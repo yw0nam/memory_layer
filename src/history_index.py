@@ -69,6 +69,7 @@ class Distillation:
     summary: str
     resolution: str
     references: list[str]
+    decisions: list[str] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -245,9 +246,14 @@ def triage_heuristic(session: Session) -> str:
     return "borderline"
 
 
+def burst_score(mean_idf_value: float, has_social: bool) -> float:
+    return mean_idf_value + (1.0 if has_social else 0.0)
+
+
 def passes_burst_gate(burst: Burst, mean_idf_value: float, document_count: int) -> bool:
-    # ponytail: strict AND gate, relax to scoring if recall suffers
-    return (document_count < 20 or mean_idf_value >= 4.0) and burst.social_weight > 1.0
+    if document_count < 20:
+        return True
+    return burst_score(mean_idf_value, burst.social_weight > 1.0) >= 4.0
 
 
 def _valid_session(session: Session) -> bool:
@@ -281,12 +287,38 @@ async def _triage_llm(session: Session) -> bool:
         return True
 
 
+def parse_distillation(parsed: dict[str, Any]) -> Distillation:
+    question = str(parsed.get("one_line_question") or "").strip()
+    summary = str(parsed.get("summary") or "").strip()
+    resolution = str(parsed.get("resolution") or "미해결").strip()
+
+    refs = parsed.get("references")
+    references = [str(ref).strip() for ref in refs] if isinstance(refs, list) else []
+
+    raw_decisions = parsed.get("decisions")
+    decisions = (
+        [str(decision).strip() for decision in raw_decisions]
+        if isinstance(raw_decisions, list)
+        else []
+    )
+    if not question or not summary:
+        raise ValueError("LLM distillation omitted required fields")
+    return Distillation(
+        question,
+        summary,
+        resolution,
+        [ref for ref in references if ref],
+        [decision for decision in decisions if decision][:10],
+    )
+
+
 async def _distill(session: Session, semaphore: asyncio.Semaphore) -> Distillation:
     prompt = (
         "다음 Claude Code 세션을 한국어로 증류하세요. 코드, 에러 문자열, 식별자는 원문을 유지하세요. "
         "반드시 JSON 객체만 반환하세요. 스키마: "
         '{"one_line_question":"나중에 검색할 질문 한 줄","summary":"3~5문장 요약",'
-        '"resolution":"최종 해결책/결론, 없으면 미해결","references":["파일/시스템/명령 언급"]}\n\n'
+        '"resolution":"최종 해결책/결론, 없으면 미해결","references":["파일/시스템/명령 언급"],'
+        '"decisions":["세션에서 내려진 주요 결정사항. 무엇을 왜 그렇게 하기로 했는지 1문장씩. 없으면 빈 배열"]}\n\n'
         + session.transcript
     )
     async with semaphore:
@@ -301,14 +333,14 @@ async def _distill(session: Session, semaphore: asyncio.Semaphore) -> Distillati
         )
     content = response.choices[0].message.content or ""
     parsed = json.loads(content)
-    question = str(parsed.get("one_line_question") or "").strip()
-    summary = str(parsed.get("summary") or "").strip()
-    resolution = str(parsed.get("resolution") or "미해결").strip()
-    refs = parsed.get("references")
-    references = [str(ref).strip() for ref in refs] if isinstance(refs, list) else []
-    if not question or not summary:
-        raise ValueError("LLM distillation omitted required fields")
-    return Distillation(question, summary, resolution, [ref for ref in references if ref])
+    raw_decisions = parsed.get("decisions")
+    if isinstance(raw_decisions, list) and len(raw_decisions) > 10:
+        LOGGER.warning(
+            "distillation returned %d decisions for %s; keeping first 10",
+            len(raw_decisions),
+            session.session_id,
+        )
+    return parse_distillation(parsed)
 
 
 def _vector_literal(vector: Any) -> str:
@@ -474,16 +506,29 @@ async def _process_file(
                     "timestamp": session.ts_last_active, "idf": None, "metadata": metadata,
                 }
             )
+            for index, decision in enumerate(distilled.decisions):
+                decision_distilled = f"[{distilled.one_line_question}] 결정: {decision}"
+                output_rows.append(
+                    {
+                        "id": f"{session.session_id}:decision:{index}",
+                        "source_ref": source_ref,
+                        "kind": "decision",
+                        "session_id": session.session_id,
+                        "raw": decision,
+                        "distilled": decision_distilled,
+                        "embedding": await _embed(embedder, decision_distilled),
+                        "timestamp": session.ts_last_active,
+                        "idf": None,
+                        "metadata": {**metadata, "index": index},
+                    }
+                )
             accepted_bursts: list[Burst] = []
             for burst in group_bursts(session.messages):
                 burst.mean_idf = mean_idf(burst.text, document_count, dfs)
-                idf_passes = document_count < 20 or burst.mean_idf >= 4.0
                 if passes_burst_gate(burst, burst.mean_idf, document_count):
                     accepted_bursts.append(burst)
-                elif idf_passes:
-                    stats["burst_no_social"] += 1
                 else:
-                    stats["low_idf_burst"] += 1
+                    stats["burst_below_threshold"] += 1
             for index, burst in enumerate(accepted_bursts):
                 burst_distilled = f"[{distilled.one_line_question}] {burst.text}"
                 output_rows.append(
@@ -503,7 +548,7 @@ async def _process_file(
     await _write_file(conn, path, stat, kept, output_rows, old_ids)
     stats["files_processed"] += 1
     stats["session_rows"] += len(kept)
-    stats["burst_rows"] += len(output_rows) - len(kept)
+    stats["burst_rows"] += sum(row["kind"] == "burst" for row in output_rows)
 
 
 def _select_files(args: argparse.Namespace) -> list[Path]:
@@ -554,13 +599,10 @@ def _count_dry_run_session(
     stats["burst_candidates"] += len(bursts)
     for burst in bursts:
         burst_idf = mean_idf(burst.text, document_count, dfs)
-        idf_passes = document_count < 20 or burst_idf >= 4.0
         if passes_burst_gate(burst, burst_idf, document_count):
             stats["burst_rows"] += 1
-        elif idf_passes:
-            stats["burst_no_social"] += 1
         else:
-            stats["low_idf_burst"] += 1
+            stats["burst_below_threshold"] += 1
 
 
 async def run(args: argparse.Namespace) -> Counter[str]:
@@ -618,7 +660,7 @@ def _print_summary(stats: Counter[str]) -> None:
     )
     print("triage: " + " ".join(f"{key}={stats[key]}" for key in triage_keys))
     skip_keys = (
-        "active", "unchanged", "noise_session", "low_idf_burst", "burst_no_social",
+        "active", "unchanged", "noise_session", "burst_below_threshold",
         "llm_failure", "embedding_failure", "read_error",
     )
     print("skips: " + " ".join(f"{key}={stats[key]}" for key in skip_keys))
