@@ -3,7 +3,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path("/home/spow12/codes/2026_upper/agents/memory/memory_layer/repos/memory_base/src")))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from history_index import Message, build_transcript, group_bursts, parse_jsonl
 
