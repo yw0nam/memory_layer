@@ -11,5 +11,18 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  mcp:
+    build: .
+    container_name: memory_base_mcp
+    depends_on: [db]
+    ports:
+      - "8765:8765"
+    environment:
+      MCP_TRANSPORT: sse
+      DB_URL: postgres://memory:memory@db:5432/memory_base   # 컨테이너 내부는 db:5432
+      EMB_URL: ${EMB_URL}
+      RERANK_URL: ${RERANK_URL}
+      LLM_URL: ${LLM_URL}
+
 volumes:
   pgdata:
