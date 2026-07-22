@@ -17,7 +17,8 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from search import Hit, search
+from search import Hit
+from search import search as run_search
 
 TEXT_LIMIT = 2000
 
@@ -42,11 +43,11 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
 
 
 async def _run_search(query: str, source: str, top_k: int) -> list[dict[str, Any]]:
-    hits = await search(query, source=source)
+    hits = await run_search(query, source=source)
     return [hit_to_dict(h) for h in hits[:top_k]]
 
 
-@mcp.tool()
+@mcp.tool(name="search")
 async def search_all(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     """Search both code and conversation history for the given query.
 
