@@ -20,16 +20,11 @@ DB/LLM/network-free by design.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any
 
 import pytest
 
-SRC = Path(__file__).resolve().parent.parent / "src"
-sys.path.insert(0, str(SRC))
-
-from history_index import (  # noqa: E402
+from memory_base.ingest.history import (
     Burst,
     Distillation,
     Message,
@@ -186,68 +181,94 @@ def test_burst_score_social_signal_adds_exactly_one_point():
 
 def test_passes_burst_gate_idf_and_social_both_pass():
     # idf=4.5 + social(+1.0)=5.5 -- comfortably over threshold either way.
-    assert passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=4.5, document_count=50) is True
+    assert (
+        passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=4.5, document_count=50) is True
+    )
 
 
 def test_passes_burst_gate_idf_alone_above_threshold_passes_without_social():
     # Inverts the old strict-AND "fails_without_social_signal" case: under
     # the weighted gate, IDF alone (4.5, no social bonus) already clears 4.0.
-    assert passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=4.5, document_count=50) is True
+    assert (
+        passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=4.5, document_count=50) is True
+    )
 
 
 def test_passes_burst_gate_fails_without_sufficient_idf_when_corpus_large():
     # idf=1.0 + social(+1.0)=2.0 -- social bonus alone can't rescue a weak
     # IDF score.
-    assert passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=1.0, document_count=50) is False
+    assert (
+        passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=1.0, document_count=50) is False
+    )
 
 
 def test_passes_burst_gate_idf_alone_reaches_threshold_at_4_0():
-    assert passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=4.0, document_count=50) is True
+    assert (
+        passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=4.0, document_count=50) is True
+    )
 
 
 def test_passes_burst_gate_idf_alone_just_under_threshold_at_3_9_fails():
-    assert passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=3.9, document_count=50) is False
+    assert (
+        passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=3.9, document_count=50) is False
+    )
 
 
 def test_passes_burst_gate_idf_plus_social_reaches_threshold_at_3_0():
     # 3.0 + 1.0 (social bonus) == 4.0 -> passes.
-    assert passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=3.0, document_count=50) is True
+    assert (
+        passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=3.0, document_count=50) is True
+    )
 
 
 def test_passes_burst_gate_idf_plus_social_just_under_threshold_at_2_9_fails():
     # 2.9 + 1.0 (social bonus) == 3.9 -> still fails.
-    assert passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=2.9, document_count=50) is False
+    assert (
+        passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=2.9, document_count=50) is False
+    )
 
 
 def test_passes_burst_gate_social_weight_exactly_1_0_gives_no_bonus():
     # social_weight must be strictly > 1.0 to count as a social signal.
     # idf=3.5 alone is under threshold; only the >1.0 case gets the +1.0
     # bonus needed to clear 4.0.
-    assert passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=3.5, document_count=50) is False
-    assert passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=3.5, document_count=50) is True
+    assert (
+        passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=3.5, document_count=50) is False
+    )
+    assert (
+        passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=3.5, document_count=50) is True
+    )
 
 
 def test_passes_burst_gate_bootstrap_bypasses_idf_when_corpus_small():
-    assert passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=0.1, document_count=10) is True
+    assert (
+        passes_burst_gate(_burst(social_weight=1.5), mean_idf_value=0.1, document_count=10) is True
+    )
 
 
 def test_passes_burst_gate_bootstrap_bypasses_social_requirement_too():
     # Inverts the old strict-AND "bootstrap_bypass_still_requires_social_signal"
     # case: below N=20 the bypass is total -- weak IDF AND no social signal
     # still passes, since neither is trustworthy yet at this corpus size.
-    assert passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=0.1, document_count=10) is True
+    assert (
+        passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=0.1, document_count=10) is True
+    )
 
 
 def test_passes_burst_gate_document_count_19_is_bootstrap_bypass():
     # Same (weak) inputs as the N=20 case below, differing only in N, to
     # pin the exact boundary where the bootstrap bypass stops applying.
-    assert passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=0.0, document_count=19) is True
+    assert (
+        passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=0.0, document_count=19) is True
+    )
 
 
 def test_passes_burst_gate_document_count_20_is_not_bootstrap_bypass():
     # document_count == 20 is NOT < 20 -> weighted score is evaluated for
     # real, and 0.0 (no idf, no social) doesn't clear 4.0.
-    assert passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=0.0, document_count=20) is False
+    assert (
+        passes_burst_gate(_burst(social_weight=1.0), mean_idf_value=0.0, document_count=20) is False
+    )
 
 
 # ---- parse_distillation / Distillation.decisions (Issue #9) ----------------

@@ -9,17 +9,12 @@ this stays CI-safe.
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parent.parent / "src"
-sys.path.insert(0, str(SRC))
+import asyncpg
 
-import asyncpg  # noqa: E402
-
-from common import DB_URL  # noqa: E402
+from memory_base.common import DB_URL
 
 
 def _db_reachable() -> bool:
@@ -35,13 +30,15 @@ def _db_reachable() -> bool:
 
 
 if not _db_reachable():
-    pytest.skip(f"DB not reachable at {DB_URL}; skipping integration tests", allow_module_level=True)
+    pytest.skip(
+        f"DB not reachable at {DB_URL}; skipping integration tests", allow_module_level=True
+    )
 
 pytestmark = pytest.mark.integration
 
-import answer  # noqa: E402
-import mcp_server  # noqa: E402
-from search import search  # noqa: E402
+from memory_base.serve import answer  # noqa: E402
+from memory_base.serve import mcp_server  # noqa: E402
+from memory_base.retrieval.search import search  # noqa: E402
 
 
 # ---- search() against real code_chunks / memory_chunks --------------------

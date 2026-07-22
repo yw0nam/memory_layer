@@ -1,6 +1,6 @@
 """Hybrid search: FTS + vector + time-decay signals fused with RRF, then reranked.
 
-CLI: uv run python src/search.py "your query" [--source code|history|all]
+CLI: uv run python -m memory_base.retrieval.search "your query" [--source code|history|all]
 """
 
 from __future__ import annotations
@@ -14,9 +14,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import asyncpg
-from openai import AsyncOpenAI
 
-from common import DB_URL, PG_SCHEMA, RERANK_MODEL, VllmEmbedder
+from memory_base.common import DB_URL, PG_SCHEMA, RERANK_MODEL, VllmEmbedder
 
 RRF_K = 60
 CANDIDATES_PER_SIGNAL = 50
@@ -75,7 +74,7 @@ async def _search_code(conn: asyncpg.Connection, query: str, qvec_lit: str) -> l
         hits.append(
             Hit(
                 source="code",
-                ref=f'{r["filename"]}:L{r["start_line"]}-L{r["end_line"]}',
+                ref=f"{r['filename']}:L{r['start_line']}-L{r['end_line']}",
                 text=r["code"],
                 ts=r["mtime"],
                 rrf=score,
@@ -87,9 +86,7 @@ async def _search_code(conn: asyncpg.Connection, query: str, qvec_lit: str) -> l
 
 async def _search_history(conn: asyncpg.Connection, query: str, qvec_lit: str) -> list[Hit]:
     tbl = f'"{PG_SCHEMA}"."memory_chunks"'
-    exists = await conn.fetchval(
-        "SELECT to_regclass($1) IS NOT NULL", f"{PG_SCHEMA}.memory_chunks"
-    )
+    exists = await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{PG_SCHEMA}.memory_chunks")
     if not exists:
         return []
     vec_rows = await conn.fetch(
@@ -107,9 +104,7 @@ async def _search_history(conn: asyncpg.Connection, query: str, qvec_lit: str) -
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
     recency = _time_decay_list({r["id"]: r["ts_last_active"] for r in by_id.values()})
     idf = _time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})
-    scores = _rrf_fuse(
-        [[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf]
-    )
+    scores = _rrf_fuse([[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf])
 
     hits = []
     for cid, score in scores.items():

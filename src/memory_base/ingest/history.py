@@ -21,7 +21,7 @@ from typing import Any, Iterable, Sequence
 
 import asyncpg
 
-from common import DB_URL, LLM_MODEL, PG_SCHEMA, VllmEmbedder, llm_client
+from memory_base.common import DB_URL, LLM_MODEL, PG_SCHEMA, VllmEmbedder, llm_client
 
 LOGGER = logging.getLogger("history_index")
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,}|[가-힣]{2,}")
@@ -151,7 +151,9 @@ def build_transcript(messages: Sequence[Message], max_chars: int = 100_000) -> s
     transcript = "\n".join(f"{m.role.upper()}: {m.text}" for m in messages)
     if len(transcript) <= max_chars:
         return transcript
-    return transcript[: int(max_chars * 0.6)] + TRUNCATION_MARKER + transcript[-int(max_chars * 0.4) :]
+    return (
+        transcript[: int(max_chars * 0.6)] + TRUNCATION_MARKER + transcript[-int(max_chars * 0.4) :]
+    )
 
 
 def group_sessions(messages: Iterable[Message], fallback_timestamp: float = 0.0) -> list[Session]:
@@ -215,7 +217,9 @@ def mean_idf(text: str, document_count: int, dfs: dict[str, int]) -> float:
     tokens = tokenize(text)
     if not tokens:
         return 0.0
-    return sum(math.log((document_count + 1) / (dfs.get(token, 0) + 1)) + 1 for token in tokens) / len(tokens)
+    return sum(
+        math.log((document_count + 1) / (dfs.get(token, 0) + 1)) + 1 for token in tokens
+    ) / len(tokens)
 
 
 def build_corpus_df(transcripts: Iterable[str]) -> tuple[dict[str, int], int]:
@@ -264,8 +268,7 @@ async def _triage_llm(session: Session) -> bool:
     prompt = (
         "다음 Claude Code 세션이 나중에 '이 문제 어떻게 풀었지?'로 검색할 가치가 있는지 판정하세요. "
         "반드시 JSON 객체만 반환하세요. 스키마: "
-        '{"keep":true|false,"reason":"판정 이유"}\n\n'
-        + session.transcript[:3_000]
+        '{"keep":true|false,"reason":"판정 이유"}\n\n' + session.transcript[:3_000]
     )
     try:
         response = await asyncio.wait_for(
@@ -348,9 +351,7 @@ def _vector_literal(vector: Any) -> str:
 
 
 async def _embed(embedder: VllmEmbedder, text: str) -> str:
-    vector = await asyncio.wait_for(
-        embedder.embed(text), timeout=SERVICE_TIMEOUT_SECONDS
-    )
+    vector = await asyncio.wait_for(embedder.embed(text), timeout=SERVICE_TIMEOUT_SECONDS)
     return _vector_literal(vector)
 
 
@@ -388,7 +389,8 @@ async def _old_session_ids(conn: asyncpg.Connection, file_path: str) -> list[str
     return [
         row["session_id"]
         for row in await conn.fetch(
-            f'SELECT session_id FROM "{PG_SCHEMA}".history_file_sessions WHERE file_path=$1', file_path
+            f'SELECT session_id FROM "{PG_SCHEMA}".history_file_sessions WHERE file_path=$1',
+            file_path,
         )
     ]
 
@@ -404,13 +406,18 @@ async def _write_file(
     schema = f'"{PG_SCHEMA}"'
     async with conn.transaction():
         if old_ids:
-            await conn.execute(f"DELETE FROM {schema}.memory_chunks WHERE session_id=ANY($1::text[])", old_ids)
-        await conn.execute(f"DELETE FROM {schema}.history_file_sessions WHERE file_path=$1", str(path))
+            await conn.execute(
+                f"DELETE FROM {schema}.memory_chunks WHERE session_id=ANY($1::text[])", old_ids
+            )
+        await conn.execute(
+            f"DELETE FROM {schema}.history_file_sessions WHERE file_path=$1", str(path)
+        )
 
         for session in sessions:
             await conn.execute(
                 f"INSERT INTO {schema}.history_file_sessions(file_path, session_id) VALUES($1,$2)",
-                str(path), session.session_id,
+                str(path),
+                session.session_id,
             )
         insert_sql = f"""
             INSERT INTO {schema}.memory_chunks
@@ -422,9 +429,17 @@ async def _write_file(
             insert_sql,
             [
                 (
-                    row["id"], "claude_code", row["source_ref"], row["kind"], row["session_id"],
-                    row["raw"], row["distilled"], row["embedding"], row["timestamp"],
-                    row["idf"], json.dumps(row["metadata"], ensure_ascii=False),
+                    row["id"],
+                    "claude_code",
+                    row["source_ref"],
+                    row["kind"],
+                    row["session_id"],
+                    row["raw"],
+                    row["distilled"],
+                    row["embedding"],
+                    row["timestamp"],
+                    row["idf"],
+                    json.dumps(row["metadata"], ensure_ascii=False),
                 )
                 for row in rows
             ],
@@ -432,7 +447,10 @@ async def _write_file(
         await conn.execute(
             f"INSERT INTO {schema}.ingest_state(file_path,mtime,size,ingested_at) VALUES($1,$2,$3,$4) "
             "ON CONFLICT(file_path) DO UPDATE SET mtime=EXCLUDED.mtime,size=EXCLUDED.size,ingested_at=EXCLUDED.ingested_at",
-            str(path), stat.st_mtime, stat.st_size, time.time(),
+            str(path),
+            stat.st_mtime,
+            stat.st_size,
+            time.time(),
         )
 
 
@@ -478,14 +496,18 @@ async def _process_file(
         return
 
     semaphore = asyncio.Semaphore(4)
-    results = await asyncio.gather(*(_distill(session, semaphore) for session in kept), return_exceptions=True)
+    results = await asyncio.gather(
+        *(_distill(session, semaphore) for session in kept), return_exceptions=True
+    )
     if any(isinstance(result, BaseException) for result in results):
         for session, result in zip(kept, results, strict=True):
             if isinstance(result, BaseException):
                 LOGGER.warning("distillation failed for %s: %s", session.session_id, result)
                 stats["llm_failure"] += 1
         return
-    distillations = {session.session_id: result for session, result in zip(kept, results, strict=True)}
+    distillations = {
+        session.session_id: result for session, result in zip(kept, results, strict=True)
+    }
 
     embedder = VllmEmbedder()
     output_rows: list[dict[str, Any]] = []
@@ -494,16 +516,24 @@ async def _process_file(
             distilled = distillations[session.session_id]
             source_ref = f"{path.parent.name}/{session.session_id}"
             metadata = {
-                "file_path": str(path), "cwd": session.messages[-1].cwd,
+                "file_path": str(path),
+                "cwd": session.messages[-1].cwd,
                 "git_branch": session.messages[-1].git_branch,
-                "tool_names": sorted(set(session.tool_names)), "tool_error_count": session.tool_error_count,
+                "tool_names": sorted(set(session.tool_names)),
+                "tool_error_count": session.tool_error_count,
             }
             output_rows.append(
                 {
-                    "id": f"{session.session_id}:session", "source_ref": source_ref, "kind": "session",
-                    "session_id": session.session_id, "raw": session.transcript, "distilled": distilled.text,
+                    "id": f"{session.session_id}:session",
+                    "source_ref": source_ref,
+                    "kind": "session",
+                    "session_id": session.session_id,
+                    "raw": session.transcript,
+                    "distilled": distilled.text,
                     "embedding": await _embed(embedder, distilled.text),
-                    "timestamp": session.ts_last_active, "idf": None, "metadata": metadata,
+                    "timestamp": session.ts_last_active,
+                    "idf": None,
+                    "metadata": metadata,
                 }
             )
             for index, decision in enumerate(distilled.decisions):
@@ -533,11 +563,20 @@ async def _process_file(
                 burst_distilled = f"[{distilled.one_line_question}] {burst.text}"
                 output_rows.append(
                     {
-                        "id": f"{session.session_id}:burst:{index}", "source_ref": source_ref, "kind": "burst",
-                        "session_id": session.session_id, "raw": burst.text, "distilled": burst_distilled,
+                        "id": f"{session.session_id}:burst:{index}",
+                        "source_ref": source_ref,
+                        "kind": "burst",
+                        "session_id": session.session_id,
+                        "raw": burst.text,
+                        "distilled": burst_distilled,
                         "embedding": await _embed(embedder, burst_distilled),
-                        "timestamp": session.ts_last_active, "idf": burst.mean_idf,
-                        "metadata": {**metadata, "role": burst.role, "social_weight": burst.social_weight},
+                        "timestamp": session.ts_last_active,
+                        "idf": burst.mean_idf,
+                        "metadata": {
+                            **metadata,
+                            "role": burst.role,
+                            "social_weight": burst.social_weight,
+                        },
                     }
                 )
     except Exception as exc:
@@ -633,7 +672,9 @@ async def run(args: argparse.Namespace) -> Counter[str]:
     conn = await asyncpg.connect(DB_URL, timeout=15)
     try:
         await _ensure_schema(conn)
-        state_rows = await conn.fetch(f'SELECT file_path,mtime,size FROM "{PG_SCHEMA}".ingest_state')
+        state_rows = await conn.fetch(
+            f'SELECT file_path,mtime,size FROM "{PG_SCHEMA}".ingest_state'
+        )
         state = {row["file_path"]: (float(row["mtime"]), int(row["size"])) for row in state_rows}
         for path, (stat, sessions) in scanned.items():
             if time.time() - stat.st_mtime < ACTIVE_WINDOW_SECONDS:
@@ -655,13 +696,21 @@ def _print_summary(stats: Counter[str]) -> None:
         f"session_rows={stats['session_rows']} burst_rows={stats['burst_rows']}"
     )
     triage_keys = (
-        "triage_keep", "triage_skip_heuristic", "triage_borderline",
-        "triage_llm_keep", "triage_llm_skip",
+        "triage_keep",
+        "triage_skip_heuristic",
+        "triage_borderline",
+        "triage_llm_keep",
+        "triage_llm_skip",
     )
     print("triage: " + " ".join(f"{key}={stats[key]}" for key in triage_keys))
     skip_keys = (
-        "active", "unchanged", "noise_session", "burst_below_threshold",
-        "llm_failure", "embedding_failure", "read_error",
+        "active",
+        "unchanged",
+        "noise_session",
+        "burst_below_threshold",
+        "llm_failure",
+        "embedding_failure",
+        "read_error",
     )
     print("skips: " + " ".join(f"{key}={stats[key]}" for key in skip_keys))
     if stats["burst_candidates"]:

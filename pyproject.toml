@@ -17,8 +17,20 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "ruff",
 ]
 
 [tool.pytest.ini_options]
 markers = ["integration: requires local DB/vLLM services"]
 testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memory_base"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100

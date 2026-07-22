@@ -10,12 +10,12 @@ bind address (defaults 0.0.0.0:8765).
 
 Register with Claude Code:
     stdio (local):
-        claude mcp add memory-base -- uv --directory <절대경로> run python src/mcp_server.py
+        claude mcp add memory-base -- uv --directory <절대경로> run python -m memory_base.serve.mcp_server
     SSE (Docker):
         claude mcp add --transport sse memory-base http://localhost:8765/sse
 
 Run directly:
-    uv run python src/mcp_server.py
+    uv run python -m memory_base.serve.mcp_server
 """
 
 from __future__ import annotations
@@ -25,11 +25,11 @@ from typing import Any, Mapping
 
 from mcp.server.fastmcp import FastMCP
 
+from memory_base.retrieval.search import Hit
+from memory_base.retrieval.search import search as run_search
+
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
-
-from search import Hit
-from search import search as run_search
 
 TEXT_LIMIT = 2000
 

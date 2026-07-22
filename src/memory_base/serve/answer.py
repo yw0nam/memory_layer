@@ -1,6 +1,6 @@
 """Query -> Planner(source selection) -> Executor(hybrid search) -> Synthesis(cited answer) CLI.
 
-uv run python src/answer.py "질문" [--source auto|code|history|all]
+uv run python -m memory_base.serve.answer "질문" [--source auto|code|history|all]
 """
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ import asyncio
 import json
 from datetime import datetime, timezone
 
-from common import LLM_MODEL, llm_client
-from search import Hit, search
+from memory_base.common import LLM_MODEL, llm_client
+from memory_base.retrieval.search import Hit, search
 
 EVIDENCE_TEXT_LIMIT = 2000
 
@@ -47,7 +47,9 @@ def dedup_sort_hits(hits: list[Hit], top_k: int = 10) -> list[Hit]:
         if existing is None:
             best[key] = h
         else:
-            existing_score = existing.rerank_score if existing.rerank_score is not None else existing.rrf
+            existing_score = (
+                existing.rerank_score if existing.rerank_score is not None else existing.rrf
+            )
             if score > existing_score:
                 best[key] = h
     ordered = sorted(

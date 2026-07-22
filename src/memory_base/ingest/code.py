@@ -1,7 +1,7 @@
 """Phase 0: incremental code repo indexing (CocoIndex + tree-sitter + pgvector).
 
-Run once / incremental:  uv run cocoindex update src/code_index.py
-Live watch:              uv run cocoindex update -L src/code_index.py
+Run once / incremental:  uv run cocoindex update src/memory_base/ingest/code.py
+Live watch:              uv run cocoindex update -L src/memory_base/ingest/code.py
 """
 
 from __future__ import annotations
@@ -21,11 +21,13 @@ from cocoindex.resources.chunk import Chunk
 from cocoindex.resources.file import FileLike, PatternFilePathMatcher
 from cocoindex.resources.id import IdGenerator
 
-from common import DB_URL, PG_SCHEMA, VllmEmbedder
+from memory_base.common import DB_URL, PG_SCHEMA, VllmEmbedder
 
 TABLE_NAME = "code_chunks"
 # ponytail: single repo for now; add paths here to index more repos.
-REPO_ROOT = pathlib.Path(os.getenv("INDEX_REPO", pathlib.Path(__file__).parent.parent))
+REPO_ROOT = pathlib.Path(
+    os.getenv("INDEX_REPO", pathlib.Path(__file__).parent.parent.parent.parent)
+)
 
 PG_DB = coco.ContextKey[asyncpg.Pool]("memory_base_db")
 EMBEDDER = coco.ContextKey[VllmEmbedder]("embedder")

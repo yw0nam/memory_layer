@@ -6,15 +6,9 @@ directly with hand-built dicts (os.environ is never touched).
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 
-SRC = Path(__file__).resolve().parent.parent / "src"
-sys.path.insert(0, str(SRC))
-
-from mcp_server import resolve_transport  # noqa: E402
+from memory_base.serve.mcp_server import resolve_transport
 
 
 def test_resolve_transport_defaults_to_stdio():

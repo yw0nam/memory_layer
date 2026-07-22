@@ -6,16 +6,10 @@ group_sessions. No DB/LLM/embedding access.
 from __future__ import annotations
 
 import math
-import sys
-from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parent.parent / "src"
-sys.path.insert(0, str(SRC))
-
-from history_index import (  # noqa: E402
+from memory_base.ingest.history import (
     TRUNCATION_MARKER,
     Message,
     build_transcript,
