@@ -1,11 +1,18 @@
-"""MCP stdio server exposing memory_base's hybrid search as thin tools.
+"""MCP server exposing memory_base's hybrid search as thin tools.
 
 No LLM calls here -- each tool is a direct delegate to search.search()
 (FTS + vector + time-decay, fused with RRF, then reranked and
 context-restored). See docs/specs §3.2 ⑦.
 
+Transport is stdio by default (local dev); set MCP_TRANSPORT=sse|streamable-http
+to serve over HTTP instead (e.g. in Docker). MCP_HOST/MCP_PORT control the
+bind address (defaults 0.0.0.0:8765).
+
 Register with Claude Code:
-    claude mcp add memory-base -- uv --directory <절대경로> run python src/mcp_server.py
+    stdio (local):
+        claude mcp add memory-base -- uv --directory <절대경로> run python src/mcp_server.py
+    SSE (Docker):
+        claude mcp add --transport sse memory-base http://localhost:8765/sse
 
 Run directly:
     uv run python src/mcp_server.py
@@ -13,9 +20,13 @@ Run directly:
 
 from __future__ import annotations
 
-from typing import Any
+import os
+from typing import Any, Mapping
 
 from mcp.server.fastmcp import FastMCP
+
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8765
 
 from search import Hit
 from search import search as run_search
@@ -89,5 +100,28 @@ async def search_history(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     return await _run_search(query, "history", top_k)
 
 
+def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:
+    """(transport, host, port). MCP_TRANSPORT: stdio(기본)|sse|streamable-http.
+
+    MCP_HOST 기본 "0.0.0.0", MCP_PORT 기본 8765. 잘못된 transport 값이면 ValueError.
+    """
+    transport = env.get("MCP_TRANSPORT", "stdio").lower()
+    if transport not in ("stdio", "sse", "streamable-http"):
+        raise ValueError(f"invalid MCP_TRANSPORT: {transport!r}")
+    host = env.get("MCP_HOST", DEFAULT_HOST)
+    port_raw = env.get("MCP_PORT", str(DEFAULT_PORT))
+    try:
+        port = int(port_raw)
+    except ValueError as e:
+        raise ValueError(f"invalid MCP_PORT: {port_raw!r}") from e
+    return transport, host, port
+
+
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    _transport, _host, _port = resolve_transport(os.environ)
+    if _transport == "stdio":
+        mcp.run(transport="stdio")
+    else:
+        mcp.settings.host = _host
+        mcp.settings.port = _port
+        mcp.run(transport=_transport)

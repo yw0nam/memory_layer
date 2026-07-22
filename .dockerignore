@@ -1,0 +1,7 @@
+.venv
+.git
+.cocoindex
+__pycache__
+tests
+docs
+.env
