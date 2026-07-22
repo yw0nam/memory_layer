@@ -6,16 +6,11 @@ plain dicts, so they're exercised directly with hand-built inputs.
 
 from __future__ import annotations
 
-import sys
 import time
-from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parent.parent / "src"
-sys.path.insert(0, str(SRC))
-
-from search import (  # noqa: E402
+from memory_base.retrieval.search import (
     FUSED_TOP,
     PER_FILE_CAP,
     RRF_K,

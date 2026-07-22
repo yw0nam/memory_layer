@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Design docs (docs/specs/)
+    url: https://github.com/yw0nam/memory_layer/tree/main/docs/specs
+    about: Review docs/specs/spec.md and the implementation specs before opening an issue

@@ -8,22 +8,32 @@ search.search so no network/DB call happens.
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
-
-import pytest
-
-SRC = Path(__file__).resolve().parent.parent / "src"
-sys.path.insert(0, str(SRC))
-
-from search import Hit  # noqa: E402
-
-import answer  # noqa: E402
-import mcp_server  # noqa: E402
 
 
-def _hit(source="code", ref="a.py:L1-L2", text="hello", ts=1_700_000_000.0, rrf=0.5, rerank_score=None, meta=None):
-    return Hit(source=source, ref=ref, text=text, ts=ts, rrf=rrf, rerank_score=rerank_score, meta=meta or {})
+from memory_base.retrieval.search import Hit
+
+from memory_base.serve import answer
+from memory_base.serve import mcp_server
+
+
+def _hit(
+    source="code",
+    ref="a.py:L1-L2",
+    text="hello",
+    ts=1_700_000_000.0,
+    rrf=0.5,
+    rerank_score=None,
+    meta=None,
+):
+    return Hit(
+        source=source,
+        ref=ref,
+        text=text,
+        ts=ts,
+        rrf=rrf,
+        rerank_score=rerank_score,
+        meta=meta or {},
+    )
 
 
 # ---- answer.py pure functions ----------------------------------------------
@@ -116,7 +126,9 @@ def test_answer_returns_no_evidence_message_without_llm_call(monkeypatch):
 
 
 def test_hit_to_dict_basic_fields():
-    h = _hit(source="code", ref="a.py:L1-L2", text="body", ts=1_700_000_000.0, rrf=0.4, rerank_score=0.8)
+    h = _hit(
+        source="code", ref="a.py:L1-L2", text="body", ts=1_700_000_000.0, rrf=0.4, rerank_score=0.8
+    )
     d = mcp_server.hit_to_dict(h)
     assert d["source"] == "code"
     assert d["ref"] == "a.py:L1-L2"
