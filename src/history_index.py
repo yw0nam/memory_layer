@@ -217,8 +217,68 @@ def mean_idf(text: str, document_count: int, dfs: dict[str, int]) -> float:
     return sum(math.log((document_count + 1) / (dfs.get(token, 0) + 1)) + 1 for token in tokens) / len(tokens)
 
 
+def build_corpus_df(transcripts: Iterable[str]) -> tuple[dict[str, int], int]:
+    """Return document frequencies and the number of supplied transcripts."""
+    dfs: Counter[str] = Counter()
+    document_count = 0
+    for transcript in transcripts:
+        document_count += 1
+        dfs.update(tokenize(transcript))
+    return dict(dfs), document_count
+
+
+def triage_heuristic(session: Session) -> str:
+    """Cheaply classify a session before any LLM or embedding work."""
+    text_messages = [message for message in session.messages if message.text]
+    assistant_messages = [message for message in text_messages if message.role == "assistant"]
+    if not assistant_messages:
+        return "skip"
+
+    user_messages = [message for message in text_messages if message.role == "user"]
+    user_chars = sum(len(message.text) for message in user_messages)
+    if len(user_messages) <= 2 and user_chars < 200:
+        return "skip"
+
+    total_chars = sum(len(message.text) for message in text_messages)
+    if total_chars >= 5_000 or len(text_messages) >= 20:
+        return "keep"
+    return "borderline"
+
+
+def passes_burst_gate(burst: Burst, mean_idf_value: float, document_count: int) -> bool:
+    # ponytail: strict AND gate, relax to scoring if recall suffers
+    return (document_count < 20 or mean_idf_value >= 4.0) and burst.social_weight > 1.0
+
+
 def _valid_session(session: Session) -> bool:
     return len(session.messages) >= 5 and sum(len(m.text) for m in session.messages) >= 500
+
+
+async def _triage_llm(session: Session) -> bool:
+    prompt = (
+        "다음 Claude Code 세션이 나중에 '이 문제 어떻게 풀었지?'로 검색할 가치가 있는지 판정하세요. "
+        "반드시 JSON 객체만 반환하세요. 스키마: "
+        '{"keep":true|false,"reason":"판정 이유"}\n\n'
+        + session.transcript[:3_000]
+    )
+    try:
+        response = await asyncio.wait_for(
+            llm_client().chat.completions.create(
+                model=LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0,
+            ),
+            timeout=SERVICE_TIMEOUT_SECONDS,
+        )
+        content = response.choices[0].message.content or ""
+        parsed = json.loads(content)
+        if not isinstance(parsed.get("keep"), bool):
+            raise ValueError("LLM triage omitted boolean keep")
+        return parsed["keep"]
+    except Exception as exc:
+        LOGGER.warning("triage failed for %s; keeping session: %s", session.session_id, exc)
+        return True
 
 
 async def _distill(session: Session, semaphore: asyncio.Semaphore) -> Distillation:
@@ -282,46 +342,23 @@ async def _ensure_schema(conn: asyncpg.Connection) -> None:
           file_path text PRIMARY KEY, mtime double precision NOT NULL,
           size bigint NOT NULL, ingested_at double precision NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS {schema}.df_stats (
-          token text PRIMARY KEY, df bigint NOT NULL
-        );
+        DROP TABLE IF EXISTS {schema}.df_stats;
+        DROP TABLE IF EXISTS {schema}.history_session_tokens;
         CREATE TABLE IF NOT EXISTS {schema}.history_file_sessions (
           file_path text NOT NULL, session_id text NOT NULL,
           PRIMARY KEY (file_path, session_id)
-        );
-        CREATE TABLE IF NOT EXISTS {schema}.history_session_tokens (
-          session_id text NOT NULL, token text NOT NULL,
-          PRIMARY KEY (session_id, token)
         );
         """
     )
 
 
-async def _corpus_without_file(
-    conn: asyncpg.Connection, file_path: str
-) -> tuple[dict[str, int], int, list[str], dict[str, set[str]]]:
-    rows = await conn.fetch(f'SELECT token, df FROM "{PG_SCHEMA}".df_stats')
-    dfs = {row["token"]: int(row["df"]) for row in rows if row["token"] != "__N__"}
-    n = next((int(row["df"]) for row in rows if row["token"] == "__N__"), 0)
-    old_ids = [
+async def _old_session_ids(conn: asyncpg.Connection, file_path: str) -> list[str]:
+    return [
         row["session_id"]
         for row in await conn.fetch(
             f'SELECT session_id FROM "{PG_SCHEMA}".history_file_sessions WHERE file_path=$1', file_path
         )
     ]
-    old_tokens: dict[str, set[str]] = {session_id: set() for session_id in old_ids}
-    if old_ids:
-        for row in await conn.fetch(
-            f'SELECT session_id, token FROM "{PG_SCHEMA}".history_session_tokens '
-            "WHERE session_id = ANY($1::text[])",
-            old_ids,
-        ):
-            old_tokens[row["session_id"]].add(row["token"])
-        for tokens in old_tokens.values():
-            for token in tokens:
-                dfs[token] = max(0, dfs.get(token, 0) - 1)
-        n = max(0, n - len(old_ids))
-    return dfs, n, old_ids, old_tokens
 
 
 async def _write_file(
@@ -329,48 +366,20 @@ async def _write_file(
     path: Path,
     stat: Any,
     sessions: list[Session],
-    session_tokens: dict[str, set[str]],
     rows: list[dict[str, Any]],
     old_ids: list[str],
-    old_tokens: dict[str, set[str]],
 ) -> None:
     schema = f'"{PG_SCHEMA}"'
     async with conn.transaction():
-        for tokens in old_tokens.values():
-            if tokens:
-                await conn.execute(
-                    f"UPDATE {schema}.df_stats SET df=df-1 WHERE token=ANY($1::text[])", list(tokens)
-                )
         if old_ids:
             await conn.execute(f"DELETE FROM {schema}.memory_chunks WHERE session_id=ANY($1::text[])", old_ids)
-            await conn.execute(
-                f"DELETE FROM {schema}.history_session_tokens WHERE session_id=ANY($1::text[])", old_ids
-            )
         await conn.execute(f"DELETE FROM {schema}.history_file_sessions WHERE file_path=$1", str(path))
-        await conn.execute(f"DELETE FROM {schema}.df_stats WHERE token <> '__N__' AND df <= 0")
 
         for session in sessions:
             await conn.execute(
                 f"INSERT INTO {schema}.history_file_sessions(file_path, session_id) VALUES($1,$2)",
                 str(path), session.session_id,
             )
-            tokens = session_tokens[session.session_id]
-            if tokens:
-                await conn.executemany(
-                    f"INSERT INTO {schema}.history_session_tokens(session_id, token) VALUES($1,$2)",
-                    [(session.session_id, token) for token in tokens],
-                )
-                await conn.executemany(
-                    f"INSERT INTO {schema}.df_stats(token, df) VALUES($1,1) "
-                    "ON CONFLICT(token) DO UPDATE SET df=df_stats.df+1",
-                    [(token,) for token in tokens],
-                )
-        old_n = max(0, int(await conn.fetchval(f"SELECT COALESCE(df,0) FROM {schema}.df_stats WHERE token='__N__'") or 0) - len(old_ids))
-        await conn.execute(
-            f"INSERT INTO {schema}.df_stats(token,df) VALUES('__N__',$1) "
-            "ON CONFLICT(token) DO UPDATE SET df=EXCLUDED.df",
-            old_n + len(sessions),
-        )
         insert_sql = f"""
             INSERT INTO {schema}.memory_chunks
               (id, source_type, source_ref, chunk_kind, session_id, content_raw,
@@ -395,47 +404,61 @@ async def _write_file(
         )
 
 
-async def _process_file(conn: asyncpg.Connection, path: Path, stats: Counter[str]) -> None:
-    stat = path.stat()
-    try:
-        data = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        LOGGER.warning("cannot read %s: %s", path, exc)
-        stats["read_error"] += 1
-        return
-    sessions = group_sessions(parse_jsonl(data, path.stem), stat.st_mtime)
+async def _process_file(
+    conn: asyncpg.Connection,
+    path: Path,
+    stat: Any,
+    sessions: list[Session],
+    dfs: dict[str, int],
+    document_count: int,
+    stats: Counter[str],
+) -> None:
     valid = [session for session in sessions if _valid_session(session)]
     stats["noise_session"] += len(sessions) - len(valid)
-    if not valid:
-        # An all-noise file is still successfully ingested and must be incremental.
-        dfs, n, old_ids, old_tokens = await _corpus_without_file(conn, str(path))
-        del dfs, n
-        await _write_file(conn, path, stat, [], {}, [], old_ids, old_tokens)
+
+    kept: list[Session] = []
+    borderline: list[Session] = []
+    for session in valid:
+        decision = triage_heuristic(session)
+        if decision == "keep":
+            stats["triage_keep"] += 1
+            kept.append(session)
+        elif decision == "skip":
+            stats["triage_skip_heuristic"] += 1
+        else:
+            stats["triage_borderline"] += 1
+            borderline.append(session)
+
+    if borderline:
+        triage_results = await asyncio.gather(*(_triage_llm(session) for session in borderline))
+        for session, keep in zip(borderline, triage_results, strict=True):
+            if keep:
+                stats["triage_llm_keep"] += 1
+                kept.append(session)
+            else:
+                stats["triage_llm_skip"] += 1
+
+    old_ids = await _old_session_ids(conn, str(path))
+    if not kept:
+        # All-noise and all-skipped files still advance ingest_state.
+        await _write_file(conn, path, stat, [], [], old_ids)
         stats["files_processed"] += 1
         return
 
     semaphore = asyncio.Semaphore(4)
-    results = await asyncio.gather(*(_distill(session, semaphore) for session in valid), return_exceptions=True)
+    results = await asyncio.gather(*(_distill(session, semaphore) for session in kept), return_exceptions=True)
     if any(isinstance(result, BaseException) for result in results):
-        for session, result in zip(valid, results, strict=True):
+        for session, result in zip(kept, results, strict=True):
             if isinstance(result, BaseException):
                 LOGGER.warning("distillation failed for %s: %s", session.session_id, result)
                 stats["llm_failure"] += 1
         return
-    distillations = {session.session_id: result for session, result in zip(valid, results, strict=True)}
-
-    dfs, base_n, old_ids, old_tokens = await _corpus_without_file(conn, str(path))
-    session_tokens = {session.session_id: tokenize(session.transcript) for session in valid}
-    effective_dfs = dict(dfs)
-    for tokens in session_tokens.values():
-        for token in tokens:
-            effective_dfs[token] = effective_dfs.get(token, 0) + 1
-    effective_n = base_n + len(valid)
+    distillations = {session.session_id: result for session, result in zip(kept, results, strict=True)}
 
     embedder = VllmEmbedder()
     output_rows: list[dict[str, Any]] = []
     try:
-        for session in valid:
+        for session in kept:
             distilled = distillations[session.session_id]
             source_ref = f"{path.parent.name}/{session.session_id}"
             metadata = {
@@ -453,9 +476,12 @@ async def _process_file(conn: asyncpg.Connection, path: Path, stats: Counter[str
             )
             accepted_bursts: list[Burst] = []
             for burst in group_bursts(session.messages):
-                burst.mean_idf = mean_idf(burst.text, effective_n, effective_dfs)
-                if effective_n < 20 or burst.mean_idf >= 4.0:
+                burst.mean_idf = mean_idf(burst.text, document_count, dfs)
+                idf_passes = document_count < 20 or burst.mean_idf >= 4.0
+                if passes_burst_gate(burst, burst.mean_idf, document_count):
                     accepted_bursts.append(burst)
+                elif idf_passes:
+                    stats["burst_no_social"] += 1
                 else:
                     stats["low_idf_burst"] += 1
             for index, burst in enumerate(accepted_bursts):
@@ -474,10 +500,10 @@ async def _process_file(conn: asyncpg.Connection, path: Path, stats: Counter[str
         stats["embedding_failure"] += 1
         return
 
-    await _write_file(conn, path, stat, valid, session_tokens, output_rows, old_ids, old_tokens)
+    await _write_file(conn, path, stat, kept, output_rows, old_ids)
     stats["files_processed"] += 1
-    stats["session_rows"] += len(valid)
-    stats["burst_rows"] += len(output_rows) - len(valid)
+    stats["session_rows"] += len(kept)
+    stats["burst_rows"] += len(output_rows) - len(kept)
 
 
 def _select_files(args: argparse.Namespace) -> list[Path]:
@@ -488,22 +514,78 @@ def _select_files(args: argparse.Namespace) -> list[Path]:
     return files[: args.limit] if args.limit is not None else files
 
 
+def _scan_files(
+    files: Sequence[Path], stats: Counter[str]
+) -> dict[Path, tuple[Any, list[Session]]]:
+    """Parse every selected file once for the corpus pass and ingest pass."""
+    scanned: dict[Path, tuple[Any, list[Session]]] = {}
+    for path in files:
+        try:
+            stat = path.stat()
+            data = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            LOGGER.warning("cannot read %s: %s", path, exc)
+            stats["read_error"] += 1
+            continue
+        scanned[path] = (
+            stat,
+            group_sessions(parse_jsonl(data, path.stem), stat.st_mtime),
+        )
+    return scanned
+
+
+def _count_dry_run_session(
+    session: Session,
+    dfs: dict[str, int],
+    document_count: int,
+    stats: Counter[str],
+) -> None:
+    decision = triage_heuristic(session)
+    if decision == "skip":
+        stats["triage_skip_heuristic"] += 1
+        return
+    if decision == "borderline":
+        stats["triage_borderline"] += 1
+        return
+
+    stats["triage_keep"] += 1
+    stats["session_rows"] += 1
+    bursts = group_bursts(session.messages)
+    stats["burst_candidates"] += len(bursts)
+    for burst in bursts:
+        burst_idf = mean_idf(burst.text, document_count, dfs)
+        idf_passes = document_count < 20 or burst_idf >= 4.0
+        if passes_burst_gate(burst, burst_idf, document_count):
+            stats["burst_rows"] += 1
+        elif idf_passes:
+            stats["burst_no_social"] += 1
+        else:
+            stats["low_idf_burst"] += 1
+
+
 async def run(args: argparse.Namespace) -> Counter[str]:
     stats: Counter[str] = Counter()
     files = _select_files(args)
     stats["files_selected"] = len(files)
+    scanned = _scan_files(files, stats)
+    valid_sessions = [
+        session
+        for _, sessions in scanned.values()
+        for session in sessions
+        if _valid_session(session)
+    ]
+    dfs, document_count = build_corpus_df(session.transcript for session in valid_sessions)
+
     if args.dry_run:
-        for path in files:
-            stat = path.stat()
+        for stat, sessions in scanned.values():
             if time.time() - stat.st_mtime < ACTIVE_WINDOW_SECONDS:
                 stats["active"] += 1
                 continue
-            sessions = group_sessions(parse_jsonl(path.read_text(encoding="utf-8", errors="replace"), path.stem), stat.st_mtime)
             valid = [session for session in sessions if _valid_session(session)]
             stats["files_processed"] += 1
-            stats["session_rows"] += len(valid)
-            stats["burst_candidates"] += sum(len(group_bursts(session.messages)) for session in valid)
             stats["noise_session"] += len(sessions) - len(valid)
+            for session in valid:
+                _count_dry_run_session(session, dfs, document_count, stats)
         return stats
 
     conn = await asyncpg.connect(DB_URL, timeout=15)
@@ -511,15 +593,14 @@ async def run(args: argparse.Namespace) -> Counter[str]:
         await _ensure_schema(conn)
         state_rows = await conn.fetch(f'SELECT file_path,mtime,size FROM "{PG_SCHEMA}".ingest_state')
         state = {row["file_path"]: (float(row["mtime"]), int(row["size"])) for row in state_rows}
-        for path in files:
-            stat = path.stat()
+        for path, (stat, sessions) in scanned.items():
             if time.time() - stat.st_mtime < ACTIVE_WINDOW_SECONDS:
                 stats["active"] += 1
                 continue
             if not args.full and state.get(str(path)) == (stat.st_mtime, stat.st_size):
                 stats["unchanged"] += 1
                 continue
-            await _process_file(conn, path, stats)
+            await _process_file(conn, path, stat, sessions, dfs, document_count, stats)
     finally:
         await conn.close()
     return stats
@@ -531,7 +612,15 @@ def _print_summary(stats: Counter[str]) -> None:
         f"selected={stats['files_selected']} processed_files={stats['files_processed']} "
         f"session_rows={stats['session_rows']} burst_rows={stats['burst_rows']}"
     )
-    skip_keys = ("active", "unchanged", "noise_session", "low_idf_burst", "llm_failure", "embedding_failure", "read_error")
+    triage_keys = (
+        "triage_keep", "triage_skip_heuristic", "triage_borderline",
+        "triage_llm_keep", "triage_llm_skip",
+    )
+    print("triage: " + " ".join(f"{key}={stats[key]}" for key in triage_keys))
+    skip_keys = (
+        "active", "unchanged", "noise_session", "low_idf_burst", "burst_no_social",
+        "llm_failure", "embedding_failure", "read_error",
+    )
     print("skips: " + " ".join(f"{key}={stats[key]}" for key in skip_keys))
     if stats["burst_candidates"]:
         print(f"dry_run_burst_candidates={stats['burst_candidates']}")
