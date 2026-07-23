@@ -5,7 +5,7 @@
 Everything the system **stores or emits** is English, and everything the repo
 **contains** is English — even when user/agent input arrives in Korean or
 Japanese. Input handling stays multilingual: transcripts are parsed, tokenized
-(Hangul token branch in `TOKEN_RE` stays, rewritten with `가-힣`
+(Hangul token branch in `TOKEN_RE` stays, rewritten with `\uAC00-\uD7A3`
 escapes), embedded, and reranked in any language.
 
 ## Code changes (TDD)
@@ -16,8 +16,8 @@ escapes), embedded, and reranked in any language.
   verbatim; explicitly instructs English output even for Korean/Japanese
   transcripts.
 - Triage LLM prompt: English, `reason` in English.
-- `parse_distillation` default resolution `"unresolved"` (was `"미해결"`).
-- Decision row prefix `Decision:` (was `결정:`).
+- `parse_distillation` default resolution `"unresolved"`.
+- Decision row prefix `Decision:`.
 - `TOKEN_RE`: Hangul range via unicode escapes (behavior identical).
 
 ### serve/answer.py

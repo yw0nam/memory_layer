@@ -1,37 +1,38 @@
-# 구현 스펙: Phase 1 — 에이전트 이력 수집·증류 파이프라인
+# Implementation spec: Phase 1 — Agent history ingest & distillation pipeline
 
-## 목표
+## Goal
 
-Claude Code 세션 JSONL(`~/.claude/projects/<encoded-path>/<session-id>.jsonl`)을 파싱해
-LLM으로 증류(distill)하고, `memory.memory_chunks` 테이블에 임베딩과 함께 적재하는
-**증분·멱등** 파이프라인 `src/history_index.py`를 구현한다.
+Implement an **incremental & idempotent** pipeline `src/history_index.py` that parses
+Claude Code session JSONL (`~/.claude/projects/<encoded-path>/<session-id>.jsonl`),
+distills it with an LLM, and loads it into the `memory.memory_chunks` table together
+with embeddings.
 
-## 컨텍스트 (기존 코드 — 수정 금지, 읽고 맞출 것)
+## Context (existing code — do not modify, read and conform)
 
-- 프로젝트 루트: `/home/spow12/codes/2026_upper/agents/memory/memory_layer/repos/memory_base`
-- Python 3.12, uv 프로젝트. 의존성 설치됨: asyncpg, openai(AsyncOpenAI), numpy, python-dotenv, httpx, cocoindex(무관)
+- Project root: `/home/spow12/codes/2026_upper/agents/memory/memory_layer/repos/memory_base`
+- Python 3.12, uv project. Installed deps: asyncpg, openai (AsyncOpenAI), numpy, python-dotenv, httpx, cocoindex (unrelated)
 - `src/common.py`: `VllmEmbedder().embed(text, query=False) -> np.float16[2048]` (async),
-  `llm_client() -> AsyncOpenAI`, `LLM_MODEL`, `DB_URL`, `PG_SCHEMA = "memory"`. 반드시 재사용.
-- DB: Postgres(포트 5439, docker `memory_base_db`), pgvector 0.8.5, 스키마 `memory` 존재.
-- `memory.code_chunks` 테이블은 CocoIndex가 관리 — **절대 건드리지 말 것**.
-- `src/search.py`의 `_search_history()`가 이미 아래 컬럼을 SELECT한다(계약):
+  `llm_client() -> AsyncOpenAI`, `LLM_MODEL`, `DB_URL`, `PG_SCHEMA = "memory"`. Must be reused.
+- DB: Postgres (port 5439, docker `memory_base_db`), pgvector 0.8.5, schema `memory` exists.
+- The `memory.code_chunks` table is managed by CocoIndex — **never touch it**.
+- `src/search.py`'s `_search_history()` already SELECTs the following columns (contract):
   `id, source_ref, distilled, content_raw, ts_last_active, idf_score, embedding(halfvec)`.
-  이 계약을 깨지 말 것. 실행: `cd src && uv run python search.py "질의" --source history`
+  Do not break this contract. Run: `cd src && uv run python search.py "query" --source history`
 
-## 테이블 (이 파이프라인이 소유·생성, IF NOT EXISTS)
+## Table (owned & created by this pipeline, IF NOT EXISTS)
 
 ```sql
 CREATE TABLE IF NOT EXISTS memory.memory_chunks (
-  id             text PRIMARY KEY,          -- "{session_id}:session" 또는 "{session_id}:burst:{n}"
-  source_type    text NOT NULL,             -- 'claude_code' (Hermes 등은 추후 어댑터)
-  source_ref     text NOT NULL,             -- "{project_dir_name}/{session_id}" (사람이 추적 가능)
+  id             text PRIMARY KEY,          -- "{session_id}:session" or "{session_id}:burst:{n}"
+  source_type    text NOT NULL,             -- 'claude_code' (Hermes etc. via a later adapter)
+  source_ref     text NOT NULL,             -- "{project_dir_name}/{session_id}" (human-traceable)
   chunk_kind     text NOT NULL,             -- 'session' | 'burst'
   session_id     text NOT NULL,
-  content_raw    text NOT NULL,             -- FTS 대상 원문(세션이면 재구성 트랜스크립트, 버스트면 버스트 원문)
-  distilled      text,                      -- 임베딩된 텍스트(세션: 증류 결과, 버스트: 주제 프리픽스+버스트)
+  content_raw    text NOT NULL,             -- raw text for FTS (session: reconstructed transcript; burst: burst raw text)
+  distilled      text,                      -- embedded text (session: distillation result; burst: topic prefix + burst)
   embedding      halfvec(2048) NOT NULL,
-  ts_last_active double precision NOT NULL, -- 세션 마지막 메시지 epoch sec
-  idf_score      double precision,          -- 버스트 mean-IDF (세션 행은 NULL 허용)
+  ts_last_active double precision NOT NULL, -- epoch sec of the session's last message
+  idf_score      double precision,          -- burst mean-IDF (NULL allowed for session rows)
   metadata       jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS memory_chunks__fts ON memory.memory_chunks
@@ -39,109 +40,109 @@ CREATE INDEX IF NOT EXISTS memory_chunks__fts ON memory.memory_chunks
 CREATE INDEX IF NOT EXISTS memory_chunks__vec ON memory.memory_chunks
   USING hnsw (embedding halfvec_cosine_ops);
 CREATE INDEX IF NOT EXISTS memory_chunks__session ON memory.memory_chunks (session_id);
--- 증분 상태 추적
+-- incremental state tracking
 CREATE TABLE IF NOT EXISTS memory.ingest_state (
   file_path text PRIMARY KEY,
   mtime     double precision NOT NULL,
   size      bigint NOT NULL,
   ingested_at double precision NOT NULL
 );
--- 코퍼스 토큰 DF (IDF 계산용)
+-- corpus token DF (for IDF computation)
 CREATE TABLE IF NOT EXISTS memory.df_stats (
   token text PRIMARY KEY,
   df    bigint NOT NULL
 );
--- 총 문서 수는 df_stats에 특수 토큰 '__N__'으로 저장하거나 별도 1행 테이블. 구현 재량.
+-- Store the total document count in df_stats under the special token '__N__', or a separate single-row table. Implementer's discretion.
 ```
 
-## JSONL 파싱 규칙 (실물 포맷 확인됨)
+## JSONL parsing rules (real format confirmed)
 
-한 줄 = JSON 객체. `type` 필드 기준:
+One line = one JSON object. Based on the `type` field:
 
-- **취급 대상**: `type in ("user", "assistant")` 만. 그 외(`attachment, ai-title, mode,
-  system, file-history-snapshot, queue-operation, bridge-session, ...`)는 전부 skip.
-- `isSidechain == true` 인 줄은 skip (서브에이전트 트래픽).
-- 공통 필드: `timestamp`(ISO8601, "2026-06-25T05:08:12.347Z"), `sessionId`, `cwd`, `gitBranch`, `uuid`, `parentUuid`.
-- **user**: `message.content`가 str이면 그대로 텍스트. list이면 블록 배열 —
-  `{"type":"text"}` 블록의 text만 취하고, `{"type":"tool_result"}` 블록은 텍스트로 넣지 말되
-  `is_error` 필드를 도구 실패 신호로 집계한다.
-- **assistant**: `message.content`는 블록 list — `{"type":"text"}`의 text만 이어붙인다.
-  `{"type":"thinking"}` skip. `{"type":"tool_use"}`는 텍스트로 넣지 말되 도구명(name)을 집계.
-- 빈 텍스트 메시지는 버린다.
-- 파일이 손상 줄(파싱 불가 JSON)을 포함할 수 있음 — 해당 줄만 skip.
+- **Handled**: only `type in ("user", "assistant")`. Everything else (`attachment, ai-title, mode,
+  system, file-history-snapshot, queue-operation, bridge-session, ...`) is skipped.
+- Lines with `isSidechain == true` are skipped (sub-agent traffic).
+- Common fields: `timestamp` (ISO8601, "2026-06-25T05:08:12.347Z"), `sessionId`, `cwd`, `gitBranch`, `uuid`, `parentUuid`.
+- **user**: if `message.content` is a str, use it as text directly. If a list, it's a block array —
+  take only the text of `{"type":"text"}` blocks; do not include `{"type":"tool_result"}` blocks as
+  text, but aggregate their `is_error` field as a tool-failure signal.
+- **assistant**: `message.content` is a block list — concatenate only the text of `{"type":"text"}`.
+  Skip `{"type":"thinking"}`. Do not include `{"type":"tool_use"}` as text, but aggregate the tool name (name).
+- Empty-text messages are discarded.
+- A file may contain corrupt lines (unparseable JSON) — skip only that line.
 
-## 세션 재구성 → 행 생성
+## Session reconstruction → row generation
 
-**세션 = 스레드.** 세션당:
+**Session = thread.** Per session:
 
-1. **session 행 1개**: `content_raw` = "USER: ...\nASSISTANT: ..." 형태 재구성 트랜스크립트
-   (100k자 초과 시 head 60% + "\n...[truncated]...\n" + tail 40%로 절단).
-   `distilled` = LLM 증류 결과(아래), 임베딩은 distilled에 대해 수행.
-2. **burst 행 0~N개**: 동일 화자 연속 텍스트 메시지 묶음(버스트) 중
-   **결합 길이 ≥ 200자 AND mean-IDF ≥ 4.0** 인 것만.
-   `distilled` = `"[{세션 주제 한 줄}] {버스트 원문}"` (주제는 증류 결과의 one_line_question 재사용),
-   임베딩은 이 distilled에 대해 수행. `content_raw` = 버스트 원문.
-   - **사회적 가중(스펙 §3.2)**: 버스트 구간에 도구 에러(is_error) 또는 직후 사용자 재질문
-     (같은 사용자가 3분 내 재발화)이 있으면 `metadata.social_weight = 1.5`, 아니면 1.0.
-     idf_score에 곱하지 말고 metadata에만 기록(검색측에서 추후 활용).
+1. **One session row**: `content_raw` = a reconstructed transcript in the form "USER: ...\nASSISTANT: ..."
+   (if over 100k chars, truncate to head 60% + "\n...[truncated]...\n" + tail 40%).
+   `distilled` = the LLM distillation result (below); the embedding is computed over distilled.
+2. **0–N burst rows**: only groups of consecutive same-speaker text messages (bursts) with
+   **combined length ≥ 200 chars AND mean-IDF ≥ 4.0**.
+   `distilled` = `"[{one-line session topic}] {burst raw text}"` (the topic reuses one_line_question from the distillation result);
+   the embedding is computed over this distilled. `content_raw` = burst raw text.
+   - **Social weight (spec §3.2)**: if the burst span has a tool error (is_error) or an immediately following user re-ask
+     (same user speaks again within 3 minutes), `metadata.social_weight = 1.5`, otherwise 1.0.
+     Do not multiply idf_score by it; record it only in metadata (for later use on the search side).
 
-메시지 5개 미만이거나 총 텍스트 500자 미만인 세션은 skip (노이즈).
+Sessions with fewer than 5 messages or under 500 total text chars are skipped (noise).
 
-## LLM 증류
+## LLM distillation
 
-- `common.llm_client()` + `LLM_MODEL` 사용, JSON 모드(response_format={"type":"json_object"}).
-- 프롬프트에 트랜스크립트(절단본)를 넣고 다음 JSON 추출:
-  `{"one_line_question": "...", "summary": "...", "resolution": "...", "references": ["파일/시스템/명령 언급"]}`
-  - one_line_question: "나중에 이 세션을 찾을 때 던질 법한 검색 질문 한 줄"
-  - summary: 3~5문장 요약, resolution: 최종 해결책/결론(없으면 "미해결")
-  - 출력 언어: 한국어(원문에 등장하는 코드·에러문자열·식별자는 원문 유지).
-- session 행의 `distilled` = one_line_question + "\n" + summary + "\n" + resolution + "\n" + ", ".join(references)
-- LLM 호출 실패(타임아웃/거부) 시: 그 세션은 distilled=None으로 두지 말고 **skip하고 경고 로그**
-  (ingest_state에 기록하지 않아 다음 실행에서 재시도되게).
+- Use `common.llm_client()` + `LLM_MODEL`, JSON mode (response_format={"type":"json_object"}).
+- Put the (truncated) transcript in the prompt and extract the following JSON:
+  `{"one_line_question": "...", "summary": "...", "resolution": "...", "references": ["mentioned files/systems/commands"]}`
+  - one_line_question: "a one-line search question you'd likely ask to find this session later"
+  - summary: a 3–5 sentence summary; resolution: the final solution/conclusion (if none, "unresolved")
+  - Output language: Korean (code, error strings, and identifiers appearing in the original stay verbatim).
+- The session row's `distilled` = one_line_question + "\n" + summary + "\n" + resolution + "\n" + ", ".join(references)
+- On LLM call failure (timeout/refusal): do not leave that session with distilled=None; instead **skip it and log a warning**
+  (do not record it in ingest_state, so it retries on the next run).
 
 ## IDF
 
-- 토큰화: `re.findall(r"[A-Za-z_][A-Za-z0-9_]{1,}|[가-힣]{2,}", text.lower())` 수준의 단순 토크나이저.
-- DF 갱신: 세션 단위 문서로 카운트(세션의 고유 토큰 집합 → df += 1). N = 총 세션 수.
-- `idf(t) = ln((N+1)/(df(t)+1)) + 1`. 버스트 mean-IDF = 버스트 고유 토큰 idf 평균.
-- 부트스트랩 문제(초기 N 작음)는 무시 — N < 20 이면 IDF 필터를 통과시킨다(길이 조건만 적용).
+- Tokenization: a simple tokenizer at the level of `re.findall(r"[A-Za-z_][A-Za-z0-9_]{1,}|[\uAC00-\uD7A3]{2,}", text.lower())` (the Hangul range written as unicode escapes).
+- DF update: count as session-unit documents (unique token set of a session → df += 1). N = total number of sessions.
+- `idf(t) = ln((N+1)/(df(t)+1)) + 1`. Burst mean-IDF = mean idf of the burst's unique tokens.
+- Ignore the bootstrap problem (small initial N) — if N < 20, let the IDF filter pass (apply only the length condition).
 
-## 증분·멱등
+## Incremental & idempotent
 
-- 대상 파일: `~/.claude/projects/*/*.jsonl` (약 145개). glob 후 `ingest_state`와 mtime+size 비교,
-  변한 파일만 처리. `--full`이면 전부 재처리.
-- **활성 세션 보호**: mtime이 최근 10분 이내인 파일은 skip(아직 기록 중).
-- 세션 재처리 시: 트랜잭션 안에서 `DELETE FROM memory_chunks WHERE session_id=$1` 후 재삽입.
-- 임베딩 호출은 세션당 순차로 충분(PoC). LLM 증류는 동시 4개까지 세마포어.
+- Target files: `~/.claude/projects/*/*.jsonl` (~145 files). After glob, compare mtime+size against `ingest_state`,
+  process only changed files. `--full` reprocesses everything.
+- **Active-session protection**: skip files whose mtime is within the last 10 minutes (still being written).
+- On session reprocessing: within a transaction, `DELETE FROM memory_chunks WHERE session_id=$1` then re-insert.
+- Sequential embedding calls per session are sufficient (PoC). LLM distillation runs with a semaphore of up to 4 concurrent.
 
 ## CLI
 
 ```
 uv run python src/history_index.py [--limit N] [--project SUBSTR] [--full] [--dry-run]
 ```
-- `--limit N`: 최신 mtime 순 N개 파일만 (테스트용)
-- `--project SUBSTR`: 프로젝트 디렉토리명 부분일치 필터
-- `--dry-run`: DB 쓰기 없이 파싱·필터 통계만 출력
-- 실행 종료 시 요약 출력: 처리 파일 수, 생성 세션/버스트 행 수, skip 사유별 카운트.
+- `--limit N`: only N files by most recent mtime (for testing)
+- `--project SUBSTR`: substring-match filter on the project directory name
+- `--dry-run`: no DB writes, print only parse/filter statistics
+- On exit, print a summary: files processed, session/burst rows created, per-reason skip counts.
 
-## 테스트 (필수 산출물)
+## Tests (required deliverable)
 
-`tests/test_history_parse.py` — DB·LLM·임베딩 **없이** 실행 가능해야 함:
-- 인라인 픽스처(위 포맷의 JSONL 문자열 몇 줄)로 파서 단위 검증:
-  sidechain skip, thinking skip, tool_result 텍스트 미포함 + is_error 집계, 트랜스크립트 재구성.
-- 버스트 그룹핑과 200자 필터 검증.
-- 실행: `uv run pytest tests/test_history_parse.py` (pytest는 `uv add --dev pytest`로 추가).
-- 이를 위해 파싱·버스팅 로직은 I/O 없는 순수 함수로 분리할 것.
+`tests/test_history_parse.py` — must run **without** DB/LLM/embeddings:
+- Unit-verify the parser with inline fixtures (a few lines of JSONL strings in the format above):
+  sidechain skip, thinking skip, tool_result text exclusion + is_error aggregation, transcript reconstruction.
+- Verify burst grouping and the 200-char filter.
+- Run: `uv run pytest tests/test_history_parse.py` (pytest is added via `uv add --dev pytest`).
+- To enable this, split the parsing/bursting logic into pure functions with no I/O.
 
-## 수용 기준
+## Acceptance criteria
 
-1. `uv run pytest tests/test_history_parse.py` 통과.
-2. `uv run python src/history_index.py --limit 5` 성공, memory_chunks에 행 생성.
-3. `cd src && uv run python search.py "아무 관련 질의" --source history` 가 결과 반환(에러 없이).
-4. 같은 명령 재실행 시 변경 없는 파일은 재처리하지 않음(증분 동작, 로그로 확인 가능).
+1. `uv run pytest tests/test_history_parse.py` passes.
+2. `uv run python src/history_index.py --limit 5` succeeds, creating rows in memory_chunks.
+3. `cd src && uv run python search.py "any relevant query" --source history` returns results (without error).
+4. Re-running the same command does not reprocess unchanged files (incremental behavior, verifiable in logs).
 
-## 금지 사항
+## Forbidden
 
-- `src/common.py`, `src/search.py`, `src/code_index.py` 수정 금지.
-- 새 무거운 의존성 추가 금지(pytest dev 의존성만 허용). 표준 라이브러리 + 기존 설치분으로 구현.
-- memory.code_chunks 테이블 접근 금지.
+- Do not modify `src/common.py`, `src/search.py`, `src/code_index.py`.
+- Do not add new heavy dependencies (only the pytest dev dependency is allowed). Implement with the standard library + already-installed packages.
+- Do not access the memory.code_chunks table.
