@@ -88,6 +88,16 @@ def test_no_tags_empty_metadata():
     assert row["metadata"] == {}
 
 
+def test_tags_are_normalized_and_deduplicated():
+    row = build_note_row(
+        "content with normalized tags",
+        "note",
+        [" Infrastructure ", "DATABASE", "infrastructure", "  "],
+        NOW,
+    )
+    assert row["metadata"] == {"tags": ["infrastructure", "database"]}
+
+
 # ---- pure: validation ------------------------------------------------------
 
 
@@ -105,6 +115,12 @@ def test_oversized_content_rejected():
 def test_unknown_kind_rejected():
     with pytest.raises(ValueError):
         build_note_row("valid content", "reminder", None, NOW)
+
+
+@pytest.mark.parametrize("tags", ["infra", {"infra": True}, [1], ["infra", None]])
+def test_malformed_tags_rejected(tags):
+    with pytest.raises(ValueError, match="tags must be a list of strings"):
+        build_note_row("valid content", "note", tags, NOW)
 
 
 # ---- integration: real DB + embedder --------------------------------------

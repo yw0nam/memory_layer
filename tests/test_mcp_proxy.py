@@ -79,6 +79,46 @@ def test_search_history_posts_with_source_history(monkeypatch):
     assert captured["json"] == {"query": "burst gate", "source": "history", "top_k": 3}
 
 
+def test_search_history_forwards_filters_and_atom_option(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(
+        mcp_server.search_history(
+            query="decision",
+            top_k=4,
+            kind="decision",
+            tags=["infra"],
+            include_atoms=False,
+        )
+    )
+    assert captured["json"] == {
+        "query": "decision",
+        "source": "history",
+        "top_k": 4,
+        "kind": "decision",
+        "tags": ["infra"],
+        "include_atoms": False,
+    }
+
+
+def test_search_all_forwards_filter_options(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(400, json={"error": 'filters require source="history"'})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="filters require"):
+        asyncio.run(mcp_server.search_all("query", kind="note"))
+    assert captured["json"]["kind"] == "note"
+
+
 def test_search_all_posts_with_source_all(monkeypatch):
     captured = {}
 

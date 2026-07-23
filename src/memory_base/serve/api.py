@@ -16,6 +16,7 @@ from starlette.routing import Route
 from memory_base.common import DB_URL
 from memory_base.retrieval.search import Hit
 from memory_base.retrieval.search import search
+from memory_base.retrieval.search import validate_search_options
 from memory_base.serve import admin
 from memory_base.serve.access_log import log_retrieval
 from memory_base.serve.notes import save_note
@@ -105,7 +106,26 @@ async def search_route(request: Request) -> JSONResponse:
     if not isinstance(include_archived, bool):
         return _error("include_archived must be a boolean")
 
-    hits = (await search(query, source=source, include_archived=include_archived))[:top_k]
+    include_atoms = body.get("include_atoms")
+    if "include_atoms" in body and not isinstance(include_atoms, bool):
+        return _error("include_atoms must be a boolean")
+    if "tags" in body and body["tags"] is None:
+        return _error("tags must be a non-empty list of strings")
+    try:
+        kind, tags = validate_search_options(source, body.get("kind"), body.get("tags"))
+        options: dict[str, Any] = {
+            "source": source,
+            "include_archived": include_archived,
+        }
+        if "kind" in body:
+            options["kind"] = kind
+        if "tags" in body:
+            options["tags"] = tags
+        if "include_atoms" in body:
+            options["include_atoms"] = include_atoms
+        hits = (await search(query, **options))[:top_k]
+    except ValueError as exc:
+        return _error(str(exc))
     await log_retrieval(query, source, hits)
     return JSONResponse([hit_to_dict(hit) for hit in hits])
 

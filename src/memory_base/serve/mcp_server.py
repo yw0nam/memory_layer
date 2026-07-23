@@ -33,17 +33,37 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(base_url=REST_URL)
 
 
-async def _search(query: str, source: str, top_k: int) -> list[dict[str, Any]]:
+async def _search(
+    query: str,
+    source: str,
+    top_k: int,
+    kind: str | None = None,
+    tags: list[str] | None = None,
+    include_atoms: bool | None = None,
+) -> list[dict[str, Any]]:
+    body: dict[str, Any] = {"query": query, "source": source, "top_k": top_k}
+    if kind is not None:
+        body["kind"] = kind
+    if tags is not None:
+        body["tags"] = tags
+    if include_atoms is not None:
+        body["include_atoms"] = include_atoms
     async with _client() as client:
-        response = await client.post(
-            "/search", json={"query": query, "source": source, "top_k": top_k}
-        )
+        response = await client.post("/search", json=body)
+        if response.status_code == 400:
+            raise ValueError(response.json()["error"])
         response.raise_for_status()
         return response.json()
 
 
 @mcp.tool(name="search")
-async def search_all(query: str, top_k: int = 10) -> list[dict[str, Any]]:
+async def search_all(
+    query: str,
+    top_k: int = 10,
+    kind: str | None = None,
+    tags: list[str] | None = None,
+    include_atoms: bool | None = None,
+) -> list[dict[str, Any]]:
     """Search both code and conversation history for the given query.
 
     Use this when you don't know or don't need to restrict whether the
@@ -54,7 +74,7 @@ async def search_all(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     date (YYYY-MM-DD), score, text (truncated to 2000 chars), and optional
     context (neighboring code for code hits).
     """
-    return await _search(query, "all", top_k)
+    return await _search(query, "all", top_k, kind, tags, include_atoms)
 
 
 @mcp.tool()
@@ -72,7 +92,13 @@ async def search_code(query: str, top_k: int = 10) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def search_history(query: str, top_k: int = 10) -> list[dict[str, Any]]:
+async def search_history(
+    query: str,
+    top_k: int = 10,
+    kind: str | None = None,
+    tags: list[str] | None = None,
+    include_atoms: bool | None = None,
+) -> list[dict[str, Any]]:
     """Search only past conversation/session history for the given query.
 
     Use this for retrospective questions like "how did we solve this
@@ -81,7 +107,7 @@ async def search_history(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     sorted by relevance, each with source="history", ref (session ref),
     date (YYYY-MM-DD), score, and text (truncated to 2000 chars).
     """
-    return await _search(query, "history", top_k)
+    return await _search(query, "history", top_k, kind, tags, include_atoms)
 
 
 @mcp.tool()
