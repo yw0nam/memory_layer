@@ -97,7 +97,7 @@ def test_format_references_section_maps_numbers_to_refs():
         _hit(ref="sess-42"),
     ]
     section = answer.format_references_section(hits)
-    assert section.startswith("참조:")
+    assert section.startswith("References:")
     assert "[1] a.py:L1-L2" in section
     assert "[2] sess-42" in section
 
@@ -117,8 +117,8 @@ def test_answer_returns_no_evidence_message_without_llm_call(monkeypatch):
 
     monkeypatch.setattr(answer, "llm_client", fail_llm_client)
 
-    result = asyncio.run(answer.answer("아무 상관없는 질문", source="all"))
-    assert result == "관련 증거를 찾지 못했습니다."
+    result = asyncio.run(answer.answer("a completely unrelated question", source="all"))
+    assert result == "No relevant evidence was found."
     assert not called
 
 

@@ -25,7 +25,7 @@ from memory_base.adapters.claude_code import parse_jsonl as parse_jsonl
 from memory_base.common import DB_URL, LLM_MODEL, PG_SCHEMA, VllmEmbedder, llm_client
 
 LOGGER = logging.getLogger("history_index")
-TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,}|[가-힣]{2,}")
+TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,}|[\uac00-\ud7a3]{2,}")
 TRUNCATION_MARKER = "\n...[truncated]...\n"
 ACTIVE_WINDOW_SECONDS = 10 * 60
 SERVICE_TIMEOUT_SECONDS = 120
@@ -177,9 +177,10 @@ def _valid_session(session: Session) -> bool:
 
 async def _triage_llm(session: Session) -> bool:
     prompt = (
-        "다음 Claude Code 세션이 나중에 '이 문제 어떻게 풀었지?'로 검색할 가치가 있는지 판정하세요. "
-        "반드시 JSON 객체만 반환하세요. 스키마: "
-        '{"keep":true|false,"reason":"판정 이유"}\n\n' + session.transcript[:3_000]
+        "Determine whether the following Claude Code session is worth retrieving later "
+        "to answer a how-did-we-solve-this question. Return only a JSON object using this "
+        'schema: {"keep":true|false,"reason":"reason for the judgment in English"}\n\n'
+        + session.transcript[:3_000]
     )
     try:
         response = await asyncio.wait_for(
@@ -204,7 +205,7 @@ async def _triage_llm(session: Session) -> bool:
 def parse_distillation(parsed: dict[str, Any]) -> Distillation:
     question = str(parsed.get("one_line_question") or "").strip()
     summary = str(parsed.get("summary") or "").strip()
-    resolution = str(parsed.get("resolution") or "미해결").strip()
+    resolution = str(parsed.get("resolution") or "unresolved").strip()
 
     refs = parsed.get("references")
     references = [str(ref).strip() for ref in refs] if isinstance(refs, list) else []
@@ -228,12 +229,15 @@ def parse_distillation(parsed: dict[str, Any]) -> Distillation:
 
 async def _distill(session: Session, semaphore: asyncio.Semaphore) -> Distillation:
     prompt = (
-        "다음 Claude Code 세션을 한국어로 증류하세요. 코드, 에러 문자열, 식별자는 원문을 유지하세요. "
-        "반드시 JSON 객체만 반환하세요. 스키마: "
-        '{"one_line_question":"나중에 검색할 질문 한 줄","summary":"3~5문장 요약",'
-        '"resolution":"최종 해결책/결론, 없으면 미해결","references":["파일/시스템/명령 언급"],'
-        '"decisions":["세션에서 내려진 주요 결정사항. 무엇을 왜 그렇게 하기로 했는지 1문장씩. 없으면 빈 배열"]}\n\n'
-        + session.transcript
+        "Distill the following Claude Code session in English, even when the transcript "
+        "is in Korean or Japanese. Keep code, error strings, identifiers, and file paths "
+        "verbatim. Return only a JSON object using this schema: "
+        '{"one_line_question":"one-line question for later retrieval in English",'
+        '"summary":"3-5 sentence summary in English",'
+        '"resolution":"final solution or conclusion in English, or unresolved",'
+        '"references":["mentioned files, systems, or commands"],'
+        '"decisions":["one sentence in English for each key decision, stating what was '
+        'decided and why; use an empty array if there were none"]}\n\n' + session.transcript
     )
     async with semaphore:
         response = await asyncio.wait_for(
@@ -399,7 +403,7 @@ def build_rows(
         }
     ]
     for index, decision in enumerate(distillation.decisions):
-        decision_distilled = f"[{distillation.one_line_question}] 결정: {decision}"
+        decision_distilled = f"[{distillation.one_line_question}] Decision: {decision}"
         rows.append(
             {
                 "id": f"{session.session_id}:decision:{index}",
