@@ -1,42 +1,30 @@
-"""Incrementally distill source history into ``memory_chunks``.
+"""Source-agnostic selection core for conversation history.
 
-The JSONL parsing and burst construction functions in this module are pure so
-they can be tested without Postgres, an LLM, or an embedding service.
+Distills a source session into ``memory_chunks`` rows: session validity,
+triage (heuristic + LLM), LLM distillation, bursting with the weighted burst
+gate, and IDF corpus statistics. There is no I/O entrypoint here — future
+corpus adapters (e.g. Slack) feed sessions through these functions.
+Interactive agent consoles contribute through the MCP realtime channel
+(save_memory) instead.
 """
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import logging
 import math
 import re
-import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
-import asyncpg
-
-from memory_base.adapters import ADAPTERS
-from memory_base.adapters.base import Burst, Message, Session, SourceAdapter, SourceFile
-from memory_base.adapters.claude_code import parse_jsonl as parse_jsonl
-from memory_base.common import (
-    DB_URL,
-    LLM_MODEL,
-    PG_SCHEMA,
-    SERVICE_TIMEOUT_SECONDS,
-    VllmEmbedder,
-    llm_client,
-)
-from memory_base.common import embed_text as _embed
-from memory_base.schema import ensure_schema as _ensure_schema
+from memory_base.adapters.base import Burst, Message, Session, SourceAdapter
+from memory_base.common import LLM_MODEL, SERVICE_TIMEOUT_SECONDS, llm_client
 
 LOGGER = logging.getLogger("history_index")
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,}|[\uac00-\ud7a3]{2,}")
 TRUNCATION_MARKER = "\n...[truncated]...\n"
-ACTIVE_WINDOW_SECONDS = 10 * 60
 
 
 @dataclass
@@ -185,7 +173,7 @@ def _valid_session(session: Session) -> bool:
 
 async def _triage_llm(session: Session) -> bool:
     prompt = (
-        "Determine whether the following Claude Code session is worth retrieving later "
+        "Determine whether the following agent session is worth retrieving later "
         "to answer a how-did-we-solve-this question. Return only a JSON object using this "
         'schema: {"keep":true|false,"reason":"reason for the judgment in English"}\n\n'
         + session.transcript[:3_000]
@@ -237,7 +225,7 @@ def parse_distillation(parsed: dict[str, Any]) -> Distillation:
 
 async def _distill(session: Session, semaphore: asyncio.Semaphore) -> Distillation:
     prompt = (
-        "Distill the following Claude Code session in English, even when the transcript "
+        "Distill the following agent session in English, even when the transcript "
         "is in Korean or Japanese. Keep code, error strings, identifiers, and file paths "
         "verbatim. Return only a JSON object using this schema: "
         '{"one_line_question":"one-line question for later retrieval in English",'
@@ -267,75 +255,6 @@ async def _distill(session: Session, semaphore: asyncio.Semaphore) -> Distillati
             session.session_id,
         )
     return parse_distillation(parsed)
-
-
-async def _old_session_ids(conn: asyncpg.Connection, file_path: str) -> list[str]:
-    return [
-        row["session_id"]
-        for row in await conn.fetch(
-            f'SELECT session_id FROM "{PG_SCHEMA}".history_file_sessions WHERE file_path=$1',
-            file_path,
-        )
-    ]
-
-
-async def _write_file(
-    conn: asyncpg.Connection,
-    file: SourceFile,
-    sessions: list[Session],
-    rows: list[dict[str, Any]],
-    old_ids: list[str],
-) -> None:
-    path = file.path
-    schema = f'"{PG_SCHEMA}"'
-    async with conn.transaction():
-        if old_ids:
-            await conn.execute(
-                f"DELETE FROM {schema}.memory_chunks WHERE session_id=ANY($1::text[])", old_ids
-            )
-        await conn.execute(
-            f"DELETE FROM {schema}.history_file_sessions WHERE file_path=$1", str(path)
-        )
-
-        for session in sessions:
-            await conn.execute(
-                f"INSERT INTO {schema}.history_file_sessions(file_path, session_id) VALUES($1,$2)",
-                str(path),
-                session.session_id,
-            )
-        insert_sql = f"""
-            INSERT INTO {schema}.memory_chunks
-              (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-               distilled, embedding, ts_last_active, idf_score, metadata)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb)
-        """
-        await conn.executemany(
-            insert_sql,
-            [
-                (
-                    row["id"],
-                    row["source_type"],
-                    row["source_ref"],
-                    row["kind"],
-                    row["session_id"],
-                    row["raw"],
-                    row["distilled"],
-                    row["embedding"],
-                    row["timestamp"],
-                    row["idf"],
-                    json.dumps(row["metadata"], ensure_ascii=False),
-                )
-                for row in rows
-            ],
-        )
-        await conn.execute(
-            f"INSERT INTO {schema}.ingest_state(file_path,mtime,size,ingested_at) VALUES($1,$2,$3,$4) "
-            "ON CONFLICT(file_path) DO UPDATE SET mtime=EXCLUDED.mtime,size=EXCLUDED.size,ingested_at=EXCLUDED.ingested_at",
-            str(path),
-            file.mtime,
-            file.size,
-            time.time(),
-        )
 
 
 def build_rows(
@@ -415,238 +334,3 @@ def build_rows(
             }
         )
     return rows
-
-
-async def _process_file(
-    conn: asyncpg.Connection,
-    file: SourceFile,
-    adapter: SourceAdapter,
-    sessions: list[Session],
-    dfs: dict[str, int],
-    document_count: int,
-    stats: Counter[str],
-) -> None:
-    path = file.path
-    valid = [session for session in sessions if _valid_session(session)]
-    stats["noise_session"] += len(sessions) - len(valid)
-
-    kept: list[Session] = []
-    borderline: list[Session] = []
-    for session in valid:
-        decision = triage_heuristic(session)
-        if decision == "keep":
-            stats["triage_keep"] += 1
-            kept.append(session)
-        elif decision == "skip":
-            stats["triage_skip_heuristic"] += 1
-        else:
-            stats["triage_borderline"] += 1
-            borderline.append(session)
-
-    if borderline:
-        triage_results = await asyncio.gather(*(_triage_llm(session) for session in borderline))
-        for session, keep in zip(borderline, triage_results, strict=True):
-            if keep:
-                stats["triage_llm_keep"] += 1
-                kept.append(session)
-            else:
-                stats["triage_llm_skip"] += 1
-
-    old_ids = await _old_session_ids(conn, str(path))
-    if not kept:
-        # All-noise and all-skipped files still advance ingest_state.
-        await _write_file(conn, file, [], [], old_ids)
-        stats["files_processed"] += 1
-        return
-
-    semaphore = asyncio.Semaphore(4)
-    results = await asyncio.gather(
-        *(_distill(session, semaphore) for session in kept), return_exceptions=True
-    )
-    if any(isinstance(result, BaseException) for result in results):
-        for session, result in zip(kept, results, strict=True):
-            if isinstance(result, BaseException):
-                LOGGER.warning("distillation failed for %s: %s", session.session_id, result)
-                stats["llm_failure"] += 1
-        return
-    distillations = {
-        session.session_id: result for session, result in zip(kept, results, strict=True)
-    }
-
-    embedder = VllmEmbedder()
-    output_rows: list[dict[str, Any]] = []
-    try:
-        for session in kept:
-            distilled = distillations[session.session_id]
-            rows = build_rows(session, distilled, adapter, dfs, document_count)
-            non_burst_rows = [row for row in rows if row["kind"] != "burst"]
-            burst_rows = [row for row in rows if row["kind"] == "burst"]
-            for row in non_burst_rows:
-                row["embedding"] = await _embed(embedder, row["distilled"])
-                output_rows.append(row)
-            if adapter.emit_bursts:
-                stats["burst_below_threshold"] += len(group_bursts(session.messages)) - len(
-                    burst_rows
-                )
-            for row in burst_rows:
-                row["embedding"] = await _embed(embedder, row["distilled"])
-                output_rows.append(row)
-    except Exception as exc:
-        LOGGER.warning("embedding failed for %s: %s", path, exc)
-        stats["embedding_failure"] += 1
-        return
-
-    await _write_file(conn, file, kept, output_rows, old_ids)
-    stats["files_processed"] += 1
-    stats["session_rows"] += len(kept)
-    stats["burst_rows"] += sum(row["kind"] == "burst" for row in output_rows)
-
-
-def _select_files(args: argparse.Namespace, adapter: SourceAdapter) -> list[SourceFile]:
-    files = adapter.discover()
-    if args.project:
-        files = [file for file in files if args.project in file.path.parent.name]
-    return files[: args.limit] if args.limit is not None else files
-
-
-def _scan_files(
-    files: Sequence[SourceFile], adapter: SourceAdapter, stats: Counter[str]
-) -> dict[SourceFile, list[Session]]:
-    """Parse every selected file once for the corpus pass and ingest pass."""
-    scanned: dict[SourceFile, list[Session]] = {}
-    for file in files:
-        try:
-            data = file.path.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            LOGGER.warning("cannot read %s: %s", file.path, exc)
-            stats["read_error"] += 1
-            continue
-        sessions = adapter.parse(data, file)
-        scanned[file] = sessions
-    return scanned
-
-
-def _count_dry_run_session(
-    session: Session,
-    adapter: SourceAdapter,
-    dfs: dict[str, int],
-    document_count: int,
-    stats: Counter[str],
-) -> None:
-    decision = triage_heuristic(session)
-    if decision == "skip":
-        stats["triage_skip_heuristic"] += 1
-        return
-    if decision == "borderline":
-        stats["triage_borderline"] += 1
-        return
-
-    stats["triage_keep"] += 1
-    stats["session_rows"] += 1
-    if not adapter.emit_bursts:
-        return
-    bursts = group_bursts(session.messages)
-    stats["burst_candidates"] += len(bursts)
-    for burst in bursts:
-        burst_idf = mean_idf(burst.text, document_count, dfs)
-        if passes_burst_gate(burst, burst_idf, document_count, adapter.has_social(burst)):
-            stats["burst_rows"] += 1
-        else:
-            stats["burst_below_threshold"] += 1
-
-
-async def run(args: argparse.Namespace) -> Counter[str]:
-    stats: Counter[str] = Counter()
-    selected_adapters = (
-        {args.adapter: ADAPTERS[args.adapter]} if getattr(args, "adapter", None) else ADAPTERS
-    )
-    scanned: dict[SourceFile, tuple[SourceAdapter, list[Session]]] = {}
-    for adapter in selected_adapters.values():
-        files = _select_files(args, adapter)
-        stats["files_selected"] += len(files)
-        scanned.update(
-            (file, (adapter, sessions))
-            for file, sessions in _scan_files(files, adapter, stats).items()
-        )
-    valid_sessions = [
-        session
-        for _, sessions in scanned.values()
-        for session in sessions
-        if _valid_session(session)
-    ]
-    dfs, document_count = build_corpus_df(session.transcript for session in valid_sessions)
-
-    if args.dry_run:
-        for file, (adapter, sessions) in scanned.items():
-            if time.time() - file.mtime < ACTIVE_WINDOW_SECONDS:
-                stats["active"] += 1
-                continue
-            valid = [session for session in sessions if _valid_session(session)]
-            stats["files_processed"] += 1
-            stats["noise_session"] += len(sessions) - len(valid)
-            for session in valid:
-                _count_dry_run_session(session, adapter, dfs, document_count, stats)
-        return stats
-
-    conn = await asyncpg.connect(DB_URL, timeout=15)
-    try:
-        await _ensure_schema(conn)
-        state_rows = await conn.fetch(
-            f'SELECT file_path,mtime,size FROM "{PG_SCHEMA}".ingest_state'
-        )
-        state = {row["file_path"]: (float(row["mtime"]), int(row["size"])) for row in state_rows}
-        for file, (adapter, sessions) in scanned.items():
-            if time.time() - file.mtime < ACTIVE_WINDOW_SECONDS:
-                stats["active"] += 1
-                continue
-            if not args.full and state.get(str(file.path)) == (file.mtime, file.size):
-                stats["unchanged"] += 1
-                continue
-            await _process_file(conn, file, adapter, sessions, dfs, document_count, stats)
-    finally:
-        await conn.close()
-    return stats
-
-
-def _print_summary(stats: Counter[str]) -> None:
-    print(
-        "summary: "
-        f"selected={stats['files_selected']} processed_files={stats['files_processed']} "
-        f"session_rows={stats['session_rows']} burst_rows={stats['burst_rows']}"
-    )
-    triage_keys = (
-        "triage_keep",
-        "triage_skip_heuristic",
-        "triage_borderline",
-        "triage_llm_keep",
-        "triage_llm_skip",
-    )
-    print("triage: " + " ".join(f"{key}={stats[key]}" for key in triage_keys))
-    skip_keys = (
-        "active",
-        "unchanged",
-        "noise_session",
-        "burst_below_threshold",
-        "llm_failure",
-        "embedding_failure",
-        "read_error",
-    )
-    print("skips: " + " ".join(f"{key}={stats[key]}" for key in skip_keys))
-    if stats["burst_candidates"]:
-        print(f"dry_run_burst_candidates={stats['burst_candidates']}")
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--limit", type=int)
-    parser.add_argument("--project")
-    parser.add_argument("--adapter", choices=ADAPTERS)
-    parser.add_argument("--full", action="store_true")
-    parser.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    _print_summary(asyncio.run(run(args)))
-
-
-if __name__ == "__main__":
-    main()

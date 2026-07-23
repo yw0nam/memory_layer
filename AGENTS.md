@@ -12,8 +12,9 @@
 src/memory_base/
   common.py        # shared constants + LLM/embedding clients (vLLM, OpenAI-compatible)
   ingest/
-    history.py     # selection core: parse → triage → burst gate → distill → store
+    history.py     # source-agnostic selection core (triage, burst gate, distill); no I/O entrypoint
     code.py        # CocoIndex app: repo code chunking + embedding
+  adapters/         # source-adapter contract; ADAPTERS registry is empty awaiting future corpus sources
   retrieval/
     search.py      # hybrid search: FTS + vector + IDF + time decay → RRF → rerank
   serve/
@@ -34,7 +35,6 @@ uv run ruff format --check . && uv run ruff check .  # lint (ruff is the only Py
 docker compose up -d db                              # pgvector on localhost:5439
 docker compose up -d --build mcp                     # MCP server, SSE on :8765
 uv run cocoindex update src/memory_base/ingest/code.py   # (re)index repo code
-uv run python -m memory_base.ingest.history --full       # ingest agent history
 claude mcp add --transport sse memory-base http://localhost:8765/sse
 ```
 

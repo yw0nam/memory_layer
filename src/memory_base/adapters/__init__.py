@@ -1,6 +1,10 @@
-"""Registered source adapters."""
+"""Registered source adapters.
+
+Empty today: interactive agent consoles contribute through the MCP realtime
+channel (save_memory), not batch ingestion. Future corpus adapters (e.g.
+Slack) register here.
+"""
 
 from memory_base.adapters.base import SourceAdapter
-from memory_base.adapters.claude_code import ClaudeCodeAdapter
 
-ADAPTERS: dict[str, SourceAdapter] = {"claude_code": ClaudeCodeAdapter()}
+ADAPTERS: dict[str, SourceAdapter] = {}
