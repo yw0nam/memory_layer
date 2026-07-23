@@ -150,12 +150,20 @@ def test_save_memory_endpoint_roundtrip_and_dedup():
     try:
         first = client.post("/save_memory", json={"content": content})
         assert first.status_code == 200
-        assert first.json() == {"id": note_id, "kind": "note", "stored": True}
+        assert first.json() == {
+            "id": note_id,
+            "kind": "note",
+            "stored": True,
+            "superseded": None,
+            "similar": [],
+        }
 
         second = client.post("/save_memory", json={"content": content})
         assert second.status_code == 200
         assert second.json()["id"] == note_id
         assert second.json()["stored"] is False
+        assert second.json()["superseded"] is None
+        assert second.json()["similar"] == []
 
         row = asyncio.run(_fetch_chunk(note_id))
         assert row is not None
