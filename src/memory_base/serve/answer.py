@@ -27,7 +27,8 @@ produce one to three search-friendly queries for the user's question.
   notes, ingested documents, or any curated memory.
 - Use source="all" when both sources apply or the choice is ambiguous.
 - Search queries are ALWAYS English, regardless of the question language. Translate the
-  user's intent into English because the FTS index contains English text.
+  user's intent into English because the FTS index contains English text. Never copy
+  non-English words from the question into a query; translate them.
 
 Return only this JSON format: {"source": "code"|"memory"|"all", "queries": ["...", ...]}
 """
