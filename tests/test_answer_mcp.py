@@ -236,4 +236,10 @@ def test_mcp_server_registers_expected_tools():
             return {t.name for t in result.tools}
 
     names = asyncio.run(_run())
-    assert names == {"search", "search_code", "search_history", "save_memory"}
+    assert names == {
+        "search",
+        "search_code",
+        "search_history",
+        "save_memory",
+        "ingest_document",
+    }

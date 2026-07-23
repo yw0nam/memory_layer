@@ -22,6 +22,9 @@ from typing import Any, Mapping
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
+from memory_base.adapters.document import extension_for
+
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
 REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
@@ -145,6 +148,43 @@ async def save_memory(
             raise ValueError(response.json()["error"])
         response.raise_for_status()
         return response.json()
+
+
+@mcp.tool()
+async def ingest_document(
+    content: str,
+    filename: str,
+    document_id: str | None = None,
+    origin: str | None = None,
+    mode: str = "upsert",
+) -> dict[str, Any]:
+    """Queue a text document for conversion, enrichment, and atomic storage.
+
+    The filename must use a supported text extension: .md, .markdown, .txt,
+    .rst, .html, or .htm. Binary documents upload through REST directly.
+    """
+    try:
+        extension = extension_for(filename)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    if extension not in MCP_TEXT_EXTENSIONS:
+        raise ValueError("MCP document ingestion supports text formats only")
+    data = {"filename": filename, "mode": mode}
+    if document_id is not None:
+        data["document_id"] = document_id
+    if origin is not None:
+        data["origin"] = origin
+    async with _client() as client:
+        response = await client.post(
+            "/ingest/document",
+            data=data,
+            files={"file": (filename, content.encode("utf-8"))},
+        )
+        if response.status_code in {400, 413, 415, 429}:
+            raise ValueError(response.json()["error"])
+        response.raise_for_status()
+        payload = response.json()
+        return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
 
 def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:

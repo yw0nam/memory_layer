@@ -192,7 +192,7 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
     }
 
 
-def test_mcp_tool_list_still_exactly_four_tools():
+def test_mcp_tool_list_still_exactly_five_tools():
     from mcp.shared.memory import create_connected_server_and_client_session
 
     async def _run():
@@ -203,7 +203,7 @@ def test_mcp_tool_list_still_exactly_four_tools():
             return {t.name for t in result.tools}
 
     names = asyncio.run(_run())
-    assert names == {"search", "search_code", "search_history", "save_memory"}
+    assert names == {"search", "search_code", "search_history", "save_memory", "ingest_document"}
 
 
 # ---- integration: real DB + embedder ----------------------------------------
