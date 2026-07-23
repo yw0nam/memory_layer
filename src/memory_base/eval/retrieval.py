@@ -198,7 +198,7 @@ async def _evaluate_mode(
     for index, label in enumerate(labels, start=1):
         hits = await search_module.search(
             label.query,
-            source="history",
+            source="memory",
             rerank=True,
             include_atoms=include_atoms,
         )

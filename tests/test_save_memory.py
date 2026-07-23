@@ -218,7 +218,7 @@ def test_saved_note_found_by_search(rest_in_process):
     asyncio.run(_delete(note_id))
     try:
         asyncio.run(save_memory(content))
-        hits = asyncio.run(search(content, source="history", rerank=False))
+        hits = asyncio.run(search(content, source="memory", rerank=False))
         assert any(h.meta.get("id") == note_id for h in hits)
     finally:
         asyncio.run(_delete(note_id))

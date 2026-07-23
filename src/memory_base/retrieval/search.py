@@ -1,6 +1,6 @@
 """Hybrid search: FTS + vector + time-decay signals fused with RRF, then reranked.
 
-CLI: uv run python -m memory_base.retrieval.search "your query" [--source code|history|all]
+CLI: uv run python -m memory_base.retrieval.search "your query" [--source code|memory|all]
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ SEARCH_KINDS = ("doc", "note", "decision")
 
 @dataclass
 class Hit:
-    source: str  # "code" | "history"
+    source: str  # "code" | "memory"
     ref: str  # filename:lines or session id
     text: str  # text shown to reranker / synthesis
     ts: float  # recency timestamp (epoch sec)
@@ -87,8 +87,8 @@ def validate_search_options(
     if kind is not None and kind not in SEARCH_KINDS:
         raise ValueError(f"kind must be one of {SEARCH_KINDS}")
     normalized_tags = _normalize_tags(tags)
-    if (kind is not None or normalized_tags is not None) and source != "history":
-        raise ValueError('kind and tags filters require source="history"')
+    if (kind is not None or normalized_tags is not None) and source != "memory":
+        raise ValueError('kind and tags filters require source="memory"')
     return kind, normalized_tags
 
 
@@ -147,7 +147,7 @@ async def _search_code(conn: asyncpg.Connection, query: str, qvec_lit: str) -> l
     return hits
 
 
-async def _search_history(
+async def _search_memory(
     conn: asyncpg.Connection,
     query: str,
     qvec_lit: str,
@@ -192,7 +192,7 @@ async def _search_history(
         metadata = _metadata_dict(r["metadata"])
         hits.append(
             Hit(
-                source="history",
+                source="memory",
                 ref=metadata.get("search_ref") or r["source_ref"],
                 text=r["distilled"] or r["content_raw"],
                 ts=r["ts_last_active"],
@@ -254,7 +254,7 @@ async def _search_atoms(
         metadata = _metadata_dict(row["metadata"])
         hits.append(
             Hit(
-                source="history",
+                source="memory",
                 ref=metadata.get("search_ref") or row["source_ref"],
                 text=row["distilled"] or row["content_raw"],
                 ts=row["ts_last_active"],
@@ -302,7 +302,7 @@ def _dedup_cap(hits: list[Hit]) -> list[Hit]:
     for h in hits:
         key = (
             h.meta.get("source_ref", h.ref)
-            if h.source == "history"
+            if h.source == "memory"
             else h.meta.get("filename") or h.ref
         )
         if counts.get(key, 0) >= PER_FILE_CAP:
@@ -376,8 +376,8 @@ async def search(
         hits: list[Hit] = []
         if source in ("code", "all"):
             hits += await _search_code(conn, query, qvec_lit)
-        if source in ("history", "all"):
-            hits += await _search_history(
+        if source in ("memory", "all"):
+            hits += await _search_memory(
                 conn,
                 query,
                 qvec_lit,
@@ -389,7 +389,7 @@ async def search(
             # Archival recall asks for old rows; recency decay would bury them.
             _apply_time_decay(hits)
         hits = _dedup_cap(hits)
-        if include_atoms and source in ("history", "all"):
+        if include_atoms and source in ("memory", "all"):
             atom_hits = await _search_atoms(
                 conn,
                 qvec_lit,
@@ -409,7 +409,7 @@ async def search(
 async def _main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
-    ap.add_argument("--source", choices=["code", "history", "all"], default="all")
+    ap.add_argument("--source", choices=["code", "memory", "all"], default="all")
     ap.add_argument("--no-rerank", action="store_true")
     args = ap.parse_args()
 

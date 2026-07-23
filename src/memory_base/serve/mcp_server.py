@@ -24,6 +24,7 @@ from mcp.server.fastmcp import FastMCP
 
 from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
 from memory_base.adapters.document import extension_for
+from memory_base.retrieval.decompose import DEEP_TIMEOUT_SECONDS
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
@@ -67,13 +68,13 @@ async def search_all(
     tags: list[str] | None = None,
     include_atoms: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """Search both code and conversation history for the given query.
+    """Search both code and memory for the given query.
 
     Use this when you don't know or don't need to restrict whether the
-    answer lives in the codebase or in past conversation/session history
+    answer lives in the codebase or in stored memory
     (e.g. broad or ambiguous questions). Returns up to `top_k` hits sorted
     by relevance (rerank score, falling back to RRF fusion score), each with
-    source ("code" or "history"), ref (file:line-range or session ref),
+    source ("code" or "memory"), ref (file:line-range or document ref),
     date (YYYY-MM-DD), score, text (truncated to 2000 chars), and optional
     context (neighboring code for code hits).
     """
@@ -95,22 +96,22 @@ async def search_code(query: str, top_k: int = 10) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def search_history(
+async def search_memory(
     query: str,
     top_k: int = 10,
     kind: str | None = None,
     tags: list[str] | None = None,
     include_atoms: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """Search only past conversation/session history for the given query.
+    """Search only stored memory for the given query.
 
-    Use this for retrospective questions like "how did we solve this
-    before", "what did we decide about X", or anything referring to prior
-    sessions rather than the current codebase. Returns up to `top_k` hits
-    sorted by relevance, each with source="history", ref (session ref),
-    date (YYYY-MM-DD), score, and text (truncated to 2000 chars).
+    Use this for questions about past decisions, saved notes, ingested
+    documents, or any knowledge stored in the memory base rather than
+    the current codebase. Returns up to `top_k` hits sorted by relevance,
+    each with source="memory", ref (document ref), date (YYYY-MM-DD),
+    score, and text (truncated to 2000 chars).
     """
-    return await _search(query, "history", top_k, kind, tags, include_atoms)
+    return await _search(query, "memory", top_k, kind, tags, include_atoms)
 
 
 @mcp.tool()
@@ -185,6 +186,38 @@ async def ingest_document(
         response.raise_for_status()
         payload = response.json()
         return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
+
+
+@mcp.tool()
+async def deep_search(
+    query: str,
+    max_hops: int | None = None,
+    kind: str | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Multi-hop decomposition over stored memory for complex questions.
+
+    Use when a single search is unlikely to answer a multi-part or
+    multi-hop question (e.g. "which service owned the incident that
+    caused the checkout latency fix?"). Operates on memory only.
+    Returns evidence entries with ref, text, kind, tags, date, hop,
+    atom_question, and id; a trace of sub-questions per hop; and
+    hops_used and stopped_reason.
+    """
+    body: dict[str, Any] = {"query": query}
+    if max_hops is not None:
+        body["max_hops"] = max_hops
+    if kind is not None:
+        body["kind"] = kind
+    if tags is not None:
+        body["tags"] = tags
+    timeout = DEEP_TIMEOUT_SECONDS + 30
+    async with _client() as client:
+        response = await client.post("/search/deep", json=body, timeout=timeout)
+        if response.status_code == 400:
+            raise ValueError(response.json()["error"])
+        response.raise_for_status()
+        return response.json()
 
 
 def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:

@@ -1,6 +1,6 @@
 """Query -> Planner(source selection) -> Executor(hybrid search) -> Synthesis(cited answer) CLI.
 
-uv run python -m memory_base.serve.answer "question" [--source auto|code|history|all]
+uv run python -m memory_base.serve.answer "question" [--source auto|code|memory|all] [--deep]
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timezone
 
 from memory_base.common import LLM_MODEL, llm_client
+from memory_base.retrieval.decompose import EvidenceEntry, deep_search
 from memory_base.retrieval.search import Hit, search
 
 LOGGER = logging.getLogger("answer")
@@ -22,13 +23,13 @@ PLANNER_SYSTEM_PROMPT = """You are a search planner. Select which source to sear
 produce one to three search-friendly queries for the user's question.
 
 - Use source="code" for questions about code structure or implementation locations.
-- Use source="history" for retrospective questions about past conversations or work,
-  such as how something was solved or what was decided previously.
+- Use source="memory" for questions about stored knowledge — past decisions, saved
+  notes, ingested documents, or any curated memory.
 - Use source="all" when both sources apply or the choice is ambiguous.
 - Search queries are ALWAYS English, regardless of the question language. Translate the
   user's intent into English because the FTS index contains English text.
 
-Return only this JSON format: {"source": "code"|"history"|"all", "queries": ["...", ...]}
+Return only this JSON format: {"source": "code"|"memory"|"all", "queries": ["...", ...]}
 """
 
 SYNTHESIS_SYSTEM_PROMPT = """You are an assistant that answers questions from the
@@ -97,7 +98,7 @@ async def plan(query: str) -> tuple[str, list[str]]:
     try:
         data = json.loads(resp.choices[0].message.content or "")
         source = data.get("source", "all")
-        if source not in ("code", "history", "all"):
+        if source not in ("code", "memory", "all"):
             source = "all"
         queries = data.get("queries") or [query]
     except (json.JSONDecodeError, TypeError, KeyError):
@@ -129,7 +130,35 @@ async def synthesize(query: str, hits: list[Hit]) -> str:
     return f"{answer}\n\n{format_references_section(hits)}"
 
 
-async def answer(query: str, source: str = "auto") -> str:
+def _evidence_to_hits(evidence: list[EvidenceEntry]) -> list[Hit]:
+    hits = []
+    for entry in evidence:
+        hits.append(
+            Hit(
+                source="memory",
+                ref=entry.ref,
+                text=entry.text,
+                ts=entry.date,
+                meta={
+                    "id": entry.id,
+                    "kind": entry.kind,
+                    "tags": entry.tags,
+                    "hop": entry.hop,
+                    "atom_question": entry.atom_question,
+                },
+            )
+        )
+    return hits
+
+
+async def answer(query: str, source: str = "auto", deep: bool = False) -> str:
+    if deep:
+        result = await deep_search(query)
+        hits = _evidence_to_hits(result.evidence)
+        if not hits:
+            return "No relevant evidence was found."
+        return await synthesize(query, hits)
+
     if source == "auto":
         decided_source, queries = await plan(query)
     else:
@@ -144,10 +173,14 @@ async def answer(query: str, source: str = "auto") -> str:
 async def _main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
-    ap.add_argument("--source", choices=["auto", "code", "history", "all"], default="auto")
+    ap.add_argument("--source", choices=["auto", "code", "memory", "all"], default="auto")
+    ap.add_argument("--deep", action="store_true")
     args = ap.parse_args()
 
-    print(await answer(args.query, source=args.source))
+    if args.deep and args.source not in ("auto", "memory"):
+        ap.error("--deep requires --source memory (or no --source)")
+
+    print(await answer(args.query, source=args.source, deep=args.deep))
 
 
 if __name__ == "__main__":
