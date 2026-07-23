@@ -414,6 +414,8 @@ def build_rows(
                 "source_type": adapter.source_type,
             }
         )
+    if not adapter.emit_bursts:
+        return rows
     accepted_bursts: list[Burst] = []
     for burst in group_bursts(session.messages):
         burst.mean_idf = mean_idf(burst.text, n, dfs)
@@ -509,7 +511,10 @@ async def _process_file(
             for row in non_burst_rows:
                 row["embedding"] = await _embed(embedder, row["distilled"])
                 output_rows.append(row)
-            stats["burst_below_threshold"] += len(group_bursts(session.messages)) - len(burst_rows)
+            if adapter.emit_bursts:
+                stats["burst_below_threshold"] += len(group_bursts(session.messages)) - len(
+                    burst_rows
+                )
             for row in burst_rows:
                 row["embedding"] = await _embed(embedder, row["distilled"])
                 output_rows.append(row)
@@ -565,6 +570,8 @@ def _count_dry_run_session(
 
     stats["triage_keep"] += 1
     stats["session_rows"] += 1
+    if not adapter.emit_bursts:
+        return
     bursts = group_bursts(session.messages)
     stats["burst_candidates"] += len(bursts)
     for burst in bursts:

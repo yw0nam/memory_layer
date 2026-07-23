@@ -50,6 +50,7 @@ class Session:
 
 class SourceAdapter(ABC):
     source_type: ClassVar[str]
+    emit_bursts: ClassVar[bool] = True
 
     @abstractmethod
     def discover(self) -> list[SourceFile]: ...

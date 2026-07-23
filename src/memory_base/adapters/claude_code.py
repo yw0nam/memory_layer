@@ -74,6 +74,7 @@ def parse_jsonl(data: str, default_session_id: str = "") -> list[Message]:
 
 class ClaudeCodeAdapter(SourceAdapter):
     source_type = "claude_code"
+    emit_bursts = False
 
     def discover(self) -> list[SourceFile]:
         files = []
