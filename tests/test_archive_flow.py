@@ -127,8 +127,10 @@ def test_full_archive_and_note_lifecycle():
         f"The {token} cold tier experiment settled on archiving rows older than 180 days "
         f"that also went 90 days without a retrieval hit, keeping the thresholds conservative."
     )
-    content_dup_a = f"{token} near duplicate pair alpha rendition of a troubleshooting note"
-    content_dup_b = f"{token} near duplicate pair beta rendition of a troubleshooting note"
+    # The token stays out of the dup rows: the archive assertions below treat it
+    # as a marker unique to the archived row, and the dup pair is asserted by id.
+    content_dup_a = "near duplicate pair alpha rendition of a troubleshooting note"
+    content_dup_b = "near duplicate pair beta rendition of a troubleshooting note"
 
     old_ts = now_real - 200 * 86400  # well past COLD_AGE_DAYS=180 and COLD_UNHIT_DAYS=90
     dup_a_vec, dup_b_vec = _near_dup_vecs(seed=7)

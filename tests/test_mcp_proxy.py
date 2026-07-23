@@ -36,7 +36,7 @@ def _patch_client(monkeypatch, handler):
 # ---- tool registration ----------------------------------------------------
 
 
-def test_tool_list_is_exactly_four_tools():
+def test_tool_list_includes_document_ingestion():
     from mcp.shared.memory import create_connected_server_and_client_session
 
     async def _run():
@@ -45,7 +45,13 @@ def test_tool_list_is_exactly_four_tools():
             return {t.name for t in result.tools}
 
     names = asyncio.run(_run())
-    assert names == {"search", "search_code", "search_history", "save_memory"}
+    assert names == {
+        "search",
+        "search_code",
+        "search_history",
+        "save_memory",
+        "ingest_document",
+    }
 
 
 # ---- search proxying --------------------------------------------------------
@@ -77,6 +83,46 @@ def test_search_history_posts_with_source_history(monkeypatch):
     _patch_client(monkeypatch, handler)
     asyncio.run(mcp_server.search_history(query="burst gate", top_k=3))
     assert captured["json"] == {"query": "burst gate", "source": "history", "top_k": 3}
+
+
+def test_search_history_forwards_filters_and_atom_option(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(
+        mcp_server.search_history(
+            query="decision",
+            top_k=4,
+            kind="decision",
+            tags=["infra"],
+            include_atoms=False,
+        )
+    )
+    assert captured["json"] == {
+        "query": "decision",
+        "source": "history",
+        "top_k": 4,
+        "kind": "decision",
+        "tags": ["infra"],
+        "include_atoms": False,
+    }
+
+
+def test_search_all_forwards_filter_options(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(400, json={"error": 'filters require source="history"'})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="filters require"):
+        asyncio.run(mcp_server.search_all("query", kind="note"))
+    assert captured["json"]["kind"] == "note"
 
 
 def test_search_all_posts_with_source_all(monkeypatch):
@@ -134,3 +180,42 @@ def test_save_memory_400_response_raises_value_error_with_server_message(monkeyp
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="content must not be empty"):
         asyncio.run(mcp_server.save_memory(""))
+
+
+def test_ingest_document_posts_text_as_multipart_and_returns_job_reference(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["content_type"] = request.headers["content-type"]
+        captured["body"] = request.content
+        return httpx.Response(
+            202,
+            json={
+                "job_id": "job-1",
+                "status": "queued",
+                "status_url": "/ingest/jobs/job-1",
+            },
+        )
+
+    _patch_client(monkeypatch, handler)
+    result = asyncio.run(
+        mcp_server.ingest_document(
+            "# Guide",
+            "guide.md",
+            document_id="guide",
+            origin="mcp:test",
+            mode="force",
+        )
+    )
+    assert captured["path"] == "/ingest/document"
+    assert captured["content_type"].startswith("multipart/form-data")
+    assert b"# Guide" in captured["body"]
+    assert b'name="document_id"' in captured["body"]
+    assert result == {"job_id": "job-1", "status_url": "/ingest/jobs/job-1"}
+
+
+@pytest.mark.parametrize("filename", ["guide.pdf", "slides.pptx", "table.csv"])
+def test_ingest_document_mcp_rejects_binary_formats(filename):
+    with pytest.raises(ValueError, match="text formats only"):
+        asyncio.run(mcp_server.ingest_document("content", filename))

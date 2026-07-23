@@ -19,6 +19,15 @@ NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
 TEXT_LIMIT = 2000
 
 
+def normalize_tags(tags: Any) -> list[str]:
+    """Validate and normalize note tags."""
+    if tags is None:
+        return []
+    if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+        raise ValueError("tags must be a list of strings")
+    return list(dict.fromkeys(tag.strip().lower() for tag in tags if tag.strip()))
+
+
 def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) -> dict[str, Any]:
     """Validate a note and map it to memory_chunks columns (no embedding)."""
     content = content.strip()
@@ -28,6 +37,7 @@ def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) 
         raise ValueError(f"content exceeds {NOTE_MAX_CHARS} chars")
     if kind not in NOTE_KINDS:
         raise ValueError(f"kind must be one of {NOTE_KINDS}")
+    normalized_tags = normalize_tags(tags)
     note_id = f"note:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
     return {
         "id": note_id,
@@ -39,7 +49,7 @@ def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) 
         "distilled": content,
         "timestamp": now,
         "idf": None,
-        "metadata": {"tags": tags} if tags else {},
+        "metadata": {"tags": normalized_tags} if normalized_tags else {},
     }
 
 

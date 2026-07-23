@@ -1,0 +1,7 @@
+service,owner,channel,tier,review_day
+checkout,Mira,#team-payments,critical,Monday
+inventory,Noah,#team-supply,critical,Tuesday
+catalog,Elena,#team-discovery,high,Wednesday
+recommendations,Sam,#team-discovery,medium,Thursday
+notifications,Priya,#team-messaging,medium,Friday
+analytics,Jon,#team-data,low,Wednesday

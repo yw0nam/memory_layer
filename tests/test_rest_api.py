@@ -96,6 +96,48 @@ def test_search_invalid_source_400():
     assert "error" in response.json()
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"query": "hello", "source": "all", "kind": "note"},
+        {"query": "hello", "source": "code", "tags": ["infra"]},
+        {"query": "hello", "source": "history", "kind": "atom"},
+        {"query": "hello", "source": "history", "tags": []},
+        {"query": "hello", "source": "history", "tags": None},
+        {"query": "hello", "source": "history", "tags": "infra"},
+        {"query": "hello", "include_atoms": "yes"},
+    ],
+)
+def test_search_filter_validation_errors_are_400(body):
+    response = client.post("/search", json=body)
+    assert response.status_code == 400
+    assert set(response.json()) == {"error"}
+
+
+def test_search_forwards_normalized_filters_and_include_atoms(monkeypatch):
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post(
+        "/search",
+        json={
+            "query": "hello",
+            "source": "history",
+            "kind": "decision",
+            "tags": [" Infra ", "DATABASE", "infra"],
+            "include_atoms": False,
+        },
+    )
+    assert response.status_code == 200
+    assert captured["kind"] == "decision"
+    assert captured["tags"] == ["infra", "database"]
+    assert captured["include_atoms"] is False
+
+
 def test_search_returns_hit_to_dict_shape(monkeypatch):
     hits = [_hit(source="code", ref="a.py:L1-L2", text="x", rrf=0.5, rerank_score=0.9)]
 
@@ -189,6 +231,13 @@ def test_save_memory_bad_kind_400():
     response = client.post("/save_memory", json={"content": "valid content", "kind": "reminder"})
     assert response.status_code == 400
     assert response.json()["error"] == "kind must be one of ('note', 'decision')"
+
+
+@pytest.mark.parametrize("tags", ["infra", {"tag": "infra"}, [1], ["infra", None]])
+def test_save_memory_malformed_tags_400(tags):
+    response = client.post("/save_memory", json={"content": "valid content", "tags": tags})
+    assert response.status_code == 400
+    assert response.json()["error"] == "tags must be a list of strings"
 
 
 def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):

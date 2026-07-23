@@ -1,0 +1,24 @@
+{"query":"What caused the checkout API latency regression after deployment 8f31c2?","query_class":"agent_work_history","relevant_ids":["doc:agent-work-log.md:0"]}
+{"query":"Who owned the checkout latency incident and which dashboard verified recovery?","query_class":"agent_work_history","relevant_ids":["doc:agent-work-log.md:0"]}
+{"query":"What persistent connection pool settings were approved for the inventory client?","query_class":"agent_work_history","relevant_ids":["doc:agent-work-log.md:1"]}
+{"query":"What canary checks trigger an immediate inventory client rollback?","query_class":"agent_work_history","relevant_ids":["doc:agent-work-log.md:1"]}
+{"query":"Which HNSW parameters were selected for the product embedding migration?","query_class":"agent_work_history","relevant_ids":["doc:agent-work-log.md:2"]}
+{"query":"How did the team recover when the search index build exhausted temporary disk?","query_class":"agent_work_history","relevant_ids":["doc:agent-work-log.md:3"]}
+{"query":"Who owns the final production search index migration?","query_class":"agent_work_history","relevant_ids":["doc:agent-work-log.md:3"]}
+{"query":"The Lantern rollback procedure when deployment error rate exceeds one percent","query_class":"agent_work_history","relevant_ids":["doc:multilingual-runbook.md:1"]}
+{"query":"Which checks must pass before the Lantern incident can close after rollback?","query_class":"agent_work_history","relevant_ids":["doc:multilingual-runbook.md:2"]}
+{"query":"Find the service ownership roster with team channels and review days.","query_class":"agent_work_history","relevant_ids":["doc:service-ownership.csv:card:0"]}
+{"query":"I would feel better with an unscheduled first day after checking into the hotel.","query_class":"companion_fragment","relevant_ids":["doc:companion-notes.md:0"]}
+{"query":"Morning travel, an aisle seat, and rail transfers longer than twenty minutes suit me.","query_class":"companion_fragment","relevant_ids":["doc:companion-notes.md:0"]}
+{"query":"Shellfish is unsafe for me, and I prefer mild food at an early neighborhood dinner.","query_class":"companion_fragment","relevant_ids":["doc:companion-notes.md:1"]}
+{"query":"My strongest focus window is before lunch, with messages batched afterward.","query_class":"companion_fragment","relevant_ids":["doc:companion-notes.md:2"]}
+{"query":"Friday afternoon should stay open for review and planning.","query_class":"companion_fragment","relevant_ids":["doc:companion-notes.md:2"]}
+{"query":"Concrete examples followed by a rule and a small exercise help me learn.","query_class":"companion_fragment","relevant_ids":["doc:companion-notes.md:3"]}
+{"query":"I want written commands with expected output and hints instead of complete solutions.","query_class":"companion_fragment","relevant_ids":["doc:companion-notes.md:3"]}
+{"query":"When does the home lab PostgreSQL server take full base backups?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:0"]}
+{"query":"What makes the monthly database restore drill successful?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:0"]}
+{"query":"What are the database recovery point and recovery time objectives?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:1"]}
+{"query":"When does missing WAL archive activity trigger a page?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:1"]}
+{"query":"How many hours of supplemental light does the basil receive each day?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:2"]}
+{"query":"How should the basil be watered and fertilized?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:2"]}
+{"query":"What is the response plan for fungus gnats or aphids in the herb garden?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:3"]}

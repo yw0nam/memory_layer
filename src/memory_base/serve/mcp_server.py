@@ -22,6 +22,9 @@ from typing import Any, Mapping
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
+from memory_base.adapters.document import extension_for
+
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
 REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
@@ -33,17 +36,37 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(base_url=REST_URL)
 
 
-async def _search(query: str, source: str, top_k: int) -> list[dict[str, Any]]:
+async def _search(
+    query: str,
+    source: str,
+    top_k: int,
+    kind: str | None = None,
+    tags: list[str] | None = None,
+    include_atoms: bool | None = None,
+) -> list[dict[str, Any]]:
+    body: dict[str, Any] = {"query": query, "source": source, "top_k": top_k}
+    if kind is not None:
+        body["kind"] = kind
+    if tags is not None:
+        body["tags"] = tags
+    if include_atoms is not None:
+        body["include_atoms"] = include_atoms
     async with _client() as client:
-        response = await client.post(
-            "/search", json={"query": query, "source": source, "top_k": top_k}
-        )
+        response = await client.post("/search", json=body)
+        if response.status_code == 400:
+            raise ValueError(response.json()["error"])
         response.raise_for_status()
         return response.json()
 
 
 @mcp.tool(name="search")
-async def search_all(query: str, top_k: int = 10) -> list[dict[str, Any]]:
+async def search_all(
+    query: str,
+    top_k: int = 10,
+    kind: str | None = None,
+    tags: list[str] | None = None,
+    include_atoms: bool | None = None,
+) -> list[dict[str, Any]]:
     """Search both code and conversation history for the given query.
 
     Use this when you don't know or don't need to restrict whether the
@@ -54,7 +77,7 @@ async def search_all(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     date (YYYY-MM-DD), score, text (truncated to 2000 chars), and optional
     context (neighboring code for code hits).
     """
-    return await _search(query, "all", top_k)
+    return await _search(query, "all", top_k, kind, tags, include_atoms)
 
 
 @mcp.tool()
@@ -72,7 +95,13 @@ async def search_code(query: str, top_k: int = 10) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-async def search_history(query: str, top_k: int = 10) -> list[dict[str, Any]]:
+async def search_history(
+    query: str,
+    top_k: int = 10,
+    kind: str | None = None,
+    tags: list[str] | None = None,
+    include_atoms: bool | None = None,
+) -> list[dict[str, Any]]:
     """Search only past conversation/session history for the given query.
 
     Use this for retrospective questions like "how did we solve this
@@ -81,7 +110,7 @@ async def search_history(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     sorted by relevance, each with source="history", ref (session ref),
     date (YYYY-MM-DD), score, and text (truncated to 2000 chars).
     """
-    return await _search(query, "history", top_k)
+    return await _search(query, "history", top_k, kind, tags, include_atoms)
 
 
 @mcp.tool()
@@ -119,6 +148,43 @@ async def save_memory(
             raise ValueError(response.json()["error"])
         response.raise_for_status()
         return response.json()
+
+
+@mcp.tool()
+async def ingest_document(
+    content: str,
+    filename: str,
+    document_id: str | None = None,
+    origin: str | None = None,
+    mode: str = "upsert",
+) -> dict[str, Any]:
+    """Queue a text document for conversion, enrichment, and atomic storage.
+
+    The filename must use a supported text extension: .md, .markdown, .txt,
+    .rst, .html, or .htm. Binary documents upload through REST directly.
+    """
+    try:
+        extension = extension_for(filename)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    if extension not in MCP_TEXT_EXTENSIONS:
+        raise ValueError("MCP document ingestion supports text formats only")
+    data = {"filename": filename, "mode": mode}
+    if document_id is not None:
+        data["document_id"] = document_id
+    if origin is not None:
+        data["origin"] = origin
+    async with _client() as client:
+        response = await client.post(
+            "/ingest/document",
+            data=data,
+            files={"file": (filename, content.encode("utf-8"))},
+        )
+        if response.status_code in {400, 413, 415, 429}:
+            raise ValueError(response.json()["error"])
+        response.raise_for_status()
+        payload = response.json()
+        return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
 
 def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:
