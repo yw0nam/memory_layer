@@ -115,6 +115,16 @@ def test_dedup_cap_falls_back_to_ref_when_no_filename_meta():
 # ---- Hit dataclass --------------------------------------------------------
 
 
+def test_hit_score_returns_rerank_score_when_set():
+    h = Hit(source="code", ref="a", text="", ts=0.0, rrf=0.3, rerank_score=0.9)
+    assert h.score == 0.9
+
+
+def test_hit_score_falls_back_to_rrf_when_rerank_is_none():
+    h = Hit(source="code", ref="a", text="", ts=0.0, rrf=0.4, rerank_score=None)
+    assert h.score == 0.4
+
+
 def test_hit_defaults_and_meta_dict_independence():
     h1 = Hit(source="code", ref="a", text="", ts=0.0)
     h2 = Hit(source="code", ref="b", text="", ts=0.0)
