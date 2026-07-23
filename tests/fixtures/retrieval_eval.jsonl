@@ -22,3 +22,9 @@
 {"query":"How many hours of supplemental light does the basil receive each day?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:2"]}
 {"query":"How should the basil be watered and fertilized?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:2"]}
 {"query":"What is the response plan for fungus gnats or aphids in the herb garden?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:3"]}
+{"query":"Who owns the service that Project Lantern deploys and what is their team channel?","query_class":"multi_hop","relevant_ids":["doc:cross-reference-guide.md:0","doc:service-ownership.csv:card:0"]}
+{"query":"What rollback procedure applies to the deployment pipeline managed by the checkout team owner?","query_class":"multi_hop","relevant_ids":["doc:cross-reference-guide.md:0","doc:multilingual-runbook.md:2"]}
+{"query":"Which team channel handles alerts when the PostgreSQL server hosting the analytics database needs recovery?","query_class":"multi_hop","relevant_ids":["doc:cross-reference-guide.md:1","doc:personal-kb.md:1"]}
+{"query":"What day does the owner of the checkout service hold reviews and what deployment pipeline do they manage?","query_class":"multi_hop","relevant_ids":["doc:service-ownership.csv:card:0","doc:cross-reference-guide.md:0"]}
+{"query":"What recovery point objective applies to the analytics database and who owns it?","query_class":"multi_hop","relevant_ids":["doc:cross-reference-guide.md:1","doc:personal-kb.md:1"]}
+{"query":"What travel planning activity happens during the same time window preferred for deep work?","query_class":"multi_hop","relevant_ids":["doc:cross-reference-guide.md:2","doc:companion-notes.md:2"]}
