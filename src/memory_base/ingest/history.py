@@ -197,7 +197,9 @@ async def _distill(session: Session, semaphore: asyncio.Semaphore) -> Distillati
         "Distill the following agent session in English, even when the transcript "
         "is in Korean or Japanese. Keep code, error strings, identifiers, and file paths "
         "verbatim. Return only a JSON object using this schema: "
-        '{"one_line_question":"one-line question for later retrieval in English",'
+        '{"one_line_question":"one-line question capturing the session\'s central topic'
+        " — the question a future reader would search for to find this session."
+        ' Focus on what the session is mostly about, NOT the first or opening message",'
         '"summary":"3-5 sentence summary in English",'
         '"resolution":"final solution or conclusion in English, or unresolved",'
         '"references":["mentioned files, systems, or commands"],'
