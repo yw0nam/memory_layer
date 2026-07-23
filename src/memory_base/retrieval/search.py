@@ -84,19 +84,28 @@ async def _search_code(conn: asyncpg.Connection, query: str, qvec_lit: str) -> l
     return hits
 
 
-async def _search_history(conn: asyncpg.Connection, query: str, qvec_lit: str) -> list[Hit]:
+async def _search_history(
+    conn: asyncpg.Connection,
+    query: str,
+    qvec_lit: str,
+    include_archived: bool = False,
+) -> list[Hit]:
     tbl = f'"{PG_SCHEMA}"."memory_chunks"'
     exists = await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{PG_SCHEMA}.memory_chunks")
     if not exists:
         return []
+    active_filter = "" if include_archived else "WHERE archived_at IS NULL "
+    active_clause = "" if include_archived else "archived_at IS NULL AND "
     vec_rows = await conn.fetch(
         f"SELECT id, source_ref, distilled, content_raw, ts_last_active, idf_score "
-        f"FROM {tbl} ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
+        f"FROM {tbl} {active_filter}"
+        f"ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
         qvec_lit,
     )
     fts_rows = await conn.fetch(
         f"SELECT id, source_ref, distilled, content_raw, ts_last_active, idf_score FROM {tbl} "
-        f"WHERE to_tsvector('simple', content_raw) @@ websearch_to_tsquery('simple', $1) "
+        f"WHERE {active_clause}"
+        f"to_tsvector('simple', content_raw) @@ websearch_to_tsquery('simple', $1) "
         f"ORDER BY ts_rank_cd(to_tsvector('simple', content_raw), websearch_to_tsquery('simple', $1)) DESC "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
         query,
@@ -184,7 +193,12 @@ async def _restore_context(conn: asyncpg.Connection, hits: list[Hit]) -> None:
             h.meta["context"] = "\n...\n".join(r["code"] for r in rows)
 
 
-async def search(query: str, source: str = "all", rerank: bool = True) -> list[Hit]:
+async def search(
+    query: str,
+    source: str = "all",
+    rerank: bool = True,
+    include_archived: bool = False,
+) -> list[Hit]:
     embedder = VllmEmbedder()
     qvec = await embedder.embed(query, query=True)
     qvec_lit = "[" + ",".join(f"{x:.6f}" for x in qvec.astype(float)) + "]"
@@ -195,8 +209,10 @@ async def search(query: str, source: str = "all", rerank: bool = True) -> list[H
         if source in ("code", "all"):
             hits += await _search_code(conn, query, qvec_lit)
         if source in ("history", "all"):
-            hits += await _search_history(conn, query, qvec_lit)
-        _apply_time_decay(hits)
+            hits += await _search_history(conn, query, qvec_lit, include_archived=include_archived)
+        if not include_archived:
+            # Archival recall asks for old rows; recency decay would bury them.
+            _apply_time_decay(hits)
         hits = _dedup_cap(hits)
         if rerank:
             hits = await _rerank(query, hits)

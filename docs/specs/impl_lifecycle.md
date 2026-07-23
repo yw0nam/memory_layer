@@ -18,7 +18,8 @@ reversible state change — no row deletion except explicit note pruning (below)
 
 Retrieval excludes archived rows by default: the history legs in `retrieval/search.py` add
 `WHERE archived_at IS NULL`; `search()` gains `include_archived: bool = False` which lifts the
-filter. REST `POST /search` accepts an optional `"include_archived": false` field and passes it
+filter and also disables time-decay weighting for that call — the flag requests archival
+recall, and recency decay would bury exactly the rows old enough to be archived. REST `POST /search` accepts an optional `"include_archived": false` field and passes it
 through. The MCP search tools keep their current signatures (always default search — archived
 recall is a management concern, and management never crosses MCP).
 
