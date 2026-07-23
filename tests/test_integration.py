@@ -52,12 +52,12 @@ def test_search_code_source_returns_code_hits_with_line_refs():
     assert all(h.rrf > 0 for h in hits)
 
 
-def test_search_history_source_returns_history_hits():
+def test_search_memory_source_returns_memory_hits():
     # vector KNN alone (no FTS match needed) is enough to surface rows from
     # the small memory_chunks table regardless of query wording.
-    hits = asyncio.run(search("이전에 진행한 작업 내용을 알려줘", source="history", rerank=False))
+    hits = asyncio.run(search("이전에 진행한 작업 내용을 알려줘", source="memory", rerank=False))
     assert len(hits) >= 1
-    assert all(h.source == "history" for h in hits)
+    assert all(h.source == "memory" for h in hits)
 
 
 def test_search_all_source_with_rerank_populates_rerank_score():

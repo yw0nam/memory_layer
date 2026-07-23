@@ -171,7 +171,7 @@ Search `ref` is produced source-agnostically: the **adapter** writes
 `{document_id}#card-{i}` for CSV cards) and retrieval returns `metadata.search_ref`
 when present, else `source_ref` — no document branching in retrieval. Atom-resolved
 parents surface the parent's `search_ref`. **Dedup grouping is unchanged**: `Hit.meta`
-keeps `source_ref`, and `_dedup_cap` groups history hits by it (not by the displayed
+keeps `source_ref`, and `_dedup_cap` groups memory hits by it (not by the displayed
 ref), so one document still occupies at most `PER_FILE_CAP` baseline slots even though
 each chunk displays a distinct `search_ref`. Everything the pipeline generates — atoms, tags, cards — is English;
 `content_raw` keeps the source language (the embedder is multilingual; FTS uses the
@@ -214,7 +214,7 @@ each chunk displays a distinct `search_ref`. Everything the pipeline generates �
 
 ## Retrieval (two lanes; atoms never displace baseline candidates)
 
-- **Baseline lane**: `_search_history` excludes atom rows (`chunk_kind <> 'atom'`), now
+- **Baseline lane**: `_search_memory` excludes atom rows (`chunk_kind <> 'atom'`), now
   selects `chunk_kind` + `metadata`, and runs to completion exactly as today: RRF fusion,
   time decay, `_dedup_cap` to `FUSED_TOP` (20). `Hit.meta` carries kind and tags.
 - **Atom lane** (runs when `include_atoms` resolves true and the active `kind`/`tags`/
@@ -236,12 +236,12 @@ each chunk displays a distinct `search_ref`. Everything the pipeline generates �
   themselves. Access logging credits the parent row id.
 - **Filters**: `kind` (exact, one of `doc|note|decision`) and `tags` (list of normalized
   lowercase phrases, **ANY** semantics) apply to `memory_chunks` only and require
-  `source="history"`; any other source combination is `400`. An empty `tags` list is
+   `source="memory"`; any other source combination is `400`. An empty `tags` list is
   `400`. Filters are SQL predicates inside both the vector and FTS queries, before their
   LIMITs. `ensure_schema` adds a GIN index on `(metadata->'tags')`.
 - `include_atoms` (search option, default env `ATOMS_RETRIEVE`, default true) lets
   retrieval exclude atoms without deleting rows — this is the A/B switch.
-- REST `/search` and the MCP `search`/`search_history` tools expose `kind`, `tags`, and
+- REST `/search` and the MCP `search`/`search_memory` tools expose `kind`, `tags`, and
   `include_atoms`.
 
 ## Validation (acceptance)

@@ -22,3 +22,9 @@
 {"query":"How many hours of supplemental light does the basil receive each day?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:2"]}
 {"query":"How should the basil be watered and fertilized?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:2"]}
 {"query":"What is the response plan for fungus gnats or aphids in the herb garden?","query_class":"personal_kb","relevant_ids":["doc:personal-kb.md:3"]}
+{"query": "What error rate threshold triggers a rollback during a release of the pipeline that deploys the checkout service, and what happens to traffic when it is exceeded?", "query_class": "multi_hop", "relevant_ids": ["doc:cross-reference-guide.md:0", "doc:multilingual-runbook.md:1"]}
+{"query": "What rollback procedure applies to the deployment pipeline managed by the checkout team owner?", "query_class": "multi_hop", "relevant_ids": ["doc:cross-reference-guide.md:0", "doc:multilingual-runbook.md:1"]}
+{"query": "What is the weekly backup schedule of the PostgreSQL server that hosts the analytics database, and which channel does the analytics owner use?", "query_class": "multi_hop", "relevant_ids": ["doc:cross-reference-guide.md:1", "doc:personal-kb.md:0"]}
+{"query": "Which deployment pipeline deploys the service that suffered the Tuesday p95 latency incident?", "query_class": "multi_hop", "relevant_ids": ["doc:agent-work-log.md:0", "doc:cross-reference-guide.md:0"]}
+{"query": "What recovery time objective applies to the database server that hosts the analytics service, and who owns the analytics service?", "query_class": "multi_hop", "relevant_ids": ["doc:cross-reference-guide.md:1", "doc:personal-kb.md:1"]}
+{"query": "What travel planning activity happens during the same time window preferred for deep work?", "query_class": "multi_hop", "relevant_ids": ["doc:cross-reference-guide.md:2", "doc:companion-notes.md:2"]}

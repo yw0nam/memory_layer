@@ -48,9 +48,10 @@ def test_tool_list_includes_document_ingestion():
     assert names == {
         "search",
         "search_code",
-        "search_history",
+        "search_memory",
         "save_memory",
         "ingest_document",
+        "deep_search",
     }
 
 
@@ -73,7 +74,7 @@ def test_search_code_posts_to_search_with_source_code(monkeypatch):
     assert captured["json"] == {"query": "halfvec index", "source": "code", "top_k": 5}
 
 
-def test_search_history_posts_with_source_history(monkeypatch):
+def test_search_memory_posts_with_source_memory(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -81,11 +82,11 @@ def test_search_history_posts_with_source_history(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_history(query="burst gate", top_k=3))
-    assert captured["json"] == {"query": "burst gate", "source": "history", "top_k": 3}
+    asyncio.run(mcp_server.search_memory(query="burst gate", top_k=3))
+    assert captured["json"] == {"query": "burst gate", "source": "memory", "top_k": 3}
 
 
-def test_search_history_forwards_filters_and_atom_option(monkeypatch):
+def test_search_memory_forwards_filters_and_atom_option(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -94,7 +95,7 @@ def test_search_history_forwards_filters_and_atom_option(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     asyncio.run(
-        mcp_server.search_history(
+        mcp_server.search_memory(
             query="decision",
             top_k=4,
             kind="decision",
@@ -104,7 +105,7 @@ def test_search_history_forwards_filters_and_atom_option(monkeypatch):
     )
     assert captured["json"] == {
         "query": "decision",
-        "source": "history",
+        "source": "memory",
         "top_k": 4,
         "kind": "decision",
         "tags": ["infra"],
@@ -117,7 +118,7 @@ def test_search_all_forwards_filter_options(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["json"] = json.loads(request.content)
-        return httpx.Response(400, json={"error": 'filters require source="history"'})
+        return httpx.Response(400, json={"error": 'filters require source="memory"'})
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="filters require"):
@@ -219,3 +220,90 @@ def test_ingest_document_posts_text_as_multipart_and_returns_job_reference(monke
 def test_ingest_document_mcp_rejects_binary_formats(filename):
     with pytest.raises(ValueError, match="text formats only"):
         asyncio.run(mcp_server.ingest_document("content", filename))
+
+
+# ---- deep_search proxying ---------------------------------------------------
+
+
+def test_deep_search_posts_to_search_deep(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "evidence": [],
+                "trace": [],
+                "hops_used": 0,
+                "stopped_reason": "done",
+            },
+        )
+
+    _patch_client(monkeypatch, handler)
+    result = asyncio.run(mcp_server.deep_search(query="multi-hop question"))
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/search/deep"
+    assert captured["json"] == {"query": "multi-hop question"}
+    assert result["stopped_reason"] == "done"
+
+
+def test_deep_search_forwards_options(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"evidence": [], "trace": [], "hops_used": 0, "stopped_reason": "max_hops"},
+        )
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(
+        mcp_server.deep_search(
+            query="complex question",
+            max_hops=2,
+            kind="decision",
+            tags=["infra"],
+        )
+    )
+    assert captured["json"] == {
+        "query": "complex question",
+        "max_hops": 2,
+        "kind": "decision",
+        "tags": ["infra"],
+    }
+
+
+def test_deep_search_400_surfaces_as_value_error(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "max_hops must be between 1 and 3"})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="max_hops"):
+        asyncio.run(mcp_server.deep_search(query="q", max_hops=0))
+
+
+def test_deep_search_uses_extended_timeout(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"evidence": [], "trace": [], "hops_used": 0, "stopped_reason": "done"},
+        )
+
+    def fake_client():
+        client = httpx.AsyncClient(
+            base_url=mcp_server.REST_URL, transport=httpx.MockTransport(handler)
+        )
+        captured["client"] = client
+        return client
+
+    monkeypatch.setattr(mcp_server, "_client", fake_client)
+    asyncio.run(mcp_server.deep_search(query="q"))
+    from memory_base.retrieval.decompose import DEEP_TIMEOUT_SECONDS
+
+    assert DEEP_TIMEOUT_SECONDS + 30 > DEEP_TIMEOUT_SECONDS

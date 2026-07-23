@@ -170,7 +170,7 @@ def test_full_archive_and_note_lifecycle():
 
         # ---- default /search excludes archived rows; include_archived brings back ----
         default_search = client.post(
-            "/search", json={"query": content_old, "source": "history", "top_k": 20}
+            "/search", json={"query": content_old, "source": "memory", "top_k": 20}
         )
         assert default_search.status_code == 200
         assert not any(token in h["text"] for h in default_search.json())
@@ -179,7 +179,7 @@ def test_full_archive_and_note_lifecycle():
             "/search",
             json={
                 "query": content_old,
-                "source": "history",
+                "source": "memory",
                 "top_k": 20,
                 "include_archived": True,
             },

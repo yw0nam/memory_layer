@@ -108,7 +108,7 @@ def test_dedup_cap_keeps_rrf_descending_order():
 
 def test_dedup_cap_falls_back_to_ref_when_no_filename_meta():
     # history hits have no meta["filename"] -> dedup key falls back to ref
-    hits = [Hit(source="history", ref="sess-1", text="", ts=0.0, rrf=1.0, meta={})]
+    hits = [Hit(source="memory", ref="sess-1", text="", ts=0.0, rrf=1.0, meta={})]
     out = _dedup_cap(hits)
     assert len(out) == 1
     assert out[0].ref == "sess-1"

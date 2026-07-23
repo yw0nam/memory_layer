@@ -47,7 +47,7 @@ def test_dedup_sort_hits_dedupes_by_source_ref_and_sorts():
         _hit(source="code", ref="a.py:L1-L2", rrf=0.1, rerank_score=0.3),
         _hit(source="code", ref="a.py:L1-L2", rrf=0.9, rerank_score=0.9),  # dup, better score wins
         _hit(source="code", ref="b.py:L1-L2", rrf=0.5, rerank_score=None),  # no rerank -> uses rrf
-        _hit(source="history", ref="sess-1", rrf=0.2, rerank_score=0.1),
+        _hit(source="memory", ref="sess-1", rrf=0.2, rerank_score=0.1),
     ]
     out = answer.dedup_sort_hits(hits, top_k=10)
 
@@ -89,7 +89,7 @@ def test_format_evidence_block_includes_code_context():
 
 
 def test_format_evidence_block_ignores_context_for_history_hits():
-    hits = [_hit(source="history", meta={"context": "SHOULD_NOT_APPEAR"})]
+    hits = [_hit(source="memory", meta={"context": "SHOULD_NOT_APPEAR"})]
     block = answer.format_evidence_block(hits)
     assert "SHOULD_NOT_APPEAR" not in block
 
@@ -239,7 +239,125 @@ def test_mcp_server_registers_expected_tools():
     assert names == {
         "search",
         "search_code",
-        "search_history",
+        "search_memory",
         "save_memory",
         "ingest_document",
+        "deep_search",
     }
+
+
+# ---- answer.py --deep -------------------------------------------------------
+
+
+def test_deep_bypasses_planner_and_converts_evidence_to_hits(monkeypatch):
+    from memory_base.retrieval.decompose import DeepResult, EvidenceEntry
+
+    evidence = [
+        EvidenceEntry(
+            id="doc:guide.md:0",
+            ref="guide.md#chunk-0",
+            text="evidence text one",
+            kind="doc",
+            tags=["infra"],
+            date=1_700_000_000.0,
+            hop=1,
+            atom_question="what is the guide?",
+        ),
+        EvidenceEntry(
+            id="note:abc",
+            ref="save_memory",
+            text="evidence text two",
+            kind="note",
+            tags=[],
+            date=1_700_000_000.0,
+            hop=2,
+            atom_question=None,
+        ),
+    ]
+    result = DeepResult(evidence=evidence, trace=[], hops_used=2, stopped_reason="max_hops")
+
+    async def fake_deep_search(query, **kwargs):
+        return result
+
+    monkeypatch.setattr(answer, "deep_search", fake_deep_search)
+
+    captured_hits = {}
+
+    async def fake_synthesize(query, hits):
+        captured_hits["hits"] = hits
+        return "synthesized answer"
+
+    monkeypatch.setattr(answer, "synthesize", fake_synthesize)
+
+    plan_called = False
+
+    async def fake_plan(query):
+        nonlocal plan_called
+        plan_called = True
+        return "all", [query]
+
+    monkeypatch.setattr(answer, "plan", fake_plan)
+
+    result_text = asyncio.run(answer.answer("multi-hop question", deep=True))
+    assert result_text == "synthesized answer"
+    assert not plan_called
+    hits = captured_hits["hits"]
+    assert len(hits) == 2
+    assert hits[0].source == "memory"
+    assert hits[0].ref == "guide.md#chunk-0"
+    assert hits[0].meta["id"] == "doc:guide.md:0"
+    assert hits[0].meta["hop"] == 1
+    assert hits[0].meta["atom_question"] == "what is the guide?"
+    assert hits[1].meta["atom_question"] is None
+    assert hits[1].meta["hop"] == 2
+
+
+def test_deep_with_no_evidence_returns_no_evidence_message(monkeypatch):
+    from memory_base.retrieval.decompose import DeepResult
+
+    async def fake_deep_search(query, **kwargs):
+        return DeepResult(evidence=[], trace=[], hops_used=0, stopped_reason="done")
+
+    monkeypatch.setattr(answer, "deep_search", fake_deep_search)
+
+    synthesize_called = False
+
+    async def fake_synthesize(query, hits):
+        nonlocal synthesize_called
+        synthesize_called = True
+        return "should not reach"
+
+    monkeypatch.setattr(answer, "synthesize", fake_synthesize)
+
+    result_text = asyncio.run(answer.answer("question", deep=True))
+    assert result_text == "No relevant evidence was found."
+    assert not synthesize_called
+
+
+def test_evidence_to_hits_preserves_fields():
+    from memory_base.retrieval.decompose import EvidenceEntry
+
+    entries = [
+        EvidenceEntry(
+            id="doc:x:0",
+            ref="x.md#chunk-0",
+            text="some text",
+            kind="doc",
+            tags=["a", "b"],
+            date=1_700_000_000.0,
+            hop=1,
+            atom_question="q?",
+        ),
+    ]
+    hits = answer._evidence_to_hits(entries)
+    assert len(hits) == 1
+    h = hits[0]
+    assert h.source == "memory"
+    assert h.ref == "x.md#chunk-0"
+    assert h.text == "some text"
+    assert h.ts == 1_700_000_000.0
+    assert h.meta["id"] == "doc:x:0"
+    assert h.meta["kind"] == "doc"
+    assert h.meta["tags"] == ["a", "b"]
+    assert h.meta["hop"] == 1
+    assert h.meta["atom_question"] == "q?"

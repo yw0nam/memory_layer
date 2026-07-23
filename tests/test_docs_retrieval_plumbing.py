@@ -13,7 +13,7 @@ from memory_base.retrieval.search import (
     _dedup_cap,
     _merge_atom_hits,
     _search_atoms,
-    _search_history,
+    _search_memory,
     validate_search_options,
 )
 
@@ -33,14 +33,14 @@ class FakeSearchConnection:
 
 
 @pytest.mark.parametrize("kind", ["doc", "note", "decision"])
-def test_history_kind_filters_are_valid(kind):
-    assert validate_search_options("history", kind, None) == (kind, None)
+def test_memory_kind_filters_are_valid(kind):
+    assert validate_search_options("memory", kind, None) == (kind, None)
 
 
 @pytest.mark.parametrize("kind", ["atom", "code", "", 1])
 def test_unknown_kind_filter_is_rejected(kind):
     with pytest.raises(ValueError, match="kind must be one of"):
-        validate_search_options("history", kind, None)
+        validate_search_options("memory", kind, None)
 
 
 @pytest.mark.parametrize(
@@ -52,27 +52,27 @@ def test_unknown_kind_filter_is_rejected(kind):
         ("code", None, ["infra"]),
     ],
 )
-def test_filters_require_history_source(source, kind, tags):
-    with pytest.raises(ValueError, match='source="history"'):
+def test_filters_require_memory_source(source, kind, tags):
+    with pytest.raises(ValueError, match='source="memory"'):
         validate_search_options(source, kind, tags)
 
 
 def test_search_tags_are_normalized_with_any_semantics():
     assert validate_search_options(
-        "history", None, [" Infrastructure ", "DATABASE", "infrastructure"]
+        "memory", None, [" Infrastructure ", "DATABASE", "infrastructure"]
     ) == (None, ["infrastructure", "database"])
 
 
 @pytest.mark.parametrize("tags", [[], [" "], "infra", [1], ["infra", None]])
 def test_empty_or_malformed_search_tags_are_rejected(tags):
     with pytest.raises(ValueError, match="tags"):
-        validate_search_options("history", None, tags)
+        validate_search_options("memory", None, tags)
 
 
-def test_history_filters_are_inside_both_candidate_queries():
+def test_memory_filters_are_inside_both_candidate_queries():
     conn = FakeSearchConnection([[], []])
     asyncio.run(
-        _search_history(
+        _search_memory(
             conn,
             "query",
             "[1]",
@@ -93,7 +93,7 @@ def test_history_filters_are_inside_both_candidate_queries():
     assert fts_args == ("query", "decision", ["infra", "database"])
 
 
-def test_history_hit_uses_search_ref_and_keeps_source_ref_for_dedup():
+def test_memory_hit_uses_search_ref_and_keeps_source_ref_for_dedup():
     metadata = {
         "search_ref": "guide.md#chunk-2",
         "tags": ["infra"],
@@ -109,7 +109,7 @@ def test_history_hit_uses_search_ref_and_keeps_source_ref_for_dedup():
         "idf_score": None,
     }
     conn = FakeSearchConnection([[row], []])
-    hits = asyncio.run(_search_history(conn, "query", "[1]"))
+    hits = asyncio.run(_search_memory(conn, "query", "[1]"))
 
     assert hits[0].ref == "guide.md#chunk-2"
     assert hits[0].meta["source_ref"] == "guide.md"
@@ -129,11 +129,11 @@ def test_csv_card_hit_uses_search_ref():
         "idf_score": None,
     }
     conn = FakeSearchConnection([[row], []])
-    hits = asyncio.run(_search_history(conn, "query", "[1]"))
+    hits = asyncio.run(_search_memory(conn, "query", "[1]"))
     assert hits[0].ref == "table.csv#card-0"
 
 
-def test_history_hit_falls_back_to_source_ref():
+def test_memory_hit_falls_back_to_source_ref():
     row = {
         "id": "note:1",
         "source_ref": "save_memory",
@@ -145,14 +145,14 @@ def test_history_hit_falls_back_to_source_ref():
         "idf_score": None,
     }
     conn = FakeSearchConnection([[row], []])
-    hits = asyncio.run(_search_history(conn, "query", "[1]"))
+    hits = asyncio.run(_search_memory(conn, "query", "[1]"))
     assert hits[0].ref == "save_memory"
 
 
 def test_document_chunks_remain_subject_to_per_file_cap():
     hits = [
         Hit(
-            source="history",
+            source="memory",
             ref=f"guide.md#chunk-{i}",
             text="",
             ts=0.0,
@@ -237,7 +237,7 @@ def test_atom_parent_filters_are_applied_before_the_candidate_limit():
 def test_atom_evidence_annotates_baseline_parent_without_duplication():
     baseline = [
         Hit(
-            source="history",
+            source="memory",
             ref="guide.md#chunk-0",
             text="parent",
             ts=100.0,
@@ -246,7 +246,7 @@ def test_atom_evidence_annotates_baseline_parent_without_duplication():
         )
     ]
     atom = Hit(
-        source="history",
+        source="memory",
         ref="guide.md#chunk-0",
         text="parent",
         ts=100.0,
@@ -265,7 +265,7 @@ def test_atom_evidence_annotates_baseline_parent_without_duplication():
 def test_atom_union_has_no_shared_fused_top_truncation():
     baseline = [
         Hit(
-            source="history",
+            source="memory",
             ref=f"base:{index}",
             text="",
             ts=0.0,
@@ -275,7 +275,7 @@ def test_atom_union_has_no_shared_fused_top_truncation():
     ]
     atoms = [
         Hit(
-            source="history",
+            source="memory",
             ref=f"atom-parent:{index}",
             text="",
             ts=0.0,

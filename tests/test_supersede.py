@@ -14,7 +14,7 @@ optional ``supersedes: <note id>`` argument (MCP tool, REST body, and
   a 400 with ``{"error": "unknown supersedes id: <id>"}``.
 - The MCP ``save_memory`` tool posts ``supersedes`` in the JSON body
   (``None`` when not given); the tool list is unaffected (still exactly
-  {search, search_code, search_history, save_memory}).
+  {search, search_code, search_memory, save_memory, ingest_document, deep_search}).
 
 Pure/unit sections use no DB/network (REST route delegates to a monkeypatched
 ``api.save_note``; MCP proxy uses ``httpx.MockTransport`` as in
@@ -192,7 +192,7 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
     }
 
 
-def test_mcp_tool_list_still_exactly_five_tools():
+def test_mcp_tool_list_still_exactly_six_tools():
     from mcp.shared.memory import create_connected_server_and_client_session
 
     async def _run():
@@ -203,7 +203,14 @@ def test_mcp_tool_list_still_exactly_five_tools():
             return {t.name for t in result.tools}
 
     names = asyncio.run(_run())
-    assert names == {"search", "search_code", "search_history", "save_memory", "ingest_document"}
+    assert names == {
+        "search",
+        "search_code",
+        "search_memory",
+        "save_memory",
+        "ingest_document",
+        "deep_search",
+    }
 
 
 # ---- integration: real DB + embedder ----------------------------------------

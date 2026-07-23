@@ -117,14 +117,14 @@ def test_search_logs_retrieval_and_bumps_hit_columns():
         asyncio.run(save_note(content))
         t0 = time.time()
 
-        response = client.post("/search", json={"query": content, "source": "history", "top_k": 5})
+        response = client.post("/search", json={"query": content, "source": "memory", "top_k": 5})
         assert response.status_code == 200
         assert response.json()
 
-        log_row = asyncio.run(_fetch_latest_retrieval_log(content, "history"))
+        log_row = asyncio.run(_fetch_latest_retrieval_log(content, "memory"))
         assert log_row is not None
         assert log_row["query"] == content
-        assert log_row["source"] == "history"
+        assert log_row["source"] == "memory"
         assert log_row["hit_ids"]
         assert log_row["ts"] >= t0
 
