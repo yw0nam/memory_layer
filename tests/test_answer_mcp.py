@@ -1,8 +1,8 @@
-"""Tests for src/answer.py and src/mcp_server.py.
+"""Tests for serve/answer.py, serve/api.py's hit serialization, and the MCP tool list.
 
 Runs without LLM/DB access: pure-function unit tests use hand-built
-search.Hit objects, and the MCP in-process check monkeypatches
-search.search so no network/DB call happens.
+search.Hit objects, and the MCP in-process check only lists tools (the
+proxy tools perform no I/O until invoked).
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import asyncio
 from memory_base.retrieval.search import Hit
 
 from memory_base.serve import answer
+from memory_base.serve import api
 from memory_base.serve import mcp_server
 
 
@@ -122,14 +123,14 @@ def test_answer_returns_no_evidence_message_without_llm_call(monkeypatch):
     assert not called
 
 
-# ---- mcp_server.py pure functions -------------------------------------------
+# ---- api.py pure functions ---------------------------------------------------
 
 
 def test_hit_to_dict_basic_fields():
     h = _hit(
         source="code", ref="a.py:L1-L2", text="body", ts=1_700_000_000.0, rrf=0.4, rerank_score=0.8
     )
-    d = mcp_server.hit_to_dict(h)
+    d = api.hit_to_dict(h)
     assert d["source"] == "code"
     assert d["ref"] == "a.py:L1-L2"
     assert d["score"] == 0.8  # prefers rerank_score over rrf
@@ -140,13 +141,13 @@ def test_hit_to_dict_basic_fields():
 
 def test_hit_to_dict_falls_back_to_rrf_when_no_rerank_score():
     h = _hit(rrf=0.4, rerank_score=None)
-    d = mcp_server.hit_to_dict(h)
+    d = api.hit_to_dict(h)
     assert d["score"] == 0.4
 
 
 def test_hit_to_dict_truncates_text_and_includes_context():
     h = _hit(text="z" * 5000, meta={"context": "CTX"})
-    d = mcp_server.hit_to_dict(h)
+    d = api.hit_to_dict(h)
     assert len(d["text"]) == 2000
     assert d["context"] == "CTX"
 
@@ -154,20 +155,14 @@ def test_hit_to_dict_truncates_text_and_includes_context():
 # ---- MCP server in-process tool registration --------------------------------
 
 
-def test_mcp_server_registers_expected_tools(monkeypatch):
+def test_mcp_server_registers_expected_tools():
     """Verify tools/list exposes the search tools plus save_memory in-process.
 
     Uses mcp.shared.memory.create_connected_server_and_client_session to spin
-    up an in-memory client/server pair (no subprocess, no stdio). We
-    monkeypatch mcp_server.run_search (aliased from search.search) so no
-    DB/LLM access happens even if a tool were invoked.
+    up an in-memory client/server pair (no subprocess, no stdio). Listing
+    tools performs no I/O — the proxy tools only reach REST when invoked.
     """
     from mcp.shared.memory import create_connected_server_and_client_session
-
-    async def fake_search(query, source="all", rerank=True):
-        return []
-
-    monkeypatch.setattr(mcp_server, "run_search", fake_search)
 
     async def _run():
         async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:

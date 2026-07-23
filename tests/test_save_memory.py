@@ -2,11 +2,9 @@
 
 Pure tests pin build_note_row's id scheme, row shape, and validation with no
 DB/embedder/network. Integration tests (marked ``integration``, skipped when the
-DB is unreachable) call the real tool against Postgres + embedder and clean up
-every row they insert so reruns stay stable.
-
-build_note_row lives in memory_base.serve.notes (moved from mcp_server.py per
-docs/specs/impl_rest_api.md); save_memory is still the MCP tool.
+DB is unreachable) call the real tool through the in-process REST app
+(``rest_in_process`` fixture) against Postgres + embedder and clean up every
+row they insert so reruns stay stable.
 """
 
 from __future__ import annotations
@@ -158,7 +156,7 @@ async def _count(note_id: str) -> int:
 
 @pytest.mark.integration
 @requires_db
-def test_save_memory_stores_row_in_db():
+def test_save_memory_stores_row_in_db(rest_in_process):
     content = "save_memory integration: notes are stored without LLM distillation"
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete(note_id))
@@ -182,7 +180,7 @@ def test_save_memory_stores_row_in_db():
 
 @pytest.mark.integration
 @requires_db
-def test_save_memory_duplicate_is_noop():
+def test_save_memory_duplicate_is_noop(rest_in_process):
     content = "save_memory integration: re-saving identical content is idempotent"
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete(note_id))
@@ -198,7 +196,7 @@ def test_save_memory_duplicate_is_noop():
 
 @pytest.mark.integration
 @requires_db
-def test_saved_note_found_by_search():
+def test_saved_note_found_by_search(rest_in_process):
     content = "save_memory integration: pgvector halfvec powers hybrid retrieval search"
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete(note_id))

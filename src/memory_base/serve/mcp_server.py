@@ -1,8 +1,4 @@
-"""MCP server exposing memory_base's hybrid search as thin tools.
-
-No LLM calls here -- each tool is a direct delegate to search.search()
-(FTS + vector + time-decay, fused with RRF, then reranked and
-context-restored). See docs/specs §3.2 ⑦.
+"""MCP server exposing memory_base's REST API as thin tools.
 
 Transport is stdio by default (local dev); set MCP_TRANSPORT=sse|streamable-http
 to serve over HTTP instead (e.g. in Docker). MCP_HOST/MCP_PORT control the
@@ -20,51 +16,30 @@ Run directly:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
-import time
 from typing import Any, Mapping
 
-import asyncpg
+import httpx
 from mcp.server.fastmcp import FastMCP
-
-from memory_base.common import DB_URL, PG_SCHEMA, VllmEmbedder
-from memory_base.ingest.history import _embed, _ensure_schema
-from memory_base.retrieval.search import Hit
-from memory_base.retrieval.search import search as run_search
-
-NOTE_MAX_CHARS = 4000
-NOTE_KINDS = ("note", "decision")
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
-
-TEXT_LIMIT = 2000
+REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
 
 mcp = FastMCP("memory-base")
 
 
-def hit_to_dict(hit: Hit) -> dict[str, Any]:
-    """Convert a search.Hit into a JSON-serializable dict for tool results."""
-    from datetime import datetime, timezone
-
-    out: dict[str, Any] = {
-        "source": hit.source,
-        "ref": hit.ref,
-        "date": datetime.fromtimestamp(hit.ts, tz=timezone.utc).strftime("%Y-%m-%d"),
-        "score": hit.rerank_score if hit.rerank_score is not None else hit.rrf,
-        "text": hit.text[:TEXT_LIMIT],
-    }
-    context = hit.meta.get("context")
-    if context:
-        out["context"] = context
-    return out
+def _client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(base_url=REST_URL)
 
 
-async def _run_search(query: str, source: str, top_k: int) -> list[dict[str, Any]]:
-    hits = await run_search(query, source=source)
-    return [hit_to_dict(h) for h in hits[:top_k]]
+async def _search(query: str, source: str, top_k: int) -> list[dict[str, Any]]:
+    async with _client() as client:
+        response = await client.post(
+            "/search", json={"query": query, "source": source, "top_k": top_k}
+        )
+        response.raise_for_status()
+        return response.json()
 
 
 @mcp.tool(name="search")
@@ -79,7 +54,7 @@ async def search_all(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     date (YYYY-MM-DD), score, text (truncated to 2000 chars), and optional
     context (neighboring code for code hits).
     """
-    return await _run_search(query, "all", top_k)
+    return await _search(query, "all", top_k)
 
 
 @mcp.tool()
@@ -93,7 +68,7 @@ async def search_code(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     (truncated to 2000 chars), and optional context (neighboring code chunks
     for continuity).
     """
-    return await _run_search(query, "code", top_k)
+    return await _search(query, "code", top_k)
 
 
 @mcp.tool()
@@ -106,31 +81,7 @@ async def search_history(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     sorted by relevance, each with source="history", ref (session ref),
     date (YYYY-MM-DD), score, and text (truncated to 2000 chars).
     """
-    return await _run_search(query, "history", top_k)
-
-
-def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) -> dict[str, Any]:
-    """Validate a note and map it to memory_chunks columns (no embedding)."""
-    content = content.strip()
-    if not content:
-        raise ValueError("content must not be empty")
-    if len(content) > NOTE_MAX_CHARS:
-        raise ValueError(f"content exceeds {NOTE_MAX_CHARS} chars")
-    if kind not in NOTE_KINDS:
-        raise ValueError(f"kind must be one of {NOTE_KINDS}")
-    note_id = f"note:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
-    return {
-        "id": note_id,
-        "source_type": "agent_note",
-        "source_ref": "save_memory",
-        "kind": kind,
-        "session_id": note_id,
-        "raw": content,
-        "distilled": content,
-        "timestamp": now,
-        "idf": None,
-        "metadata": {"tags": tags} if tags else {},
-    }
+    return await _search(query, "history", top_k)
 
 
 @mcp.tool()
@@ -151,34 +102,14 @@ async def save_memory(
     Returns {"id", "kind", "stored"}; `stored` is False when identical content
     was already saved (idempotent no-op).
     """
-    row = build_note_row(content, kind, tags, time.time())
-    embedding = await _embed(VllmEmbedder(), content)
-    conn = await asyncpg.connect(DB_URL)
-    try:
-        await _ensure_schema(conn)
-        status = await conn.execute(
-            f"""
-            INSERT INTO "{PG_SCHEMA}".memory_chunks
-              (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-               distilled, embedding, ts_last_active, idf_score, metadata)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            row["id"],
-            row["source_type"],
-            row["source_ref"],
-            row["kind"],
-            row["session_id"],
-            row["raw"],
-            row["distilled"],
-            embedding,
-            row["timestamp"],
-            row["idf"],
-            json.dumps(row["metadata"], ensure_ascii=False),
+    async with _client() as client:
+        response = await client.post(
+            "/save_memory", json={"content": content, "kind": kind, "tags": tags}
         )
-    finally:
-        await conn.close()
-    return {"id": row["id"], "kind": row["kind"], "stored": status.endswith(" 1")}
+        if response.status_code == 400:
+            raise ValueError(response.json()["error"])
+        response.raise_for_status()
+        return response.json()
 
 
 def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:

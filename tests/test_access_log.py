@@ -6,14 +6,12 @@ on every returned memory_chunks hit; POST /save_memory must roundtrip through
 the real DB; ensure_schema must be idempotent and add the access-log columns
 and table. Skipped when the DB is unreachable, matching the pattern in
 tests/test_save_memory.py.
-
-Collection fails today: memory_base.serve.api / memory_base.serve.notes /
-memory_base.schema don't exist yet.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from starlette.testclient import TestClient
@@ -89,33 +87,52 @@ async def _delete_retrieval_log(query_text: str) -> None:
 # ---- POST /search logs retrieval_log + bumps hit columns ------------------
 
 
+async def _fetch_chunks_by_ids(ids: list[str]):
+    conn = await asyncpg.connect(DB_URL)
+    try:
+        return await conn.fetch(
+            f'SELECT id, hit_count, last_hit_at FROM "{PG_SCHEMA}".memory_chunks '
+            "WHERE id = ANY($1::text[])",
+            ids,
+        )
+    finally:
+        await conn.close()
+
+
 @pytest.mark.integration
 @requires_db
 def test_search_logs_retrieval_and_bumps_hit_columns():
+    """Every returned hit is logged and its memory_chunks row is bumped.
+
+    Ranking is not asserted (which rows come back depends on the corpus);
+    the pin is the mechanism: one retrieval_log row per search, and every
+    returned memory_chunks id has hit_count >= 1 with last_hit_at set to
+    the moment of this search.
+    """
     content = "access-log integration pin: zzzaccesslogpin unique retrieval marker"
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete_note(note_id))
     asyncio.run(_delete_retrieval_log(content))
     try:
         asyncio.run(save_note(content))
-        before = asyncio.run(_fetch_chunk(note_id))
-        assert before is not None
-        assert before["hit_count"] == 0
+        t0 = time.time()
 
         response = client.post("/search", json={"query": content, "source": "history", "top_k": 5})
         assert response.status_code == 200
+        assert response.json()
 
         log_row = asyncio.run(_fetch_latest_retrieval_log(content, "history"))
         assert log_row is not None
         assert log_row["query"] == content
         assert log_row["source"] == "history"
         assert log_row["hit_ids"]
-        assert note_id in log_row["hit_ids"]
-        assert log_row["ts"] > 0
+        assert log_row["ts"] >= t0
 
-        after = asyncio.run(_fetch_chunk(note_id))
-        assert after["hit_count"] == before["hit_count"] + 1
-        assert after["last_hit_at"] is not None
+        bumped = asyncio.run(_fetch_chunks_by_ids(list(log_row["hit_ids"])))
+        assert bumped  # history hits must resolve to memory_chunks rows
+        for row in bumped:
+            assert row["hit_count"] >= 1
+            assert row["last_hit_at"] is not None and row["last_hit_at"] >= t0
     finally:
         asyncio.run(_delete_note(note_id))
         asyncio.run(_delete_retrieval_log(content))
