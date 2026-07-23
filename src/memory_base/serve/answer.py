@@ -8,10 +8,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 
 from memory_base.common import LLM_MODEL, llm_client
 from memory_base.retrieval.search import Hit, search
+
+LOGGER = logging.getLogger("answer")
 
 EVIDENCE_TEXT_LIMIT = 2000
 
@@ -46,21 +49,10 @@ def dedup_sort_hits(hits: list[Hit], top_k: int = 10) -> list[Hit]:
     best: dict[tuple[str, str], Hit] = {}
     for h in hits:
         key = (h.source, h.ref)
-        score = h.rerank_score if h.rerank_score is not None else h.rrf
         existing = best.get(key)
-        if existing is None:
+        if existing is None or h.score > existing.score:
             best[key] = h
-        else:
-            existing_score = (
-                existing.rerank_score if existing.rerank_score is not None else existing.rrf
-            )
-            if score > existing_score:
-                best[key] = h
-    ordered = sorted(
-        best.values(),
-        key=lambda h: h.rerank_score if h.rerank_score is not None else h.rrf,
-        reverse=True,
-    )
+    ordered = sorted(best.values(), key=lambda h: h.score, reverse=True)
     return ordered[:top_k]
 
 
@@ -102,13 +94,16 @@ async def plan(query: str) -> tuple[str, list[str]]:
         ],
         response_format={"type": "json_object"},
     )
-    data = json.loads(resp.choices[0].message.content)
-    source = data.get("source", "all")
-    if source not in ("code", "history", "all"):
+    try:
+        data = json.loads(resp.choices[0].message.content or "")
+        source = data.get("source", "all")
+        if source not in ("code", "history", "all"):
+            source = "all"
+        queries = data.get("queries") or [query]
+    except (json.JSONDecodeError, TypeError, KeyError):
+        LOGGER.warning("planner returned invalid JSON; falling back to trivial plan")
         source = "all"
-    # Fallback keeps retrieval alive when the planner returns no queries; the
-    # vector leg is multilingual, so even a non-English original still works.
-    queries = data.get("queries") or [query]
+        queries = [query]
     return source, queries[:3]
 
 

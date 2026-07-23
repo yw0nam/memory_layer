@@ -30,7 +30,7 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         "source": hit.source,
         "ref": hit.ref,
         "date": datetime.fromtimestamp(hit.ts, tz=timezone.utc).strftime("%Y-%m-%d"),
-        "score": hit.rerank_score if hit.rerank_score is not None else hit.rrf,
+        "score": hit.score,
         "text": hit.text[:TEXT_LIMIT],
     }
     context = hit.meta.get("context")

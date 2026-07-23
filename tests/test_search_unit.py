@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import time
 
+import numpy as np
 import pytest
 
+from memory_base.common import vector_literal
 from memory_base.retrieval.search import (
     FUSED_TOP,
     PER_FILE_CAP,
@@ -115,6 +117,16 @@ def test_dedup_cap_falls_back_to_ref_when_no_filename_meta():
 # ---- Hit dataclass --------------------------------------------------------
 
 
+def test_hit_score_returns_rerank_score_when_set():
+    h = Hit(source="code", ref="a", text="", ts=0.0, rrf=0.3, rerank_score=0.9)
+    assert h.score == 0.9
+
+
+def test_hit_score_falls_back_to_rrf_when_rerank_is_none():
+    h = Hit(source="code", ref="a", text="", ts=0.0, rrf=0.4, rerank_score=None)
+    assert h.score == 0.4
+
+
 def test_hit_defaults_and_meta_dict_independence():
     h1 = Hit(source="code", ref="a", text="", ts=0.0)
     h2 = Hit(source="code", ref="b", text="", ts=0.0)
@@ -122,3 +134,17 @@ def test_hit_defaults_and_meta_dict_independence():
     assert h1.rerank_score is None
     h1.meta["x"] = 1
     assert h2.meta == {}  # default_factory gives each Hit its own dict
+
+
+# ---- vector_literal -------------------------------------------------------
+
+
+def test_vector_literal_format():
+    vec = np.array([1.0, 0.5, 0.25], dtype=np.float16)
+    result = vector_literal(vec)
+    assert result == "[1.000000,0.500000,0.250000]"
+
+
+def test_vector_literal_empty():
+    vec = np.array([], dtype=np.float16)
+    assert vector_literal(vec) == "[]"
