@@ -130,18 +130,20 @@ def test_answer_returns_no_evidence_message_without_llm_call(monkeypatch):
 
 def _mock_llm_response(content: str):
     """Build a fake OpenAI response object with the given message content."""
-    return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
-    )
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
 
 def test_plan_falls_back_on_malformed_json(monkeypatch, caplog):
     async def fake_create(**kwargs):
         return _mock_llm_response("this is not json at all")
 
-    monkeypatch.setattr(answer, "llm_client", lambda: SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
-    ))
+    monkeypatch.setattr(
+        answer,
+        "llm_client",
+        lambda: SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+        ),
+    )
 
     with caplog.at_level(logging.WARNING):
         source, queries = asyncio.run(answer.plan("What is the search function?"))
@@ -155,9 +157,13 @@ def test_plan_falls_back_on_missing_keys(monkeypatch, caplog):
     async def fake_create(**kwargs):
         return _mock_llm_response('{"unexpected_key": "value"}')
 
-    monkeypatch.setattr(answer, "llm_client", lambda: SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
-    ))
+    monkeypatch.setattr(
+        answer,
+        "llm_client",
+        lambda: SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+        ),
+    )
 
     with caplog.at_level(logging.WARNING):
         source, queries = asyncio.run(answer.plan("original question"))
@@ -170,9 +176,13 @@ def test_plan_succeeds_on_valid_json(monkeypatch):
     async def fake_create(**kwargs):
         return _mock_llm_response('{"source": "code", "queries": ["q1", "q2"]}')
 
-    monkeypatch.setattr(answer, "llm_client", lambda: SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
-    ))
+    monkeypatch.setattr(
+        answer,
+        "llm_client",
+        lambda: SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+        ),
+    )
 
     source, queries = asyncio.run(answer.plan("some question"))
     assert source == "code"

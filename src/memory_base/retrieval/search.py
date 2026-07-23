@@ -15,7 +15,7 @@ from typing import Any
 
 import asyncpg
 
-from memory_base.common import DB_URL, PG_SCHEMA, RERANK_MODEL, VllmEmbedder
+from memory_base.common import DB_URL, PG_SCHEMA, RERANK_MODEL, VllmEmbedder, vector_literal
 
 RRF_K = 60
 CANDIDATES_PER_SIGNAL = 50
@@ -34,6 +34,10 @@ class Hit:
     rrf: float = 0.0
     rerank_score: float | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def score(self) -> float:
+        return self.rerank_score if self.rerank_score is not None else self.rrf
 
 
 def _rrf_fuse(lists: list[list[Any]]) -> dict[Any, float]:
@@ -201,7 +205,7 @@ async def search(
 ) -> list[Hit]:
     embedder = VllmEmbedder()
     qvec = await embedder.embed(query, query=True)
-    qvec_lit = "[" + ",".join(f"{x:.6f}" for x in qvec.astype(float)) + "]"
+    qvec_lit = vector_literal(qvec)
 
     conn = await asyncpg.connect(DB_URL)
     try:
@@ -230,8 +234,7 @@ async def _main() -> None:
     args = ap.parse_args()
 
     for h in await search(args.query, source=args.source, rerank=not args.no_rerank):
-        score = h.rerank_score if h.rerank_score is not None else h.rrf
-        print(f"[{score:.4f}] ({h.source}) {h.ref}")
+        print(f"[{h.score:.4f}] ({h.source}) {h.ref}")
         print("    " + h.text[:300].replace("\n", "\n    "))
         print("---")
 
