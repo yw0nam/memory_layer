@@ -187,3 +187,43 @@ def test_history_reexports_source_neutral_names():
     assert Message is not None
     assert Session is not None
     assert Burst is not None
+
+
+# ---- emit_bursts toggle (Issue #17) ------------------------------------
+
+
+class NoBurstAdapter(FakeAdapter):
+    emit_bursts = False
+
+
+def _burst_distillation():
+    return parse_distillation(
+        {
+            "one_line_question": "How should the burst gate treat short error bursts?",
+            "summary": "Discussed lowering min_chars or bypassing on tool_error.",
+            "resolution": "Bypass planned as a follow-up.",
+            "references": ["ingest/history.py"],
+            "decisions": ["Use Traceback text plus tool_error as the bypass signal."],
+        }
+    )
+
+
+def test_emit_bursts_defaults_true_and_claude_code_opts_out():
+    from memory_base.adapters.claude_code import ClaudeCodeAdapter
+
+    assert FakeAdapter.emit_bursts is True
+    assert ClaudeCodeAdapter.emit_bursts is False
+
+
+def test_build_rows_honors_emit_bursts_toggle():
+    session = _fake_session()
+    distillation = _burst_distillation()
+
+    # n < 20 makes passes_burst_gate return True unconditionally, so these
+    # bursts genuinely pass the gate under the default (emit_bursts) adapter.
+    emitted = build_rows(session, distillation, FakeAdapter(), dfs={}, n=1)
+    assert any(row["kind"] == "burst" for row in emitted)
+
+    suppressed = build_rows(session, distillation, NoBurstAdapter(), dfs={}, n=1)
+    assert not any(row["kind"] == "burst" for row in suppressed)
+    assert {row["kind"] for row in suppressed} == {"session", "decision"}
