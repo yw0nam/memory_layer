@@ -10,7 +10,7 @@ bind address (defaults 0.0.0.0:8765).
 
 Register with Claude Code:
     stdio (local):
-        claude mcp add memory-base -- uv --directory <절대경로> run python -m memory_base.serve.mcp_server
+        claude mcp add memory-base -- uv --directory <absolute-path> run python -m memory_base.serve.mcp_server
     SSE (Docker):
         claude mcp add --transport sse memory-base http://localhost:8765/sse
 
@@ -182,9 +182,10 @@ async def save_memory(
 
 
 def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:
-    """(transport, host, port). MCP_TRANSPORT: stdio(기본)|sse|streamable-http.
+    """Return (transport, host, port) from the MCP environment settings.
 
-    MCP_HOST 기본 "0.0.0.0", MCP_PORT 기본 8765. 잘못된 transport 값이면 ValueError.
+    MCP_TRANSPORT defaults to stdio; MCP_HOST defaults to "0.0.0.0"; MCP_PORT
+    defaults to 8765. An invalid transport value raises ValueError.
     """
     transport = env.get("MCP_TRANSPORT", "stdio").lower()
     if transport not in ("stdio", "sse", "streamable-http"):

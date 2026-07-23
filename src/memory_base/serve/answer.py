@@ -1,6 +1,6 @@
 """Query -> Planner(source selection) -> Executor(hybrid search) -> Synthesis(cited answer) CLI.
 
-uv run python -m memory_base.serve.answer "질문" [--source auto|code|history|all]
+uv run python -m memory_base.serve.answer "question" [--source auto|code|history|all]
 """
 
 from __future__ import annotations
@@ -15,25 +15,29 @@ from memory_base.retrieval.search import Hit, search
 
 EVIDENCE_TEXT_LIMIT = 2000
 
-PLANNER_SYSTEM_PROMPT = """당신은 검색 플래너입니다. 사용자 질의를 보고 어떤 소스를 검색할지,
-그리고 검색에 쓸 질의 1~3개를 정합니다.
+PLANNER_SYSTEM_PROMPT = """You are a search planner. Select which source to search and
+produce one to three search-friendly queries for the user's question.
 
-- 질의가 코드 구조/구현 위치를 묻는 질문이면 source="code".
-- "예전에", "그때", "어떻게 풀었지" 류의 과거 대화/작업 회고 질문이면 source="history".
-- 둘 다 해당하거나 애매하면 source="all".
-- queries는 원 질의를 검색 친화적으로 변형한 것들이며, 원 질의 자체도 반드시 포함해야 합니다.
+- Use source="code" for questions about code structure or implementation locations.
+- Use source="history" for retrospective questions about past conversations or work,
+  such as how something was solved or what was decided previously.
+- Use source="all" when both sources apply or the choice is ambiguous.
+- Search queries are ALWAYS English, regardless of the question language. Translate the
+  user's intent into English because the FTS index contains English text.
 
-다음 JSON 형식으로만 답하세요: {"source": "code"|"history"|"all", "queries": ["...", ...]}
+Return only this JSON format: {"source": "code"|"history"|"all", "queries": ["...", ...]}
 """
 
-SYNTHESIS_SYSTEM_PROMPT = """당신은 제공된 증거를 바탕으로 질문에 답하는 어시스턴트입니다.
+SYNTHESIS_SYSTEM_PROMPT = """You are an assistant that answers questions from the
+provided evidence.
 
-원칙:
-- 제공된 증거만 사용하여 답변할 것. 증거에 없는 내용을 추측하지 말 것.
-- 각 주장 뒤에는 근거가 된 증거 번호를 [1][2] 형태로 인용할 것.
-- 증거가 부족하면 부족하다고 명시할 것.
-- 오래된 정보와 최신 정보가 충돌하면 최신 정보를 우선하고, 그 사실을 주의사항으로 표기할 것.
-- 반드시 한국어로 답변할 것.
+Rules:
+- Use only the provided evidence. Do not speculate beyond it.
+- Cite the supporting evidence number after each claim in the form [1][2].
+- Explicitly state when the evidence is insufficient.
+- When older and newer evidence conflict, prefer the newer evidence and note the conflict
+  as a caution.
+- Always answer in English.
 """
 
 
@@ -75,13 +79,13 @@ def format_evidence_block(hits: list[Hit]) -> str:
         ]
         context = h.meta.get("context") if h.source == "code" else None
         if context:
-            block.append(f"(주변 맥락)\n{context}")
+            block.append(f"(Surrounding context)\n{context}")
         parts.append("\n".join(block))
     return "\n\n".join(parts)
 
 
 def format_references_section(hits: list[Hit]) -> str:
-    lines = ["참조:"]
+    lines = ["References:"]
     for i, h in enumerate(hits, start=1):
         lines.append(f"[{i}] {h.ref}")
     return "\n".join(lines)
@@ -102,9 +106,9 @@ async def plan(query: str) -> tuple[str, list[str]]:
     source = data.get("source", "all")
     if source not in ("code", "history", "all"):
         source = "all"
+    # Fallback keeps retrieval alive when the planner returns no queries; the
+    # vector leg is multilingual, so even a non-English original still works.
     queries = data.get("queries") or [query]
-    if query not in queries:
-        queries = [query, *queries]
     return source, queries[:3]
 
 
@@ -116,9 +120,9 @@ async def execute(source: str, queries: list[str]) -> list[Hit]:
 
 
 async def synthesize(query: str, hits: list[Hit]) -> str:
-    """LLM call: cited Korean answer from evidence blocks."""
+    """LLM call: cited English answer from evidence blocks."""
     client = llm_client()
-    user_content = f"{format_evidence_block(hits)}\n\n질문: {query}"
+    user_content = f"{format_evidence_block(hits)}\n\nQuestion: {query}"
     resp = await client.chat.completions.create(
         model=LLM_MODEL,
         messages=[
@@ -138,7 +142,7 @@ async def answer(query: str, source: str = "auto") -> str:
 
     hits = await execute(decided_source, queries)
     if not hits:
-        return "관련 증거를 찾지 못했습니다."
+        return "No relevant evidence was found."
     return await synthesize(query, hits)
 
 
