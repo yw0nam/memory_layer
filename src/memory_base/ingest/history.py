@@ -167,37 +167,6 @@ def passes_burst_gate(
     return burst_score(mean_idf_value, has_social) >= 4.0
 
 
-def _valid_session(session: Session) -> bool:
-    return len(session.messages) >= 5 and sum(len(m.text) for m in session.messages) >= 500
-
-
-async def _triage_llm(session: Session) -> bool:
-    prompt = (
-        "Determine whether the following agent session is worth retrieving later "
-        "to answer a how-did-we-solve-this question. Return only a JSON object using this "
-        'schema: {"keep":true|false,"reason":"reason for the judgment in English"}\n\n'
-        + session.transcript[:3_000]
-    )
-    try:
-        response = await asyncio.wait_for(
-            llm_client().chat.completions.create(
-                model=LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                temperature=0,
-            ),
-            timeout=SERVICE_TIMEOUT_SECONDS,
-        )
-        content = response.choices[0].message.content or ""
-        parsed = json.loads(content)
-        if not isinstance(parsed.get("keep"), bool):
-            raise ValueError("LLM triage omitted boolean keep")
-        return parsed["keep"]
-    except Exception as exc:
-        LOGGER.warning("triage failed for %s; keeping session: %s", session.session_id, exc)
-        return True
-
-
 def parse_distillation(parsed: dict[str, Any]) -> Distillation:
     question = str(parsed.get("one_line_question") or "").strip()
     summary = str(parsed.get("summary") or "").strip()
@@ -264,13 +233,8 @@ def build_rows(
     dfs: dict[str, int],
     n: int,
 ) -> list[dict[str, Any]]:
-    file = getattr(session, "_source_file", None)
-    path = file.path if file is not None else None
-    source_ref = (
-        f"{path.parent.name}/{session.session_id}" if path is not None else session.session_id
-    )
+    source_ref = session.session_id
     metadata = {
-        "file_path": str(path) if path is not None else "",
         "cwd": session.messages[-1].cwd,
         "git_branch": session.messages[-1].git_branch,
         "tool_names": sorted(set(session.tool_names)),

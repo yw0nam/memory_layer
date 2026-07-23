@@ -101,7 +101,7 @@ async def save_memory(
     `content` MUST be written in English regardless of the conversation
     language, and be already distilled (the server does no summarization).
     `kind` is "note" (default) or "decision". `tags` are optional labels.
-    `supersedes` archives an older note; `similar` hints identify related notes.
+    `supersedes` archives an older note by id.
 
     `stored` is False when identical content was already saved (idempotent no-op).
     """

@@ -29,7 +29,7 @@ Three core design philosophies (inherited directly from Cerebras):
 | Internal wiki · Docs · Jira | Lower-priority sources (Gmail · GDrive · n8n · Slack · wiki) — added via connectors |
 | `who_knows` (expert search) | Unnecessary at personal scope. Instead, **"how did I solve this problem before?"** (episodic memory) takes that place |
 
-**Memory-system perspective**: Agent conversation history corresponds to **episodic + procedural memory** in the standard memory taxonomy (semantic/episodic/procedural/working). Claude Code deletes transcripts after 30 days by default (`cleanupPeriodDays`), so distilling and loading them into this system makes them **permanent long-term memory beyond the 30-day window** — this is the core motivation behind the name "memory system".
+**Memory-system perspective**: Agent conversation history corresponds to **episodic + procedural memory** in the standard memory taxonomy (semantic/episodic/procedural/working). Claude Code deletes transcripts after 30 days by default (`cleanupPeriodDays`), so an agent that saves its own distilled decisions and notes into this system through `save_memory` keeps them as **permanent long-term memory beyond the 30-day window** — this is the core motivation behind the name "memory system".
 
 ---
 
@@ -47,12 +47,12 @@ Source → Ingest → Distill → [single embedding table] → Hybrid search →
 flowchart TD
     subgraph SRC["① Sources (by priority)"]
       A1[Code repositories<br/>git repos]
-      A2[Agent history<br/>Claude Code JSONL · Hermes · SQLite]
+      A2[Agent consoles<br/>Claude Code · Hermes]
       A3[Lower priority: n8n · Gmail · GDrive · Slack · wiki]
     end
-    subgraph ING["② Ingest (connector / plugin scripts)"]
+    subgraph ING["② Ingest"]
       B1[CocoIndex<br/>Tree-sitter incremental]
-      B2[History parser<br/>session→thread reconstruction]
+      B2[MCP save_memory<br/>agent-distilled notes/decisions]
       B3[Custom connector]
     end
     subgraph DIST["③ Distillation (LLM structuring)"]
@@ -90,10 +90,8 @@ flowchart TD
 **① Sources & ② Ingest**
 
 - **Code repositories (priority 1)**: Adopt **CocoIndex**. As of 2026, it chunks via Tree-sitter (syntax-accurate) plus language-specific regex boundaries, and is an incremental engine that **re-embeds only changed chunks**. It tracks sync metadata in Postgres, so it can live in the same DB as the embedding store. Generates **multi-granularity** embeddings at file level, function level, etc.
-- **Agent history (priority 1, custom DB)**: Handled by a custom **plugin script** (exactly Cerebras's custom-source approach).
-  - Claude Code: `~/.claude/projects/<encoded-path>/<session-id>.jsonl` — each line is `{type: user|assistant|tool, content, timestamp, sessionId, cwd}`. Global index `~/.claude/history.jsonl`, meta `sessions-index.json` (summary · message count · git branch).
-  - Hermes / others: JSON or SQLite. Once a single adapter emits "rows in the shape of our embedding table" per source, the rest of the stack stays unchanged.
-  - Treat **session = Slack thread** → reconstruct the whole session into one conversation state and store it as a single row (isomorphic to Cerebras thread reconstruction).
+- **Agent history (priority 1)**: interactive agent consoles (Claude Code, Hermes) contribute directly through the MCP realtime channel — the `save_memory` tool stores a distilled note or decision the agent already wrote in English; there is no batch file parsing. A source-agnostic selection core (triage → burst gate → distillation) and an adapter ABC contract stay in-tree for future batch corpus sources (e.g. Slack) that are not files an interactive agent already has open.
+  - Treat **session = Slack thread** → reconstruct the whole session into one conversation state and store it as a single row (isomorphic to Cerebras thread reconstruction) — applies to any future batch adapter.
 - **Lower-priority sources**: n8n (workflow logs/notes), Gmail, GDrive, Slack, wiki → each added via a connector. It's done once they all write **identical-schema rows** to the shared DB (plugin architecture).
 
 **③ Distillation (LLM structuring)** — the biggest lever on accuracy
@@ -159,7 +157,7 @@ Each phase is **a system that works on its own**, and the next phase inherits an
 - **Done when**: code search like "where is this function defined?" gives semantically better results than grep.
 
 ### Phase 1 — Agent memory ingest + distillation (PIKE-RAG L1 factual)
-- History parser (Claude Code JSONL / SQLite → standard rows) + session=thread reconstruction.
+- Source-agnostic selection core (triage → burst gate → distillation) + session=thread reconstruction, fed by agent consoles through the MCP `save_memory` tool.
 - **LLM distillation** (one-line question · summary · resolution · references) + **bursting** (tool-success/re-ask weighting).
 - Hybrid search (FTS + embedding + IDF + time decay) running.
 - **Done when**: "how did I solve that build error last month?" summons the exact past session.
@@ -206,7 +204,7 @@ Each phase is **a system that works on its own**, and the next phase inherits an
 - **Voyage rerank-2.5 / rerank-2.5-lite**: instruction-following rerankers (current generation).
 - Open-weight embeddings: **Qwen3-Embedding-8B** is near the top of the open-weight MTEB v2 leaderboard (~75%), and **Gemini Embedding 2** is rated top-tier overall.
 - **CocoIndex** (active in 2026): Tree-sitter syntactic chunking + incremental (changed files only) + Postgres lineage. Positioned as an "incremental engine for long-horizon agents".
-- **Claude Code history**: `~/.claude/projects/<encoded-path>/<session-id>.jsonl`, JSON per line (type · content · timestamp · sessionId · cwd), global `history.jsonl` + `sessions-index.json` (summary · message count · git branch). **Deleted after 30 days by default** (`cleanupPeriodDays`) → becomes permanent memory once loaded into the KB.
+- **Claude Code history**: session transcripts are **deleted after 30 days by default** (`cleanupPeriodDays`) — a distilled note the agent saves via `save_memory` during the session survives as permanent memory beyond that window.
 - Standard agent-memory taxonomy: semantic · episodic · procedural · working → this system maps code = semantic/procedural, agent history = episodic/procedural.
 
 ---
