@@ -95,7 +95,9 @@ many diverse questions as possible. At most {max_sub} sub-questions.
 
 # Output Format
 Output JSON with keys:
-- "continue": boolean, true if more evidence is needed
+- "continue": boolean, true if more evidence is needed. Set it to false only when \
+the evidence already covers every entity and fact the question asks about; if any \
+part of the question is still uncovered, set it to true.
 - "sub_questions": list of up to {max_sub} English sub-questions
 
 # Context (evidence gathered so far)
@@ -109,8 +111,9 @@ _SELECT_SYSTEM = "You are a helpful AI assistant on question answering."
 _SELECT_USER = """\
 # Task
 Analyse the providing context then decide which candidate may be useful to answer \
-the question. Select the most relevant candidate. Avoid candidates already covered \
-by the context.
+the question. Prefer the candidate that fills a part of the question the context \
+does not yet cover. Return null only when no candidate adds any missing \
+information.
 
 # Output Format
 Output JSON with key:
@@ -192,6 +195,7 @@ async def _llm_complete(llm: Any, messages: list[dict], deadline: float) -> str:
                 model=LLM_MODEL,
                 messages=messages,
                 response_format={"type": "json_object"},
+                temperature=0.0,
             ),
             timeout=min(SERVICE_TIMEOUT_SECONDS, remaining),
         )

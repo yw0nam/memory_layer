@@ -20,6 +20,7 @@ import asyncpg
 
 from memory_base import common, schema as schema_module
 from memory_base.common import DB_URL, EMB_MODEL, RERANK_MODEL
+from memory_base.retrieval import decompose as decompose_module
 from memory_base.retrieval import search as search_module
 from memory_base.retrieval.decompose import deep_search
 from memory_base.serve import ingest_api
@@ -148,7 +149,7 @@ def load_labels(path: Path = LABELS_PATH) -> list[EvalLabel]:
 
 
 def _set_schema(schema_name: str) -> dict[Any, str]:
-    modules = (common, schema_module, ingest_api, search_module)
+    modules = (common, schema_module, ingest_api, search_module, decompose_module)
     previous = {module: module.PG_SCHEMA for module in modules}
     for module in modules:
         module.PG_SCHEMA = schema_name

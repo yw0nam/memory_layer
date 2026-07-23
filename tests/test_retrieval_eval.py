@@ -231,3 +231,15 @@ def test_baseline_search_kwargs_are_pinned():
         "rerank": True,
         "include_archived": False,
     }
+
+
+def test_set_schema_covers_every_query_module():
+    from memory_base.eval import retrieval as eval_module
+
+    previous = eval_module._set_schema("scratch_test_schema")
+    try:
+        assert eval_module.decompose_module.PG_SCHEMA == "scratch_test_schema"
+        assert eval_module.search_module.PG_SCHEMA == "scratch_test_schema"
+    finally:
+        eval_module._restore_schema(previous)
+    assert eval_module.decompose_module.PG_SCHEMA != "scratch_test_schema"
