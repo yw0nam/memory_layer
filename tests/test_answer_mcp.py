@@ -154,8 +154,8 @@ def test_hit_to_dict_truncates_text_and_includes_context():
 # ---- MCP server in-process tool registration --------------------------------
 
 
-def test_mcp_server_registers_three_search_tools(monkeypatch):
-    """Verify tools/list exposes search, search_code, search_history in-process.
+def test_mcp_server_registers_expected_tools(monkeypatch):
+    """Verify tools/list exposes the search tools plus save_memory in-process.
 
     Uses mcp.shared.memory.create_connected_server_and_client_session to spin
     up an in-memory client/server pair (no subprocess, no stdio). We
@@ -175,4 +175,4 @@ def test_mcp_server_registers_three_search_tools(monkeypatch):
             return {t.name for t in result.tools}
 
     names = asyncio.run(_run())
-    assert names == {"search", "search_code", "search_history"}
+    assert names == {"search", "search_code", "search_history", "save_memory"}
