@@ -5,5 +5,5 @@ COPY pyproject.toml uv.lock ./
 COPY src/ src/
 RUN uv sync --frozen --no-dev
 ENV MCP_TRANSPORT=sse
-EXPOSE 8765
+EXPOSE 8010 8765
 CMD ["uv", "run", "--no-sync", "python", "-m", "memory_base.serve.mcp_server"]

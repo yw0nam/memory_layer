@@ -76,10 +76,11 @@ def test_fts_exact_literal_hits_file_containing_it():
 # ---- MCP in-process tool call ----------------------------------------------
 
 
-def test_mcp_search_code_tool_real_call_returns_expected_schema():
-    """Calls the real search_code tool in-process (no monkeypatch) via
-    mcp.shared.memory.create_connected_server_and_client_session, exercising
-    the full search.search() pipeline including the reranker.
+def test_mcp_search_code_tool_real_call_returns_expected_schema(rest_in_process):
+    """Calls the real search_code tool in-process via
+    mcp.shared.memory.create_connected_server_and_client_session; the proxy
+    routes through the in-process REST app, exercising the full
+    search.search() pipeline including the reranker.
     """
     from mcp.shared.memory import create_connected_server_and_client_session
 

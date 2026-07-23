@@ -2,10 +2,9 @@
 
 Pure tests pin build_note_row's id scheme, row shape, and validation with no
 DB/embedder/network. Integration tests (marked ``integration``, skipped when the
-DB is unreachable) call the real tool against Postgres + embedder and clean up
-every row they insert so reruns stay stable.
-
-Collection fails today: build_note_row / save_memory don't exist yet.
+DB is unreachable) call the real tool through the in-process REST app
+(``rest_in_process`` fixture) against Postgres + embedder and clean up every
+row they insert so reruns stay stable.
 """
 
 from __future__ import annotations
@@ -19,7 +18,8 @@ import asyncpg
 
 from memory_base.common import DB_URL, PG_SCHEMA
 from memory_base.retrieval.search import search
-from memory_base.serve.mcp_server import build_note_row, save_memory
+from memory_base.serve.mcp_server import save_memory
+from memory_base.serve.notes import build_note_row
 
 NOW = 1_700_000_000.0
 ID_RE = re.compile(r"^note:[0-9a-f]{16}$")
@@ -156,7 +156,7 @@ async def _count(note_id: str) -> int:
 
 @pytest.mark.integration
 @requires_db
-def test_save_memory_stores_row_in_db():
+def test_save_memory_stores_row_in_db(rest_in_process):
     content = "save_memory integration: notes are stored without LLM distillation"
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete(note_id))
@@ -180,7 +180,7 @@ def test_save_memory_stores_row_in_db():
 
 @pytest.mark.integration
 @requires_db
-def test_save_memory_duplicate_is_noop():
+def test_save_memory_duplicate_is_noop(rest_in_process):
     content = "save_memory integration: re-saving identical content is idempotent"
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete(note_id))
@@ -196,7 +196,7 @@ def test_save_memory_duplicate_is_noop():
 
 @pytest.mark.integration
 @requires_db
-def test_saved_note_found_by_search():
+def test_saved_note_found_by_search(rest_in_process):
     content = "save_memory integration: pgvector halfvec powers hybrid retrieval search"
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete(note_id))

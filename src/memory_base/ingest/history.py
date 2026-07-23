@@ -22,13 +22,21 @@ import asyncpg
 from memory_base.adapters import ADAPTERS
 from memory_base.adapters.base import Burst, Message, Session, SourceAdapter, SourceFile
 from memory_base.adapters.claude_code import parse_jsonl as parse_jsonl
-from memory_base.common import DB_URL, LLM_MODEL, PG_SCHEMA, VllmEmbedder, llm_client
+from memory_base.common import (
+    DB_URL,
+    LLM_MODEL,
+    PG_SCHEMA,
+    SERVICE_TIMEOUT_SECONDS,
+    VllmEmbedder,
+    llm_client,
+)
+from memory_base.common import embed_text as _embed
+from memory_base.schema import ensure_schema as _ensure_schema
 
 LOGGER = logging.getLogger("history_index")
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,}|[\uac00-\ud7a3]{2,}")
 TRUNCATION_MARKER = "\n...[truncated]...\n"
 ACTIVE_WINDOW_SECONDS = 10 * 60
-SERVICE_TIMEOUT_SECONDS = 120
 
 
 @dataclass
@@ -259,45 +267,6 @@ async def _distill(session: Session, semaphore: asyncio.Semaphore) -> Distillati
             session.session_id,
         )
     return parse_distillation(parsed)
-
-
-def _vector_literal(vector: Any) -> str:
-    return "[" + ",".join(f"{value:.6f}" for value in vector.astype(float)) + "]"
-
-
-async def _embed(embedder: VllmEmbedder, text: str) -> str:
-    vector = await asyncio.wait_for(embedder.embed(text), timeout=SERVICE_TIMEOUT_SECONDS)
-    return _vector_literal(vector)
-
-
-async def _ensure_schema(conn: asyncpg.Connection) -> None:
-    schema = f'"{PG_SCHEMA}"'
-    await conn.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {schema}.memory_chunks (
-          id text PRIMARY KEY, source_type text NOT NULL, source_ref text NOT NULL,
-          chunk_kind text NOT NULL, session_id text NOT NULL, content_raw text NOT NULL,
-          distilled text, embedding halfvec(2048) NOT NULL,
-          ts_last_active double precision NOT NULL, idf_score double precision,
-          metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb
-        );
-        CREATE INDEX IF NOT EXISTS memory_chunks__fts ON {schema}.memory_chunks
-          USING GIN (to_tsvector('simple', content_raw));
-        CREATE INDEX IF NOT EXISTS memory_chunks__vec ON {schema}.memory_chunks
-          USING hnsw (embedding halfvec_cosine_ops);
-        CREATE INDEX IF NOT EXISTS memory_chunks__session ON {schema}.memory_chunks (session_id);
-        CREATE TABLE IF NOT EXISTS {schema}.ingest_state (
-          file_path text PRIMARY KEY, mtime double precision NOT NULL,
-          size bigint NOT NULL, ingested_at double precision NOT NULL
-        );
-        DROP TABLE IF EXISTS {schema}.df_stats;
-        DROP TABLE IF EXISTS {schema}.history_session_tokens;
-        CREATE TABLE IF NOT EXISTS {schema}.history_file_sessions (
-          file_path text NOT NULL, session_id text NOT NULL,
-          PRIMARY KEY (file_path, session_id)
-        );
-        """
-    )
 
 
 async def _old_session_ids(conn: asyncpg.Connection, file_path: str) -> list[str]:

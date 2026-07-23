@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import numpy as np
@@ -18,6 +19,7 @@ EMB_DIM = 2048  # Qwen3-VL-Embedding-2B, no matryoshka -> halfvec(2048) in pgvec
 
 DB_URL = os.getenv("DB_URL", "postgres://memory:memory@localhost:5439/memory_base")
 PG_SCHEMA = "memory"
+SERVICE_TIMEOUT_SECONDS = 120
 
 # Qwen3 embedding convention: instruction-prefixed query, raw document.
 _QUERY_PREFIX = (
@@ -50,3 +52,13 @@ class VllmEmbedder:
             text = _QUERY_PREFIX + text
         r = await self._client.embeddings.create(model=EMB_MODEL, input=text)
         return np.asarray(r.data[0].embedding, dtype=np.float16)
+
+
+def vector_literal(vector: NDArray) -> str:
+    return "[" + ",".join(f"{value:.6f}" for value in vector.astype(float)) + "]"
+
+
+async def embed_text(embedder: VllmEmbedder, text: str) -> str:
+    """Embed text and return it as a pgvector halfvec literal."""
+    vector = await asyncio.wait_for(embedder.embed(text), timeout=SERVICE_TIMEOUT_SECONDS)
+    return vector_literal(vector)
