@@ -32,6 +32,8 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           ADD COLUMN IF NOT EXISTS last_hit_at double precision;
         ALTER TABLE {schema}.memory_chunks
           ADD COLUMN IF NOT EXISTS hit_count bigint NOT NULL DEFAULT 0;
+        ALTER TABLE {schema}.memory_chunks
+          ADD COLUMN IF NOT EXISTS archived_at double precision;
         CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
           id bigserial PRIMARY KEY,
           query text NOT NULL,

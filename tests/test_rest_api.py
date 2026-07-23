@@ -99,7 +99,7 @@ def test_search_invalid_source_400():
 def test_search_returns_hit_to_dict_shape(monkeypatch):
     hits = [_hit(source="code", ref="a.py:L1-L2", text="x", rrf=0.5, rerank_score=0.9)]
 
-    async def fake_search(query, source="all"):
+    async def fake_search(query, source="all", include_archived=False):
         return hits
 
     monkeypatch.setattr(api, "search", fake_search)
@@ -113,7 +113,7 @@ def test_search_returns_hit_to_dict_shape(monkeypatch):
 def test_search_defaults_source_to_all(monkeypatch):
     captured = {}
 
-    async def fake_search(query, source="all"):
+    async def fake_search(query, source="all", include_archived=False):
         captured["query"] = query
         captured["source"] = source
         return []
@@ -128,7 +128,7 @@ def test_search_defaults_source_to_all(monkeypatch):
 def test_search_passes_requested_source_through(monkeypatch):
     captured = {}
 
-    async def fake_search(query, source="all"):
+    async def fake_search(query, source="all", include_archived=False):
         captured["source"] = source
         return []
 
@@ -141,7 +141,7 @@ def test_search_passes_requested_source_through(monkeypatch):
 def test_search_default_top_k_is_10(monkeypatch):
     hits = [_hit(ref=f"f{i}.py:L1-L2", rrf=float(i)) for i in range(15)]
 
-    async def fake_search(query, source="all"):
+    async def fake_search(query, source="all", include_archived=False):
         return hits
 
     monkeypatch.setattr(api, "search", fake_search)
@@ -153,7 +153,7 @@ def test_search_default_top_k_is_10(monkeypatch):
 def test_search_respects_custom_top_k(monkeypatch):
     hits = [_hit(ref=f"f{i}.py:L1-L2", rrf=float(i)) for i in range(5)]
 
-    async def fake_search(query, source="all"):
+    async def fake_search(query, source="all", include_archived=False):
         return hits
 
     monkeypatch.setattr(api, "search", fake_search)
@@ -194,17 +194,35 @@ def test_save_memory_bad_kind_400():
 def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
     captured = {}
 
-    async def fake_save_note(content, kind="note", tags=None):
+    async def fake_save_note(content, kind="note", tags=None, supersedes=None):
         captured["content"] = content
         captured["kind"] = kind
         captured["tags"] = tags
-        return {"id": "note:deadbeefdeadbeef", "kind": kind, "stored": True}
+        captured["supersedes"] = supersedes
+        return {
+            "id": "note:deadbeefdeadbeef",
+            "kind": kind,
+            "stored": True,
+            "superseded": None,
+            "similar": [],
+        }
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post("/save_memory", json={"content": "distilled note text"})
     assert response.status_code == 200
-    assert response.json() == {"id": "note:deadbeefdeadbeef", "kind": "note", "stored": True}
-    assert captured == {"content": "distilled note text", "kind": "note", "tags": None}
+    assert response.json() == {
+        "id": "note:deadbeefdeadbeef",
+        "kind": "note",
+        "stored": True,
+        "superseded": None,
+        "similar": [],
+    }
+    assert captured == {
+        "content": "distilled note text",
+        "kind": "note",
+        "tags": None,
+        "supersedes": None,
+    }
 
 
 def test_save_memory_malformed_json_400():

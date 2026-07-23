@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from typing import Any
 
@@ -14,6 +15,8 @@ from memory_base.schema import ensure_schema
 
 NOTE_MAX_CHARS = 4000
 NOTE_KINDS = ("note", "decision")
+NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
+TEXT_LIMIT = 2000
 
 
 def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) -> dict[str, Any]:
@@ -41,7 +44,10 @@ def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) 
 
 
 async def save_note(
-    content: str, kind: str = "note", tags: list[str] | None = None
+    content: str,
+    kind: str = "note",
+    tags: list[str] | None = None,
+    supersedes: str | None = None,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory."""
     row = build_note_row(content, kind, tags, time.time())
@@ -49,26 +55,75 @@ async def save_note(
     conn = await asyncpg.connect(DB_URL)
     try:
         await ensure_schema(conn)
-        status = await conn.execute(
-            f"""
-            INSERT INTO "{PG_SCHEMA}".memory_chunks
-              (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-               distilled, embedding, ts_last_active, idf_score, metadata)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            row["id"],
-            row["source_type"],
-            row["source_ref"],
-            row["kind"],
-            row["session_id"],
-            row["raw"],
-            row["distilled"],
-            embedding,
-            row["timestamp"],
-            row["idf"],
-            json.dumps(row["metadata"], ensure_ascii=False),
-        )
+        async with conn.transaction():
+            if supersedes is not None:
+                exists = await conn.fetchval(
+                    f"""
+                    SELECT EXISTS(
+                      SELECT 1 FROM "{PG_SCHEMA}".memory_chunks
+                      WHERE id = $1 AND source_type = 'agent_note'
+                    )
+                    """,
+                    supersedes,
+                )
+                if not exists:
+                    raise ValueError(f"unknown supersedes id: {supersedes}")
+
+            status = await conn.execute(
+                f"""
+                INSERT INTO "{PG_SCHEMA}".memory_chunks
+                  (id, source_type, source_ref, chunk_kind, session_id, content_raw,
+                   distilled, embedding, ts_last_active, idf_score, metadata)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                row["id"],
+                row["source_type"],
+                row["source_ref"],
+                row["kind"],
+                row["session_id"],
+                row["raw"],
+                row["distilled"],
+                embedding,
+                row["timestamp"],
+                row["idf"],
+                json.dumps(row["metadata"], ensure_ascii=False),
+            )
+            if supersedes is not None:
+                await conn.execute(
+                    f"""
+                    UPDATE "{PG_SCHEMA}".memory_chunks
+                    SET archived_at = $2
+                    WHERE id = $1
+                    """,
+                    supersedes,
+                    row["timestamp"],
+                )
+            excluded_ids = [row["id"]]
+            if supersedes is not None:
+                excluded_ids.append(supersedes)
+            similar_rows = await conn.fetch(
+                f"""
+                SELECT id, 1 - (embedding <=> $1::halfvec) AS score,
+                       left(content_raw, {TEXT_LIMIT}) AS text
+                FROM "{PG_SCHEMA}".memory_chunks
+                WHERE source_type = 'agent_note'
+                  AND archived_at IS NULL
+                  AND id <> ALL($2::text[])
+                  AND 1 - (embedding <=> $1::halfvec) > $3
+                ORDER BY score DESC
+                LIMIT 3
+                """,
+                embedding,
+                excluded_ids,
+                NOTE_SIMILAR_THRESHOLD,
+            )
     finally:
         await conn.close()
-    return {"id": row["id"], "kind": row["kind"], "stored": status.endswith(" 1")}
+    return {
+        "id": row["id"],
+        "kind": row["kind"],
+        "stored": status.endswith(" 1"),
+        "superseded": supersedes,
+        "similar": [dict(similar) for similar in similar_rows],
+    }

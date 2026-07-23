@@ -86,7 +86,10 @@ async def search_history(query: str, top_k: int = 10) -> list[dict[str, Any]]:
 
 @mcp.tool()
 async def save_memory(
-    content: str, kind: str = "note", tags: list[str] | None = None
+    content: str,
+    kind: str = "note",
+    tags: list[str] | None = None,
+    supersedes: str | None = None,
 ) -> dict[str, Any]:
     """Store a distilled memory worth recalling in a future session.
 
@@ -98,13 +101,19 @@ async def save_memory(
     `content` MUST be written in English regardless of the conversation
     language, and be already distilled (the server does no summarization).
     `kind` is "note" (default) or "decision". `tags` are optional labels.
+    `supersedes` archives an older note; `similar` hints identify related notes.
 
-    Returns {"id", "kind", "stored"}; `stored` is False when identical content
-    was already saved (idempotent no-op).
+    `stored` is False when identical content was already saved (idempotent no-op).
     """
     async with _client() as client:
         response = await client.post(
-            "/save_memory", json={"content": content, "kind": kind, "tags": tags}
+            "/save_memory",
+            json={
+                "content": content,
+                "kind": kind,
+                "tags": tags,
+                "supersedes": supersedes,
+            },
         )
         if response.status_code == 400:
             raise ValueError(response.json()["error"])

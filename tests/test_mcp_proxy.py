@@ -118,7 +118,12 @@ def test_save_memory_posts_to_save_memory_and_returns_body(monkeypatch):
     _patch_client(monkeypatch, handler)
     result = asyncio.run(mcp_server.save_memory("distilled content", kind="note", tags=["infra"]))
     assert captured["path"] == "/save_memory"
-    assert captured["json"] == {"content": "distilled content", "kind": "note", "tags": ["infra"]}
+    assert captured["json"] == {
+        "content": "distilled content",
+        "kind": "note",
+        "tags": ["infra"],
+        "supersedes": None,
+    }
     assert result == {"id": "note:abc", "kind": "note", "stored": True}
 
 
