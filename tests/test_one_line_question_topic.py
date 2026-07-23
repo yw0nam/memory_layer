@@ -142,7 +142,16 @@ def test_distill_one_line_question_captures_central_topic_not_opener():
     question = distillation.one_line_question.lower()
 
     docker_keywords = ("docker", "container running", "honcho")
-    topic_keywords = ("retrieval", "pipeline", "search", "vector", "fts", "rrf", "hybrid", "rank fusion")
+    topic_keywords = (
+        "retrieval",
+        "pipeline",
+        "search",
+        "vector",
+        "fts",
+        "rrf",
+        "hybrid",
+        "rank fusion",
+    )
 
     matches_docker = any(kw in question for kw in docker_keywords)
     matches_topic = any(kw in question for kw in topic_keywords)
