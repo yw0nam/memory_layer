@@ -5,7 +5,8 @@ DB/embedder/network. Integration tests (marked ``integration``, skipped when the
 DB is unreachable) call the real tool against Postgres + embedder and clean up
 every row they insert so reruns stay stable.
 
-Collection fails today: build_note_row / save_memory don't exist yet.
+build_note_row lives in memory_base.serve.notes (moved from mcp_server.py per
+docs/specs/impl_rest_api.md); save_memory is still the MCP tool.
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ import asyncpg
 
 from memory_base.common import DB_URL, PG_SCHEMA
 from memory_base.retrieval.search import search
-from memory_base.serve.mcp_server import build_note_row, save_memory
+from memory_base.serve.mcp_server import save_memory
+from memory_base.serve.notes import build_note_row
 
 NOW = 1_700_000_000.0
 ID_RE = re.compile(r"^note:[0-9a-f]{16}$")
