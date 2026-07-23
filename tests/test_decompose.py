@@ -52,7 +52,7 @@ class FakeCompletions:
         self._responses = list(responses)
         self.calls: list = []
 
-    async def create(self, *, model, messages, response_format=None):
+    async def create(self, *, model, messages, response_format=None, temperature=None):
         self.calls.append((model, messages, response_format))
         if not self._responses:
             raise RuntimeError("no more responses")
