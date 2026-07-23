@@ -1,6 +1,6 @@
-"""Unit tests for the pure functions in src/history_index.py not already
-covered by tests/test_history_parse.py: mean_idf, tokenize, build_transcript,
-group_sessions. No DB/LLM/embedding access.
+"""Unit tests for the pure functions in memory_base.ingest.history: mean_idf,
+tokenize, build_transcript, group_sessions, group_bursts. No DB/LLM/embedding
+access.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from memory_base.ingest.history import (
     TRUNCATION_MARKER,
     Message,
     build_transcript,
+    group_bursts,
     group_sessions,
     mean_idf,
     tokenize,
@@ -137,3 +138,34 @@ def test_group_sessions_ignores_none_timestamps_when_computing_max():
     ]
     sessions = group_sessions(msgs, fallback_timestamp=0.0)
     assert sessions[0].ts_last_active == 42.0
+
+
+# ---- group_bursts -------------------------------------------------------
+
+
+def _msg(role: str, text: str, seconds: float, error: bool = False) -> Message:
+    return Message(role=role, text=text, timestamp=seconds, session_id="s1", tool_error=error)
+
+
+def test_group_bursts_concatenates_consecutive_same_role_and_drops_short():
+    bursts = group_bursts(
+        [
+            _msg("user", "가" * 110, 0),
+            _msg("user", "나" * 100, 5),
+            _msg("assistant", "짧음", 10),
+            _msg("user", "다" * 199, 20),
+        ]
+    )
+    assert len(bursts) == 1
+    assert bursts[0].text == "가" * 110 + "\n" + "나" * 100
+
+
+def test_group_bursts_social_weight_tool_error_and_quick_reply():
+    assert group_bursts([_msg("assistant", "x" * 200, 0, error=True)])[0].social_weight == 1.5
+    assert (
+        group_bursts([_msg("assistant", "x" * 200, 0), _msg("user", "y" * 200, 120)])[
+            0
+        ].social_weight
+        == 1.5
+    )
+    assert group_bursts([_msg("assistant", "x" * 200, 0)])[0].social_weight == 1.0

@@ -1,5 +1,5 @@
-"""Pins the source-adapter contract (docs/specs/impl_source_adapters.md) before
-the ``memory_base.adapters`` package exists. No DB/LLM/embedding access.
+"""Pins the source-adapter contract in ``memory_base.adapters``. No DB/LLM/embedding
+access.
 """
 
 from __future__ import annotations
@@ -139,11 +139,9 @@ def test_build_rows_is_source_agnostic_and_pure():
     assert len(session_rows) == 1
     session_row = session_rows[0]
 
-    # build_rows is pure (no network/DB): unlike the row dicts _process_file
-    # writes today, there is no computed "embedding" key here — embedding is
-    # added later by a separate, effectful step. source_type is a new key
-    # (today's writer hardcodes the "claude_code" literal instead) so the
-    # core can label rows without knowing about any specific source.
+    # build_rows is pure (no network/DB): there is no computed "embedding"
+    # key here — embedding is added later by a separate, effectful step.
+    # source_type labels rows without hardcoding any specific source.
     assert set(session_row) == {
         "id",
         "source_ref",
@@ -170,26 +168,13 @@ def test_build_rows_is_source_agnostic_and_pure():
 # ---- registry -----------------------------------------------------------
 
 
-def test_registry_has_claude_code_adapter():
+def test_registry_is_empty_awaiting_future_corpus_adapters():
     from memory_base.adapters import ADAPTERS
 
-    assert "claude_code" in ADAPTERS
-    assert isinstance(ADAPTERS["claude_code"], SourceAdapter)
+    assert ADAPTERS == {}
 
 
-# ---- backward compat: history re-exports --------------------------------
-
-
-def test_history_reexports_source_neutral_names():
-    from memory_base.ingest.history import Burst, Message, Session, parse_jsonl
-
-    assert callable(parse_jsonl)
-    assert Message is not None
-    assert Session is not None
-    assert Burst is not None
-
-
-# ---- emit_bursts toggle (Issue #17) ------------------------------------
+# ---- emit_bursts toggle -------------------------------------------------
 
 
 class NoBurstAdapter(FakeAdapter):
@@ -208,11 +193,8 @@ def _burst_distillation():
     )
 
 
-def test_emit_bursts_defaults_true_and_claude_code_opts_out():
-    from memory_base.adapters.claude_code import ClaudeCodeAdapter
-
+def test_emit_bursts_defaults_true_on_the_abc():
     assert FakeAdapter.emit_bursts is True
-    assert ClaudeCodeAdapter.emit_bursts is False
 
 
 def test_build_rows_honors_emit_bursts_toggle():

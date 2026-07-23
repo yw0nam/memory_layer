@@ -24,16 +24,10 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         CREATE INDEX IF NOT EXISTS memory_chunks__vec ON {schema}.memory_chunks
           USING hnsw (embedding halfvec_cosine_ops);
         CREATE INDEX IF NOT EXISTS memory_chunks__session ON {schema}.memory_chunks (session_id);
-        CREATE TABLE IF NOT EXISTS {schema}.ingest_state (
-          file_path text PRIMARY KEY, mtime double precision NOT NULL,
-          size bigint NOT NULL, ingested_at double precision NOT NULL
-        );
+        DROP TABLE IF EXISTS {schema}.ingest_state;
         DROP TABLE IF EXISTS {schema}.df_stats;
         DROP TABLE IF EXISTS {schema}.history_session_tokens;
-        CREATE TABLE IF NOT EXISTS {schema}.history_file_sessions (
-          file_path text NOT NULL, session_id text NOT NULL,
-          PRIMARY KEY (file_path, session_id)
-        );
+        DROP TABLE IF EXISTS {schema}.history_file_sessions;
         ALTER TABLE {schema}.memory_chunks
           ADD COLUMN IF NOT EXISTS last_hit_at double precision;
         ALTER TABLE {schema}.memory_chunks
