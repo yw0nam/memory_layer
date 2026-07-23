@@ -20,13 +20,22 @@ Run directly:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import time
 from typing import Any, Mapping
 
+import asyncpg
 from mcp.server.fastmcp import FastMCP
 
+from memory_base.common import DB_URL, PG_SCHEMA, VllmEmbedder
+from memory_base.ingest.history import _embed, _ensure_schema
 from memory_base.retrieval.search import Hit
 from memory_base.retrieval.search import search as run_search
+
+NOTE_MAX_CHARS = 4000
+NOTE_KINDS = ("note", "decision")
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
@@ -98,6 +107,78 @@ async def search_history(query: str, top_k: int = 10) -> list[dict[str, Any]]:
     date (YYYY-MM-DD), score, and text (truncated to 2000 chars).
     """
     return await _run_search(query, "history", top_k)
+
+
+def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) -> dict[str, Any]:
+    """Validate a note and map it to memory_chunks columns (no embedding)."""
+    content = content.strip()
+    if not content:
+        raise ValueError("content must not be empty")
+    if len(content) > NOTE_MAX_CHARS:
+        raise ValueError(f"content exceeds {NOTE_MAX_CHARS} chars")
+    if kind not in NOTE_KINDS:
+        raise ValueError(f"kind must be one of {NOTE_KINDS}")
+    note_id = f"note:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
+    return {
+        "id": note_id,
+        "source_type": "agent_note",
+        "source_ref": "save_memory",
+        "kind": kind,
+        "session_id": note_id,
+        "raw": content,
+        "distilled": content,
+        "timestamp": now,
+        "idf": None,
+        "metadata": {"tags": tags} if tags else {},
+    }
+
+
+@mcp.tool()
+async def save_memory(
+    content: str, kind: str = "note", tags: list[str] | None = None
+) -> dict[str, Any]:
+    """Store a distilled memory worth recalling in a future session.
+
+    Save ONLY high-signal content worth remembering later: a decision and its
+    rationale, a stated user preference, or a hard-won troubleshooting
+    conclusion. Do NOT save running commentary, restatements of the current
+    task, or anything trivially re-derivable.
+
+    `content` MUST be written in English regardless of the conversation
+    language, and be already distilled (the server does no summarization).
+    `kind` is "note" (default) or "decision". `tags` are optional labels.
+
+    Returns {"id", "kind", "stored"}; `stored` is False when identical content
+    was already saved (idempotent no-op).
+    """
+    row = build_note_row(content, kind, tags, time.time())
+    embedding = await _embed(VllmEmbedder(), content)
+    conn = await asyncpg.connect(DB_URL)
+    try:
+        await _ensure_schema(conn)
+        status = await conn.execute(
+            f"""
+            INSERT INTO "{PG_SCHEMA}".memory_chunks
+              (id, source_type, source_ref, chunk_kind, session_id, content_raw,
+               distilled, embedding, ts_last_active, idf_score, metadata)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            row["id"],
+            row["source_type"],
+            row["source_ref"],
+            row["kind"],
+            row["session_id"],
+            row["raw"],
+            row["distilled"],
+            embedding,
+            row["timestamp"],
+            row["idf"],
+            json.dumps(row["metadata"], ensure_ascii=False),
+        )
+    finally:
+        await conn.close()
+    return {"id": row["id"], "kind": row["kind"], "stored": status.endswith(" 1")}
 
 
 def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:
