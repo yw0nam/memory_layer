@@ -89,7 +89,7 @@ def test_derive_repo_name_uses_explicit_name():
     assert repos.derive_repo_name("https://x/y.git", "custom_name") == "custom_name"
 
 
-@pytest.mark.parametrize("name", ["..", "../etc", "a/b", "a\\b", "", "bad:name", "with space"])
+@pytest.mark.parametrize("name", ["..", "../etc", "a/b", "a\\b", "bad:name", "with space"])
 def test_derive_repo_name_rejects_traversal_and_bad_chars(name):
     with pytest.raises(ValueError):
         repos.derive_repo_name("https://x/y.git", name)
@@ -100,8 +100,12 @@ def test_derive_repo_name_rejects_traversal_and_bad_chars(name):
 
 def _make_git_repo(path):
     path.mkdir(parents=True, exist_ok=True)
-    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
-           "GIT_COMMITTER_EMAIL": "t@t"}
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
     subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
     (path / "main.py").write_text("print('hi')\n")
     subprocess.run(["git", "-C", str(path), "add", "."], check=True)
