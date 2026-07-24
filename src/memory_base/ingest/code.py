@@ -129,7 +129,9 @@ async def process_file(
     # `git log -1 --format=%ct` per file.
     mtime = pathlib.Path(file.file_path.path).stat().st_mtime
     id_gen = IdGenerator()
-    await coco.map(process_chunk, chunks, repo, _cache_rel(file.file_path.path), mtime, id_gen, table)
+    await coco.map(
+        process_chunk, chunks, repo, _cache_rel(file.file_path.path), mtime, id_gen, table
+    )
 
 
 @coco.fn
