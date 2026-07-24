@@ -153,10 +153,10 @@ async def process_repo(
 
 
 @coco.fn
-async def app_main(root_dir: pathlib.Path, table_name: str) -> None:
+async def app_main(root_dir: pathlib.Path) -> None:
     table = await postgres.mount_table_target(
         PG_DB,
-        table_name=table_name,
+        table_name=TABLE_NAME,
         table_schema=await postgres.TableSchema.from_class(CodeChunk, primary_key=["id"]),
         pg_schema_name=PG_SCHEMA,
     )
@@ -166,10 +166,10 @@ async def app_main(root_dir: pathlib.Path, table_name: str) -> None:
     table.declare_sql_command_attachment(
         name="fts_gin",
         setup_sql=(
-            f'CREATE INDEX IF NOT EXISTS {table_name}__fts ON "{PG_SCHEMA}"."{table_name}" '
+            f'CREATE INDEX IF NOT EXISTS {TABLE_NAME}__fts ON "{PG_SCHEMA}"."{TABLE_NAME}" '
             "USING GIN (to_tsvector('simple', code))"
         ),
-        teardown_sql=f'DROP INDEX IF EXISTS "{PG_SCHEMA}".{table_name}__fts',
+        teardown_sql=f'DROP INDEX IF EXISTS "{PG_SCHEMA}".{TABLE_NAME}__fts',
     )
 
     for entry in sorted(root_dir.iterdir()):
@@ -188,5 +188,4 @@ app = coco.App(
     coco.AppConfig(name="MemoryBaseCode"),
     app_main,
     root_dir=CACHE_ROOT,
-    table_name=TABLE_NAME,
 )
