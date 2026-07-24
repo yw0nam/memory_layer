@@ -22,7 +22,7 @@ from memory_base.common import (
     RERANK_MODEL,
     SERVICE_TIMEOUT_SECONDS,
     VllmEmbedder,
-    _env,
+    require_env,
     vector_literal,
 )
 
@@ -34,8 +34,7 @@ RERANK_TOP = 10
 TIME_DECAY_HALF_LIFE_DAYS = 90.0
 ATOM_RETRIEVE_K = int(os.getenv("ATOM_RETRIEVE_K", "8"))
 SEARCH_KINDS = ("doc", "note", "decision")
-# Reranker's own input budget; larger than the API response TEXT_LIMIT (2000 in serve/api.py),
-# which only bounds what is returned to callers.
+# Reranker input budget; the API's TEXT_LIMIT is separate and bounds only the response.
 RERANK_TEXT_LIMIT = 4000
 NEIGHBOR_LINE_WINDOW = 40
 NEIGHBOR_LIMIT = 2
@@ -335,7 +334,7 @@ async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
         return hits
     async with httpx.AsyncClient(timeout=SERVICE_TIMEOUT_SECONDS) as client:
         r = await client.post(
-            _env("RERANK_URL").rstrip("/") + "/rerank",
+            require_env("RERANK_URL").rstrip("/") + "/rerank",
             json={
                 "model": RERANK_MODEL,
                 "query": query,
