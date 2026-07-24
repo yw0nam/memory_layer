@@ -5,7 +5,7 @@ Two flavors of test live here:
 - Pure guards and literal pins that require no services. They assert the repo
   stores/emits English and keeps Korean **input** handling intact.
 - LLM integration tests (marker ``integration``) that drive the real
-  distillation and planner paths and assert English output.
+  distillation and sub-question paths and assert English output.
 
 The Hangul range boundaries are written with unicode escapes so this test file
 itself stays ASCII in its logic. Korean string literals appear only as
@@ -15,12 +15,14 @@ deliberate input-fixture data, each flagged with an English comment.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
 
 from memory_base.adapters.base import Burst, Message, Session, SourceAdapter
 from memory_base.common import LLM_MODEL, llm_client
+from memory_base.retrieval.decompose import _propose
 from memory_base.ingest.history import (
     Distillation,
     build_rows,
@@ -28,7 +30,6 @@ from memory_base.ingest.history import (
     parse_distillation,
     tokenize,
 )
-from memory_base.serve import answer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -235,13 +236,19 @@ def test_distillation_of_korean_transcript_is_english():
 
 
 @pytest.mark.integration
-def test_planner_queries_are_ascii_for_korean_question():
+def test_sub_questions_are_english_for_korean_question():
     _require_llm()
-    # Korean question fixture: cross-lingual recall must emit ASCII queries.
-    _source, queries = _run_sync(answer.plan("예전에 burst gate 임계값을 어떻게 정했지?"))
-    assert queries
-    for query in queries:
-        assert query.isascii() and query.isprintable(), f"non-ASCII query: {query!r}"
+    # Korean question fixture: cross-lingual recall must emit English sub-questions.
+    _continue, sub_questions = _run_sync(
+        _propose(
+            llm_client(), "예전에 burst gate 임계값을 어떻게 정했지?", [], time.monotonic() + 120
+        )
+    )
+    assert sub_questions
+    for question in sub_questions:
+        assert question.isprintable(), f"unprintable query: {question!r}"
+        leaked = [char for char in question if _is_hangul_or_kana(char)]
+        assert not leaked, f"non-English query: {question!r}"
 
 
 def _run_sync(coro):
