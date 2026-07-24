@@ -24,6 +24,7 @@ from mcp.server.fastmcp import FastMCP
 
 from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
 from memory_base.adapters.document import extension_for
+from memory_base.core.logger import setup_logging
 from memory_base.retrieval.decompose import DEEP_TIMEOUT_SECONDS
 
 DEFAULT_HOST = "0.0.0.0"
@@ -248,6 +249,7 @@ def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:
 
 
 if __name__ == "__main__":
+    setup_logging()
     _transport, _host, _port = resolve_transport(os.environ)
     if _transport == "stdio":
         mcp.run(transport="stdio")
