@@ -15,7 +15,16 @@ from typing import Any
 
 import asyncpg
 
-from memory_base.common import DB_URL, PG_SCHEMA, RERANK_MODEL, VllmEmbedder, vector_literal
+from memory_base.common import (
+    DB_URL,
+    OVERSAMPLE_FACTOR,
+    PG_SCHEMA,
+    RERANK_MODEL,
+    SERVICE_TIMEOUT_SECONDS,
+    VllmEmbedder,
+    _env,
+    vector_literal,
+)
 
 RRF_K = 60
 CANDIDATES_PER_SIGNAL = 50
@@ -25,6 +34,11 @@ RERANK_TOP = 10
 TIME_DECAY_HALF_LIFE_DAYS = 90.0
 ATOM_RETRIEVE_K = int(os.getenv("ATOM_RETRIEVE_K", "8"))
 SEARCH_KINDS = ("doc", "note", "decision")
+# Reranker's own input budget; larger than the API response TEXT_LIMIT (2000 in serve/api.py),
+# which only bounds what is returned to callers.
+RERANK_TEXT_LIMIT = 4000
+NEIGHBOR_LINE_WINDOW = 40
+NEIGHBOR_LIMIT = 2
 
 
 @dataclass
@@ -234,7 +248,7 @@ async def _search_atoms(
         JOIN {tbl} AS parent ON parent.id = atom.metadata->>'parent_id'
         WHERE atom.chunk_kind = 'atom' AND {predicates}
         ORDER BY atom.embedding <=> $1::halfvec
-        LIMIT {3 * ATOM_RETRIEVE_K}
+        LIMIT {OVERSAMPLE_FACTOR * ATOM_RETRIEVE_K}
         """,
         qvec_lit,
         *filter_args,
@@ -319,13 +333,13 @@ async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
 
     if not hits:
         return hits
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=SERVICE_TIMEOUT_SECONDS) as client:
         r = await client.post(
-            os.environ["RERANK_URL"].rstrip("/") + "/rerank",
+            _env("RERANK_URL").rstrip("/") + "/rerank",
             json={
                 "model": RERANK_MODEL,
                 "query": query,
-                "documents": [h.text[:4000] for h in hits],
+                "documents": [h.text[:RERANK_TEXT_LIMIT] for h in hits],
             },
         )
         r.raise_for_status()
@@ -343,7 +357,8 @@ async def _restore_context(conn: asyncpg.Connection, hits: list[Hit]) -> None:
             continue
         rows = await conn.fetch(
             f"SELECT code, start_line FROM {tbl} WHERE filename = $1 "
-            f"AND id <> $2 AND abs(start_line - $3) <= 40 ORDER BY start_line LIMIT 2",
+            f"AND id <> $2 AND abs(start_line - $3) <= {NEIGHBOR_LINE_WINDOW} "
+            f"ORDER BY start_line LIMIT {NEIGHBOR_LIMIT}",
             h.meta["filename"],
             h.meta["id"],
             h.meta["start_line"],

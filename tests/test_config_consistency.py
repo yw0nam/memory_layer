@@ -53,7 +53,9 @@ def test_distill_fanout_shares_one_llm_client():
                     "decisions": [],
                 }
             )
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            )
 
     class _FakeLLM:
         def __init__(self):
