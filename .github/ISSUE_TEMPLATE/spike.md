@@ -18,8 +18,7 @@ labels: ["spike"]
 
 ## Definition of Done
 - [ ] Conclusion reached
-- [ ] Document the conclusion in the relevant `docs/specs/` file
 - [ ] Related OPEN/Assumption items marked resolved
 
 ## References
-- `docs/specs/`:
+<!-- Related issues, PRs, external sources -->

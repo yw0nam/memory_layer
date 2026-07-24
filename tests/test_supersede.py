@@ -1,6 +1,6 @@
 """Contract tests for save_memory's supersedes + similar hints (red-first).
 
-Per docs/specs/impl_lifecycle.md §2, ``save_note``/``save_memory`` gain an
+``save_note``/``save_memory`` take an
 optional ``supersedes: <note id>`` argument (MCP tool, REST body, and
 ``save_note`` itself). Pinned contract:
 

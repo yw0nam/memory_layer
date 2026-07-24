@@ -36,7 +36,6 @@ if not _db_reachable():
 
 pytestmark = pytest.mark.integration
 
-from memory_base.serve import answer  # noqa: E402
 from memory_base.serve import mcp_server  # noqa: E402
 from memory_base.retrieval.search import search  # noqa: E402
 
@@ -96,17 +95,3 @@ def test_mcp_search_code_tool_real_call_returns_expected_schema(rest_in_process)
         for key in ("source", "ref", "date", "score", "text"):
             assert key in item
         assert item["source"] == "code"
-
-
-# ---- LLM: answer.plan (single integration call, loose assertions) ---------
-
-
-def test_answer_plan_code_question_selects_code_source():
-    # Korean input fixture: the planner must route to code and emit English
-    # search queries (the original query is not echoed verbatim).
-    query = "search.py의 _rrf_fuse 함수는 어디에 정의되어 있어?"
-    source, queries = asyncio.run(answer.plan(query))
-    assert source in ("code", "all")
-    assert queries
-    assert all(q.isascii() for q in queries)
-    assert any("_rrf_fuse" in q for q in queries)

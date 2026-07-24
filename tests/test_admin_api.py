@@ -1,6 +1,6 @@
 """Unit tests for /admin/* REST endpoints and POST /search's include_archived.
 
-No DB, no network: per docs/specs/impl_lifecycle.md, api.py does
+No DB, no network: api.py does
 ``from memory_base.serve import admin`` and calls ``admin.<fn>(...)`` at
 request time, so every admin function is monkeypatched here directly on the
 ``admin`` module (not on ``api``), matching the convention already used for

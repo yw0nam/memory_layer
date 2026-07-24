@@ -1,7 +1,6 @@
 """Unit tests for the REST API server (memory_base.serve.api).
 
-No DB, no network: routes only parse/validate/delegate/JSON per
-docs/specs/impl_rest_api.md, so the hooks a route calls into are monkeypatched
+No DB, no network: routes only parse/validate/delegate/JSON, so the hooks a route calls into are monkeypatched
 at the module level, matching the existing convention (e.g.
 ``monkeypatch.setattr(answer, "search", fake_search)`` in test_answer_mcp.py):
 

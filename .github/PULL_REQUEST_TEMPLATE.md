@@ -6,9 +6,6 @@
 ## Related issues
 <!-- Closes #__ -->
 
-## Related specs / docs
-<!-- Touched docs: docs/specs/... -->
-
 ## Runtime evidence (required for ingest / retrieval / serving behavior)
 <!-- Unit tests are not runtime verification. For any behavioral change, paste
      the proving output: ingest stats line, search results for a real query,
@@ -24,6 +21,5 @@
 ## Checklist (core principles)
 - [ ] Selective storage — new write paths go through triage/gates/distillation; raw transcripts are never embedded
 - [ ] Source-specific logic stays out of the source-agnostic core (ingest pipeline, retrieval, serving)
-- [ ] `memory_chunks` schema changes update `docs/specs/` and the retrieval contract alongside the code
 - [ ] No hardcoded endpoints/models — configuration lives in `.env`
 - [ ] New/changed behavior ships a test in this PR (or `skip-tests` label justified)

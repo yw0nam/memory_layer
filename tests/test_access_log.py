@@ -1,4 +1,4 @@
-"""Integration tests for access logging (docs/specs/impl_rest_api.md §4).
+"""Integration tests for access logging.
 
 Exercises the real REST app against Postgres + vLLM (embedder/reranker): a
 POST /search must write one retrieval_log row and bump hit_count/last_hit_at

@@ -1,7 +1,7 @@
 """Unit tests for the rewritten MCP server: an httpx proxy over the REST API.
 
-Per docs/specs/impl_rest_api.md §5, memory_base.serve.mcp_server keeps FastMCP
-and the four existing tool signatures/docstrings, but each tool body becomes
+memory_base.serve.mcp_server keeps FastMCP
+and the tool signatures/docstrings, but each tool body is
 an httpx call to REST_URL instead of touching the DB/search pipeline
 directly. Tests inject a mocked transport by monkeypatching
 ``mcp_server._client``, a zero-arg factory returning an

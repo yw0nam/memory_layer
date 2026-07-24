@@ -1,6 +1,6 @@
 """Pure unit pins for memory_base.serve.admin.is_cold.
 
-Per docs/specs/impl_lifecycle.md §4, the cold-tier candidate rule is:
+The cold-tier candidate rule is:
 
     ts_last_active < now - age_days*86400 AND
     COALESCE(last_hit_at, ts_last_active) < now - unhit_days*86400
