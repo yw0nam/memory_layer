@@ -1,7 +1,6 @@
 """Pure unit pins for memory_base.serve.notes.build_note_row.
 
-build_note_row moves here from mcp_server.py (docs/specs/impl_rest_api.md);
-these pins mirror the non-integration cases in tests/test_save_memory.py at
+These pins mirror the non-integration cases in tests/test_save_memory.py at
 its new home. No DB/network involved.
 
 Collection fails today: memory_base.serve.notes does not exist yet.

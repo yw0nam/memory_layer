@@ -1,6 +1,6 @@
 """Integration test for the full cold-tier / note lifecycle flow (real DB).
 
-Per docs/specs/impl_lifecycle.md §§2-4: seeds synthetic rows directly via
+Seeds synthetic rows directly via
 asyncpg (bypassing the embedder-backed save path, so old timestamps can be
 set precisely), then drives the real REST app through the whole lifecycle:
 

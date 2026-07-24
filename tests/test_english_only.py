@@ -67,11 +67,6 @@ def test_src_has_no_hangul_or_kana():
     assert not hits, "Hangul/Kana found in src/:\n" + "\n".join(hits)
 
 
-def test_spec_docs_have_no_hangul_or_kana():
-    hits = _scan_for_hangul_kana(list((REPO_ROOT / "docs" / "specs").glob("*.md")))
-    assert not hits, "Hangul/Kana found in docs/specs/:\n" + "\n".join(hits)
-
-
 # ---- literal pins ------------------------------------------------------
 
 
