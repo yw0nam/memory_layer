@@ -15,6 +15,8 @@ The REST API is the single backend: every consumer (MCP server, n8n, scripts) re
 src/memory_base/
   common.py           # shared constants + LLM/embedding clients (vLLM, OpenAI-compatible)
   schema.py           # memory_chunks + retrieval-log DDL
+  core/
+    logger.py         # unified loguru setup: colored stderr + daily-rotated file sink
   ingest/
     enrich.py         # generic JSON-mode enrichment for stored content
     code.py           # CocoIndex app: repo code chunking + embedding
@@ -52,6 +54,8 @@ claude mcp add --transport sse memory-base http://localhost:8765/sse
 ```
 
 Endpoints and credentials live in `.env` (gitignored): `LLM_URL`, `EMB_URL`, `RERANK_URL`, `DB_URL`, `COCOINDEX_DB`, `LLM_MODEL`, `EMB_MODEL`, `RERANK_MODEL`. Never hardcode them.
+
+Logging is configured once per process via `memory_base.core.logger.setup_logging()`; modules log through `loguru` or stdlib `logging` (intercepted into the same sinks). `LOG_DIR` (optional, default `logs/`) sets the file-sink directory.
 
 ## Development work
 

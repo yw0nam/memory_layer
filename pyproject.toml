@@ -7,6 +7,7 @@ dependencies = [
     "asyncpg>=0.31.0",
     "cocoindex[postgres]>=1.0.17",
     "httpx>=0.28.1",
+    "loguru>=0.7.3",
     "markitdown[docx,pdf,pptx]~=0.1.0",
     "mcp>=1.28.1",
     "numpy>=2.5.1",

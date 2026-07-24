@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from memory_base.common import DB_URL
+from memory_base.core.logger import setup_logging
 from memory_base.retrieval.decompose import DeepResult, deep_search
 from memory_base.retrieval.search import Hit
 from memory_base.retrieval.search import search
@@ -299,6 +300,8 @@ async def admin_restore_route(request: Request) -> JSONResponse:
     rows = await _resolve(admin.rows_by_ids(ids))
     return JSONResponse({"rows": rows})
 
+
+setup_logging()
 
 app = Starlette(
     routes=[

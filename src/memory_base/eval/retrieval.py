@@ -20,6 +20,7 @@ import asyncpg
 
 from memory_base import common, schema as schema_module
 from memory_base.common import DB_URL, EMB_MODEL, RERANK_MODEL
+from memory_base.core.logger import setup_logging
 from memory_base.retrieval import decompose as decompose_module
 from memory_base.retrieval import search as search_module
 from memory_base.retrieval.decompose import deep_search
@@ -418,6 +419,7 @@ async def run_evaluation() -> None:
 
 def main() -> None:
     """Run the report without making environment availability a process gate."""
+    setup_logging()
     try:
         asyncio.run(run_evaluation())
     except Exception as exc:
