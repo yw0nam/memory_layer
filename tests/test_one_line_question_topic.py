@@ -136,7 +136,7 @@ def test_distill_one_line_question_captures_central_topic_not_opener():
 
     async def _run() -> Distillation:
         semaphore = asyncio.Semaphore(1)
-        return await _distill(_topic_pivot_session(), semaphore)
+        return await _distill(_topic_pivot_session(), semaphore, llm_client())
 
     distillation = _run_sync(_run())
     question = distillation.one_line_question.lower()

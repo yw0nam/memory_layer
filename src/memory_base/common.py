@@ -20,6 +20,7 @@ EMB_DIM = 2048  # Qwen3-VL-Embedding-2B, no matryoshka -> halfvec(2048) in pgvec
 DB_URL = os.getenv("DB_URL", "postgres://memory:memory@localhost:5439/memory_base")
 PG_SCHEMA = "memory"
 SERVICE_TIMEOUT_SECONDS = 120
+OVERSAMPLE_FACTOR = 3  # atom candidate pool size relative to the final retrieve count
 
 # Qwen3 embedding convention: instruction-prefixed query, raw document.
 _QUERY_PREFIX = (
@@ -28,8 +29,15 @@ _QUERY_PREFIX = (
 )
 
 
+def require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is not set; define it in .env")
+    return value
+
+
 def llm_client() -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=os.environ["LLM_URL"], api_key="EMPTY")
+    return AsyncOpenAI(base_url=require_env("LLM_URL"), api_key="EMPTY")
 
 
 class VllmEmbedder:
@@ -40,7 +48,7 @@ class VllmEmbedder:
     """
 
     def __init__(self) -> None:
-        self._client = AsyncOpenAI(base_url=os.environ["EMB_URL"], api_key="EMPTY")
+        self._client = AsyncOpenAI(base_url=require_env("EMB_URL"), api_key="EMPTY")
 
     async def __coco_vector_schema__(self):  # noqa: ANN201 - cocoindex protocol
         from cocoindex.resources.schema import VectorSchema

@@ -219,6 +219,7 @@ async def deep_search(
         body["kind"] = kind
     if tags is not None:
         body["tags"] = tags
+    # +30s covers HTTP/round-trip slack beyond the server-side deep-search deadline.
     timeout = DEEP_TIMEOUT_SECONDS + 30
     async with _client() as client:
         response = await client.post("/search/deep", json=body, timeout=timeout)

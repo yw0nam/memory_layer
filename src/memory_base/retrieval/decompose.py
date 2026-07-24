@@ -15,6 +15,7 @@ import asyncpg
 from memory_base.common import (
     DB_URL,
     LLM_MODEL,
+    OVERSAMPLE_FACTOR,
     PG_SCHEMA,
     SERVICE_TIMEOUT_SECONDS,
     VllmEmbedder,
@@ -296,7 +297,7 @@ async def _atom_rows(
         JOIN {tbl} AS parent ON parent.id = atom.metadata->>'parent_id'
         WHERE atom.chunk_kind = 'atom' AND {predicates} AND {excl_clause}
         ORDER BY atom.embedding <=> $1::halfvec
-        LIMIT {3 * HOP_CANDIDATE_CAP}
+        LIMIT {OVERSAMPLE_FACTOR * HOP_CANDIDATE_CAP}
         """,
         *args,
     )

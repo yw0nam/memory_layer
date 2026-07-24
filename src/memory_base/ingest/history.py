@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
 from memory_base.adapters.base import Burst, Message, Session, SourceAdapter
-from memory_base.common import LLM_MODEL, SERVICE_TIMEOUT_SECONDS, llm_client
+from memory_base.common import LLM_MODEL, SERVICE_TIMEOUT_SECONDS
 
 LOGGER = logging.getLogger("history_index")
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,}|[\uac00-\ud7a3]{2,}")
@@ -192,7 +192,7 @@ def parse_distillation(parsed: dict[str, Any]) -> Distillation:
     )
 
 
-async def _distill(session: Session, semaphore: asyncio.Semaphore) -> Distillation:
+async def _distill(session: Session, semaphore: asyncio.Semaphore, llm: Any) -> Distillation:
     prompt = (
         "Distill the following agent session in English, even when the transcript "
         "is in Korean or Japanese. Keep code, error strings, identifiers, and file paths "
@@ -208,7 +208,7 @@ async def _distill(session: Session, semaphore: asyncio.Semaphore) -> Distillati
     )
     async with semaphore:
         response = await asyncio.wait_for(
-            llm_client().chat.completions.create(
+            llm.chat.completions.create(
                 model=LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},

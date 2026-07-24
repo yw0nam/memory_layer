@@ -225,7 +225,7 @@ def test_distillation_of_korean_transcript_is_english():
 
     async def _run() -> Distillation:
         semaphore = asyncio.Semaphore(1)
-        return await _distill(_korean_session(), semaphore)
+        return await _distill(_korean_session(), semaphore, llm_client())
 
     distillation = _run_sync(_run())
     combined = (
