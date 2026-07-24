@@ -8,21 +8,35 @@
 
 ## Project structure
 
+The REST API is the single backend: every consumer (MCP server, n8n, scripts) reaches
+`memory_chunks` through it, never through the DB directly.
+
 ```
 src/memory_base/
-  common.py        # shared constants + LLM/embedding clients (vLLM, OpenAI-compatible)
+  common.py           # shared constants + LLM/embedding clients (vLLM, OpenAI-compatible)
+  schema.py           # memory_chunks + retrieval-log DDL
   ingest/
-    history.py     # source-agnostic selection core (triage, burst gate, distill); no I/O entrypoint
-    code.py        # CocoIndex app: repo code chunking + embedding
-  adapters/         # source-adapter contract; ADAPTERS registry is empty awaiting future corpus sources
+    history.py        # source-agnostic selection core (triage, burst gate, distill); no I/O entrypoint
+    enrich.py         # generic JSON-mode enrichment for stored content
+    code.py           # CocoIndex app: repo code chunking + embedding
+  adapters/
+    base.py           # source-adapter contract + source-neutral history records
+    document.py       # document conversion, chunking, CSV sampling, storage-row mapping
+    document_worker.py# killable MarkItDown conversion worker
   retrieval/
-    search.py      # hybrid search: FTS + vector + IDF + time decay → RRF → rerank
+    search.py         # hybrid search: FTS + vector + IDF + time decay → RRF → rerank
+    decompose.py      # knowledge-aware decomposition: multi-hop retrieval over memory atoms
   serve/
-    answer.py      # cited-answer CLI (plan → execute → synthesize)
-    mcp_server.py  # MCP server (stdio | SSE | streamable-http), Docker serves SSE
-tests/             # pytest; DB/vLLM-dependent tests carry the `integration` marker
-docs/specs/        # implementation specs (one per issue/work order)
-scripts/ci/        # CI helper scripts (test-guard)
+    api.py            # Starlette REST API (search, deep search, save, admin) — the backend
+    ingest_api.py     # bounded async document-ingestion orchestration
+    notes.py          # validation + storage for agent-authored notes
+    admin.py          # memory lifecycle operations (duplicates, archive, restore)
+    access_log.py     # best-effort persistence of retrieval activity
+    mcp_server.py     # MCP server over REST (stdio | SSE | streamable-http), Docker serves SSE
+  eval/
+    retrieval.py      # reproducible retrieval evaluation with an atom-lane A/B report
+tests/                # pytest; DB/vLLM-dependent tests carry the `integration` marker
+scripts/ci/           # CI helper scripts (test-guard)
 ```
 
 ## Commands
@@ -33,6 +47,7 @@ uv run pytest                                        # all tests (integration sk
 uv run pytest -m "not integration"                   # unit tests only (what CI runs)
 uv run ruff format --check . && uv run ruff check .  # lint (ruff is the only Python linter)
 docker compose up -d db                              # pgvector on localhost:5439
+docker compose up -d --build api                     # REST backend on :8010
 docker compose up -d --build mcp                     # MCP server, SSE on :8765
 uv run cocoindex update src/memory_base/ingest/code.py   # (re)index repo code
 claude mcp add --transport sse memory-base http://localhost:8765/sse
