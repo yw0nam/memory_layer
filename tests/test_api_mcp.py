@@ -89,4 +89,7 @@ def test_mcp_server_registers_expected_tools():
         "save_memory",
         "ingest_document",
         "deep_search",
+        "ingest_repo",
+        "remove_repo",
+        "list_repos",
     }
