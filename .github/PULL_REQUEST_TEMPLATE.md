@@ -19,7 +19,7 @@
 - [ ] Runtime evidence attached above, or N/A justified
 
 ## Checklist (core principles)
-- [ ] Selective storage — new write paths go through triage/gates/distillation; raw transcripts are never embedded
+- [ ] Selective storage — no write path stores raw, undistilled content
 - [ ] Source-specific logic stays out of the source-agnostic core (ingest pipeline, retrieval, serving)
 - [ ] No hardcoded endpoints/models — configuration lives in `.env`
 - [ ] New/changed behavior ships a test in this PR (or `skip-tests` label justified)

@@ -1,10 +1,5 @@
-"""Registered source adapters.
+"""Document-processing adapters (conversion, chunking, storage-row mapping).
 
-Empty today: interactive agent consoles contribute through the MCP realtime
-channel (save_memory), not batch ingestion. Future corpus adapters (e.g.
-Slack) register here.
+Interactive agents contribute memory through the MCP realtime channel
+(`save_memory`), not through an adapter here.
 """
-
-from memory_base.adapters.base import SourceAdapter
-
-ADAPTERS: dict[str, SourceAdapter] = {}

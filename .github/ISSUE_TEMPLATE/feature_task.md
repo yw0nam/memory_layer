@@ -21,4 +21,4 @@ labels: ["feature"]
 ## Checklist
 - [ ] TDD order: failing test first (`test:`), then implementation (`feat:`), then refactor
 - [ ] No unverified assumptions (web/context7 cross-check, user confirmation for design decisions)
-- [ ] Selective storage upheld — no write path bypasses triage/gates/distillation
+- [ ] Selective storage upheld — no write path stores raw, undistilled content
