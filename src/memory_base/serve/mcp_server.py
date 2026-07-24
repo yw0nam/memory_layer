@@ -37,6 +37,14 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(base_url=REST_URL)
 
 
+def _raise_backend_error(response: httpx.Response) -> None:
+    try:
+        message = response.json()["error"]
+    except (ValueError, KeyError, TypeError):
+        message = f"backend returned {response.status_code}"
+    raise ValueError(message)
+
+
 async def _search(
     query: str,
     source: str,
@@ -55,7 +63,7 @@ async def _search(
     async with _client() as client:
         response = await client.post("/search", json=body)
         if response.status_code == 400:
-            raise ValueError(response.json()["error"])
+            _raise_backend_error(response)
         response.raise_for_status()
         return response.json()
 
@@ -146,7 +154,7 @@ async def save_memory(
             },
         )
         if response.status_code == 400:
-            raise ValueError(response.json()["error"])
+            _raise_backend_error(response)
         response.raise_for_status()
         return response.json()
 
@@ -182,7 +190,7 @@ async def ingest_document(
             files={"file": (filename, content.encode("utf-8"))},
         )
         if response.status_code in {400, 413, 415, 429}:
-            raise ValueError(response.json()["error"])
+            _raise_backend_error(response)
         response.raise_for_status()
         payload = response.json()
         return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
@@ -215,7 +223,7 @@ async def deep_search(
     async with _client() as client:
         response = await client.post("/search/deep", json=body, timeout=timeout)
         if response.status_code == 400:
-            raise ValueError(response.json()["error"])
+            _raise_backend_error(response)
         response.raise_for_status()
         return response.json()
 

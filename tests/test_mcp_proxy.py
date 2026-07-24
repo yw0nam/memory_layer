@@ -126,6 +126,24 @@ def test_search_all_forwards_filter_options(monkeypatch):
     assert captured["json"]["kind"] == "note"
 
 
+def test_search_400_non_json_body_raises_generic_value_error(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="upstream proxy error")
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="backend returned 400"):
+        asyncio.run(mcp_server.search_code(query="q"))
+
+
+def test_search_400_json_without_error_key_raises_generic_value_error(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"detail": "bad request"})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="backend returned 400"):
+        asyncio.run(mcp_server.search_code(query="q"))
+
+
 def test_search_all_posts_with_source_all(monkeypatch):
     captured = {}
 
@@ -181,6 +199,15 @@ def test_save_memory_400_response_raises_value_error_with_server_message(monkeyp
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="content must not be empty"):
         asyncio.run(mcp_server.save_memory(""))
+
+
+def test_ingest_document_429_non_json_body_raises_generic_value_error(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, text="rate limited")
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="backend returned 429"):
+        asyncio.run(mcp_server.ingest_document("content", "guide.md"))
 
 
 def test_ingest_document_posts_text_as_multipart_and_returns_job_reference(monkeypatch):
@@ -284,6 +311,15 @@ def test_deep_search_400_surfaces_as_value_error(monkeypatch):
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="max_hops"):
         asyncio.run(mcp_server.deep_search(query="q", max_hops=0))
+
+
+def test_deep_search_400_json_without_error_key_raises_generic_value_error(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"detail": "bad request"})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="backend returned 400"):
+        asyncio.run(mcp_server.deep_search(query="q"))
 
 
 def test_deep_search_uses_extended_timeout(monkeypatch):
