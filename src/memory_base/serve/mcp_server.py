@@ -198,6 +198,63 @@ async def ingest_document(
 
 
 @mcp.tool()
+async def ingest_repo(
+    url: str,
+    branch: str | None = None,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """Clone (or re-sync) a git repository into the code index.
+
+    `url` is an http(s)/ssh git URL or the git@host:path SSH form. `branch`
+    optionally selects a branch to clone. `name` overrides the cache directory
+    name (derived from the URL basename by default). Re-issuing this for an
+    existing name pulls the latest commits instead of re-cloning. Returns
+    {job_id, status_url}; poll status_url for progress.
+    """
+    body: dict[str, Any] = {"url": url}
+    if branch is not None:
+        body["branch"] = branch
+    if name is not None:
+        body["name"] = name
+    async with _client() as client:
+        response = await client.post("/repos", json=body)
+        if response.status_code in {400, 429}:
+            _raise_backend_error(response)
+        response.raise_for_status()
+        payload = response.json()
+        return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
+
+
+@mcp.tool()
+async def remove_repo(name: str) -> dict[str, Any]:
+    """Remove a repository from the code index by its cache name.
+
+    Queues a re-index that tears down the removed repo's code chunks. Returns
+    {job_id, status_url}; poll status_url for progress.
+    """
+    async with _client() as client:
+        response = await client.delete(f"/repos/{name}")
+        if response.status_code in {400, 404, 429}:
+            _raise_backend_error(response)
+        response.raise_for_status()
+        payload = response.json()
+        return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
+
+
+@mcp.tool()
+async def list_repos() -> list[dict[str, Any]]:
+    """List indexed repositories.
+
+    Returns one entry per cached repo with name, origin url, current branch,
+    short head commit, and the number of indexed code chunks.
+    """
+    async with _client() as client:
+        response = await client.get("/repos")
+        response.raise_for_status()
+        return response.json()
+
+
+@mcp.tool()
 async def deep_search(
     query: str,
     max_hops: int | None = None,

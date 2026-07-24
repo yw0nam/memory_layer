@@ -24,8 +24,13 @@ def test_ingest_repo_returns_job_id_and_status_url(monkeypatch):
         assert request.url.path == "/repos"
         assert request.method == "POST"
         return httpx.Response(
-            202, json={"job_id": "j1", "name": "repo", "status": "queued",
-                       "status_url": "/repos/jobs/j1"}
+            202,
+            json={
+                "job_id": "j1",
+                "name": "repo",
+                "status": "queued",
+                "status_url": "/repos/jobs/j1",
+            },
         )
 
     monkeypatch.setattr(mcp_server, "_client", _mock_client(handler))
@@ -38,8 +43,13 @@ def test_remove_repo_returns_job_id_and_status_url(monkeypatch):
         assert request.method == "DELETE"
         assert request.url.path == "/repos/repo"
         return httpx.Response(
-            202, json={"job_id": "j2", "name": "repo", "status": "queued",
-                       "status_url": "/repos/jobs/j2"}
+            202,
+            json={
+                "job_id": "j2",
+                "name": "repo",
+                "status": "queued",
+                "status_url": "/repos/jobs/j2",
+            },
         )
 
     monkeypatch.setattr(mcp_server, "_client", _mock_client(handler))
@@ -51,8 +61,10 @@ def test_list_repos_returns_backend_list(monkeypatch):
     def handler(request):
         assert request.method == "GET"
         assert request.url.path == "/repos"
-        return httpx.Response(200, json=[{"name": "repo", "url": "u", "branch": "main",
-                                          "head": "abc1234", "chunks": 3}])
+        return httpx.Response(
+            200,
+            json=[{"name": "repo", "url": "u", "branch": "main", "head": "abc1234", "chunks": 3}],
+        )
 
     monkeypatch.setattr(mcp_server, "_client", _mock_client(handler))
     result = asyncio.run(mcp_server.list_repos())
