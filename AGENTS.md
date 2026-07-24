@@ -2,8 +2,8 @@
 
 ## Core principles
 
-- **Low-signal data never reaches the DB.** Every write path is selective: session triage → burst gate (weighted signal sum) → distill-then-embed. Raw transcripts are never embedded directly; only distilled, high-signal content is stored.
-- **Source-specific knowledge lives only in source adapters.** The selection core (`ingest/`), storage schema, retrieval (`retrieval/`), and consumers (`serve/`) are source-agnostic. The `memory_chunks` table is the single contract between the write side and the read side — adding a new source must not change retrieval or serving code.
+- **Low-signal data never reaches the DB.** Agent-authored notes arrive already distilled through the MCP `save_memory` tool (validation, dedup, supersede) and are stored without embedding raw text. Documents go through chunking and LLM enrichment (atomize/summarize) before embedding. Raw transcripts and raw files are never embedded directly; only distilled, high-signal content is stored.
+- **Source-specific knowledge lives only in source adapters (`adapters/`).** `ingest/`, the storage schema, retrieval (`retrieval/`), and consumers (`serve/`) are source-agnostic. The `memory_chunks` table is the single contract between the write side and the read side — adding a new source must not change retrieval or serving code.
 - **Assemble verified engines; don't reinvent.** Chunking/incremental indexing/vector storage/serving use proven components (CocoIndex, pgvector, FastMCP). Design decisions are grounded in web research and confirmed with the user — not invented ad hoc.
 
 ## Project structure
@@ -16,11 +16,9 @@ src/memory_base/
   common.py           # shared constants + LLM/embedding clients (vLLM, OpenAI-compatible)
   schema.py           # memory_chunks + retrieval-log DDL
   ingest/
-    history.py        # source-agnostic selection core (triage, burst gate, distill); no I/O entrypoint
     enrich.py         # generic JSON-mode enrichment for stored content
     code.py           # CocoIndex app: repo code chunking + embedding
   adapters/
-    base.py           # source-adapter contract + source-neutral history records
     document.py       # document conversion, chunking, CSV sampling, storage-row mapping
     document_worker.py# killable MarkItDown conversion worker
   retrieval/

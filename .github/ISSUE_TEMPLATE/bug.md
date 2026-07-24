@@ -9,7 +9,7 @@ labels: ["bug"]
 <!-- What is wrong -->
 
 ## Reproduction steps
-<!-- Exact command(s), e.g. `uv run python -m memory_base.ingest.history --limit 5` -->
+<!-- Exact command(s), e.g. `uv run cocoindex update src/memory_base/ingest/code.py` -->
 1.
 2.
 
