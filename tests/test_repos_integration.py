@@ -1,30 +1,49 @@
-"""Integration tests for URL-driven multi-repo ingestion against the live DB
-and CocoIndex indexer (configured via .env).
+"""Integration tests for URL-driven multi-repo ingestion against a live
+Postgres server and CocoIndex indexer (services configured via .env).
 
-Destructive: rebuilds the code_chunks table from throwaway local git repos, so
-it is gated behind the `integration` marker and skipped when the DB is
-unreachable (keeping CI safe). Index/teardown are driven through the job-runner
-coroutines directly so completion is deterministic in-process; the REST surface
-(GET /repos, DELETE, job polling) is exercised through the real Starlette app.
+Fully isolated and non-destructive: a throwaway database (`memory_base_it`) is
+created on the configured server for the run and dropped afterwards, and
+CocoIndex's LMDB state points at a temp dir. The configured DB_URL /
+COCOINDEX_DB are never written to. Both env vars and the DB_URL bound into the
+in-process modules are redirected for the test; the `run_index()` subprocess
+inherits the redirected env (common.load_dotenv uses override=False, so it does
+not clobber them).
+
+Gated behind the `integration` marker; skipped when the DB server or the
+embedder is unreachable, keeping CI safe. Index/teardown run through the
+job-runner coroutines directly so completion is deterministic in-process.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import socket
 import subprocess
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
 
 import asyncpg
 
-from memory_base.common import DB_URL, PG_SCHEMA
+from memory_base.common import DB_URL as CONFIGURED_DB
+
+IT_DB_NAME = "memory_base_it"
 
 
-def _db_reachable() -> bool:
+def _with_db(url: str, db_name: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit(parts._replace(path=f"/{db_name}"))
+
+
+ADMIN_DB = _with_db(CONFIGURED_DB, "postgres")
+IT_DB = _with_db(CONFIGURED_DB, IT_DB_NAME)
+
+
+def _server_reachable() -> bool:
     async def _check() -> None:
-        conn = await asyncpg.connect(DB_URL, timeout=5)
+        conn = await asyncpg.connect(ADMIN_DB, timeout=5)
         await conn.close()
 
     try:
@@ -34,13 +53,33 @@ def _db_reachable() -> bool:
         return False
 
 
-if not _db_reachable():
+def _emb_reachable() -> bool:
+    emb = os.getenv("EMB_URL")
+    if not emb:
+        return False
+    parts = urlsplit(emb)
+    host = parts.hostname
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    if not host:
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=5):
+            return True
+    except OSError:
+        return False
+
+
+if not _server_reachable():
     pytest.skip(
-        f"DB not reachable at {DB_URL}; skipping integration tests", allow_module_level=True
+        f"DB server not reachable at {ADMIN_DB}; skipping integration tests",
+        allow_module_level=True,
     )
+if not _emb_reachable():
+    pytest.skip("EMB_URL unset or unreachable; skipping integration tests", allow_module_level=True)
 
 pytestmark = pytest.mark.integration
 
+from memory_base.retrieval import search as search_mod  # noqa: E402
 from memory_base.retrieval.search import search  # noqa: E402
 from memory_base.serve import api, repos  # noqa: E402
 
@@ -85,21 +124,87 @@ def _delete(path):
 
 
 async def _repo_row_count(repo: str) -> int:
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(IT_DB)
     try:
         return await conn.fetchval(
-            f'SELECT COUNT(*) FROM "{PG_SCHEMA}"."code_chunks" WHERE repo = $1', repo
+            'SELECT COUNT(*) FROM "memory"."code_chunks" WHERE repo = $1', repo
         )
     finally:
         await conn.close()
 
 
-def test_multi_repo_index_search_and_teardown(tmp_path, monkeypatch):
+class _CapturingRegistry:
+    """Records the job runner without executing it, so route calls stay side-
+    effect free (the real background index is driven explicitly in the test).
+    Firing a real index here would deadlock: the fire-and-forget task is
+    cancelled when the request loop closes, orphaning a `cocoindex update` that
+    holds the single-writer LMDB lock the explicit teardown then blocks on.
+    """
+
+    def __init__(self):
+        self.job = None
+
+    def has_capacity(self):
+        return True
+
+    def create(self, name, action):
+        import time
+
+        now = time.time()
+        self.job = repos.RepoJob("job-it", name, action, created_at=now, updated_at=now)
+        return self.job
+
+    def start(self, job, runner):
+        self._runner = runner
+
+    def get(self, job_id):
+        return self.job if self.job and self.job.job_id == job_id else None
+
+
+@pytest.fixture()
+def isolated_stack(tmp_path, monkeypatch):
+    """Create a throwaway DB + LMDB state; redirect all DB access to them."""
+
+    async def _create() -> None:
+        admin = await asyncpg.connect(ADMIN_DB)
+        try:
+            await admin.execute(f'DROP DATABASE IF EXISTS "{IT_DB_NAME}" WITH (FORCE)')
+            await admin.execute(f'CREATE DATABASE "{IT_DB_NAME}"')
+        finally:
+            await admin.close()
+        conn = await asyncpg.connect(IT_DB)
+        try:
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            await conn.execute('CREATE SCHEMA IF NOT EXISTS "memory"')
+        finally:
+            await conn.close()
+
+    async def _drop() -> None:
+        admin = await asyncpg.connect(ADMIN_DB)
+        try:
+            await admin.execute(f'DROP DATABASE IF EXISTS "{IT_DB_NAME}" WITH (FORCE)')
+        finally:
+            await admin.close()
+
+    asyncio.run(_create())
+
     cache = tmp_path / "cache"
     cache.mkdir()
-    monkeypatch.setattr(repos, "CACHE_ROOT", cache)
+    monkeypatch.setenv("DB_URL", IT_DB)
+    monkeypatch.setenv("COCOINDEX_DB", str(tmp_path / "cocoindex_state"))
     monkeypatch.setenv("REPO_CACHE", str(cache))
+    monkeypatch.setattr(repos, "DB_URL", IT_DB)
+    monkeypatch.setattr(repos, "CACHE_ROOT", cache)
+    monkeypatch.setattr(repos, "registry", _CapturingRegistry())
+    monkeypatch.setattr(search_mod, "DB_URL", IT_DB)
+    try:
+        yield cache
+    finally:
+        asyncio.run(_drop())
 
+
+def test_multi_repo_index_search_and_teardown(isolated_stack, tmp_path):
+    cache = isolated_stack
     origin_a = tmp_path / "origin_a"
     origin_b = tmp_path / "origin_b"
     _make_repo(origin_a, "alpha_marker_fn")
