@@ -19,15 +19,16 @@ services:
       - "8010:8010"
     environment:
       DB_URL: postgres://memory:memory@db:5432/memory_base
-      COCOINDEX_DB: ${COCOINDEX_DB}
+      COCOINDEX_DB: /data/cocoindex_state
       EMB_URL: ${EMB_URL}
       RERANK_URL: ${RERANK_URL}
       LLM_URL: ${LLM_URL}
       REPO_CACHE: /data/repos_cache
-    # ponytail: repo clones live here; losing this volume orphans code_chunks
-    # rows until the repos are re-added.
+    # ponytail: repo clones and the CocoIndex ledger live here; losing either
+    # volume orphans code_chunks rows until the repos are re-added.
     volumes:
       - repos_cache:/data/repos_cache
+      - cocoindex_state:/data/cocoindex_state
     command: uv run --no-sync uvicorn memory_base.serve.api:app --host 0.0.0.0 --port 8010
 
   mcp:
@@ -43,3 +44,4 @@ services:
 volumes:
   pgdata:
   repos_cache:
+  cocoindex_state:
