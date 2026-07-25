@@ -73,9 +73,7 @@ async def load(kind: str, job_id: str, cls: type, terminal: frozenset[str]) -> o
         logger.warning("failed to load {} job {}: {}", kind, job_id, exc)
         return None
     if job.status not in terminal:
-        # ponytail: single-process judgement — non-terminal and not in memory
-        # means dead; with multiple workers this could misjudge a job running
-        # on another worker, upgrade path is a short-TTL heartbeat key.
-        job.error = "job state lost to a process restart"
+        # ponytail: single-process judgement can misread a job running on another worker
+        job.error = "no terminal state was recorded (a restart or a lost final write)"
         job.status = "failed"
     return job
