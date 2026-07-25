@@ -206,10 +206,11 @@ async def ingest_repo(
     """Clone (or re-sync) a git repository into the code index.
 
     `url` is an http(s)/ssh git URL or the git@host:path SSH form. `branch`
-    optionally selects a branch to clone. `name` overrides the cache directory
-    name (derived from the URL basename by default). Re-issuing this for an
-    existing name pulls the latest commits instead of re-cloning. Returns
-    {job_id, status_url}; poll status_url for progress.
+    selects the branch on the initial clone only. `name` overrides the cache
+    directory name (derived from the URL basename by default). Re-issuing this
+    for an existing name fast-forwards its current branch instead of
+    re-cloning, ignoring `branch` — remove and re-add the repo to switch
+    branch. Returns {job_id, status_url}; poll status_url for progress.
     """
     body: dict[str, Any] = {"url": url}
     if branch is not None:

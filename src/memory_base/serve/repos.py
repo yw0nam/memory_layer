@@ -129,13 +129,17 @@ def remove(dest: Path) -> None:
 
 
 async def _repo_chunk_counts() -> dict[str, int]:
-    conn = await asyncpg.connect(DB_URL)
+    """Chunk count per repo; empty when the table or the DB is unavailable."""
+    try:
+        conn = await asyncpg.connect(DB_URL)
+    except (OSError, asyncpg.PostgresError):
+        return {}
     try:
         rows = await conn.fetch(
             f'SELECT repo, COUNT(*) AS n FROM "{PG_SCHEMA}"."code_chunks" GROUP BY repo'
         )
         return {row["repo"]: row["n"] for row in rows}
-    except asyncpg.UndefinedTableError:
+    except asyncpg.PostgresError:
         return {}
     finally:
         await conn.close()
@@ -172,14 +176,15 @@ async def list_repos() -> list[dict[str, Any]]:
 # ---- index runner ---------------------------------------------------------
 
 
+def _index_command() -> list[str]:
+    """Index argv; --no-sync keeps the runtime env from being re-resolved."""
+    return ["uv", "run", "--no-sync", "cocoindex", "update", CODE_APP]
+
+
 async def run_index() -> None:
     # ponytail: subprocess for isolation; move in-process if latency bites.
     proc = await asyncio.create_subprocess_exec(
-        "uv",
-        "run",
-        "cocoindex",
-        "update",
-        CODE_APP,
+        *_index_command(),
         cwd=str(PACKAGE_ROOT),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -324,7 +329,11 @@ async def _json_body(request: Request) -> dict[str, Any]:
 
 
 async def ingest_repo_route(request: Request) -> JSONResponse:
-    """Clone or re-sync a git repo and queue a code re-index."""
+    """Clone or re-sync a git repo and queue a code re-index.
+
+    `branch` applies to the initial clone only; an existing checkout is
+    fast-forwarded on its current branch. Remove and re-add to switch branch.
+    """
     try:
         body = await _json_body(request)
     except Exception as exc:
