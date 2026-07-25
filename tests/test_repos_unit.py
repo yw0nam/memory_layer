@@ -189,7 +189,7 @@ def test_repo_job_registry_queue_bound_and_ttl():
         registry.create("b", "ingest")
     first.status = "succeeded"
     first.updated_at = 100
-    assert registry.get(first.job_id) is None
+    assert asyncio.run(registry.get(first.job_id)) is None
 
 
 # ---- REST routes -----------------------------------------------------------
@@ -212,7 +212,7 @@ class AcceptingRegistry:
     def start(self, job, runner):
         self.runner = runner
 
-    def get(self, job_id):
+    async def get(self, job_id):
         return self.job if self.job and self.job.job_id == job_id else None
 
 

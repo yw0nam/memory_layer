@@ -157,7 +157,7 @@ class _CapturingRegistry:
     def start(self, job, runner):
         self._runner = runner
 
-    def get(self, job_id):
+    async def get(self, job_id):
         return self.job if self.job and self.job.job_id == job_id else None
 
 

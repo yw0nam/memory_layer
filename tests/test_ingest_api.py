@@ -118,7 +118,7 @@ def test_job_registry_queue_bound_ttl_and_completed_eviction():
 
     first.status = "succeeded"
     first.updated_at = 100
-    assert registry.get(first.job_id) is None
+    assert asyncio.run(registry.get(first.job_id)) is None
 
     now = time.time()
     for index in range(3):
