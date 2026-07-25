@@ -7,6 +7,7 @@ large document must not turn into a write per chunk.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -14,31 +15,33 @@ from memory_base.serve import ingest_api, job_store
 
 
 class Recorder:
-    """Stands in for the store, counting writes and retaining payloads."""
+    """Stands in for the transport only, so the real serialisation still runs.
+
+    Payloads are stored as JSON, exactly as Redis would hold them, and reads go
+    through the production `load` — a fake that returned the live object would
+    never cross the asdict/from-dict round trip.
+    """
 
     def __init__(self):
-        self.saved: dict[tuple[str, str], object] = {}
+        self.stored: dict[str, str] = {}
         self.writes: list[str] = []
 
-    async def save(self, kind, job):
-        self.writes.append(job.status)
-        self.saved[(kind, job.job_id)] = job
+    async def set(self, key, value, ex=None):
+        self.writes.append(json.loads(value)["status"])
+        self.stored[key] = value
 
-    async def load(self, kind, job_id, cls, terminal):
-        job = self.saved.get((kind, job_id))
-        if job is None:
-            return None
-        if job.status not in terminal:
-            job.error = "job state lost to a process restart"
-            job.status = "failed"
-        return job
+    async def get(self, key):
+        return self.stored.get(key)
 
 
 @pytest.fixture()
 def store(monkeypatch):
     recorder = Recorder()
-    monkeypatch.setattr(job_store, "save", recorder.save)
-    monkeypatch.setattr(job_store, "load", recorder.load)
+
+    async def get_client():
+        return recorder
+
+    monkeypatch.setattr(job_store, "get_client", get_client)
     return recorder
 
 
@@ -174,5 +177,32 @@ def test_store_outage_does_not_break_the_job(monkeypatch):
 
     async def _succeed(job):
         job.touch(status="succeeded", stage="done")
+
+    asyncio.run(scenario())
+
+
+def test_a_misconfigured_store_cannot_swallow_the_document(monkeypatch):
+    """A scheme-less REDIS_URL must not stop the pipeline from running.
+
+    The first store call happens before the runner; if it raises there, the
+    document is never converted while the status endpoint still says queued.
+    """
+    monkeypatch.setattr(job_store, "_client", None)
+    monkeypatch.setattr(job_store, "_client_initialized", False)
+    monkeypatch.setenv("REDIS_URL", "localhost:6379/0")
+
+    async def scenario():
+        ran = []
+        registry = ingest_api.JobRegistry()
+        job = registry.create("doc-1")
+
+        async def runner():
+            ran.append(job.job_id)
+            job.touch(status="succeeded", stage="done")
+
+        registry.start(job, runner)
+        await _drain(registry)
+        assert ran == [job.job_id]
+        assert job.status == "succeeded"
 
     asyncio.run(scenario())

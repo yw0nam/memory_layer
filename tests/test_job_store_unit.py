@@ -130,3 +130,46 @@ def test_absent_client_is_tolerated(monkeypatch):
 def test_corrupt_payload_is_a_miss_not_a_crash(fake):
     fake.store[job_store.job_key("repo", "j1")] = "{ not json"
     assert asyncio.run(job_store.load("repo", "j1", SampleJob, TERMINAL)) is None
+
+
+# ---- client construction ---------------------------------------------------
+
+
+@pytest.fixture()
+def fresh_client(monkeypatch):
+    """Reset the module-level client cache so get_client() actually runs."""
+    monkeypatch.setattr(job_store, "_client", None)
+    monkeypatch.setattr(job_store, "_client_initialized", False)
+
+
+def test_unusable_redis_url_yields_no_client_instead_of_raising(fresh_client, monkeypatch):
+    """A scheme-less URL is a plausible config typo; it must not raise."""
+    monkeypatch.setenv("REDIS_URL", "localhost:6379/0")
+    assert asyncio.run(job_store.get_client()) is None
+
+
+def test_save_and_load_stay_silent_on_an_unusable_url(fresh_client, monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "localhost:6379/0")
+    asyncio.run(job_store.save("document", SampleJob("j1")))
+    assert asyncio.run(job_store.load("document", "j1", SampleJob, TERMINAL)) is None
+
+
+def test_client_cannot_wait_forever(fresh_client, monkeypatch):
+    """load() runs inside the HTTP status route; an unbounded wait hangs it."""
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    client = asyncio.run(job_store.get_client())
+    kwargs = client.connection_pool.connection_kwargs
+    assert kwargs.get("socket_connect_timeout")
+    assert kwargs.get("socket_timeout")
+
+
+# ---- honesty about an unknown outcome --------------------------------------
+
+
+def test_missing_terminal_record_does_not_assert_a_cause(fake):
+    """A dropped terminal write looks identical to a restart — say so."""
+    asyncio.run(job_store.save("document", SampleJob("j1", status="running")))
+
+    revived = asyncio.run(job_store.load("document", "j1", SampleJob, TERMINAL))
+    assert revived.status == "failed"
+    assert "no terminal state" in (revived.error or "")
