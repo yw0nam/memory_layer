@@ -3,13 +3,13 @@
 ## Core principles
 
 - **Low-signal data never reaches the DB.** Agent-authored notes arrive already distilled through the MCP `save_memory` tool (validation, dedup, supersede) and are stored without embedding raw text. Documents go through chunking and LLM enrichment (atomize/summarize) before embedding. Raw transcripts and raw files are never embedded directly; only distilled, high-signal content is stored.
-- **Source-specific knowledge lives only in source adapters (`adapters/`).** `ingest/`, the storage schema, retrieval (`retrieval/`), and consumers (`serve/`) are source-agnostic. The `memory_chunks` table is the single contract between the write side and the read side — adding a new source must not change retrieval or serving code.
+- **Source-specific knowledge lives only in source adapters (`adapters/`).** `ingest/`, the storage schema, retrieval (`retrieval/`), and consumers (`serve/`) are source-agnostic. The `memory_chunks` and `code_chunks` tables are the only contract between the write side and the read side — adding a new source must not change retrieval or serving code.
 - **Assemble verified engines; don't reinvent.** Chunking/incremental indexing/vector storage/serving use proven components (CocoIndex, pgvector, FastMCP). Design decisions are grounded in web research and confirmed with the user — not invented ad hoc.
 
 ## Project structure
 
 The REST API is the single backend: every consumer (MCP server, n8n, scripts) reaches
-`memory_chunks` through it, never through the DB directly.
+stored chunks through it, never through the DB directly.
 
 ```
 src/memory_base/
@@ -19,7 +19,7 @@ src/memory_base/
     logger.py         # unified loguru setup: colored stderr + daily-rotated file sink
   ingest/
     enrich.py         # generic JSON-mode enrichment for stored content
-    code.py           # CocoIndex app: repo code chunking + embedding
+    code.py           # CocoIndex app: multi-repo code chunking + embedding over the repo cache
   adapters/
     document.py       # document conversion, chunking, CSV sampling, storage-row mapping
     document_worker.py# killable MarkItDown conversion worker
@@ -27,8 +27,10 @@ src/memory_base/
     search.py         # hybrid search: FTS + vector + IDF + time decay → RRF → rerank
     decompose.py      # knowledge-aware decomposition: multi-hop retrieval over memory atoms
   serve/
-    api.py            # Starlette REST API (search, deep search, save, admin) — the backend
+    api.py            # Starlette REST API (search, deep search, save, repos, admin) — the backend
     ingest_api.py     # bounded async document-ingestion orchestration
+    repos.py          # URL-driven git repo cache management + code re-indexing
+    job_store.py      # Redis mirror of job state: survives a restart, degrades to memory-only
     notes.py          # validation + storage for agent-authored notes
     admin.py          # memory lifecycle operations (duplicates, archive, restore)
     access_log.py     # best-effort persistence of retrieval activity
@@ -46,14 +48,23 @@ uv sync                                              # install deps + editable p
 uv run pytest                                        # all tests (integration skips if DB is down)
 uv run pytest -m "not integration"                   # unit tests only (what CI runs)
 uv run ruff format --check . && uv run ruff check .  # lint (ruff is the only Python linter)
-docker compose up -d db                              # pgvector on localhost:5439
+docker compose up -d db redis                        # pgvector on :5439, job state on :6379
 docker compose up -d --build api                     # REST backend on :8010
 docker compose up -d --build mcp                     # MCP server, SSE on :8765
-uv run cocoindex update src/memory_base/ingest/code.py   # (re)index repo code
+uv run cocoindex update src/memory_base/ingest/code.py   # (re)index every cached repo
 claude mcp add --transport sse memory-base http://localhost:8765/sse
 ```
 
+Code repositories are added and removed by git URL at runtime — `POST /repos {url}`,
+`DELETE /repos/{name}`, `GET /repos`, and the matching `ingest_repo` / `remove_repo` /
+`list_repos` MCP tools. Each mutation clones or removes a checkout under `REPO_CACHE` and
+re-runs the indexer, which mounts every cache subdirectory as an independent codebase.
+Both repo and document ingestion answer `202 {job_id, status_url}`; poll that URL for the
+outcome.
+
 Endpoints and credentials live in `.env` (gitignored): `LLM_URL`, `EMB_URL`, `RERANK_URL`, `DB_URL`, `COCOINDEX_DB`, `LLM_MODEL`, `EMB_MODEL`, `RERANK_MODEL`. Never hardcode them.
+
+`REPO_CACHE` (git checkouts), `COCOINDEX_DB` (incremental ledger) and `REDIS_URL` (job state) are set by `docker-compose.yml` to container-local paths, each backed by its own named volume, so the container never inherits a host location. Losing the repo cache or the ledger orphans `code_chunks` rows until the repos are re-added; losing the Redis volume drops job history only.
 
 Logging is configured once per process via `memory_base.core.logger.setup_logging()`; modules log through `loguru` or stdlib `logging` (intercepted into the same sinks). `LOG_DIR` (optional, default `logs/`) sets the file-sink directory.
 

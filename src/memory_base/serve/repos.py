@@ -7,7 +7,6 @@ code indexer over it, so repos can be added and removed at runtime.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import shutil
@@ -22,11 +21,11 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import asyncpg
-from loguru import logger
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.common import DB_URL, PG_SCHEMA
+from memory_base.serve import job_store
 
 REPO_MAX_QUEUED = int(os.getenv("REPO_MAX_QUEUED", "10"))
 JOB_TTL_SECONDS = 24 * 60 * 60
@@ -38,8 +37,6 @@ CACHE_ROOT = Path(
 ).resolve()
 PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 CODE_APP = "src/memory_base/ingest/code.py"
-# Dotfile under CACHE_ROOT: list_repos() and the indexer skip "."-prefixed entries.
-JOBS_FILE = CACHE_ROOT / ".repo_jobs.json"
 
 _SCP_LIKE = re.compile(r"^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:.+$")
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -258,46 +255,9 @@ class RepoJobRegistry:
         self.jobs: OrderedDict[str, RepoJob] = OrderedDict()
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._tasks: set[asyncio.Task[None]] = set()
-        self._load()
-
-    def _load(self) -> None:
-        """Restore job state from JOBS_FILE; a missing/corrupt file is not fatal."""
-        try:
-            raw = JOBS_FILE.read_text()
-            entries = json.loads(raw) if raw.strip() else []
-        except (OSError, ValueError):
-            return
-        if not isinstance(entries, list):
-            return
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            try:
-                job = RepoJob(**entry)
-            except TypeError:
-                continue
-            if job.status not in TERMINAL_STATUSES:
-                job.error = "job state lost to a process restart"
-                job.touch(status="failed")
-            self.jobs[job.job_id] = job
-
-    def persist(self) -> None:
-        """Write all retained jobs to JOBS_FILE atomically; never raises."""
-        path = JOBS_FILE
-        tmp = path.with_name(path.name + ".tmp")
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            payload = [asdict(job) for job in self.jobs.values()]
-            tmp.write_text(json.dumps(payload))
-            os.replace(tmp, path)
-        except OSError as exc:
-            logger.warning("failed to persist repo job state: {}", exc)
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
 
     def cleanup(self, now: float | None = None) -> None:
+        # Bounds process memory; Redis EXPIRE bounds only the mirrored copy.
         current = time.time() if now is None else now
         expired = [
             job_id
@@ -310,8 +270,6 @@ class RepoJobRegistry:
         overflow = completed[: max(0, len(completed) - self.max_completed)]
         for job_id in overflow:
             self.jobs.pop(job_id, None)
-        if expired or overflow:
-            self.persist()
 
     def queued_count(self) -> int:
         return sum(job.status == "queued" for job in self.jobs.values())
@@ -329,32 +287,34 @@ class RepoJobRegistry:
             job_id=uuid.uuid4().hex, name=name, action=action, created_at=now, updated_at=now
         )
         self.jobs[job.job_id] = job
-        self.persist()
         return job
 
     def start(self, job: RepoJob, runner: Callable[[], Awaitable[None]]) -> None:
         async def run() -> None:
+            await job_store.save("repo", job)
             async with self._semaphore:
                 job.touch(status="running")
-                self.persist()
+                await job_store.save("repo", job)
                 try:
                     await runner()
                     job.touch(status="succeeded")
-                    self.persist()
                 except Exception as exc:
                     job.error = str(exc) or type(exc).__name__
                     job.touch(status="failed")
-                    self.persist()
                 finally:
+                    await job_store.save("repo", job)
                     self.cleanup()
 
         task = asyncio.create_task(run())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    def get(self, job_id: str) -> RepoJob | None:
+    async def get(self, job_id: str) -> RepoJob | None:
         self.cleanup()
-        return self.jobs.get(job_id)
+        job = self.jobs.get(job_id)
+        if job is not None:
+            return job
+        return await job_store.load("repo", job_id, RepoJob, TERMINAL_STATUSES)
 
 
 registry = RepoJobRegistry()
@@ -461,7 +421,7 @@ async def list_repos_route(request: Request) -> JSONResponse:
 
 async def repo_job_route(request: Request) -> JSONResponse:
     """Return retained repo job state."""
-    job = registry.get(request.path_params["job_id"])
+    job = await registry.get(request.path_params["job_id"])
     if job is None:
         return _error("repo job not found", 404)
     return JSONResponse(job.response())

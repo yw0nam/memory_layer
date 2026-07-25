@@ -39,6 +39,7 @@ from memory_base.adapters.document import (
 from memory_base.common import DB_URL, PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.ingest.enrich import EnrichmentError, atomize_and_tag, summarize_and_tag
 from memory_base.schema import ensure_schema
+from memory_base.serve import job_store
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))
 INGEST_MAX_QUEUED = int(os.getenv("INGEST_MAX_QUEUED", "10"))
@@ -139,23 +140,29 @@ class JobRegistry:
 
     def start(self, job: IngestJob, runner: Callable[[], Awaitable[None]]) -> None:
         async def run() -> None:
+            await job_store.save("document", job)
             async with self._semaphore:
                 job.touch(status="running", stage="converting")
+                await job_store.save("document", job)
                 try:
                     await runner()
                 except Exception as exc:
                     job.error = str(exc) or type(exc).__name__
                     job.touch(status="failed", stage="done")
                 finally:
+                    await job_store.save("document", job)
                     self.cleanup()
 
         task = asyncio.create_task(run())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    def get(self, job_id: str) -> IngestJob | None:
+    async def get(self, job_id: str) -> IngestJob | None:
         self.cleanup()
-        return self.jobs.get(job_id)
+        job = self.jobs.get(job_id)
+        if job is not None:
+            return job
+        return await job_store.load("document", job_id, IngestJob, TERMINAL_STATUSES)
 
 
 registry = JobRegistry()
@@ -456,7 +463,7 @@ async def ingest_document_route(request: Request) -> JSONResponse:
 
 async def ingest_job_route(request: Request) -> JSONResponse:
     """Return retained ingestion job state."""
-    job = registry.get(request.path_params["job_id"])
+    job = await registry.get(request.path_params["job_id"])
     if job is None:
         return _error("ingest job not found", 404)
     return JSONResponse(job.response())
