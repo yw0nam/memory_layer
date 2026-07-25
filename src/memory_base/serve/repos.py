@@ -117,7 +117,7 @@ async def _run_git(*args: str, cwd: str | None = None) -> str:
 
 
 def _clone_args(url: str, dest: str, branch: str | None) -> list[str]:
-    """Git clone argv (after the `git` executable) for a treeless, full-history clone.
+    """Git clone argv (after the `git` executable) for a blobless, full-history clone.
 
     `--filter=blob:none` keeps every commit (so per-file commit times are real)
     while fetching blobs lazily; no `--depth`, which collapses all files to one
