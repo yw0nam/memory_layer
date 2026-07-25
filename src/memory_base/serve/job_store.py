@@ -59,7 +59,7 @@ async def save(kind: str, job: object) -> None:
 
 
 async def load(kind: str, job_id: str, cls: type, terminal: frozenset[str]) -> object | None:
-    """Read back a job; a non-terminal status means it died mid-flight."""
+    """Read back a job; a non-terminal status means no outcome was recorded."""
     try:
         client = await get_client()
         if client is None:
