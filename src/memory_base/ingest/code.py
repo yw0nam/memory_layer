@@ -9,6 +9,7 @@ Live watch:              uv run cocoindex update -L src/memory_base/ingest/code.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import pathlib
 from dataclasses import dataclass
@@ -65,6 +66,26 @@ def _cache_rel(path: pathlib.PurePath) -> str:
     return str(pathlib.Path(path).relative_to(CACHE_ROOT))
 
 
+async def _commit_time(path: pathlib.Path) -> float:
+    """Last commit time for `path`, falling back to filesystem mtime."""
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "-C",
+        str(path.parent),
+        "log",
+        "-1",
+        "--format=%ct",
+        "--",
+        path.name,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    out, _ = await proc.communicate()
+    if proc.returncode == 0 and out.strip():
+        return float(out.strip())
+    return path.stat().st_mtime
+
+
 @dataclass
 class CodeChunk:
     id: int
@@ -74,7 +95,7 @@ class CodeChunk:
     embedding: Annotated[NDArray, VllmEmbedder()]
     start_line: int
     end_line: int
-    mtime: float  # file mtime (epoch sec), used for time-decay scoring at query time
+    mtime: float  # commit time (epoch sec), used for time-decay scoring at query time
 
 
 @coco.lifespan
@@ -124,10 +145,7 @@ async def process_file(
         chunk_overlap=300,
         language=language,
     )
-    # ponytail: cloned files carry checkout-time mtime (flat right after a fresh
-    # clone; normalizes as pulls touch only changed files). Upgrade path: inject
-    # `git log -1 --format=%ct` per file.
-    mtime = pathlib.Path(file.file_path.path).stat().st_mtime
+    mtime = await _commit_time(pathlib.Path(file.file_path.path))
     id_gen = IdGenerator()
     await coco.map(
         process_chunk, chunks, repo, _cache_rel(file.file_path.path), mtime, id_gen, table

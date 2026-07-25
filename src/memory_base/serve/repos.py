@@ -112,15 +112,28 @@ async def _run_git(*args: str, cwd: str | None = None) -> str:
     return out.decode(errors="replace").strip()
 
 
-async def clone(url: str, dest: Path, branch: str | None = None) -> None:
-    args = ["clone", "--depth", "1"]
+def _clone_args(url: str, dest: str, branch: str | None) -> list[str]:
+    """Git clone argv (after the `git` executable) for a treeless, full-history clone.
+
+    `--filter=blob:none` keeps every commit (so per-file commit times are real)
+    while fetching blobs lazily; no `--depth`, which collapses all files to one
+    commit time.
+    """
+    args = ["clone", "--filter=blob:none"]
     if branch:
         args += ["--branch", branch]
-    args += ["--", url, str(dest)]
-    await _run_git(*args)
+    args += ["--", url, dest]
+    return args
+
+
+async def clone(url: str, dest: Path, branch: str | None = None) -> None:
+    await _run_git(*_clone_args(url, str(dest), branch))
 
 
 async def pull(dest: Path) -> None:
+    is_shallow = await _run_git("-C", str(dest), "rev-parse", "--is-shallow-repository")
+    if is_shallow == "true":
+        await _run_git("-C", str(dest), "fetch", "--filter=blob:none", "--unshallow")
     await _run_git("-C", str(dest), "pull", "--ff-only")
 
 
