@@ -11,10 +11,17 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  redis:
+    image: redis:8-alpine
+    container_name: memory_base_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
   api:
     build: .
     container_name: memory_base_api
-    depends_on: [db]
+    depends_on: [db, redis]
     ports:
       - "8010:8010"
     environment:
@@ -24,6 +31,7 @@ services:
       RERANK_URL: ${RERANK_URL}
       LLM_URL: ${LLM_URL}
       REPO_CACHE: /data/repos_cache
+      REDIS_URL: redis://redis:6379/0
     # ponytail: repo clones and the CocoIndex ledger live here; losing either
     # volume orphans code_chunks rows until the repos are re-added.
     volumes:
@@ -45,3 +53,4 @@ volumes:
   pgdata:
   repos_cache:
   cocoindex_state:
+  redis_data:
