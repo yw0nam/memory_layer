@@ -136,6 +136,35 @@ def test_list_repos_parses_local_clones(tmp_path, monkeypatch):
     assert entry["chunks"] == 7
 
 
+def test_list_repos_survives_db_failure(tmp_path, monkeypatch):
+    origin = tmp_path / "origin"
+    _make_git_repo(origin)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    subprocess.run(["git", "clone", "-q", str(origin), str(cache / "repo")], check=True)
+
+    monkeypatch.setattr(repos, "CACHE_ROOT", cache)
+
+    async def unreachable(*args, **kwargs):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(repos.asyncpg, "connect", unreachable)
+
+    listed = asyncio.run(repos.list_repos())
+    assert [entry["name"] for entry in listed] == ["repo"]
+    assert listed[0]["chunks"] == 0
+
+
+# ---- index command ---------------------------------------------------------
+
+
+def test_index_command_skips_dependency_sync():
+    command = repos._index_command()
+    assert command[:2] == ["uv", "run"]
+    assert "--no-sync" in command
+    assert command[-1] == repos.CODE_APP
+
+
 # ---- RepoJob.response() shape ---------------------------------------------
 
 
