@@ -14,7 +14,6 @@ import os
 
 import redis.asyncio as redis_asyncio
 from loguru import logger
-from redis.exceptions import RedisError
 
 JOB_TTL_SECONDS = 24 * 60 * 60
 
@@ -35,7 +34,8 @@ async def get_client() -> redis_asyncio.Redis | None:
             _client = redis_asyncio.from_url(
                 os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
             )
-        except (OSError, RedisError) as exc:
+        except Exception as exc:
+            # broad catch: a store fault must never take a job down
             logger.warning("could not build redis client: {}", exc)
             _client = None
     return _client
@@ -43,27 +43,29 @@ async def get_client() -> redis_asyncio.Redis | None:
 
 async def save(kind: str, job: object) -> None:
     """Mirror a job to Redis with a TTL; never raises."""
-    client = await get_client()
-    if client is None:
-        return
     try:
+        client = await get_client()
+        if client is None:
+            return
         payload = json.dumps(dataclasses.asdict(job))
         await client.set(job_key(kind, job.job_id), payload, ex=JOB_TTL_SECONDS)
-    except (OSError, ValueError, TypeError, RedisError) as exc:
+    except Exception as exc:
+        # broad catch: a store fault must never take a job down
         logger.warning("failed to persist {} job {}: {}", kind, job.job_id, exc)
 
 
 async def load(kind: str, job_id: str, cls: type, terminal: frozenset[str]) -> object | None:
     """Read back a job; a non-terminal status means it died mid-flight."""
-    client = await get_client()
-    if client is None:
-        return None
     try:
+        client = await get_client()
+        if client is None:
+            return None
         raw = await client.get(job_key(kind, job_id))
         if raw is None:
             return None
         job = cls(**json.loads(raw))
-    except (OSError, ValueError, TypeError, RedisError) as exc:
+    except Exception as exc:
+        # broad catch: a store fault must never take a job down
         logger.warning("failed to load {} job {}: {}", kind, job_id, exc)
         return None
     if job.status not in terminal:
