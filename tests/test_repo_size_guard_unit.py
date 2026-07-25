@@ -155,6 +155,21 @@ def test_a_rejected_clone_leaves_no_partial_checkout(tmp_path, monkeypatch):
     assert not dest.exists()
 
 
+def test_a_failed_clone_does_not_delete_a_checkout_it_did_not_create(tmp_path, monkeypatch):
+    """clone() may only remove what it wrote; an existing checkout is not its to drop."""
+    origin = tmp_path / "origin"
+    _make_git_repo(origin, payload_bytes=1000)
+    dest = tmp_path / "cache" / "repo"
+    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 50 * 1024 * 1024)
+    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 30)
+    asyncio.run(repos.clone(str(origin), dest))
+
+    with pytest.raises(repos.RepoError):
+        asyncio.run(repos.clone(str(origin), dest))
+
+    assert (dest / "main.py").exists()
+
+
 def test_a_clone_within_the_cap_is_untouched(tmp_path, monkeypatch):
     origin = tmp_path / "origin"
     _make_git_repo(origin, payload_bytes=1000)
@@ -184,12 +199,29 @@ def test_pull_is_bounded_too(tmp_path, monkeypatch):
 # ---- refusing before the disk is gone --------------------------------------
 
 
+def _fake_usage(monkeypatch, *, total, free):
+    usage = shutil._ntuple_diskusage(total, total - free, free)
+    monkeypatch.setattr(repos.shutil, "disk_usage", lambda path: usage)
+
+
 def test_post_repos_refuses_when_free_space_is_below_the_headroom(monkeypatch, tmp_path):
     monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
-    monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 10 * 1024**3)
-    monkeypatch.setattr(
-        repos.shutil, "disk_usage", lambda path: shutil._ntuple_diskusage(100, 90, 10)
-    )
+    monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
+    _fake_usage(monkeypatch, total=100 * 1024**3, free=200 * 1024**2)
+    registry = AcceptingRegistry()
+    monkeypatch.setattr(repos, "registry", registry)
+
+    response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
+
+    assert response.status_code == 507
+    assert registry.job is None
+
+
+def test_an_empty_volume_smaller_than_the_headroom_still_refuses(monkeypatch, tmp_path):
+    """Being wholly unused does not make a volume big enough to hold a checkout."""
+    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
+    _fake_usage(monkeypatch, total=512 * 1024**2, free=512 * 1024**2)
     registry = AcceptingRegistry()
     monkeypatch.setattr(repos, "registry", registry)
 
@@ -201,10 +233,8 @@ def test_post_repos_refuses_when_free_space_is_below_the_headroom(monkeypatch, t
 
 def test_post_repos_proceeds_when_the_disk_has_room(monkeypatch, tmp_path):
     monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
-    monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024)
-    monkeypatch.setattr(
-        repos.shutil, "disk_usage", lambda path: shutil._ntuple_diskusage(100, 0, 100)
-    )
+    monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
+    _fake_usage(monkeypatch, total=100 * 1024**3, free=50 * 1024**3)
     registry = AcceptingRegistry()
     monkeypatch.setattr(repos, "registry", registry)
 
