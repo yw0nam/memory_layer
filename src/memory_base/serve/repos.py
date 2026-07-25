@@ -7,6 +7,7 @@ code indexer over it, so repos can be added and removed at runtime.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -21,6 +22,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import asyncpg
+from loguru import logger
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -36,6 +38,8 @@ CACHE_ROOT = Path(
 ).resolve()
 PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 CODE_APP = "src/memory_base/ingest/code.py"
+# Dotfile under CACHE_ROOT: list_repos() and the indexer skip "."-prefixed entries.
+JOBS_FILE = CACHE_ROOT / ".repo_jobs.json"
 
 _SCP_LIKE = re.compile(r"^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:.+$")
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -112,15 +116,28 @@ async def _run_git(*args: str, cwd: str | None = None) -> str:
     return out.decode(errors="replace").strip()
 
 
-async def clone(url: str, dest: Path, branch: str | None = None) -> None:
-    args = ["clone", "--depth", "1"]
+def _clone_args(url: str, dest: str, branch: str | None) -> list[str]:
+    """Git clone argv (after the `git` executable) for a blobless, full-history clone.
+
+    `--filter=blob:none` keeps every commit (so per-file commit times are real)
+    while fetching blobs lazily; no `--depth`, which collapses all files to one
+    commit time.
+    """
+    args = ["clone", "--filter=blob:none"]
     if branch:
         args += ["--branch", branch]
-    args += ["--", url, str(dest)]
-    await _run_git(*args)
+    args += ["--", url, dest]
+    return args
+
+
+async def clone(url: str, dest: Path, branch: str | None = None) -> None:
+    await _run_git(*_clone_args(url, str(dest), branch))
 
 
 async def pull(dest: Path) -> None:
+    is_shallow = await _run_git("-C", str(dest), "rev-parse", "--is-shallow-repository")
+    if is_shallow == "true":
+        await _run_git("-C", str(dest), "fetch", "--filter=blob:none", "--unshallow")
     await _run_git("-C", str(dest), "pull", "--ff-only")
 
 
@@ -241,6 +258,44 @@ class RepoJobRegistry:
         self.jobs: OrderedDict[str, RepoJob] = OrderedDict()
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._tasks: set[asyncio.Task[None]] = set()
+        self._load()
+
+    def _load(self) -> None:
+        """Restore job state from JOBS_FILE; a missing/corrupt file is not fatal."""
+        try:
+            raw = JOBS_FILE.read_text()
+            entries = json.loads(raw) if raw.strip() else []
+        except (OSError, ValueError):
+            return
+        if not isinstance(entries, list):
+            return
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                job = RepoJob(**entry)
+            except TypeError:
+                continue
+            if job.status not in TERMINAL_STATUSES:
+                job.error = "job state lost to a process restart"
+                job.touch(status="failed")
+            self.jobs[job.job_id] = job
+
+    def persist(self) -> None:
+        """Write all retained jobs to JOBS_FILE atomically; never raises."""
+        path = JOBS_FILE
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = [asdict(job) for job in self.jobs.values()]
+            tmp.write_text(json.dumps(payload))
+            os.replace(tmp, path)
+        except OSError as exc:
+            logger.warning("failed to persist repo job state: {}", exc)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def cleanup(self, now: float | None = None) -> None:
         current = time.time() if now is None else now
@@ -252,8 +307,11 @@ class RepoJobRegistry:
         for job_id in expired:
             self.jobs.pop(job_id, None)
         completed = [job_id for job_id, job in self.jobs.items() if job.status in TERMINAL_STATUSES]
-        for job_id in completed[: max(0, len(completed) - self.max_completed)]:
+        overflow = completed[: max(0, len(completed) - self.max_completed)]
+        for job_id in overflow:
             self.jobs.pop(job_id, None)
+        if expired or overflow:
+            self.persist()
 
     def queued_count(self) -> int:
         return sum(job.status == "queued" for job in self.jobs.values())
@@ -271,18 +329,22 @@ class RepoJobRegistry:
             job_id=uuid.uuid4().hex, name=name, action=action, created_at=now, updated_at=now
         )
         self.jobs[job.job_id] = job
+        self.persist()
         return job
 
     def start(self, job: RepoJob, runner: Callable[[], Awaitable[None]]) -> None:
         async def run() -> None:
             async with self._semaphore:
                 job.touch(status="running")
+                self.persist()
                 try:
                     await runner()
                     job.touch(status="succeeded")
+                    self.persist()
                 except Exception as exc:
                     job.error = str(exc) or type(exc).__name__
                     job.touch(status="failed")
+                    self.persist()
                 finally:
                     self.cleanup()
 
