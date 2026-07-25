@@ -192,7 +192,7 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
     }
 
 
-def test_mcp_tool_list_still_exactly_six_tools():
+def test_mcp_tool_list_unaffected_by_supersede():
     from mcp.shared.memory import create_connected_server_and_client_session
 
     async def _run():
@@ -210,6 +210,9 @@ def test_mcp_tool_list_still_exactly_six_tools():
         "save_memory",
         "ingest_document",
         "deep_search",
+        "ingest_repo",
+        "remove_repo",
+        "list_repos",
     }
 
 

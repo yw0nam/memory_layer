@@ -1,4 +1,7 @@
-"""Phase 0: incremental code repo indexing (CocoIndex + tree-sitter + pgvector).
+"""Multi-repo incremental code indexing (CocoIndex + tree-sitter + pgvector).
+
+Scans each subdirectory of the repo cache as an independent codebase, so a repo
+that appears or disappears is mounted or torn down on the next update.
 
 Run once / incremental:  uv run cocoindex update src/memory_base/ingest/code.py
 Live watch:              uv run cocoindex update -L src/memory_base/ingest/code.py
@@ -24,15 +27,42 @@ from cocoindex.resources.id import IdGenerator
 from memory_base.common import DB_URL, PG_SCHEMA, VllmEmbedder
 
 TABLE_NAME = "code_chunks"
-# ponytail: single repo for now; add paths here to index more repos.
-REPO_ROOT = pathlib.Path(
-    os.getenv("INDEX_REPO", pathlib.Path(__file__).parent.parent.parent.parent)
-)
+CACHE_ROOT = pathlib.Path(
+    os.getenv("REPO_CACHE", pathlib.Path(__file__).parent.parent.parent.parent / ".repos_cache")
+).resolve()
+CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+
+INCLUDED_PATTERNS = [
+    "**/*.py",
+    "**/*.js",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.go",
+    "**/*.rs",
+    "**/*.java",
+    "**/*.c",
+    "**/*.cpp",
+    "**/*.h",
+    "**/*.rb",
+    "**/*.php",
+    "**/*.sh",
+    "**/*.md",
+    "**/*.toml",
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.sql",
+]
+EXCLUDED_PATTERNS = ["**/.*", "**/.venv", "**/__pycache__", "**/node_modules"]
 
 PG_DB = coco.ContextKey[asyncpg.Pool]("memory_base_db")
 EMBEDDER = coco.ContextKey[VllmEmbedder]("embedder")
 
 _splitter = RecursiveSplitter()
+
+
+def _cache_rel(path: pathlib.PurePath) -> str:
+    """Cache-relative path (repo/sub/file.py): unique per repo, ref-friendly."""
+    return str(pathlib.Path(path).relative_to(CACHE_ROOT))
 
 
 @dataclass
@@ -58,7 +88,8 @@ async def coco_lifespan(builder: coco.EnvironmentBuilder) -> AsyncIterator[None]
 @coco.fn
 async def process_chunk(
     chunk: Chunk,
-    filename: pathlib.PurePath,
+    repo: str,
+    filename: str,
     mtime: float,
     id_gen: IdGenerator,
     table: postgres.TableTarget[CodeChunk],
@@ -67,8 +98,8 @@ async def process_chunk(
     table.declare_row(
         row=CodeChunk(
             id=await id_gen.next_id(chunk.text),
-            repo=REPO_ROOT.name,
-            filename=str(filename),
+            repo=repo,
+            filename=filename,
             code=chunk.text,
             embedding=embedding,
             start_line=chunk.start.line,
@@ -81,6 +112,7 @@ async def process_chunk(
 @coco.fn(memo=True)
 async def process_file(
     file: FileLike,
+    repo: str,
     table: postgres.TableTarget[CodeChunk],
 ) -> None:
     text = await file.read_text()
@@ -92,13 +124,36 @@ async def process_file(
         chunk_overlap=300,
         language=language,
     )
+    # ponytail: cloned files carry checkout-time mtime (flat right after a fresh
+    # clone; normalizes as pulls touch only changed files). Upgrade path: inject
+    # `git log -1 --format=%ct` per file.
     mtime = pathlib.Path(file.file_path.path).stat().st_mtime
     id_gen = IdGenerator()
-    await coco.map(process_chunk, chunks, file.file_path.path, mtime, id_gen, table)
+    await coco.map(
+        process_chunk, chunks, repo, _cache_rel(file.file_path.path), mtime, id_gen, table
+    )
 
 
 @coco.fn
-async def app_main(sourcedir: pathlib.Path) -> None:
+async def process_repo(
+    repo: str,
+    repo_dir: pathlib.Path,
+    table: postgres.TableTarget[CodeChunk],
+) -> None:
+    files = localfs.walk_dir(
+        repo_dir,
+        recursive=True,
+        path_matcher=PatternFilePathMatcher(
+            included_patterns=INCLUDED_PATTERNS,
+            excluded_patterns=EXCLUDED_PATTERNS,
+        ),
+        live=True,
+    )
+    await coco.mount_each(process_file, files.items(), repo, table)
+
+
+@coco.fn
+async def app_main(root_dir: pathlib.Path) -> None:
     table = await postgres.mount_table_target(
         PG_DB,
         table_name=TABLE_NAME,
@@ -117,20 +172,20 @@ async def app_main(sourcedir: pathlib.Path) -> None:
         teardown_sql=f'DROP INDEX IF EXISTS "{PG_SCHEMA}".{TABLE_NAME}__fts',
     )
 
-    files = localfs.walk_dir(
-        sourcedir,
-        recursive=True,
-        path_matcher=PatternFilePathMatcher(
-            included_patterns=["**/*.py", "**/*.md", "**/*.toml", "**/*.yml", "**/*.sql"],
-            excluded_patterns=["**/.*", "**/.venv", "**/__pycache__", "**/node_modules"],
-        ),
-        live=True,
-    )
-    await coco.mount_each(process_file, files.items(), table)
+    for entry in sorted(root_dir.iterdir()):
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        await coco.mount(
+            coco.component_subpath("repo", entry.name),
+            process_repo,
+            entry.name,
+            entry,
+            table,
+        )
 
 
 app = coco.App(
     coco.AppConfig(name="MemoryBaseCode"),
     app_main,
-    sourcedir=REPO_ROOT,
+    root_dir=CACHE_ROOT,
 )

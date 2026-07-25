@@ -52,6 +52,9 @@ def test_tool_list_includes_document_ingestion():
         "save_memory",
         "ingest_document",
         "deep_search",
+        "ingest_repo",
+        "remove_repo",
+        "list_repos",
     }
 
 

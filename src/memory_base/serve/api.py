@@ -21,6 +21,7 @@ from memory_base.retrieval.search import search
 from memory_base.retrieval.search import validate_search_options
 from memory_base.serve import admin
 from memory_base.serve import ingest_api
+from memory_base.serve import repos
 from memory_base.serve.access_log import log_retrieval
 from memory_base.serve.notes import save_note
 
@@ -311,6 +312,10 @@ app = Starlette(
         Route("/save_memory", save_memory_route, methods=["POST"]),
         Route("/ingest/document", ingest_api.ingest_document_route, methods=["POST"]),
         Route("/ingest/jobs/{job_id}", ingest_api.ingest_job_route, methods=["GET"]),
+        Route("/repos", repos.ingest_repo_route, methods=["POST"]),
+        Route("/repos", repos.list_repos_route, methods=["GET"]),
+        Route("/repos/jobs/{job_id}", repos.repo_job_route, methods=["GET"]),
+        Route("/repos/{name}", repos.remove_repo_route, methods=["DELETE"]),
         Route("/admin/notes", admin_notes_route, methods=["GET"]),
         Route("/admin/notes/delete", admin_notes_delete_route, methods=["POST"]),
         Route("/admin/duplicates", admin_duplicates_route, methods=["GET"]),
