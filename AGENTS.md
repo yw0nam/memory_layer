@@ -59,6 +59,9 @@ Code repositories are added and removed by git URL at runtime — `POST /repos {
 `DELETE /repos/{name}`, `GET /repos`, and the matching `ingest_repo` / `remove_repo` /
 `list_repos` MCP tools. Each mutation clones or removes a checkout under `REPO_CACHE` and
 re-runs the indexer, which mounts every cache subdirectory as an independent codebase.
+A checkout is bounded by `REPO_MAX_BYTES` (default 2 GiB): the git process is killed once the
+checkout grows past the cap, and a rejected clone leaves nothing behind. `POST /repos` answers
+`507` without creating a job when free space is under `REPO_DISK_HEADROOM_BYTES` (default 1 GiB).
 Both repo and document ingestion answer `202 {job_id, status_url}`; poll that URL for the
 outcome.
 
