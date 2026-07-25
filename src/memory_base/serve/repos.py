@@ -257,8 +257,7 @@ class RepoJobRegistry:
         self._tasks: set[asyncio.Task[None]] = set()
 
     def cleanup(self, now: float | None = None) -> None:
-        # ttl_seconds sweep kept: test_repo_job_registry_queue_bound_and_ttl
-        # asserts on it directly, even though Redis EXPIRE also owns job_store's copy.
+        # Bounds process memory; Redis EXPIRE bounds only the mirrored copy.
         current = time.time() if now is None else now
         expired = [
             job_id
