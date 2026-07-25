@@ -181,10 +181,12 @@ def _clone_args(url: str, dest: str, branch: str | None) -> list[str]:
 
 
 async def clone(url: str, dest: Path, branch: str | None = None) -> None:
+    pre_existing = dest.exists()
     try:
         await _run_git_bounded(dest, *_clone_args(url, str(dest), branch))
     except RepoError:
-        shutil.rmtree(dest, ignore_errors=True)
+        if not pre_existing:
+            shutil.rmtree(dest, ignore_errors=True)
         raise
 
 
@@ -404,8 +406,7 @@ def _low_on_disk() -> bool:
     """True when the cache volume's free space is under the headroom floor.
 
     Walks up to the nearest existing parent when the cache dir is not yet
-    created; the headroom is capped at the volume's total capacity so it
-    never flags a volume that is entirely free.
+    created.
     """
     path = CACHE_ROOT
     while not path.exists():
@@ -417,7 +418,7 @@ def _low_on_disk() -> bool:
         usage = shutil.disk_usage(path)
     except OSError:
         return False
-    return usage.free < min(DISK_HEADROOM_BYTES, usage.total)
+    return usage.free < DISK_HEADROOM_BYTES
 
 
 async def _json_body(request: Request) -> dict[str, Any]:
