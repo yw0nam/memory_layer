@@ -16,6 +16,7 @@ import redis.asyncio as redis_asyncio
 from loguru import logger
 
 JOB_TTL_SECONDS = 24 * 60 * 60
+SOCKET_TIMEOUT_SECONDS = 3
 
 _client: redis_asyncio.Redis | None = None
 _client_initialized = False
@@ -32,7 +33,10 @@ async def get_client() -> redis_asyncio.Redis | None:
         _client_initialized = True
         try:
             _client = redis_asyncio.from_url(
-                os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+                os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+                decode_responses=True,
+                socket_connect_timeout=SOCKET_TIMEOUT_SECONDS,
+                socket_timeout=SOCKET_TIMEOUT_SECONDS,
             )
         except Exception as exc:
             # broad catch: a store fault must never take a job down
