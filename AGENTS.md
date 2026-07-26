@@ -61,13 +61,14 @@ Code repositories are added and removed by git URL at runtime — `POST /repos {
 re-runs the indexer, which mounts every cache subdirectory as an independent codebase.
 A checkout is bounded by `REPO_MAX_BYTES` (default 2 GiB): the git process is killed once the
 checkout grows past the cap, and a rejected clone leaves nothing behind. `POST /repos` answers
-`507` without creating a job when free space is under `REPO_DISK_HEADROOM_BYTES` (default 1 GiB).
+`507` without creating a job unless free space covers `REPO_DISK_HEADROOM_BYTES` (default 1 GiB)
+plus one full-size checkout.
 Both repo and document ingestion answer `202 {job_id, status_url}`; poll that URL for the
 outcome.
 
-Endpoints and credentials live in `.env` (gitignored): `LLM_URL`, `EMB_URL`, `RERANK_URL`, `DB_URL`, `COCOINDEX_DB`, `LLM_MODEL`, `EMB_MODEL`, `RERANK_MODEL`. Never hardcode them.
+Endpoints and credentials live in `.env` (gitignored): `LLM_URL`, `EMB_URL`, `RERANK_URL`, `DB_URL`, `COCOINDEX_DB`, `LLM_MODEL`, `EMB_MODEL`, `RERANK_MODEL`, `DATA_ROOT`. Never hardcode them.
 
-`REPO_CACHE` (git checkouts), `COCOINDEX_DB` (incremental ledger) and `REDIS_URL` (job state) are set by `docker-compose.yml` to container-local paths, each backed by its own named volume, so the container never inherits a host location. Losing the repo cache or the ledger orphans `code_chunks` rows until the repos are re-added; losing the Redis volume drops job history only.
+`DATA_ROOT` is the one host directory every container writes state into — `pgdata` (Postgres), `redis` (job state), `repos_cache` (git checkouts) and `cocoindex_state` (incremental ledger) are bound under it by `docker-compose.yml`. Compose refuses to start when it is unset rather than binding the host root. `REPO_CACHE` and `COCOINDEX_DB` stay container-local paths so the container never inherits a host location. Losing the repo cache or the ledger orphans `code_chunks` rows until the repos are re-added; losing the Redis directory drops job history only.
 
 Logging is configured once per process via `memory_base.core.logger.setup_logging()`; modules log through `loguru` or stdlib `logging` (intercepted into the same sinks). `LOG_DIR` (optional, default `logs/`) sets the file-sink directory.
 
