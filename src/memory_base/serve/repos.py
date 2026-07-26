@@ -10,6 +10,7 @@ import asyncio
 import os
 import re
 import shutil
+import signal
 import time
 import uuid
 from collections import OrderedDict
@@ -132,20 +133,31 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+def _kill_tree(proc: asyncio.subprocess.Process) -> None:
+    """Kill proc's whole process group, or proc alone when it does not lead one."""
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (ProcessLookupError, PermissionError):
+        return
+    try:
+        if pgid == proc.pid:
+            os.killpg(pgid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 async def _watch_size(proc: asyncio.subprocess.Process, dest: Path) -> None:
     """Kill proc once dest grows past the size cap; return once proc is not running."""
-    while proc.returncode is None:
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=SIZE_POLL_SECONDS)
+    waiter = asyncio.ensure_future(proc.wait())
+    while True:
+        done, _ = await asyncio.wait({waiter}, timeout=SIZE_POLL_SECONDS)
+        if done:
             return
-        except TimeoutError:
-            pass
-        if _dir_size(dest) > REPO_MAX_BYTES:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            await proc.wait()
+        if await asyncio.to_thread(_dir_size, dest) > REPO_MAX_BYTES:
+            _kill_tree(proc)
+            await waiter
             return
 
 
@@ -157,9 +169,10 @@ async def _run_git_bounded(dest: Path, *args: str, cwd: str | None = None) -> st
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
     )
     _, (out, err) = await asyncio.gather(_watch_size(proc, dest), proc.communicate())
-    if _dir_size(dest) > REPO_MAX_BYTES:
+    if await asyncio.to_thread(_dir_size, dest) > REPO_MAX_BYTES:
         raise RepoError(f"checkout exceeds the {REPO_MAX_BYTES} byte size limit")
     if proc.returncode != 0:
         raise RepoError(err.decode(errors="replace").strip() or f"git {args[0]} failed")
@@ -403,10 +416,10 @@ def _error(message: str, status_code: int) -> JSONResponse:
 
 
 def _low_on_disk() -> bool:
-    """True when the cache volume's free space is under the headroom floor.
+    """True when the cache volume cannot hold a full-size checkout above the headroom floor.
 
     Walks up to the nearest existing parent when the cache dir is not yet
-    created.
+    created; an unreadable volume counts as low.
     """
     path = CACHE_ROOT
     while not path.exists():
@@ -417,8 +430,8 @@ def _low_on_disk() -> bool:
     try:
         usage = shutil.disk_usage(path)
     except OSError:
-        return False
-    return usage.free < DISK_HEADROOM_BYTES
+        return True
+    return usage.free < DISK_HEADROOM_BYTES + REPO_MAX_BYTES
 
 
 async def _json_body(request: Request) -> dict[str, Any]:
@@ -448,7 +461,11 @@ async def ingest_repo_route(request: Request) -> JSONResponse:
     if not registry.has_capacity():
         return _error("repo job queue is full", 429)
     if _low_on_disk():
-        return _error(f"free disk space below the {DISK_HEADROOM_BYTES} byte headroom", 507)
+        return _error(
+            f"free disk space below the {DISK_HEADROOM_BYTES} byte headroom "
+            f"plus the {REPO_MAX_BYTES} byte checkout cap",
+            507,
+        )
     dest = CACHE_ROOT / name
     try:
         job = registry.create(name, "ingest")
