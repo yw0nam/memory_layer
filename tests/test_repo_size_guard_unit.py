@@ -8,6 +8,7 @@ takes indexing down with it.
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import subprocess
 import sys
@@ -52,14 +53,17 @@ class AcceptingRegistry:
         return self.job
 
 
+_COMMITTER = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@t",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@t",
+}
+
+
 def _make_git_repo(path, payload_bytes=0):
     path.mkdir(parents=True, exist_ok=True)
-    env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-    }
+    env = _COMMITTER
     subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
     (path / "main.py").write_text("print('hi')\n")
     if payload_bytes:
@@ -130,6 +134,103 @@ def test_watchdog_kills_a_process_that_outgrows_the_cap(tmp_path, monkeypatch):
     assert time.monotonic() - started < 3
 
 
+def test_the_kill_takes_descendants_with_it(tmp_path, monkeypatch):
+    """git spawns helpers (ssh, git-remote-*, index-pack); killing only the parent
+    leaves them writing into the checkout."""
+    dest = tmp_path / "checkout"
+    dest.mkdir()
+    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 64 * 1024)
+    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 0.02)
+
+    parent = (
+        "import pathlib, subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c',\n"
+        '    "import pathlib, time\\n"\n'
+        "    \"blob = pathlib.Path('child-blob')\\n\"\n"
+        '    "for i in range(600):\\n"\n'
+        "    \"    blob.write_bytes(b'x' * 8192 * (i + 1))\\n\"\n"
+        '    "    time.sleep(0.01)\\n"])\n'
+        "pathlib.Path('child.pid').write_text(str(child.pid))\n"
+        "time.sleep(60)\n"
+    )
+
+    async def scenario():
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            parent,
+            cwd=str(dest),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        await repos._watch_size(proc, dest)
+        await proc.wait()
+        return int((dest / "child.pid").read_text())
+
+    child_pid = asyncio.run(asyncio.wait_for(scenario(), 20))
+
+    time.sleep(0.5)
+    with pytest.raises(OSError):
+        os.kill(child_pid, 0)
+
+
+def test_git_runs_in_its_own_process_group(tmp_path, monkeypatch):
+    """Killing a group only works if git leads one — otherwise it is the API's own."""
+    origin = tmp_path / "origin"
+    _make_git_repo(origin, payload_bytes=1000)
+    dest = tmp_path / "cache" / "repo"
+    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 50 * 1024 * 1024)
+    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 30)
+
+    seen = []
+    spawn = asyncio.create_subprocess_exec
+
+    async def spy(*args, **kwargs):
+        seen.append(kwargs.get("start_new_session"))
+        return await spawn(*args, **kwargs)
+
+    monkeypatch.setattr(repos.asyncio, "create_subprocess_exec", spy)
+    asyncio.run(repos.clone(str(origin), dest))
+
+    assert seen and all(started is True for started in seen)
+
+
+def test_measuring_the_checkout_does_not_block_the_event_loop(tmp_path, monkeypatch):
+    """A million-file checkout takes seconds to walk; the API cannot stop serving for it."""
+    dest = tmp_path / "checkout"
+    dest.mkdir()
+    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 10**12)
+    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(repos, "_dir_size", lambda path: time.sleep(0.3) or 0)
+
+    async def scenario():
+        ticks = 0
+
+        async def heartbeat():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        beat = asyncio.create_task(heartbeat())
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(1)",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        await repos._watch_size(proc, dest)
+        beat.cancel()
+        return ticks
+
+    ticks = asyncio.run(asyncio.wait_for(scenario(), 20))
+
+    assert ticks > 20
+
+
 def test_clone_rejects_a_checkout_that_lands_over_the_cap(tmp_path, monkeypatch):
     """The final check catches what the poll interval was too coarse to see."""
     origin = tmp_path / "origin"
@@ -183,7 +284,30 @@ def test_a_clone_within_the_cap_is_untouched(tmp_path, monkeypatch):
 
 
 def test_pull_is_bounded_too(tmp_path, monkeypatch):
-    """A repo that grows past the cap after the fact must not be re-synced in."""
+    """Growth arriving through a pull is caught, not just a checkout already over the cap."""
+    origin = tmp_path / "origin"
+    _make_git_repo(origin, payload_bytes=1000)
+    dest = tmp_path / "cache" / "repo"
+    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 50 * 1024 * 1024)
+    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 0.02)
+    asyncio.run(repos.clone(str(origin), dest))
+
+    settled = repos._dir_size(dest)
+    (origin / "payload.txt").write_bytes(b"y" * 8 * 1024 * 1024)
+    subprocess.run(["git", "-C", str(origin), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(origin), "commit", "-q", "-m", "grow"],
+        check=True,
+        env=_COMMITTER,
+    )
+
+    # under the cap before the pull, over it once the new commit lands
+    monkeypatch.setattr(repos, "REPO_MAX_BYTES", settled + 2 * 1024 * 1024)
+    with pytest.raises(repos.RepoError):
+        asyncio.run(repos.pull(dest))
+
+
+def test_a_rejected_pull_keeps_the_existing_checkout(tmp_path, monkeypatch):
     origin = tmp_path / "origin"
     _make_git_repo(origin, payload_bytes=1000)
     dest = tmp_path / "cache" / "repo"
@@ -194,6 +318,8 @@ def test_pull_is_bounded_too(tmp_path, monkeypatch):
     monkeypatch.setattr(repos, "REPO_MAX_BYTES", 100)
     with pytest.raises(repos.RepoError):
         asyncio.run(repos.pull(dest))
+
+    assert (dest / "main.py").exists()
 
 
 # ---- refusing before the disk is gone --------------------------------------
@@ -231,9 +357,42 @@ def test_an_empty_volume_smaller_than_the_headroom_still_refuses(monkeypatch, tm
     assert registry.job is None
 
 
+def test_admission_requires_room_for_a_full_size_checkout(monkeypatch, tmp_path):
+    """A cap larger than the free space cannot bound anything — refuse at the door."""
+    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
+    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 2 * 1024**3)
+    _fake_usage(monkeypatch, total=100 * 1024**3, free=3 * 1024**3 - 1)
+    registry = AcceptingRegistry()
+    monkeypatch.setattr(repos, "registry", registry)
+
+    response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
+
+    assert response.status_code == 507
+    assert registry.job is None
+
+
+def test_an_unreadable_volume_refuses_rather_than_admits(monkeypatch, tmp_path):
+    """Failing open puts the guard off exactly when the volume is in trouble."""
+    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+
+    def unreadable(path):
+        raise OSError("EIO")
+
+    monkeypatch.setattr(repos.shutil, "disk_usage", unreadable)
+    registry = AcceptingRegistry()
+    monkeypatch.setattr(repos, "registry", registry)
+
+    response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
+
+    assert response.status_code == 507
+    assert registry.job is None
+
+
 def test_post_repos_proceeds_when_the_disk_has_room(monkeypatch, tmp_path):
     monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
     monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
+    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 2 * 1024**3)
     _fake_usage(monkeypatch, total=100 * 1024**3, free=50 * 1024**3)
     registry = AcceptingRegistry()
     monkeypatch.setattr(repos, "registry", registry)
