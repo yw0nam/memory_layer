@@ -19,8 +19,15 @@ def _mounts(service: str) -> list[str]:
     return COMPOSE["services"][service]["volumes"]
 
 
+def _split(mount: str) -> tuple[str, str]:
+    """Source and target of a short-syntax mount; the source may hold colons itself."""
+    variable, brace, rest = mount.rpartition("}")
+    path, _, target = (rest if brace else mount).partition(":")
+    return variable + brace + path, target
+
+
 def _mount_targets() -> set[str]:
-    return {mount.split(":")[1] for mount in API["volumes"]}
+    return {_split(mount)[1] for mount in API["volumes"]}
 
 
 def test_api_persists_cocoindex_state_on_a_volume():
@@ -36,14 +43,14 @@ def test_api_persists_repo_cache_on_a_volume():
 def test_every_stateful_mount_sits_under_the_data_root():
     for service in STATEFUL_SERVICES:
         for mount in _mounts(service):
-            assert DATA_ROOT.match(mount.split(":")[0]), f"{service}: {mount}"
+            assert DATA_ROOT.match(_split(mount)[0]), f"{service}: {mount}"
 
 
 def test_an_unset_data_root_fails_instead_of_mounting_the_host_root():
     """A bare ${DATA_ROOT} would expand to nothing and bind / into the container."""
     for service in STATEFUL_SERVICES:
         for mount in _mounts(service):
-            source = mount.split(":")[0]
+            source = _split(mount)[0]
             assert ":?" in source, f"{service}: {mount} must fail when DATA_ROOT is unset"
 
 
@@ -69,7 +76,7 @@ def test_redis_survives_its_own_restart():
     assert "appendonly yes" in " ".join(
         redis["command"] if isinstance(redis["command"], list) else [redis["command"]]
     )
-    assert any(mount.split(":")[1] == "/data" for mount in _mounts("redis"))
+    assert any(_split(mount)[1] == "/data" for mount in _mounts("redis"))
 
 
 def test_api_starts_after_redis():

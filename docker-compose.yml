@@ -9,14 +9,14 @@ services:
     ports:
       - "5439:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/pgdata:/var/lib/postgresql/data
 
   redis:
     image: redis:8-alpine
     container_name: memory_base_redis
     command: redis-server --appendonly yes
     volumes:
-      - redis_data:/data
+      - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/redis:/data
 
   api:
     build: .
@@ -33,10 +33,10 @@ services:
       REPO_CACHE: /data/repos_cache
       REDIS_URL: redis://redis:6379/0
     # ponytail: repo clones and the CocoIndex ledger live here; losing either
-    # volume orphans code_chunks rows until the repos are re-added.
+    # directory orphans code_chunks rows until the repos are re-added.
     volumes:
-      - repos_cache:/data/repos_cache
-      - cocoindex_state:/data/cocoindex_state
+      - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/repos_cache:/data/repos_cache
+      - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/cocoindex_state:/data/cocoindex_state
     command: uv run --no-sync uvicorn memory_base.serve.api:app --host 0.0.0.0 --port 8010
 
   mcp:
@@ -48,9 +48,3 @@ services:
     environment:
       MCP_TRANSPORT: sse
       REST_URL: http://api:8010
-
-volumes:
-  pgdata:
-  repos_cache:
-  cocoindex_state:
-  redis_data:
