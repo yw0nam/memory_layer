@@ -406,6 +406,7 @@ def test_post_repos_proceeds_when_the_disk_has_room(monkeypatch, tmp_path):
 def test_an_absent_cache_root_does_not_block_ingestion(monkeypatch, tmp_path):
     """The cache dir is created on first use; its absence is not a full disk."""
     monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path / "not-created-yet")
+    _fake_usage(monkeypatch, total=100 * 1024**3, free=50 * 1024**3)
     registry = AcceptingRegistry()
     monkeypatch.setattr(repos, "registry", registry)
 
