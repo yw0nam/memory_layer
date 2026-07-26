@@ -10,6 +10,7 @@ import asyncio
 import os
 import re
 import shutil
+import signal
 import time
 import uuid
 from collections import OrderedDict
@@ -28,6 +29,9 @@ from memory_base.common import DB_URL, PG_SCHEMA
 from memory_base.serve import job_store
 
 REPO_MAX_QUEUED = int(os.getenv("REPO_MAX_QUEUED", "10"))
+REPO_MAX_BYTES = int(os.getenv("REPO_MAX_BYTES", str(2 * 1024**3)))
+DISK_HEADROOM_BYTES = int(os.getenv("REPO_DISK_HEADROOM_BYTES", str(1024**3)))
+SIZE_POLL_SECONDS = 5
 JOB_TTL_SECONDS = 24 * 60 * 60
 MAX_COMPLETED_JOBS = 100
 TERMINAL_STATUSES = frozenset({"succeeded", "failed"})
@@ -113,6 +117,68 @@ async def _run_git(*args: str, cwd: str | None = None) -> str:
     return out.decode(errors="replace").strip()
 
 
+def _dir_size(path: Path) -> int:
+    """Total bytes of regular files under path; a missing path is 0 bytes."""
+    total = 0
+    for root, dirs, files in os.walk(path, followlinks=False):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+        for name in files:
+            file_path = os.path.join(root, name)
+            if os.path.islink(file_path):
+                continue
+            try:
+                total += os.stat(file_path).st_size
+            except OSError:
+                continue
+    return total
+
+
+def _kill_tree(proc: asyncio.subprocess.Process) -> None:
+    """Kill proc's whole process group, or proc alone when it does not lead one."""
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (ProcessLookupError, PermissionError):
+        return
+    try:
+        if pgid == proc.pid:
+            os.killpg(pgid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+async def _watch_size(proc: asyncio.subprocess.Process, dest: Path) -> None:
+    """Kill proc once dest grows past the size cap; return once proc is not running."""
+    waiter = asyncio.ensure_future(proc.wait())
+    while True:
+        done, _ = await asyncio.wait({waiter}, timeout=SIZE_POLL_SECONDS)
+        if done:
+            return
+        if await asyncio.to_thread(_dir_size, dest) > REPO_MAX_BYTES:
+            _kill_tree(proc)
+            await waiter
+            return
+
+
+async def _run_git_bounded(dest: Path, *args: str, cwd: str | None = None) -> str:
+    """Run a git subprocess under `dest`, guarded by the size watchdog and a final check."""
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        *args,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+    _, (out, err) = await asyncio.gather(_watch_size(proc, dest), proc.communicate())
+    if await asyncio.to_thread(_dir_size, dest) > REPO_MAX_BYTES:
+        raise RepoError(f"checkout exceeds the {REPO_MAX_BYTES} byte size limit")
+    if proc.returncode != 0:
+        raise RepoError(err.decode(errors="replace").strip() or f"git {args[0]} failed")
+    return out.decode(errors="replace").strip()
+
+
 def _clone_args(url: str, dest: str, branch: str | None) -> list[str]:
     """Git clone argv (after the `git` executable) for a blobless, full-history clone.
 
@@ -128,14 +194,20 @@ def _clone_args(url: str, dest: str, branch: str | None) -> list[str]:
 
 
 async def clone(url: str, dest: Path, branch: str | None = None) -> None:
-    await _run_git(*_clone_args(url, str(dest), branch))
+    pre_existing = dest.exists()
+    try:
+        await _run_git_bounded(dest, *_clone_args(url, str(dest), branch))
+    except RepoError:
+        if not pre_existing:
+            shutil.rmtree(dest, ignore_errors=True)
+        raise
 
 
 async def pull(dest: Path) -> None:
     is_shallow = await _run_git("-C", str(dest), "rev-parse", "--is-shallow-repository")
     if is_shallow == "true":
-        await _run_git("-C", str(dest), "fetch", "--filter=blob:none", "--unshallow")
-    await _run_git("-C", str(dest), "pull", "--ff-only")
+        await _run_git_bounded(dest, "-C", str(dest), "fetch", "--filter=blob:none", "--unshallow")
+    await _run_git_bounded(dest, "-C", str(dest), "pull", "--ff-only")
 
 
 def remove(dest: Path) -> None:
@@ -343,6 +415,25 @@ def _error(message: str, status_code: int) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status_code)
 
 
+def _low_on_disk() -> bool:
+    """True when the cache volume cannot hold a full-size checkout above the headroom floor.
+
+    Walks up to the nearest existing parent when the cache dir is not yet
+    created; an unreadable volume counts as low.
+    """
+    path = CACHE_ROOT
+    while not path.exists():
+        parent = path.parent
+        if parent == path:
+            return False
+        path = parent
+    try:
+        usage = shutil.disk_usage(path)
+    except OSError:
+        return True
+    return usage.free < DISK_HEADROOM_BYTES + REPO_MAX_BYTES
+
+
 async def _json_body(request: Request) -> dict[str, Any]:
     body = await request.json()
     if not isinstance(body, dict):
@@ -369,6 +460,12 @@ async def ingest_repo_route(request: Request) -> JSONResponse:
 
     if not registry.has_capacity():
         return _error("repo job queue is full", 429)
+    if _low_on_disk():
+        return _error(
+            f"free disk space below the {DISK_HEADROOM_BYTES} byte headroom "
+            f"plus the {REPO_MAX_BYTES} byte checkout cap",
+            507,
+        )
     dest = CACHE_ROOT / name
     try:
         job = registry.create(name, "ingest")
