@@ -53,14 +53,20 @@ async def _search(
     kind: str | None = None,
     tags: list[str] | None = None,
     include_atoms: bool | None = None,
+    include_archived: bool = False,
+    repo: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {"query": query, "source": source, "top_k": top_k}
+    if repo is not None:
+        body["repo"] = repo
     if kind is not None:
         body["kind"] = kind
     if tags is not None:
         body["tags"] = tags
     if include_atoms is not None:
         body["include_atoms"] = include_atoms
+    if include_archived:
+        body["include_archived"] = True
     async with _client() as client:
         response = await client.post("/search", json=body)
         if response.status_code == 400:
@@ -73,9 +79,8 @@ async def _search(
 async def search_all(
     query: str,
     top_k: int = 10,
-    kind: str | None = None,
-    tags: list[str] | None = None,
     include_atoms: bool | None = None,
+    include_archived: bool = False,
 ) -> list[dict[str, Any]]:
     """Search both code and memory for the given query.
 
@@ -84,24 +89,35 @@ async def search_all(
     (e.g. broad or ambiguous questions). Returns up to `top_k` hits sorted
     by relevance (rerank score, falling back to RRF fusion score), each with
     source ("code" or "memory"), ref (file:line-range or document ref),
-    date (YYYY-MM-DD), score, text (truncated to 2000 chars), and optional
-    context (neighboring code for code hits).
+    date (YYYY-MM-DD), score, text (truncated to 2000 chars), repo for code
+    hits, and optional context (neighboring code for code hits).
+
+    `include_archived` widens the search to archived memory; use `search_memory`
+    for the `kind`/`tags` filters, which apply to memory only.
     """
-    return await _search(query, "all", top_k, kind, tags, include_atoms)
+    return await _search(
+        query, "all", top_k, include_atoms=include_atoms, include_archived=include_archived
+    )
 
 
 @mcp.tool()
-async def search_code(query: str, top_k: int = 10) -> list[dict[str, Any]]:
+async def search_code(
+    query: str, top_k: int = 10, repo: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Search only the indexed codebase for the given query.
 
     Use this for questions about code structure, implementation location,
     function/class definitions, or "where is X implemented" style questions.
     Returns up to `top_k` hits sorted by relevance, each with source="code",
-    ref (file:line-range), date (file mtime as YYYY-MM-DD), score, text
+    repo, ref (file:line-range), date (file mtime as YYYY-MM-DD), score, text
     (truncated to 2000 chars), and optional context (neighboring code chunks
     for continuity).
+
+    Every cached repository is searched unless `repo` narrows it to the named
+    ones; `list_repos` reports the names that exist, and an unknown name simply
+    matches nothing.
     """
-    return await _search(query, "code", top_k)
+    return await _search(query, "code", top_k, repo=repo)
 
 
 @mcp.tool()
@@ -111,6 +127,7 @@ async def search_memory(
     kind: str | None = None,
     tags: list[str] | None = None,
     include_atoms: bool | None = None,
+    include_archived: bool = False,
 ) -> list[dict[str, Any]]:
     """Search only stored memory for the given query.
 
@@ -119,8 +136,13 @@ async def search_memory(
     the current codebase. Returns up to `top_k` hits sorted by relevance,
     each with source="memory", ref (document ref), date (YYYY-MM-DD),
     score, and text (truncated to 2000 chars).
+
+    Archived memory is excluded by default. Set `include_archived` only when the
+    question is explicitly about superseded or historical content: it also drops
+    recency weighting, and the rows it adds carry "archived": true because they
+    may have been replaced by a newer note.
     """
-    return await _search(query, "memory", top_k, kind, tags, include_atoms)
+    return await _search(query, "memory", top_k, kind, tags, include_atoms, include_archived)
 
 
 @mcp.tool()
@@ -261,6 +283,7 @@ async def deep_search(
     max_hops: int | None = None,
     kind: str | None = None,
     tags: list[str] | None = None,
+    include_archived: bool = False,
 ) -> dict[str, Any]:
     """Multi-hop decomposition over stored memory for complex questions.
 
@@ -269,7 +292,9 @@ async def deep_search(
     caused the checkout latency fix?"). Operates on memory only.
     Returns evidence entries with ref, text, kind, tags, date, hop,
     atom_question, and id; a trace of sub-questions per hop; and
-    hops_used and stopped_reason.
+    hops_used and stopped_reason. Archived evidence carries "archived": true.
+
+    `include_archived` carries the same caveats as in `search_memory`.
     """
     body: dict[str, Any] = {"query": query}
     if max_hops is not None:
@@ -278,6 +303,8 @@ async def deep_search(
         body["kind"] = kind
     if tags is not None:
         body["tags"] = tags
+    if include_archived:
+        body["include_archived"] = True
     # +30s covers HTTP/round-trip slack beyond the server-side deep-search deadline.
     timeout = DEEP_TIMEOUT_SECONDS + 30
     async with _client() as client:

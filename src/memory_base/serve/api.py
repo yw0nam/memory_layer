@@ -41,9 +41,14 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         "score": hit.score,
         "text": hit.text[:TEXT_LIMIT],
     }
+    repo = hit.meta.get("repo")
+    if repo:
+        out["repo"] = repo
     context = hit.meta.get("context")
     if context:
         out["context"] = context
+    if hit.meta.get("archived"):
+        out["archived"] = True
     return out
 
 
@@ -155,8 +160,12 @@ async def search_route(request: Request) -> JSONResponse:
         return _error("include_atoms must be a boolean")
     if "tags" in body and body["tags"] is None:
         return _error("tags must be a non-empty list of strings")
+    if "repo" in body and body["repo"] is None:
+        return _error("repo must be a non-empty list of strings")
     try:
-        kind, tags = validate_search_options(source, body.get("kind"), body.get("tags"))
+        kind, tags, repo = validate_search_options(
+            source, body.get("kind"), body.get("tags"), body.get("repo")
+        )
         options: dict[str, Any] = {
             "source": source,
             "include_archived": include_archived,
@@ -165,6 +174,8 @@ async def search_route(request: Request) -> JSONResponse:
             options["kind"] = kind
         if "tags" in body:
             options["tags"] = tags
+        if "repo" in body:
+            options["repo"] = repo
         if "include_atoms" in body:
             options["include_atoms"] = include_atoms
         hits = (await search(query, **options))[:top_k]
@@ -177,18 +188,19 @@ async def search_route(request: Request) -> JSONResponse:
 def _serialize_deep_result(result: DeepResult) -> dict[str, Any]:
     evidence = []
     for entry in result.evidence:
-        evidence.append(
-            {
-                "ref": entry.ref,
-                "text": entry.text[:TEXT_LIMIT],
-                "kind": entry.kind,
-                "tags": entry.tags,
-                "date": datetime.fromtimestamp(entry.date, tz=timezone.utc).strftime("%Y-%m-%d"),
-                "hop": entry.hop,
-                "atom_question": entry.atom_question,
-                "id": entry.id,
-            }
-        )
+        item = {
+            "ref": entry.ref,
+            "text": entry.text[:TEXT_LIMIT],
+            "kind": entry.kind,
+            "tags": entry.tags,
+            "date": datetime.fromtimestamp(entry.date, tz=timezone.utc).strftime("%Y-%m-%d"),
+            "hop": entry.hop,
+            "atom_question": entry.atom_question,
+            "id": entry.id,
+        }
+        if entry.archived:
+            item["archived"] = True
+        evidence.append(item)
     trace = []
     for entry in result.trace:
         trace.append(

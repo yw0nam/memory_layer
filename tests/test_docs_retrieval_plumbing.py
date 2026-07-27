@@ -13,6 +13,7 @@ from memory_base.retrieval.search import (
     _dedup_cap,
     _merge_atom_hits,
     _search_atoms,
+    _search_code,
     _search_memory,
     validate_search_options,
 )
@@ -34,7 +35,7 @@ class FakeSearchConnection:
 
 @pytest.mark.parametrize("kind", ["doc", "note", "decision"])
 def test_memory_kind_filters_are_valid(kind):
-    assert validate_search_options("memory", kind, None) == (kind, None)
+    assert validate_search_options("memory", kind, None) == (kind, None, None)
 
 
 @pytest.mark.parametrize("kind", ["atom", "code", "", 1])
@@ -60,13 +61,58 @@ def test_filters_require_memory_source(source, kind, tags):
 def test_search_tags_are_normalized_with_any_semantics():
     assert validate_search_options(
         "memory", None, [" Infrastructure ", "DATABASE", "infrastructure"]
-    ) == (None, ["infrastructure", "database"])
+    ) == (None, ["infrastructure", "database"], None)
 
 
 @pytest.mark.parametrize("tags", [[], [" "], "infra", [1], ["infra", None]])
 def test_empty_or_malformed_search_tags_are_rejected(tags):
     with pytest.raises(ValueError, match="tags"):
         validate_search_options("memory", None, tags)
+
+
+def test_repo_filter_is_normalized_for_code_source():
+    assert validate_search_options("code", None, None, repo=[" YUI ", "agent-team", "YUI"]) == (
+        None,
+        None,
+        ["YUI", "agent-team"],
+    )
+
+
+@pytest.mark.parametrize("source", ["all", "memory"])
+def test_repo_filter_requires_code_source(source):
+    with pytest.raises(ValueError, match='source="code"'):
+        validate_search_options(source, None, None, repo=["YUI"])
+
+
+@pytest.mark.parametrize("repo", [[], [" "], "YUI", [1], ["YUI", None]])
+def test_empty_or_malformed_repo_filter_is_rejected(repo):
+    with pytest.raises(ValueError, match="repo"):
+        validate_search_options("code", None, None, repo=repo)
+
+
+def test_repo_filter_is_inside_both_code_candidate_queries():
+    conn = FakeSearchConnection([[], []])
+    asyncio.run(_search_code(conn, "query", "[1]", repo=["YUI"]))
+    code_queries = [(q, args) for q, args in conn.queries if "code_chunks" in q]
+    assert len(code_queries) == 2
+    assert all("repo = ANY($2::text[])" in q for q, _ in code_queries)
+    assert all(args[-1] == ["YUI"] for _, args in code_queries)
+
+
+def test_code_hit_carries_repo():
+    row = {
+        "id": 1,
+        "repo": "YUI",
+        "filename": "YUI/app/main.py",
+        "code": "def main(): ...",
+        "start_line": 1,
+        "end_line": 2,
+        "mtime": 100.0,
+    }
+    conn = FakeSearchConnection([[row], []])
+    hits = asyncio.run(_search_code(conn, "query", "[1]"))
+    assert hits[0].meta["repo"] == "YUI"
+    assert all("repo = ANY" not in q for q, _ in conn.queries)
 
 
 def test_memory_filters_are_inside_both_candidate_queries():
@@ -107,6 +153,7 @@ def test_memory_hit_uses_search_ref_and_keeps_source_ref_for_dedup():
         "content_raw": "document chunk",
         "ts_last_active": 100.0,
         "idf_score": None,
+        "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -127,6 +174,7 @@ def test_csv_card_hit_uses_search_ref():
         "content_raw": "summary card",
         "ts_last_active": 100.0,
         "idf_score": None,
+        "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -143,6 +191,7 @@ def test_memory_hit_falls_back_to_source_ref():
         "content_raw": "note",
         "ts_last_active": 100.0,
         "idf_score": None,
+        "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -177,6 +226,7 @@ def test_atom_lane_collapses_parents_at_highest_cosine_and_skips_dangling_rows()
             "distilled": None,
             "ts_last_active": 100.0,
             "metadata": {"search_ref": "guide.md#chunk-1", "tags": ["infra"]},
+            "archived_at": None,
         },
         {
             "atom_id": "parent:1:atom:1",
@@ -189,6 +239,7 @@ def test_atom_lane_collapses_parents_at_highest_cosine_and_skips_dangling_rows()
             "distilled": None,
             "ts_last_active": 100.0,
             "metadata": {"search_ref": "guide.md#chunk-1", "tags": ["infra"]},
+            "archived_at": None,
         },
         {
             "atom_id": "parent:2:atom:0",
@@ -201,6 +252,7 @@ def test_atom_lane_collapses_parents_at_highest_cosine_and_skips_dangling_rows()
             "distilled": None,
             "ts_last_active": 90.0,
             "metadata": {"search_ref": "other.md#chunk-0", "tags": []},
+            "archived_at": None,
         },
     ]
     conn = FakeSearchConnection([rows])

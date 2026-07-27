@@ -18,6 +18,7 @@ from memory_base.retrieval.search import (
     RRF_K,
     Hit,
     _apply_time_decay,
+    _decay_targets,
     _dedup_cap,
     rrf_fuse,
 )
@@ -72,6 +73,21 @@ def test_time_decay_180_days_quarters_score():
     hit = Hit(source="code", ref="a", text="", ts=now - 180 * 86400, rrf=1.0)
     _apply_time_decay([hit])
     assert hit.rrf == pytest.approx(0.25, rel=1e-3)
+
+
+# ---- _decay_targets ------------------------------------------------------
+
+
+def test_decay_targets_are_every_hit_by_default():
+    code = Hit(source="code", ref="a", text="", ts=0.0, rrf=1.0)
+    memory = Hit(source="memory", ref="b", text="", ts=0.0, rrf=1.0)
+    assert _decay_targets([code, memory], include_archived=False) == [code, memory]
+
+
+def test_decay_targets_keep_code_when_archived_memory_is_included():
+    code = Hit(source="code", ref="a", text="", ts=0.0, rrf=1.0)
+    memory = Hit(source="memory", ref="b", text="", ts=0.0, rrf=1.0)
+    assert _decay_targets([code, memory], include_archived=True) == [code]
 
 
 # ---- _dedup_cap ----------------------------------------------------------

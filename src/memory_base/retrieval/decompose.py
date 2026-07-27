@@ -49,6 +49,7 @@ class EvidenceEntry:
     date: float
     hop: int
     atom_question: str | None
+    archived: bool = False
 
 
 @dataclass
@@ -76,6 +77,7 @@ class _Candidate:
     tags: list[str]
     source_ref: str
     atom_question: str | None
+    archived: bool = False
 
 
 class _LLMError(Exception):
@@ -292,7 +294,7 @@ async def _atom_rows(
                coalesce(atom.distilled, atom.content_raw) AS matched_question,
                1 - (atom.embedding <=> $1::halfvec) AS atom_cosine,
                parent.id, parent.source_ref, parent.chunk_kind, parent.content_raw,
-               parent.distilled, parent.ts_last_active, parent.metadata
+               parent.distilled, parent.ts_last_active, parent.metadata, parent.archived_at
         FROM {tbl} AS atom
         JOIN {tbl} AS parent ON parent.id = atom.metadata->>'parent_id'
         WHERE atom.chunk_kind = 'atom' AND {predicates} AND {excl_clause}
@@ -327,6 +329,7 @@ def _collapse_atoms(rows: list[Any]) -> list[_Candidate]:
                 tags=metadata.get("tags", []),
                 source_ref=row["source_ref"],
                 atom_question=row["matched_question"],
+                archived=row["archived_at"] is not None,
             )
         )
     return candidates
@@ -353,7 +356,8 @@ async def _memory_backup(
     excl_idx = len(filter_args) + 2
     excl_clause = f"id != ALL(${excl_idx}::text[])"
     columns = (
-        "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, idf_score"
+        "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
+        "idf_score, archived_at"
     )
     vec_args = [qvec_lit, *filter_args, excluded]
     vec_rows = await conn.fetch(
@@ -398,6 +402,7 @@ async def _memory_backup(
                 tags=metadata.get("tags", []),
                 source_ref=r["source_ref"],
                 atom_question=None,
+                archived=r["archived_at"] is not None,
             )
         )
         if len(candidates) >= HOP_CANDIDATE_CAP:
@@ -561,6 +566,7 @@ async def _deep_loop(
                 date=chosen.ts,
                 hop=hop,
                 atom_question=chosen.atom_question,
+                archived=chosen.archived,
             )
         )
         chosen_parent_ids.add(chosen.parent_id)

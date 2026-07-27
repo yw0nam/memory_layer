@@ -121,6 +121,7 @@ def _make_atom_row(
     ref: str = "doc.md#chunk-0",
     source_ref: str = "doc.md",
     tags: list | None = None,
+    archived_at: float | None = None,
 ):
     return {
         "atom_id": atom_id,
@@ -133,6 +134,7 @@ def _make_atom_row(
         "distilled": text,
         "ts_last_active": 100.0,
         "metadata": {"search_ref": ref, "tags": tags or []},
+        "archived_at": archived_at,
     }
 
 
@@ -145,6 +147,7 @@ def _make_history_row(
     tags: list | None = None,
     ts: float = 100.0,
     idf: float = 0.5,
+    archived_at: float | None = None,
 ):
     return {
         "id": row_id,
@@ -155,6 +158,7 @@ def _make_history_row(
         "content_raw": text,
         "ts_last_active": ts,
         "idf_score": idf,
+        "archived_at": archived_at,
     }
 
 
@@ -356,6 +360,7 @@ class TestAtomRows:
         asyncio.run(_atom_rows(conn, "[1]", [], None, None, True))
         sql, _ = conn.queries[0]
         assert "archived_at IS NULL" not in sql
+        assert "parent.archived_at" in sql
 
 
 class TestCollapseAtoms:
@@ -379,6 +384,15 @@ class TestCollapseAtoms:
         candidates = _collapse_atoms(rows)
         assert len(candidates) == HOP_CANDIDATE_CAP
 
+    def test_carries_archived_state(self):
+        rows = [
+            _make_atom_row(parent_id="p1", atom_id="a1", archived_at=100.0),
+            _make_atom_row(parent_id="p2", atom_id="a2", cosine=0.5),
+        ]
+        candidates = _collapse_atoms(rows)
+        assert candidates[0].archived is True
+        assert candidates[1].archived is False
+
 
 class TestMemoryBackup:
     def test_exclusion_in_both_queries_before_limit(self):
@@ -397,6 +411,12 @@ class TestMemoryBackup:
         assert len(candidates) == 1
         assert candidates[0].atom_question is None
         assert candidates[0].text == "backup text"
+
+    def test_carries_archived_state(self):
+        row = _make_history_row(row_id="p1", archived_at=100.0)
+        conn = FakeConnection(fetch_results=[[row], []], fetchval_results=[True])
+        candidates = asyncio.run(_memory_backup(conn, "q", "[1]", [], None, None, True))
+        assert candidates[0].archived is True
 
     def test_empty_when_table_missing(self):
         conn = FakeConnection(fetchval_results=[False])

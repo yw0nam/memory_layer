@@ -225,6 +225,12 @@ def test_multi_repo_index_search_and_teardown(isolated_stack, tmp_path):
     hits_b = asyncio.run(search("beta_marker_fn", source="code", rerank=False))
     assert any(h.ref.startswith("repo_b/") for h in hits_b)
 
+    scoped = asyncio.run(search("alpha_marker_fn", source="code", rerank=False, repo=["repo_a"]))
+    assert scoped
+    assert {h.meta["repo"] for h in scoped} == {"repo_a"}
+    elsewhere = asyncio.run(search("alpha_marker_fn", source="code", rerank=False, repo=["repo_b"]))
+    assert not any("alpha_marker_fn" in h.text for h in elsewhere)
+
     response = _delete("/repos/repo_a")
     assert response.status_code == 202
     body = response.json()
