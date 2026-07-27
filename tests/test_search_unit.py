@@ -1,6 +1,6 @@
 """Unit tests for the pure functions in src/search.py: no DB/network access.
 
-_rrf_fuse, _apply_time_decay, and _dedup_cap operate purely on Hit objects /
+rrf_fuse, _apply_time_decay, and _dedup_cap operate purely on Hit objects /
 plain dicts, so they're exercised directly with hand-built inputs.
 """
 
@@ -19,16 +19,16 @@ from memory_base.retrieval.search import (
     Hit,
     _apply_time_decay,
     _dedup_cap,
-    _rrf_fuse,
+    rrf_fuse,
 )
 
 
-# ---- _rrf_fuse ---------------------------------------------------------
+# ---- rrf_fuse ---------------------------------------------------------
 
 
 def test_rrf_fuse_formula_k60():
     # doc "a" ranked 1st in both lists; "b"/"c" ranked 2nd in only one.
-    scores = _rrf_fuse([["a", "b"], ["a", "c"]])
+    scores = rrf_fuse([["a", "b"], ["a", "c"]])
     assert scores["a"] == pytest.approx(2 / (RRF_K + 1))
     assert scores["b"] == pytest.approx(1 / (RRF_K + 2))
     assert scores["c"] == pytest.approx(1 / (RRF_K + 2))
@@ -37,15 +37,15 @@ def test_rrf_fuse_formula_k60():
 def test_rrf_fuse_consensus_beats_single_strong_vote():
     # "consensus" appears 2nd in both lists; "x"/"y" appear 1st in only one
     # each. Two moderate votes should outscore one strong vote.
-    scores = _rrf_fuse([["x", "consensus"], ["y", "consensus"]])
+    scores = rrf_fuse([["x", "consensus"], ["y", "consensus"]])
     single_strong_vote = scores["x"]
     consensus = scores["consensus"]
     assert consensus > single_strong_vote
 
 
 def test_rrf_fuse_empty_lists_yields_empty_scores():
-    assert _rrf_fuse([]) == {}
-    assert _rrf_fuse([[], []]) == {}
+    assert rrf_fuse([]) == {}
+    assert rrf_fuse([[], []]) == {}
 
 
 # ---- _apply_time_decay --------------------------------------------------

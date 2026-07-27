@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -97,12 +96,6 @@ async def _json_body(request: Request) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise ValueError("JSON body must be an object")
     return body
-
-
-async def _resolve(value: Any) -> Any:
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 def _ids(body: dict[str, Any]) -> list[str] | None:
@@ -276,7 +269,7 @@ async def admin_notes_route(request: Request) -> JSONResponse:
         older_than_days = int(request.query_params.get("older_than_days", "90"))
     except ValueError:
         return _error("older_than_days must be an integer")
-    rows = await _resolve(admin.list_old_notes(older_than_days))
+    rows = await admin.list_old_notes(older_than_days)
     return JSONResponse(rows)
 
 
@@ -289,11 +282,11 @@ async def admin_notes_delete_route(request: Request) -> JSONResponse:
     ids = _ids(body)
     if ids is None:
         return _error("ids must be a non-empty list")
-    rows = await _resolve(admin.notes_by_ids(ids))
+    rows = await admin.notes_by_ids(ids)
     if {row["id"] for row in rows} != set(ids):
         return _error("ids must refer only to agent_note rows")
     if body.get("confirm") is True:
-        deleted = await _resolve(admin.delete_notes(ids))
+        deleted = await admin.delete_notes(ids)
         return JSONResponse({"deleted": deleted})
     return JSONResponse({"rows": rows})
 
@@ -309,7 +302,7 @@ async def admin_duplicates_route(request: Request) -> JSONResponse:
         limit = int(request.query_params.get("limit", "50"))
     except ValueError:
         return _error("limit must be an integer")
-    pairs = await _resolve(admin.find_duplicates(threshold, kind, limit))
+    pairs = await admin.find_duplicates(threshold, kind, limit)
     return JSONResponse({"pairs": pairs})
 
 
@@ -320,9 +313,9 @@ async def admin_archive_route(request: Request) -> JSONResponse:
     except Exception as exc:
         return _error(f"invalid JSON body: {exc}")
     now = time.time()
-    candidates = await _resolve(admin.archive_candidates(now))
+    candidates = await admin.archive_candidates(now)
     if body.get("confirm") is True:
-        archived = await _resolve(admin.archive_rows([row["id"] for row in candidates], now))
+        archived = await admin.archive_rows([row["id"] for row in candidates], now)
         return JSONResponse({"archived": archived})
     return JSONResponse({"candidates": candidates})
 
@@ -337,9 +330,9 @@ async def admin_restore_route(request: Request) -> JSONResponse:
     if ids is None:
         return _error("ids must be a non-empty list")
     if body.get("confirm") is True:
-        restored = await _resolve(admin.restore_rows(ids))
+        restored = await admin.restore_rows(ids)
         return JSONResponse({"restored": restored})
-    rows = await _resolve(admin.rows_by_ids(ids))
+    rows = await admin.rows_by_ids(ids)
     return JSONResponse({"rows": rows})
 
 
