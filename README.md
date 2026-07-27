@@ -241,11 +241,12 @@ docker compose up -d --build mcp         # MCP server, SSE on :8765
 claude mcp add --transport sse memory-base http://localhost:8765/sse
 ```
 
-Index cached repos manually (the repo routes do this for you):
+Index cached repos manually (the repo routes do this for you). The indexer runs inside the
+API container, which owns the only copy of the ledger and the repo cache:
 
 ```bash
-uv run cocoindex update src/memory_base/ingest/code.py       # incremental
-uv run cocoindex update -L src/memory_base/ingest/code.py    # live watch
+docker compose exec api uv run cocoindex update src/memory_base/ingest/code.py     # incremental
+docker compose exec api uv run cocoindex update -L src/memory_base/ingest/code.py  # live watch
 uv run python -m memory_base.retrieval.search "your query" --source code
 ```
 
@@ -261,7 +262,6 @@ by the indexer.
 | `LLM_URL`, `EMB_URL`, `RERANK_URL` | vLLM OpenAI-compatible endpoints |
 | `LLM_MODEL`, `EMB_MODEL`, `RERANK_MODEL` | model names |
 | `DB_URL` | Postgres connection string |
-| `COCOINDEX_DB` | CocoIndex incremental ledger |
 | `REPO_CACHE` | git checkout root |
 | `REDIS_URL` | job-state mirror |
 | `REST_URL` | backend the MCP server proxies to |
@@ -272,9 +272,10 @@ Tuning knobs, all optional: `ATOM_RETRIEVE_K`, `ATOMS_RETRIEVE`, `ATOMS_GENERATE
 `INGEST_MAX_QUEUED`, `INGEST_MAX_CONCURRENT_JOBS`, `REPO_MAX_QUEUED`, `REPO_MAX_BYTES`,
 `REPO_DISK_HEADROOM_BYTES`, `COLD_AGE_DAYS`, `COLD_UNHIT_DAYS`.
 
-Inside Docker, `COCOINDEX_DB`, `REPO_CACHE`, and `REDIS_URL` point at container-local
-paths backed by named volumes. Losing the repo cache or the ledger orphans `code_chunks`
-rows until the repos are re-added; losing the Redis volume drops job history only.
+`COCOINDEX_DB` is set by `docker-compose.yml`, not by `.env` — together with `REPO_CACHE`
+and `REDIS_URL` it points at a container-local path bound under `DATA_ROOT` on the host, so
+one ledger tracks one repo cache. Losing the repo cache or the ledger orphans `code_chunks`
+rows until the repos are re-added; losing the Redis directory drops job history only.
 
 ## Development
 
