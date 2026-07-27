@@ -25,7 +25,11 @@ from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0
 
-client = TestClient(api.app)
+
+@pytest.fixture()
+def client():
+    with TestClient(api.app) as c:
+        yield c
 
 
 def _db_reachable() -> bool:
@@ -101,7 +105,7 @@ async def _fetch_chunks_by_ids(ids: list[str]):
 
 @pytest.mark.integration
 @requires_db
-def test_search_logs_retrieval_and_bumps_hit_columns():
+def test_search_logs_retrieval_and_bumps_hit_columns(client):
     """Every returned hit is logged and its memory_chunks row is bumped.
 
     Ranking is not asserted (which rows come back depends on the corpus);
@@ -143,7 +147,7 @@ def test_search_logs_retrieval_and_bumps_hit_columns():
 
 @pytest.mark.integration
 @requires_db
-def test_save_memory_endpoint_roundtrip_and_dedup():
+def test_save_memory_endpoint_roundtrip_and_dedup(client):
     content = "access-log integration pin: save_memory REST endpoint roundtrip dedup check"
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete_note(note_id))

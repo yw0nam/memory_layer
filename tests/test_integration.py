@@ -1,9 +1,10 @@
 """Integration tests against the live DB (postgres:5439) and vLLM services
 (embedder/reranker/LLM) configured via .env.
 
-Read-only: never writes to the DB and never runs history_index.py /
-cocoindex update. If the DB is unreachable, the whole module is skipped so
-this stays CI-safe.
+Exercises search() and MCP tools against real code_chunks and memory_chunks.
+Tests that require a memory_chunks row seed it through save_note and remove
+it in a finally block. If the DB is unreachable, the whole module is skipped
+so this stays CI-safe.
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ import pytest
 
 import asyncpg
 
-from memory_base.common import DB_URL
+from memory_base.common import DB_URL, PG_SCHEMA
+from memory_base.serve.notes import build_note_row, save_note
 
 
 def _db_reachable() -> bool:
@@ -40,6 +42,14 @@ from memory_base.serve import mcp_server  # noqa: E402
 from memory_base.retrieval.search import search  # noqa: E402
 
 
+async def _delete_note(note_id: str) -> None:
+    conn = await asyncpg.connect(DB_URL)
+    try:
+        await conn.execute(f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1', note_id)
+    finally:
+        await conn.close()
+
+
 # ---- search() against real code_chunks / memory_chunks --------------------
 
 
@@ -52,11 +62,16 @@ def test_search_code_source_returns_code_hits_with_line_refs():
 
 
 def test_search_memory_source_returns_memory_hits():
-    # vector KNN alone (no FTS match needed) is enough to surface rows from
-    # the small memory_chunks table regardless of query wording.
-    hits = asyncio.run(search("이전에 진행한 작업 내용을 알려줘", source="memory", rerank=False))
-    assert len(hits) >= 1
-    assert all(h.source == "memory" for h in hits)
+    content = "integration-test pin: zzz_integ_marker 7f3a9b2c"
+    note_id = build_note_row(content, "note", None, 1_700_000_000.0)["id"]
+    asyncio.run(_delete_note(note_id))
+    try:
+        asyncio.run(save_note(content))
+        hits = asyncio.run(search(content, source="memory", rerank=False))
+        assert len(hits) >= 1
+        assert all(h.source == "memory" for h in hits)
+    finally:
+        asyncio.run(_delete_note(note_id))
 
 
 def test_search_all_source_with_rerank_populates_rerank_score():
