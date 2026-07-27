@@ -100,6 +100,7 @@ last-commit time into time-decay scoring.
  ┌───────┴────────────┐              ┌─────────┴──────────┐
  │    code_chunks     │              │   memory_chunks    │  atom + archived excluded
  │ vec50 · fts50 · rec│              │vec50·fts50·rec·idf │  optional kind / tags
+ │  optional repo     │              │                    │
  └───────┬────────────┘              └─────────┬──────────┘
          └──────────────┬───────────────────────┘
                         ▼
@@ -206,7 +207,7 @@ source means adding an adapter, not touching retrieval or serving.
 |---|---|---|
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
-| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `include_atoms`, `include_archived` |
+| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `repo`, `include_atoms`, `include_archived` |
 | `POST` | `/search/deep` | multi-hop memory search — `query`, `max_hops`, `kind`, `tags`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, `kind`, `tags`, and the optional id of a prior note to archive |
 | `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin` |
@@ -221,7 +222,10 @@ source means adding an adapter, not touching retrieval or serving.
 | `POST` | `/admin/archive` | preview cold rows, or archive with `confirm` |
 | `POST` | `/admin/restore` | preview, or restore with `confirm` |
 
-`kind` and `tags` filters require `source="memory"`.
+Filters are bound to the source they belong to: `kind` and `tags` require
+`source="memory"`, `repo` requires `source="code"`, and `source="all"` takes neither.
+`repo` is a list of cache directory names as reported by `GET /repos`; an unknown name
+matches nothing. Code hits carry their `repo` whether or not the filter is set.
 
 ## MCP tools
 
@@ -234,8 +238,9 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
 Each tool takes the REST options its source supports: `include_archived` on `search`,
 `search_memory`, and `deep_search`; `kind` and `tags` only where `source="memory"` holds,
-so `search` and `search_code` do not offer them. Lifecycle routes (`/admin/*`) have no MCP
-tool — archiving and restoring stay operator actions, while reading archived rows does not.
+so `search` and `search_code` do not offer them; `repo` on `search_code` alone. Lifecycle
+routes (`/admin/*`) have no MCP tool — archiving and restoring stay operator actions, while
+reading archived rows does not.
 
 ## Running
 
