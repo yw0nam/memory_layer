@@ -22,8 +22,15 @@ import numpy as np
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.common import DB_URL, EMB_DIM, PG_SCHEMA, VllmEmbedder, embed_text, vector_literal
-from memory_base.schema import ensure_schema
+from memory_base.core.config import (
+    DB_URL,
+    EMB_DIM,
+    PG_SCHEMA,
+    VllmEmbedder,
+    embed_text,
+    vector_literal,
+)
+from memory_base.core.schema import ensure_schema
 from memory_base.serve import api
 
 client = TestClient(api.app)

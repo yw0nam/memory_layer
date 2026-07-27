@@ -18,8 +18,8 @@ from typing import Any
 
 import asyncpg
 
-from memory_base import common, schema as schema_module
-from memory_base.common import DB_URL, EMB_MODEL, RERANK_MODEL
+from memory_base.core import config, schema as schema_module
+from memory_base.core.config import DB_URL, EMB_MODEL, RERANK_MODEL
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval import decompose as decompose_module
 from memory_base.retrieval import search as search_module
@@ -150,7 +150,7 @@ def load_labels(path: Path = LABELS_PATH) -> list[EvalLabel]:
 
 
 def _set_schema(schema_name: str) -> dict[Any, str]:
-    modules = (common, schema_module, ingest_api, search_module, decompose_module)
+    modules = (config, schema_module, ingest_api, search_module, decompose_module)
     previous = {module: module.PG_SCHEMA for module in modules}
     for module in modules:
         module.PG_SCHEMA = schema_name

@@ -36,9 +36,9 @@ from memory_base.adapters.document import (
     normalize_document_id,
     read_csv_sample,
 )
-from memory_base.common import DB_URL, PG_SCHEMA, VllmEmbedder, embed_text
+from memory_base.core.config import DB_URL, PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.ingest.enrich import EnrichmentError, atomize_and_tag, summarize_and_tag
-from memory_base.schema import ensure_schema_once
+from memory_base.core.schema import ensure_schema_once
 from memory_base.serve import job_store
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))

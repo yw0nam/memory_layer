@@ -25,7 +25,7 @@ import asyncpg
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from memory_base.common import DB_URL, PG_SCHEMA
+from memory_base.core.config import DB_URL, PG_SCHEMA
 from memory_base.serve import job_store
 
 REPO_MAX_QUEUED = int(os.getenv("REPO_MAX_QUEUED", "10"))

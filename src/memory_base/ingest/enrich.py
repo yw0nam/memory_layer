@@ -10,7 +10,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from memory_base.common import LLM_MODEL, SERVICE_TIMEOUT_SECONDS, llm_client
+from memory_base.core.config import LLM_MODEL, SERVICE_TIMEOUT_SECONDS, llm_client
 
 _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9 -]{1,40}$")
 _PRONOUN_RE = re.compile(

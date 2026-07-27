@@ -13,9 +13,9 @@ stored chunks through it, never through the DB directly.
 
 ```
 src/memory_base/
-  common.py           # shared constants + LLM/embedding clients (vLLM, OpenAI-compatible)
-  schema.py           # memory_chunks + retrieval-log DDL
   core/
+    config.py         # shared constants + LLM/embedding clients (vLLM, OpenAI-compatible)
+    schema.py         # memory_chunks + retrieval-log DDL
     logger.py         # unified loguru setup: colored stderr + daily-rotated file sink
   ingest/
     enrich.py         # generic JSON-mode enrichment for stored content

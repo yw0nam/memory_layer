@@ -12,7 +12,7 @@ from typing import Any
 
 import asyncpg
 
-from memory_base.common import (
+from memory_base.core.config import (
     DB_URL,
     LLM_MODEL,
     OVERSAMPLE_FACTOR,

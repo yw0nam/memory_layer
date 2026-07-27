@@ -6,8 +6,8 @@ import asyncio
 
 import asyncpg
 
-from memory_base import common
-from memory_base.common import PG_SCHEMA
+from memory_base.core import config
+from memory_base.core.config import PG_SCHEMA
 
 
 def normalize_legacy_metadata(metadata: dict) -> dict:
@@ -114,7 +114,7 @@ _prepared_schemas: set[str] = set()
 
 async def ensure_schema_once(conn: asyncpg.Connection) -> None:
     """Run ensure_schema once per process for the current schema, coalescing concurrent callers."""
-    schema_name = common.PG_SCHEMA
+    schema_name = config.PG_SCHEMA
     if schema_name in _prepared_schemas:
         return
     async with _schema_once_lock:

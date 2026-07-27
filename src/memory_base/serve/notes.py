@@ -10,8 +10,8 @@ from typing import Any
 
 import asyncpg
 
-from memory_base.common import DB_URL, PG_SCHEMA, VllmEmbedder, embed_text
-from memory_base.schema import ensure_schema_once
+from memory_base.core.config import DB_URL, PG_SCHEMA, VllmEmbedder, embed_text
+from memory_base.core.schema import ensure_schema_once
 
 NOTE_MAX_CHARS = 4000
 NOTE_KINDS = ("note", "decision")

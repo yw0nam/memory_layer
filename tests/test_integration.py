@@ -15,7 +15,7 @@ import pytest
 
 import asyncpg
 
-from memory_base.common import DB_URL, PG_SCHEMA
+from memory_base.core.config import DB_URL, PG_SCHEMA
 from memory_base.serve.notes import build_note_row, save_note
 
 
@@ -81,7 +81,7 @@ def test_search_all_source_with_rerank_populates_rerank_score():
 
 
 def test_fts_exact_literal_hits_file_containing_it():
-    # "halfvec" is a literal known to appear verbatim in src/common.py and
+    # "halfvec" is a literal known to appear verbatim in src/memory_base/core/config.py and
     # the spec docs indexed into code_chunks.
     hits = asyncio.run(search("halfvec", source="code", rerank=False))
     assert any("halfvec" in h.text.lower() for h in hits)

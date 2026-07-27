@@ -16,7 +16,7 @@ import pytest
 
 import asyncpg
 
-from memory_base.common import DB_URL, PG_SCHEMA
+from memory_base.core.config import DB_URL, PG_SCHEMA
 from memory_base.retrieval.search import search
 from memory_base.serve.mcp_server import save_memory
 from memory_base.serve.notes import build_note_row

@@ -1,6 +1,6 @@
 """Unit tests for legacy metadata tag normalization."""
 
-from memory_base.schema import normalize_legacy_metadata
+from memory_base.core.schema import normalize_legacy_metadata
 
 
 def test_legacy_string_tags_are_removed():
