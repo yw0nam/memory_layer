@@ -9,10 +9,9 @@ import os
 import tempfile
 import time
 import uuid
-from collections import OrderedDict, defaultdict
-from collections.abc import Awaitable, Callable, Sequence
+from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -40,14 +39,13 @@ from memory_base.core.config import DB_URL, PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.ingest.enrich import EnrichmentError, atomize_and_tag, summarize_and_tag
 from memory_base.core.schema import ensure_schema_once
 from memory_base.serve import job_store
+from memory_base.serve.job_store import _iso_time
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))
 INGEST_MAX_QUEUED = int(os.getenv("INGEST_MAX_QUEUED", "10"))
 INGEST_MAX_CONCURRENT_JOBS = int(os.getenv("INGEST_MAX_CONCURRENT_JOBS", "2"))
 MAX_ACCEPTED_CHUNKS = 2_000
 MAX_TOTAL_ROWS = 5_000
-JOB_TTL_SECONDS = 24 * 60 * 60
-MAX_COMPLETED_JOBS = 100
 TERMINAL_STATUSES = frozenset({"succeeded", "failed", "no_op"})
 
 
@@ -74,6 +72,15 @@ class IngestJob:
             self.stage = stage
         self.updated_at = time.time()
 
+    def mark_running(self) -> None:
+        self.touch(status="running", stage="converting")
+
+    def mark_succeeded(self) -> None:
+        pass  # run_document_job sets its own terminal status (succeeded or no_op)
+
+    def mark_failed(self) -> None:
+        self.touch(status="failed", stage="done")
+
     def response(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["created_at"] = _iso_time(self.created_at)
@@ -81,53 +88,29 @@ class IngestJob:
         return payload
 
 
-def _iso_time(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
-
-
-class JobRegistry:
-    """Retain bounded job state and run jobs under a concurrency semaphore."""
+class JobRegistry(job_store.JobRegistry):
+    """Retain bounded document-ingest job state, keyed by document rather than by name+action."""
 
     def __init__(
         self,
         *,
         max_queued: int = INGEST_MAX_QUEUED,
         max_concurrent: int = INGEST_MAX_CONCURRENT_JOBS,
-        ttl_seconds: int = JOB_TTL_SECONDS,
-        max_completed: int = MAX_COMPLETED_JOBS,
+        ttl_seconds: int = job_store.JOB_TTL_SECONDS,
+        max_completed: int = job_store.MAX_COMPLETED_JOBS,
     ) -> None:
-        self.max_queued = max_queued
-        self.ttl_seconds = ttl_seconds
-        self.max_completed = max_completed
-        self.jobs: OrderedDict[str, IngestJob] = OrderedDict()
-        self._semaphore = asyncio.Semaphore(max_concurrent)
-        self._tasks: set[asyncio.Task[None]] = set()
-
-    def cleanup(self, now: float | None = None) -> None:
-        current = time.time() if now is None else now
-        expired = [
-            job_id
-            for job_id, job in self.jobs.items()
-            if job.status in TERMINAL_STATUSES and current - job.updated_at >= self.ttl_seconds
-        ]
-        for job_id in expired:
-            self.jobs.pop(job_id, None)
-
-        completed = [job_id for job_id, job in self.jobs.items() if job.status in TERMINAL_STATUSES]
-        for job_id in completed[: max(0, len(completed) - self.max_completed)]:
-            self.jobs.pop(job_id, None)
-
-    def queued_count(self) -> int:
-        return sum(job.status == "queued" for job in self.jobs.values())
-
-    def has_capacity(self) -> bool:
-        self.cleanup()
-        return self.queued_count() < self.max_queued
+        super().__init__(
+            kind="document",
+            job_cls=IngestJob,
+            terminal_statuses=TERMINAL_STATUSES,
+            queue_full_message="document ingest queue is full",
+            max_queued=max_queued,
+            max_concurrent=max_concurrent,
+            ttl_seconds=ttl_seconds,
+            max_completed=max_completed,
+        )
 
     def create(self, document_id: str) -> IngestJob:
-        self.cleanup()
-        if not self.has_capacity():
-            raise OverflowError("document ingest queue is full")
         now = time.time()
         job = IngestJob(
             job_id=uuid.uuid4().hex,
@@ -135,34 +118,8 @@ class JobRegistry:
             created_at=now,
             updated_at=now,
         )
-        self.jobs[job.job_id] = job
+        self.register(job)
         return job
-
-    def start(self, job: IngestJob, runner: Callable[[], Awaitable[None]]) -> None:
-        async def run() -> None:
-            await job_store.save("document", job)
-            async with self._semaphore:
-                job.touch(status="running", stage="converting")
-                await job_store.save("document", job)
-                try:
-                    await runner()
-                except Exception as exc:
-                    job.error = str(exc) or type(exc).__name__
-                    job.touch(status="failed", stage="done")
-                finally:
-                    await job_store.save("document", job)
-                    self.cleanup()
-
-        task = asyncio.create_task(run())
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-
-    async def get(self, job_id: str) -> IngestJob | None:
-        self.cleanup()
-        job = self.jobs.get(job_id)
-        if job is not None:
-            return job
-        return await job_store.load("document", job_id, IngestJob, TERMINAL_STATUSES)
 
 
 registry = JobRegistry()
