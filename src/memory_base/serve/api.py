@@ -188,18 +188,19 @@ async def search_route(request: Request) -> JSONResponse:
 def _serialize_deep_result(result: DeepResult) -> dict[str, Any]:
     evidence = []
     for entry in result.evidence:
-        evidence.append(
-            {
-                "ref": entry.ref,
-                "text": entry.text[:TEXT_LIMIT],
-                "kind": entry.kind,
-                "tags": entry.tags,
-                "date": datetime.fromtimestamp(entry.date, tz=timezone.utc).strftime("%Y-%m-%d"),
-                "hop": entry.hop,
-                "atom_question": entry.atom_question,
-                "id": entry.id,
-            }
-        )
+        item = {
+            "ref": entry.ref,
+            "text": entry.text[:TEXT_LIMIT],
+            "kind": entry.kind,
+            "tags": entry.tags,
+            "date": datetime.fromtimestamp(entry.date, tz=timezone.utc).strftime("%Y-%m-%d"),
+            "hop": entry.hop,
+            "atom_question": entry.atom_question,
+            "id": entry.id,
+        }
+        if entry.archived:
+            item["archived"] = True
+        evidence.append(item)
     trace = []
     for entry in result.trace:
         trace.append(
