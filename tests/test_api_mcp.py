@@ -64,6 +64,16 @@ def test_hit_to_dict_truncates_text_and_includes_context():
     assert d["context"] == "CTX"
 
 
+def test_hit_to_dict_marks_archived_hits():
+    d = api.hit_to_dict(_hit(meta={"archived": True}))
+    assert d["archived"] is True
+
+
+def test_hit_to_dict_omits_archived_key_for_live_hits():
+    assert "archived" not in api.hit_to_dict(_hit(meta={"archived": False}))
+    assert "archived" not in api.hit_to_dict(_hit())
+
+
 # ---- MCP server in-process tool registration --------------------------------
 
 

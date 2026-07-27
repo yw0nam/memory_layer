@@ -16,6 +16,7 @@ no REST_URL constant or _client hook.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 
 import httpx
@@ -116,17 +117,46 @@ def test_search_memory_forwards_filters_and_atom_option(monkeypatch):
     }
 
 
-def test_search_all_forwards_filter_options(monkeypatch):
+def test_search_all_does_not_expose_memory_only_filters():
+    params = inspect.signature(mcp_server.search_all).parameters
+    assert "kind" not in params
+    assert "tags" not in params
+
+
+def test_search_all_forwards_include_archived(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["json"] = json.loads(request.content)
-        return httpx.Response(400, json={"error": 'filters require source="memory"'})
+        return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="filters require"):
-        asyncio.run(mcp_server.search_all("query", kind="note"))
-    assert captured["json"]["kind"] == "note"
+    asyncio.run(mcp_server.search_all("query", include_archived=True))
+    assert captured["json"]["include_archived"] is True
+
+
+def test_search_memory_forwards_include_archived(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.search_memory("query", include_archived=True))
+    assert captured["json"]["include_archived"] is True
+
+
+def test_deep_search_forwards_include_archived(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={"evidence": [], "trace": []})
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.deep_search("query", include_archived=True))
+    assert captured["json"]["include_archived"] is True
 
 
 def test_search_400_non_json_body_raises_generic_value_error(monkeypatch):
