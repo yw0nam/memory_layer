@@ -44,13 +44,17 @@ from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0
 
-client = TestClient(api.app)
+
+@pytest.fixture()
+def client():
+    with TestClient(api.app) as c:
+        yield c
 
 
 # ---- pure: response shape ---------------------------------------------------
 
 
-def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch):
+def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, client):
     async def fake_save_note(content, kind="note", tags=None, supersedes=None):
         return {
             "id": "note:aaaaaaaaaaaaaaaa",
@@ -69,7 +73,7 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch):
 # ---- REST: forwards supersedes, 400s on ValueError -------------------------
 
 
-def test_save_memory_forwards_supersedes_to_save_note(monkeypatch):
+def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
     captured = {}
 
     async def fake_save_note(content, kind="note", tags=None, supersedes=None):
@@ -91,7 +95,7 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch):
     assert response.json()["superseded"] == "note:old0000000000"
 
 
-def test_save_memory_absent_supersedes_forwards_none(monkeypatch):
+def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
     captured = {}
 
     async def fake_save_note(content, kind="note", tags=None, supersedes=None):
@@ -111,7 +115,7 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch):
     assert response.json()["superseded"] is None
 
 
-def test_save_memory_unknown_supersedes_id_400(monkeypatch):
+def test_save_memory_unknown_supersedes_id_400(monkeypatch, client):
     async def fake_save_note(content, kind="note", tags=None, supersedes=None):
         raise ValueError(f"unknown supersedes id: {supersedes}")
 
@@ -255,7 +259,7 @@ async def _fetch_archived_at(note_id: str):
 
 @pytest.mark.integration
 @requires_db
-def test_supersede_archives_old_note_and_stores_new_one():
+def test_supersede_archives_old_note_and_stores_new_one(client):
     content_a = f"supersede integration pin A {NOW}: zzzsupersedepin unique marker one"
     content_b = f"supersede integration pin B {NOW}: zzzsupersedepin unique marker two"
     note_a = build_note_row(content_a, "note", None, NOW)["id"]
@@ -281,7 +285,7 @@ def test_supersede_archives_old_note_and_stores_new_one():
 
 @pytest.mark.integration
 @requires_db
-def test_supersede_unknown_id_400_over_rest():
+def test_supersede_unknown_id_400_over_rest(client):
     content = f"supersede integration pin C {NOW}: zzzsupersedepin unique marker three"
     response = client.post(
         "/save_memory",
@@ -293,7 +297,7 @@ def test_supersede_unknown_id_400_over_rest():
 
 @pytest.mark.integration
 @requires_db
-def test_similar_hints_include_near_identical_active_note():
+def test_similar_hints_include_near_identical_active_note(client):
     marker = f"zzzsimilarpin{int(NOW)}"
     content_b = f"similar-hint integration pin: {marker} a hard-won troubleshooting conclusion"
     content_c = f"similar-hint integration pin: {marker} a hard won troubleshooting conclusion!"
