@@ -7,6 +7,7 @@ to take a job down, and a store outage must degrade to today's behaviour.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 
 import pytest
@@ -173,3 +174,161 @@ def test_missing_terminal_record_does_not_assert_a_cause(fake):
     revived = asyncio.run(job_store.load("document", "j1", SampleJob, TERMINAL))
     assert revived.status == "failed"
     assert "no terminal state" in (revived.error or "")
+
+
+# ---- the shared JobRegistry -------------------------------------------------
+
+
+@dataclass
+class RegistryJob:
+    job_id: str
+    status: str = "queued"
+    error: str | None = None
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+    def touch(self, *, status: str | None = None) -> None:
+        if status is not None:
+            self.status = status
+        self.updated_at = time.time()
+
+    def mark_running(self) -> None:
+        self.touch(status="running")
+
+    def mark_succeeded(self) -> None:
+        self.touch(status="succeeded")
+
+    def mark_failed(self) -> None:
+        self.touch(status="failed")
+
+
+def _registry(**overrides):
+    kwargs = {
+        "kind": "sample",
+        "job_cls": RegistryJob,
+        "terminal_statuses": frozenset({"succeeded"}),
+        "queue_full_message": "sample queue is full",
+        "max_queued": 10,
+        "max_concurrent": 1,
+    }
+    kwargs.update(overrides)
+    return job_store.JobRegistry(**kwargs)
+
+
+def test_register_enforces_max_queued_and_a_finished_job_frees_capacity():
+    registry = _registry(max_queued=1)
+    first = RegistryJob("j1")
+    registry.register(first)
+    with pytest.raises(OverflowError, match="sample queue is full"):
+        registry.register(RegistryJob("j2"))
+
+    first.touch(status="succeeded")  # updated_at=now, so it survives the TTL check below
+    second = RegistryJob("j2")
+    registry.register(second)
+    assert set(registry.jobs) == {"j1", "j2"}
+
+
+def test_cleanup_drops_expired_terminal_jobs_and_trims_beyond_max_completed():
+    registry = _registry(ttl_seconds=10, max_completed=2)
+    expired = RegistryJob("expired", status="succeeded", updated_at=0.0)
+    registry.jobs[expired.job_id] = expired
+    now = 1_000.0
+    for index in range(3):
+        job = RegistryJob(f"j{index}", status="succeeded", updated_at=now + index)
+        registry.jobs[job.job_id] = job
+
+    registry.cleanup(now + 5)
+
+    assert "expired" not in registry.jobs
+    assert list(registry.jobs) == ["j1", "j2"]
+
+
+def test_max_concurrent_one_holds_the_second_job_until_the_first_finishes(fake):
+    async def scenario():
+        registry = _registry(max_concurrent=1)
+        release = asyncio.Event()
+        order: list[str] = []
+
+        async def first_runner():
+            order.append("first-start")
+            await release.wait()
+            order.append("first-end")
+
+        async def second_runner():
+            order.append("second")
+
+        job1 = RegistryJob("j1")
+        registry.register(job1)
+        registry.start(job1, first_runner)
+        await asyncio.sleep(0.01)
+        assert job1.status == "running"
+
+        job2 = RegistryJob("j2")
+        registry.register(job2)
+        registry.start(job2, second_runner)
+        await asyncio.sleep(0.01)
+        assert job2.status == "queued"
+        assert order == ["first-start"]
+
+        release.set()
+        await asyncio.gather(*registry._tasks)
+        assert order == ["first-start", "first-end", "second"]
+
+    asyncio.run(scenario())
+
+
+def test_a_raising_runner_leaves_the_job_failed_with_the_exception_text(fake):
+    async def scenario():
+        registry = _registry()
+        job = RegistryJob("j1")
+        registry.register(job)
+
+        async def boom():
+            raise RuntimeError("kaboom")
+
+        registry.start(job, boom)
+        await asyncio.gather(*registry._tasks)
+        assert job.status == "failed"
+        assert job.error == "kaboom"
+
+    asyncio.run(scenario())
+
+
+def test_get_falls_back_to_the_redis_mirror_for_a_job_it_no_longer_holds(fake):
+    registry = _registry()
+    mirrored = RegistryJob("ghost", status="succeeded", created_at=1.0, updated_at=2.0)
+    asyncio.run(job_store.save("sample", mirrored))
+
+    assert "ghost" not in registry.jobs
+    revived = asyncio.run(registry.get("ghost"))
+    assert revived == mirrored
+
+
+def test_document_registry_treats_no_op_as_terminal():
+    from memory_base.serve import ingest_api
+
+    registry = ingest_api.JobRegistry(
+        max_queued=5, max_concurrent=1, ttl_seconds=10, max_completed=5
+    )
+    job = registry.create("doc-1")
+    job.status = "no_op"
+    job.updated_at = 0.0
+
+    registry.cleanup(100)
+
+    assert job.job_id not in registry.jobs
+
+
+def test_repo_registry_does_not_treat_no_op_as_terminal():
+    from memory_base.serve import repos
+
+    registry = repos.RepoJobRegistry(
+        max_queued=5, max_concurrent=1, ttl_seconds=10, max_completed=5
+    )
+    job = registry.create("repo-1", "ingest")
+    job.status = "no_op"
+    job.updated_at = 0.0
+
+    registry.cleanup(100)
+
+    assert job.job_id in registry.jobs

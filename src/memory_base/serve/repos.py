@@ -13,10 +13,7 @@ import shutil
 import signal
 import time
 import uuid
-from collections import OrderedDict
-from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -27,13 +24,12 @@ from starlette.responses import JSONResponse
 
 from memory_base.core.config import DB_URL, PG_SCHEMA
 from memory_base.serve import job_store
+from memory_base.serve.job_store import _iso_time
 
 REPO_MAX_QUEUED = int(os.getenv("REPO_MAX_QUEUED", "10"))
 REPO_MAX_BYTES = int(os.getenv("REPO_MAX_BYTES", str(2 * 1024**3)))
 DISK_HEADROOM_BYTES = int(os.getenv("REPO_DISK_HEADROOM_BYTES", str(1024**3)))
 SIZE_POLL_SECONDS = 5
-JOB_TTL_SECONDS = 24 * 60 * 60
-MAX_COMPLETED_JOBS = 100
 TERMINAL_STATUSES = frozenset({"succeeded", "failed"})
 
 CACHE_ROOT = Path(
@@ -298,6 +294,15 @@ class RepoJob:
             self.status = status
         self.updated_at = time.time()
 
+    def mark_running(self) -> None:
+        self.touch(status="running")
+
+    def mark_succeeded(self) -> None:
+        self.touch(status="succeeded")
+
+    def mark_failed(self) -> None:
+        self.touch(status="failed")
+
     def response(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["created_at"] = _iso_time(self.created_at)
@@ -305,11 +310,7 @@ class RepoJob:
         return payload
 
 
-def _iso_time(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
-
-
-class RepoJobRegistry:
+class RepoJobRegistry(job_store.JobRegistry):
     """Bounded repo-job state; serializes index runs under a semaphore."""
 
     def __init__(
@@ -317,76 +318,28 @@ class RepoJobRegistry:
         *,
         max_queued: int = REPO_MAX_QUEUED,
         max_concurrent: int = 1,
-        ttl_seconds: int = JOB_TTL_SECONDS,
-        max_completed: int = MAX_COMPLETED_JOBS,
+        ttl_seconds: int = job_store.JOB_TTL_SECONDS,
+        max_completed: int = job_store.MAX_COMPLETED_JOBS,
     ) -> None:
         # ponytail: serialize index runs; coalesce only if bursts get heavy.
-        self.max_queued = max_queued
-        self.ttl_seconds = ttl_seconds
-        self.max_completed = max_completed
-        self.jobs: OrderedDict[str, RepoJob] = OrderedDict()
-        self._semaphore = asyncio.Semaphore(max_concurrent)
-        self._tasks: set[asyncio.Task[None]] = set()
-
-    def cleanup(self, now: float | None = None) -> None:
-        # Bounds process memory; Redis EXPIRE bounds only the mirrored copy.
-        current = time.time() if now is None else now
-        expired = [
-            job_id
-            for job_id, job in self.jobs.items()
-            if job.status in TERMINAL_STATUSES and current - job.updated_at >= self.ttl_seconds
-        ]
-        for job_id in expired:
-            self.jobs.pop(job_id, None)
-        completed = [job_id for job_id, job in self.jobs.items() if job.status in TERMINAL_STATUSES]
-        overflow = completed[: max(0, len(completed) - self.max_completed)]
-        for job_id in overflow:
-            self.jobs.pop(job_id, None)
-
-    def queued_count(self) -> int:
-        return sum(job.status == "queued" for job in self.jobs.values())
-
-    def has_capacity(self) -> bool:
-        self.cleanup()
-        return self.queued_count() < self.max_queued
+        super().__init__(
+            kind="repo",
+            job_cls=RepoJob,
+            terminal_statuses=TERMINAL_STATUSES,
+            queue_full_message="repo job queue is full",
+            max_queued=max_queued,
+            max_concurrent=max_concurrent,
+            ttl_seconds=ttl_seconds,
+            max_completed=max_completed,
+        )
 
     def create(self, name: str, action: str) -> RepoJob:
-        self.cleanup()
-        if not self.has_capacity():
-            raise OverflowError("repo job queue is full")
         now = time.time()
         job = RepoJob(
             job_id=uuid.uuid4().hex, name=name, action=action, created_at=now, updated_at=now
         )
-        self.jobs[job.job_id] = job
+        self.register(job)
         return job
-
-    def start(self, job: RepoJob, runner: Callable[[], Awaitable[None]]) -> None:
-        async def run() -> None:
-            await job_store.save("repo", job)
-            async with self._semaphore:
-                job.touch(status="running")
-                await job_store.save("repo", job)
-                try:
-                    await runner()
-                    job.touch(status="succeeded")
-                except Exception as exc:
-                    job.error = str(exc) or type(exc).__name__
-                    job.touch(status="failed")
-                finally:
-                    await job_store.save("repo", job)
-                    self.cleanup()
-
-        task = asyncio.create_task(run())
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-
-    async def get(self, job_id: str) -> RepoJob | None:
-        self.cleanup()
-        job = self.jobs.get(job_id)
-        if job is not None:
-            return job
-        return await job_store.load("repo", job_id, RepoJob, TERMINAL_STATUSES)
 
 
 registry = RepoJobRegistry()

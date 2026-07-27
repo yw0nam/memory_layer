@@ -1,6 +1,6 @@
-"""Shared Redis-backed durability mirror for job registries.
+"""Shared job registry and Redis-backed durability mirror.
 
-Not a source of truth: the in-memory registries stay the working state
+Not a source of truth: the in-memory registry stays the working state
 (queue caps, semaphores). Redis only has to answer "what happened to job X"
 after a restart. A store outage must degrade to today's in-memory-only
 behaviour, never take a job down.
@@ -8,18 +8,29 @@ behaviour, never take a job down.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import os
+import time
+from collections import OrderedDict
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
+from typing import Any
 
 import redis.asyncio as redis_asyncio
 from loguru import logger
 
 JOB_TTL_SECONDS = 24 * 60 * 60
+MAX_COMPLETED_JOBS = 100
 SOCKET_TIMEOUT_SECONDS = 3
 
 _client: redis_asyncio.Redis | None = None
 _client_initialized = False
+
+
+def _iso_time(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
 
 def job_key(kind: str, job_id: str) -> str:
@@ -77,3 +88,87 @@ async def load(kind: str, job_id: str, cls: type, terminal: frozenset[str]) -> o
         job.error = "no terminal state was recorded (a restart or a lost final write)"
         job.status = "failed"
     return job
+
+
+class JobRegistry:
+    """Bounded job state for one job kind, run under a concurrency semaphore."""
+
+    def __init__(
+        self,
+        *,
+        kind: str,
+        job_cls: type,
+        terminal_statuses: frozenset[str],
+        queue_full_message: str,
+        max_queued: int,
+        max_concurrent: int,
+        ttl_seconds: int = JOB_TTL_SECONDS,
+        max_completed: int = MAX_COMPLETED_JOBS,
+    ) -> None:
+        self.kind = kind
+        self.job_cls = job_cls
+        self.terminal_statuses = terminal_statuses
+        self.queue_full_message = queue_full_message
+        self.max_queued = max_queued
+        self.ttl_seconds = ttl_seconds
+        self.max_completed = max_completed
+        self.jobs: OrderedDict[str, Any] = OrderedDict()
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    def cleanup(self, now: float | None = None) -> None:
+        current = time.time() if now is None else now
+        expired = [
+            job_id
+            for job_id, job in self.jobs.items()
+            if job.status in self.terminal_statuses and current - job.updated_at >= self.ttl_seconds
+        ]
+        for job_id in expired:
+            self.jobs.pop(job_id, None)
+
+        completed = [
+            job_id for job_id, job in self.jobs.items() if job.status in self.terminal_statuses
+        ]
+        for job_id in completed[: max(0, len(completed) - self.max_completed)]:
+            self.jobs.pop(job_id, None)
+
+    def queued_count(self) -> int:
+        return sum(job.status == "queued" for job in self.jobs.values())
+
+    def has_capacity(self) -> bool:
+        self.cleanup()
+        return self.queued_count() < self.max_queued
+
+    def register(self, job: Any) -> None:
+        """Run the shared capacity check and store an already-built job."""
+        self.cleanup()
+        if not self.has_capacity():
+            raise OverflowError(self.queue_full_message)
+        self.jobs[job.job_id] = job
+
+    def start(self, job: Any, runner: Callable[[], Awaitable[None]]) -> None:
+        async def run() -> None:
+            await save(self.kind, job)
+            async with self._semaphore:
+                job.mark_running()
+                await save(self.kind, job)
+                try:
+                    await runner()
+                    job.mark_succeeded()
+                except Exception as exc:
+                    job.error = str(exc) or type(exc).__name__
+                    job.mark_failed()
+                finally:
+                    await save(self.kind, job)
+                    self.cleanup()
+
+        task = asyncio.create_task(run())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def get(self, job_id: str) -> Any | None:
+        self.cleanup()
+        job = self.jobs.get(job_id)
+        if job is not None:
+            return job
+        return await load(self.kind, job_id, self.job_cls, self.terminal_statuses)
