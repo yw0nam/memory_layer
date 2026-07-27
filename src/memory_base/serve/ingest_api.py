@@ -38,7 +38,7 @@ from memory_base.adapters.document import (
 )
 from memory_base.common import DB_URL, PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.ingest.enrich import EnrichmentError, atomize_and_tag, summarize_and_tag
-from memory_base.schema import ensure_schema
+from memory_base.schema import ensure_schema_once
 from memory_base.serve import job_store
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))
@@ -176,7 +176,7 @@ def _error(message: str, status_code: int) -> JSONResponse:
 async def _existing_content_hash(document_id: str) -> str | None:
     conn = await asyncpg.connect(DB_URL)
     try:
-        await ensure_schema(conn)
+        await ensure_schema_once(conn)
         return await conn.fetchval(
             f"""
             SELECT metadata->>'content_hash'
@@ -194,7 +194,7 @@ async def replace_document_rows(document_id: str, rows: Sequence[dict[str, Any]]
     """Replace one document's rows in a single transaction."""
     conn = await asyncpg.connect(DB_URL)
     try:
-        await ensure_schema(conn)
+        await ensure_schema_once(conn)
         async with conn.transaction():
             await conn.execute(
                 f"""
