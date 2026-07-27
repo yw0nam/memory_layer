@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from memory_base import common, schema
+from memory_base.core import config, schema
 
 
 class FakeConnection:
@@ -23,7 +23,7 @@ class FakeConnection:
 def _reset_once_state(monkeypatch):
     """Isolate the module-level once-guard state and PG_SCHEMA across tests."""
     monkeypatch.setattr(schema, "_prepared_schemas", set())
-    monkeypatch.setattr(common, "PG_SCHEMA", "test_schema")
+    monkeypatch.setattr(config, "PG_SCHEMA", "test_schema")
 
 
 def test_ensure_schema_once_runs_ddl_once_for_repeated_calls(monkeypatch):
@@ -53,7 +53,7 @@ def test_ensure_schema_once_reruns_after_schema_change(monkeypatch):
     conn = FakeConnection()
 
     asyncio.run(schema.ensure_schema_once(conn))
-    monkeypatch.setattr(common, "PG_SCHEMA", "other_schema")
+    monkeypatch.setattr(config, "PG_SCHEMA", "other_schema")
     asyncio.run(schema.ensure_schema_once(conn))
 
     assert calls == 2

@@ -15,7 +15,7 @@ from typing import Any
 
 import asyncpg
 
-from memory_base.common import (
+from memory_base.core.config import (
     DB_URL,
     OVERSAMPLE_FACTOR,
     PG_SCHEMA,

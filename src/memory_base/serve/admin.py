@@ -6,7 +6,7 @@ import os
 
 import asyncpg
 
-from memory_base.common import DB_URL, PG_SCHEMA
+from memory_base.core.config import DB_URL, PG_SCHEMA
 
 COLD_AGE_DAYS = int(os.getenv("COLD_AGE_DAYS", "180"))
 COLD_UNHIT_DAYS = int(os.getenv("COLD_UNHIT_DAYS", "90"))

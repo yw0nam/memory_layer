@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import asyncpg
 
-from memory_base.common import DB_URL, PG_SCHEMA
+from memory_base.core.config import DB_URL, PG_SCHEMA
 from memory_base.retrieval.search import Hit
 
 LOGGER = logging.getLogger(__name__)

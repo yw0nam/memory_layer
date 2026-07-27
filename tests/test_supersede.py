@@ -38,7 +38,7 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.common import DB_URL, PG_SCHEMA
+from memory_base.core.config import DB_URL, PG_SCHEMA
 from memory_base.serve import api, mcp_server
 from memory_base.serve.notes import build_note_row, save_note
 

@@ -6,7 +6,7 @@ created on the configured server for the run and dropped afterwards, and
 CocoIndex's LMDB state points at a temp dir. The configured DB_URL /
 COCOINDEX_DB are never written to. Both env vars and the DB_URL bound into the
 in-process modules are redirected for the test; the `run_index()` subprocess
-inherits the redirected env (common.load_dotenv uses override=False, so it does
+inherits the redirected env (config.load_dotenv uses override=False, so it does
 not clobber them).
 
 Gated behind the `integration` marker; skipped when the DB server or the
@@ -27,7 +27,7 @@ import pytest
 
 import asyncpg
 
-from memory_base.common import DB_URL as CONFIGURED_DB
+from memory_base.core.config import DB_URL as CONFIGURED_DB
 
 IT_DB_NAME = "memory_base_it"
 

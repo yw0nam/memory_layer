@@ -9,15 +9,15 @@ import asyncio
 import httpx
 import pytest
 
-from memory_base import common
+from memory_base.core import config
 from memory_base.retrieval import search as search_mod
 
 
 @pytest.mark.parametrize(
     "name, action",
     [
-        ("LLM_URL", lambda: common.llm_client()),
-        ("EMB_URL", lambda: common.VllmEmbedder()),
+        ("LLM_URL", lambda: config.llm_client()),
+        ("EMB_URL", lambda: config.VllmEmbedder()),
         (
             "RERANK_URL",
             lambda: asyncio.run(
@@ -62,4 +62,4 @@ def test_rerank_uses_service_timeout(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
     hit = search_mod.Hit(source="memory", ref="r", text="text", ts=0.0)
     asyncio.run(search_mod._rerank("q", [hit]))
-    assert captured.get("timeout") == common.SERVICE_TIMEOUT_SECONDS
+    assert captured.get("timeout") == config.SERVICE_TIMEOUT_SECONDS

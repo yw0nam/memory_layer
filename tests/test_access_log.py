@@ -18,8 +18,8 @@ from starlette.testclient import TestClient
 
 import asyncpg
 
-from memory_base.common import DB_URL, PG_SCHEMA
-from memory_base.schema import ensure_schema
+from memory_base.core.config import DB_URL, PG_SCHEMA
+from memory_base.core.schema import ensure_schema
 from memory_base.serve import api
 from memory_base.serve.notes import build_note_row, save_note
 

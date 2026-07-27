@@ -827,7 +827,7 @@ class TestHelpers:
         assert _remaining(time.monotonic() - 1) == 0.0
 
     def test_call_timeout_capped_by_service_timeout(self):
-        from memory_base.common import SERVICE_TIMEOUT_SECONDS
+        from memory_base.core.config import SERVICE_TIMEOUT_SECONDS
 
         deadline = time.monotonic() + 9999
         assert _call_timeout(deadline) == SERVICE_TIMEOUT_SECONDS

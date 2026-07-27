@@ -11,7 +11,7 @@ import time
 import numpy as np
 import pytest
 
-from memory_base.common import vector_literal
+from memory_base.core.config import vector_literal
 from memory_base.retrieval.search import (
     FUSED_TOP,
     PER_FILE_CAP,

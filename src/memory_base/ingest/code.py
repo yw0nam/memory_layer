@@ -25,7 +25,7 @@ from cocoindex.resources.chunk import Chunk
 from cocoindex.resources.file import FileLike, PatternFilePathMatcher
 from cocoindex.resources.id import IdGenerator
 
-from memory_base.common import DB_URL, PG_SCHEMA, VllmEmbedder
+from memory_base.core.config import DB_URL, PG_SCHEMA, VllmEmbedder
 
 TABLE_NAME = "code_chunks"
 CACHE_ROOT = pathlib.Path(
