@@ -106,6 +106,12 @@ def _ids(body: dict[str, Any]) -> list[str] | None:
 
 
 async def health(request: Request) -> JSONResponse:
+    """Report that the process serves HTTP, reaching nothing outside it."""
+    del request
+    return JSONResponse({"status": "ok"})
+
+
+async def health_services(request: Request) -> JSONResponse:
     """Report health of the DB, embedding, rerank, and LLM dependencies."""
     del request
     db, embedding, rerank, llm = await asyncio.gather(
@@ -341,6 +347,7 @@ setup_logging()
 app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
+        Route("/health/services", health_services, methods=["GET"]),
         Route("/search", search_route, methods=["POST"]),
         Route("/search/deep", deep_search_route, methods=["POST"]),
         Route("/save_memory", save_memory_route, methods=["POST"]),

@@ -203,7 +203,8 @@ source means adding an adapter, not touching retrieval or serving.
 
 | method | path | purpose |
 |---|---|---|
-| `GET` | `/health` | dependency liveness — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
+| `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
+| `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `include_atoms`, `include_archived` |
 | `POST` | `/search/deep` | multi-hop memory search — `query`, `max_hops`, `kind`, `tags` |
 | `POST` | `/save_memory` | store a distilled note — `content`, `kind`, `tags`, and the optional id of a prior note to archive |
