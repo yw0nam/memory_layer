@@ -117,6 +117,22 @@ def test_search_memory_forwards_filters_and_atom_option(monkeypatch):
     }
 
 
+def test_search_code_forwards_repo_filter(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.search_code("marker", repo=["repo_a"]))
+    assert captured["json"]["repo"] == ["repo_a"]
+
+
+def test_search_all_does_not_expose_repo_filter():
+    assert "repo" not in inspect.signature(mcp_server.search_all).parameters
+
+
 def test_search_all_does_not_expose_memory_only_filters():
     params = inspect.signature(mcp_server.search_all).parameters
     assert "kind" not in params

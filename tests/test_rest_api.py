@@ -212,6 +212,27 @@ def test_search_forwards_normalized_filters_and_include_atoms(monkeypatch):
     assert captured["include_atoms"] is False
 
 
+def test_search_forwards_repo_filter(monkeypatch):
+    captured = {}
+
+    async def fake_search(query, source="all", **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post(
+        "/search", json={"query": "marker", "source": "code", "repo": [" repo_a ", "repo_a"]}
+    )
+    assert response.status_code == 200
+    assert captured["repo"] == ["repo_a"]
+
+
+def test_search_rejects_repo_filter_outside_code_source():
+    response = client.post("/search", json={"query": "marker", "repo": ["repo_a"]})
+    assert response.status_code == 400
+    assert 'source="code"' in response.json()["error"]
+
+
 def test_search_returns_hit_to_dict_shape(monkeypatch):
     hits = [_hit(source="code", ref="a.py:L1-L2", text="x", rrf=0.5, rerank_score=0.9)]
 
