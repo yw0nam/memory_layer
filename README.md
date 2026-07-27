@@ -122,7 +122,8 @@ last-commit time into time-decay scoring.
 
 Response text is truncated to 2000 chars. `score` is the rerank score, falling back to the
 fused RRF score. `include_archived` surfaces archived rows and turns recency decay off so
-they are not buried.
+they are not buried; those rows carry `"archived": true`, since an archived note may have
+been superseded by a newer one.
 
 ### Read path 2 — deep search (`POST /search/deep`)
 
@@ -206,7 +207,7 @@ source means adding an adapter, not touching retrieval or serving.
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `include_atoms`, `include_archived` |
-| `POST` | `/search/deep` | multi-hop memory search — `query`, `max_hops`, `kind`, `tags` |
+| `POST` | `/search/deep` | multi-hop memory search — `query`, `max_hops`, `kind`, `tags`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, `kind`, `tags`, and the optional id of a prior note to archive |
 | `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin` |
 | `GET` | `/ingest/jobs/{job_id}` | document job state |
@@ -230,6 +231,11 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
 `search` · `search_code` · `search_memory` · `deep_search` · `save_memory` ·
 `ingest_document` (text formats only) · `ingest_repo` · `remove_repo` · `list_repos`
+
+Each tool takes the REST options its source supports: `include_archived` on `search`,
+`search_memory`, and `deep_search`; `kind` and `tags` only where `source="memory"` holds,
+so `search` and `search_code` do not offer them. Lifecycle routes (`/admin/*`) have no MCP
+tool — archiving and restoring stay operator actions, while reading archived rows does not.
 
 ## Running
 
