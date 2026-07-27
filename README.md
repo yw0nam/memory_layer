@@ -122,8 +122,9 @@ last-commit time into time-decay scoring.
 ```
 
 Response text is truncated to 2000 chars. `score` is the rerank score, falling back to the
-fused RRF score. `include_archived` surfaces archived rows and turns recency decay off so
-they are not buried. Both read paths mark those rows `"archived": true` — on `/search` hits
+fused RRF score. `include_archived` surfaces archived rows and turns recency decay off for
+memory so they are not buried; code hits have no archived state and keep decaying. Both read
+paths mark archived rows `"archived": true` — on `/search` hits
 and on `/search/deep` evidence entries — since an archived note may have been superseded by
 a newer one.
 
@@ -173,7 +174,7 @@ Multi-hop decomposition over memory only, bounded by `DEEP_TIMEOUT_SECONDS` and
                             archived_at set
                                    │
           excluded from search ◄───┴───► include_archived=true brings it back
-                                          (and disables recency decay)
+                                          (memory decay off, code decay on)
 ```
 
 `GET /admin/duplicates` lists near-duplicate pairs by cosine, `GET /admin/notes` lists old
