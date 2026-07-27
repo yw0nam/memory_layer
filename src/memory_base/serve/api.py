@@ -44,6 +44,8 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
     context = hit.meta.get("context")
     if context:
         out["context"] = context
+    if hit.meta.get("archived"):
+        out["archived"] = True
     return out
 
 

@@ -178,7 +178,8 @@ async def _search_memory(
         tags=tags,
     )
     columns = (
-        "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, idf_score"
+        "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
+        "idf_score, archived_at"
     )
     vec_rows = await conn.fetch(
         f"SELECT {columns} FROM {tbl} WHERE {predicates} "
@@ -216,6 +217,7 @@ async def _search_memory(
                     "kind": r["chunk_kind"],
                     "tags": metadata.get("tags", []),
                     "source_ref": r["source_ref"],
+                    "archived": r["archived_at"] is not None,
                 },
             )
         )
@@ -242,7 +244,7 @@ async def _search_atoms(
                coalesce(atom.distilled, atom.content_raw) AS matched_question,
                1 - (atom.embedding <=> $1::halfvec) AS atom_cosine,
                parent.id, parent.source_ref, parent.chunk_kind, parent.content_raw,
-               parent.distilled, parent.ts_last_active, parent.metadata
+               parent.distilled, parent.ts_last_active, parent.metadata, parent.archived_at
         FROM {tbl} AS atom
         JOIN {tbl} AS parent ON parent.id = atom.metadata->>'parent_id'
         WHERE atom.chunk_kind = 'atom' AND {predicates}
@@ -277,6 +279,7 @@ async def _search_atoms(
                     "kind": row["chunk_kind"],
                     "tags": metadata.get("tags", []),
                     "source_ref": row["source_ref"],
+                    "archived": row["archived_at"] is not None,
                     "atom_id": row["atom_id"],
                     "atom_question": row["matched_question"],
                     "atom_cosine": row["atom_cosine"],

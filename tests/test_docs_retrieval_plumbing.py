@@ -107,6 +107,7 @@ def test_memory_hit_uses_search_ref_and_keeps_source_ref_for_dedup():
         "content_raw": "document chunk",
         "ts_last_active": 100.0,
         "idf_score": None,
+        "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -127,6 +128,7 @@ def test_csv_card_hit_uses_search_ref():
         "content_raw": "summary card",
         "ts_last_active": 100.0,
         "idf_score": None,
+        "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -143,6 +145,7 @@ def test_memory_hit_falls_back_to_source_ref():
         "content_raw": "note",
         "ts_last_active": 100.0,
         "idf_score": None,
+        "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -177,6 +180,7 @@ def test_atom_lane_collapses_parents_at_highest_cosine_and_skips_dangling_rows()
             "distilled": None,
             "ts_last_active": 100.0,
             "metadata": {"search_ref": "guide.md#chunk-1", "tags": ["infra"]},
+            "archived_at": None,
         },
         {
             "atom_id": "parent:1:atom:1",
@@ -189,6 +193,7 @@ def test_atom_lane_collapses_parents_at_highest_cosine_and_skips_dangling_rows()
             "distilled": None,
             "ts_last_active": 100.0,
             "metadata": {"search_ref": "guide.md#chunk-1", "tags": ["infra"]},
+            "archived_at": None,
         },
         {
             "atom_id": "parent:2:atom:0",
@@ -201,6 +206,7 @@ def test_atom_lane_collapses_parents_at_highest_cosine_and_skips_dangling_rows()
             "distilled": None,
             "ts_last_active": 90.0,
             "metadata": {"search_ref": "other.md#chunk-0", "tags": []},
+            "archived_at": None,
         },
     ]
     conn = FakeSearchConnection([rows])

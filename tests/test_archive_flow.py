@@ -196,9 +196,7 @@ def test_full_archive_and_note_lifecycle():
         assert archived_hits
         # Archived rows may be superseded; the caller must be able to tell them apart.
         assert all(h.get("archived") is True for h in archived_hits)
-        assert all(
-            "archived" not in h for h in archived_search.json() if token not in h["text"]
-        )
+        assert all("archived" not in h for h in archived_search.json() if token not in h["text"])
 
         # ---- /admin/restore: dry-run then confirm brings it back to default search ----
         restore_dry = client.post("/admin/restore", json={"ids": [old_id]})
