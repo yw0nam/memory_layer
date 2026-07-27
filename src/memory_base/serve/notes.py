@@ -11,7 +11,7 @@ from typing import Any
 import asyncpg
 
 from memory_base.common import DB_URL, PG_SCHEMA, VllmEmbedder, embed_text
-from memory_base.schema import ensure_schema
+from memory_base.schema import ensure_schema_once
 
 NOTE_MAX_CHARS = 4000
 NOTE_KINDS = ("note", "decision")
@@ -64,7 +64,7 @@ async def save_note(
     embedding = await embed_text(VllmEmbedder(), row["raw"])
     conn = await asyncpg.connect(DB_URL)
     try:
-        await ensure_schema(conn)
+        await ensure_schema_once(conn)
         async with conn.transaction():
             if supersedes is not None:
                 exists = await conn.fetchval(

@@ -7,7 +7,8 @@ at the module level, matching the existing convention (e.g.
 - ``api.search``       -- delegate for POST /search (memory_base.retrieval.search.search)
 - ``api.save_note``    -- delegate for POST /save_memory (memory_base.serve.notes.save_note)
 - ``api.log_retrieval``-- best-effort access logging after a search (memory_base.serve.access_log)
-- ``api.db_healthy``   -- async DB connectivity check used by GET /health
+- ``api.db_healthy``, ``api.embedding_healthy``, ``api.rerank_healthy``, ``api.llm_healthy``
+  -- async dependency probes used by GET /health
 - ``api.hit_to_dict``  -- Hit -> {source, ref, date, score, text[, context]} serializer
 
 Collection fails today: memory_base.serve.api does not exist yet.
@@ -55,23 +56,84 @@ def _no_op_access_log(monkeypatch):
 # ---- GET /health -------------------------------------------------------
 
 
-def test_health_ok_when_db_reachable(monkeypatch):
-    async def fake_db_healthy():
-        return None
+@pytest.fixture()
+def _all_probes_up(monkeypatch):
+    """Default every dependency probe to healthy; tests override individual ones."""
 
-    monkeypatch.setattr(api, "db_healthy", fake_db_healthy)
+    async def up():
+        return True
+
+    monkeypatch.setattr(api, "db_healthy", up)
+    monkeypatch.setattr(api, "embedding_healthy", up)
+    monkeypatch.setattr(api, "rerank_healthy", up)
+    monkeypatch.setattr(api, "llm_healthy", up)
+
+
+def test_health_ok_when_all_dependencies_reachable(_all_probes_up):
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {
+        "status": "ok",
+        "checks": {"db": True, "embedding": True, "rerank": True, "llm": True},
+    }
 
 
-def test_health_503_when_db_unreachable(monkeypatch):
+def test_health_503_when_db_unreachable(_all_probes_up, monkeypatch):
     async def fake_db_healthy():
         raise ConnectionError("db down")
 
     monkeypatch.setattr(api, "db_healthy", fake_db_healthy)
     response = client.get("/health")
     assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "error"
+    assert body["checks"]["db"] is False
+
+
+def test_health_503_when_embedding_unreachable(_all_probes_up, monkeypatch):
+    async def fake_embedding_healthy():
+        return False
+
+    monkeypatch.setattr(api, "embedding_healthy", fake_embedding_healthy)
+    response = client.get("/health")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "error"
+    assert body["checks"]["embedding"] is False
+
+
+def test_health_503_when_rerank_unreachable(_all_probes_up, monkeypatch):
+    async def fake_rerank_healthy():
+        return False
+
+    monkeypatch.setattr(api, "rerank_healthy", fake_rerank_healthy)
+    response = client.get("/health")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "error"
+    assert body["checks"]["rerank"] is False
+
+
+def test_health_200_when_only_llm_unreachable(_all_probes_up, monkeypatch):
+    async def fake_llm_healthy():
+        return False
+
+    monkeypatch.setattr(api, "llm_healthy", fake_llm_healthy)
+    response = client.get("/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["checks"] == {"db": True, "embedding": True, "rerank": True, "llm": False}
+
+
+def test_health_probe_raising_is_reported_as_false_not_propagated(_all_probes_up, monkeypatch):
+    async def fake_llm_healthy():
+        raise TimeoutError("connect timed out")
+
+    monkeypatch.setattr(api, "llm_healthy", fake_llm_healthy)
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["checks"]["llm"] is False
 
 
 # ---- POST /search --------------------------------------------------------

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import asyncpg
 
+from memory_base import common
 from memory_base.common import PG_SCHEMA
 
 
@@ -103,3 +106,19 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           AND chunk.metadata IS DISTINCT FROM desired.metadata;
         """
     )
+
+
+_schema_once_lock = asyncio.Lock()
+_prepared_schemas: set[str] = set()
+
+
+async def ensure_schema_once(conn: asyncpg.Connection) -> None:
+    """Run ensure_schema once per process for the current schema, coalescing concurrent callers."""
+    schema_name = common.PG_SCHEMA
+    if schema_name in _prepared_schemas:
+        return
+    async with _schema_once_lock:
+        if schema_name in _prepared_schemas:
+            return
+        await ensure_schema(conn)
+        _prepared_schemas.add(schema_name)

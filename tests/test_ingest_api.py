@@ -186,7 +186,7 @@ def test_atomic_replacement_deletes_only_document_rows_then_inserts(monkeypatch)
         return None
 
     monkeypatch.setattr(ingest_api.asyncpg, "connect", connect)
-    monkeypatch.setattr(ingest_api, "ensure_schema", no_schema)
+    monkeypatch.setattr(ingest_api, "ensure_schema_once", no_schema)
     row = {
         "id": "doc:guide.md:0",
         "source_type": "document",

@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
+import httpx
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from memory_base.common import DB_URL
+from memory_base.common import DB_URL, require_env
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval.decompose import DeepResult, deep_search
 from memory_base.retrieval.search import Hit
@@ -27,6 +30,7 @@ from memory_base.serve.notes import save_note
 
 TEXT_LIMIT = 2000
 SOURCES = ("all", "code", "memory")
+HEALTH_PROBE_TIMEOUT_SECONDS = 5.0
 
 
 def hit_to_dict(hit: Hit) -> dict[str, Any]:
@@ -51,6 +55,37 @@ async def db_healthy() -> bool:
         return bool(await conn.fetchval("SELECT 1"))
     finally:
         await conn.close()
+
+
+async def _models_endpoint_healthy(env_var: str) -> bool:
+    """Return whether the vLLM server's /models path answers 2xx, without running inference."""
+    base_url = require_env(env_var).rstrip("/")
+    async with httpx.AsyncClient(timeout=HEALTH_PROBE_TIMEOUT_SECONDS) as client:
+        response = await client.get(f"{base_url}/models")
+    return 200 <= response.status_code < 300
+
+
+async def embedding_healthy() -> bool:
+    """Return whether the embedding endpoint (EMB_URL) is reachable."""
+    return await _models_endpoint_healthy("EMB_URL")
+
+
+async def rerank_healthy() -> bool:
+    """Return whether the rerank endpoint (RERANK_URL) is reachable."""
+    return await _models_endpoint_healthy("RERANK_URL")
+
+
+async def llm_healthy() -> bool:
+    """Return whether the LLM endpoint (LLM_URL) is reachable."""
+    return await _models_endpoint_healthy("LLM_URL")
+
+
+async def _probe(check: Callable[[], Awaitable[bool]]) -> bool:
+    """Run a health probe, turning any exception into a false result."""
+    try:
+        return bool(await check())
+    except Exception:
+        return False
 
 
 def _error(message: str) -> JSONResponse:
@@ -78,15 +113,21 @@ def _ids(body: dict[str, Any]) -> list[str] | None:
 
 
 async def health(request: Request) -> JSONResponse:
-    """Report API and database health."""
+    """Report health of the DB, embedding, rerank, and LLM dependencies."""
     del request
-    try:
-        healthy = await db_healthy()
-    except Exception:
-        healthy = False
-    if healthy is False:
-        return JSONResponse({"status": "error"}, status_code=503)
-    return JSONResponse({"status": "ok"})
+    db, embedding, rerank, llm = await asyncio.gather(
+        _probe(db_healthy),
+        _probe(embedding_healthy),
+        _probe(rerank_healthy),
+        _probe(llm_healthy),
+    )
+    checks = {"db": db, "embedding": embedding, "rerank": rerank, "llm": llm}
+    required_up = db and embedding and rerank
+    status_code = 200 if required_up else 503
+    return JSONResponse(
+        {"status": "ok" if required_up else "error", "checks": checks},
+        status_code=status_code,
+    )
 
 
 async def search_route(request: Request) -> JSONResponse:
