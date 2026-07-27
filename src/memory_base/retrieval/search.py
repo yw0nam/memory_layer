@@ -345,6 +345,17 @@ def _apply_time_decay(hits: list[Hit]) -> None:
         h.rrf *= math.pow(0.5, age_days / TIME_DECAY_HALF_LIFE_DAYS)
 
 
+def _decay_targets(hits: list[Hit], include_archived: bool) -> list[Hit]:
+    """Pick the hits recency decay still applies to.
+
+    Archival recall asks for old memory, so decay would bury exactly what was
+    requested. Code rows have no archived state and keep decaying either way.
+    """
+    if not include_archived:
+        return hits
+    return [h for h in hits if h.source == "code"]
+
+
 def _dedup_cap(hits: list[Hit]) -> list[Hit]:
     """Per-file/session cap for diversity, then take fused top."""
     hits.sort(key=lambda h: h.rrf, reverse=True)
@@ -438,9 +449,7 @@ async def search(
                 kind=kind,
                 tags=tags,
             )
-        if not include_archived:
-            # Archival recall asks for old rows; recency decay would bury them.
-            _apply_time_decay(hits)
+        _apply_time_decay(_decay_targets(hits, include_archived))
         hits = _dedup_cap(hits)
         if include_atoms and source in ("memory", "all"):
             atom_hits = await _search_atoms(
