@@ -89,8 +89,8 @@ async def search_all(
     (e.g. broad or ambiguous questions). Returns up to `top_k` hits sorted
     by relevance (rerank score, falling back to RRF fusion score), each with
     source ("code" or "memory"), ref (file:line-range or document ref),
-    date (YYYY-MM-DD), score, text (truncated to 2000 chars), and optional
-    context (neighboring code for code hits).
+    date (YYYY-MM-DD), score, text (truncated to 2000 chars), repo for code
+    hits, and optional context (neighboring code for code hits).
 
     `include_archived` widens the search to archived memory; use `search_memory`
     for the `kind`/`tags` filters, which apply to memory only.
@@ -292,7 +292,7 @@ async def deep_search(
     caused the checkout latency fix?"). Operates on memory only.
     Returns evidence entries with ref, text, kind, tags, date, hop,
     atom_question, and id; a trace of sub-questions per hop; and
-    hops_used and stopped_reason.
+    hops_used and stopped_reason. Archived evidence carries "archived": true.
 
     `include_archived` carries the same caveats as in `search_memory`.
     """

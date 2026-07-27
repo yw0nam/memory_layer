@@ -123,8 +123,9 @@ last-commit time into time-decay scoring.
 
 Response text is truncated to 2000 chars. `score` is the rerank score, falling back to the
 fused RRF score. `include_archived` surfaces archived rows and turns recency decay off so
-they are not buried; those rows carry `"archived": true`, since an archived note may have
-been superseded by a newer one.
+they are not buried. Both read paths mark those rows `"archived": true` — on `/search` hits
+and on `/search/deep` evidence entries — since an archived note may have been superseded by
+a newer one.
 
 ### Read path 2 — deep search (`POST /search/deep`)
 
