@@ -112,6 +112,7 @@ def test_code_hit_carries_repo():
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_code(conn, "query", "[1]"))
     assert hits[0].meta["repo"] == "YUI"
+    assert all("repo = ANY" not in q for q, _ in conn.queries)
 
 
 def test_memory_filters_are_inside_both_candidate_queries():
