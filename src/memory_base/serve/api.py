@@ -41,6 +41,9 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         "score": hit.score,
         "text": hit.text[:TEXT_LIMIT],
     }
+    repo = hit.meta.get("repo")
+    if repo:
+        out["repo"] = repo
     context = hit.meta.get("context")
     if context:
         out["context"] = context
@@ -157,8 +160,12 @@ async def search_route(request: Request) -> JSONResponse:
         return _error("include_atoms must be a boolean")
     if "tags" in body and body["tags"] is None:
         return _error("tags must be a non-empty list of strings")
+    if "repo" in body and body["repo"] is None:
+        return _error("repo must be a non-empty list of strings")
     try:
-        kind, tags = validate_search_options(source, body.get("kind"), body.get("tags"))
+        kind, tags, repo = validate_search_options(
+            source, body.get("kind"), body.get("tags"), body.get("repo")
+        )
         options: dict[str, Any] = {
             "source": source,
             "include_archived": include_archived,
@@ -167,6 +174,8 @@ async def search_route(request: Request) -> JSONResponse:
             options["kind"] = kind
         if "tags" in body:
             options["tags"] = tags
+        if "repo" in body:
+            options["repo"] = repo
         if "include_atoms" in body:
             options["include_atoms"] = include_atoms
         hits = (await search(query, **options))[:top_k]

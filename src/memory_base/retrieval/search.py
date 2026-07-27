@@ -91,18 +91,34 @@ def _normalize_tags(tags: Any) -> list[str] | None:
     return normalized
 
 
+def _normalize_repo(repo: Any) -> list[str] | None:
+    """Repo names are cache directory names, so case is preserved."""
+    if repo is None:
+        return None
+    if not isinstance(repo, list) or any(not isinstance(name, str) for name in repo):
+        raise ValueError("repo must be a non-empty list of strings")
+    normalized = list(dict.fromkeys(name.strip() for name in repo if name.strip()))
+    if not normalized:
+        raise ValueError("repo must be a non-empty list of strings")
+    return normalized
+
+
 def validate_search_options(
     source: str,
     kind: Any,
     tags: Any,
-) -> tuple[str | None, list[str] | None]:
+    repo: Any = None,
+) -> tuple[str | None, list[str] | None, list[str] | None]:
     """Validate source-specific filters and return normalized values."""
     if kind is not None and kind not in SEARCH_KINDS:
         raise ValueError(f"kind must be one of {SEARCH_KINDS}")
     normalized_tags = _normalize_tags(tags)
     if (kind is not None or normalized_tags is not None) and source != "memory":
         raise ValueError('kind and tags filters require source="memory"')
-    return kind, normalized_tags
+    normalized_repo = _normalize_repo(repo)
+    if normalized_repo is not None and source != "code":
+        raise ValueError('repo filter requires source="code"')
+    return kind, normalized_tags, normalized_repo
 
 
 def history_predicates(
@@ -126,19 +142,33 @@ def history_predicates(
     return " AND ".join(clauses), args
 
 
-async def _search_code(conn: asyncpg.Connection, query: str, qvec_lit: str) -> list[Hit]:
+async def _search_code(
+    conn: asyncpg.Connection,
+    query: str,
+    qvec_lit: str,
+    repo: list[str] | None = None,
+) -> list[Hit]:
     tbl = f'"{PG_SCHEMA}"."code_chunks"'
+    columns = "id, repo, filename, code, start_line, end_line, mtime"
+    # ponytail: the planner picks a seq scan at this corpus size, so the filter runs
+    # before the distance sort. Once it switches to the HNSW index, set
+    # hnsw.iterative_scan = relaxed_order or filtered recall drops to whatever
+    # survives the unfiltered top-k cut.
+    repo_clause = " AND repo = ANY($2::text[])" if repo else ""
+    repo_args = [repo] if repo else []
     vec_rows = await conn.fetch(
-        f"SELECT id, filename, code, start_line, end_line, mtime "
-        f"FROM {tbl} ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
+        f"SELECT {columns} FROM {tbl} WHERE true{repo_clause} "
+        f"ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
         qvec_lit,
+        *repo_args,
     )
     fts_rows = await conn.fetch(
-        f"SELECT id, filename, code, start_line, end_line, mtime FROM {tbl} "
-        f"WHERE to_tsvector('simple', code) @@ websearch_to_tsquery('simple', $1) "
+        f"SELECT {columns} FROM {tbl} "
+        f"WHERE to_tsvector('simple', code) @@ websearch_to_tsquery('simple', $1){repo_clause} "
         f"ORDER BY ts_rank_cd(to_tsvector('simple', code), websearch_to_tsquery('simple', $1)) DESC "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
         query,
+        *repo_args,
     )
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
     recency = time_decay_list({r["id"]: r["mtime"] for r in by_id.values()})
@@ -154,7 +184,12 @@ async def _search_code(conn: asyncpg.Connection, query: str, qvec_lit: str) -> l
                 text=r["code"],
                 ts=r["mtime"],
                 rrf=score,
-                meta={"id": cid, "filename": r["filename"], "start_line": r["start_line"]},
+                meta={
+                    "id": cid,
+                    "repo": r["repo"],
+                    "filename": r["filename"],
+                    "start_line": r["start_line"],
+                },
             )
         )
     return hits
@@ -377,8 +412,9 @@ async def search(
     kind: str | None = None,
     tags: list[str] | None = None,
     include_atoms: bool | None = None,
+    repo: list[str] | None = None,
 ) -> list[Hit]:
-    kind, tags = validate_search_options(source, kind, tags)
+    kind, tags, repo = validate_search_options(source, kind, tags, repo)
     if include_atoms is not None and not isinstance(include_atoms, bool):
         raise ValueError("include_atoms must be a boolean")
     if include_atoms is None:
@@ -392,7 +428,7 @@ async def search(
     try:
         hits: list[Hit] = []
         if source in ("code", "all"):
-            hits += await _search_code(conn, query, qvec_lit)
+            hits += await _search_code(conn, query, qvec_lit, repo=repo)
         if source in ("memory", "all"):
             hits += await _search_memory(
                 conn,

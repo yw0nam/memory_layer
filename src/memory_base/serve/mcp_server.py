@@ -54,8 +54,11 @@ async def _search(
     tags: list[str] | None = None,
     include_atoms: bool | None = None,
     include_archived: bool = False,
+    repo: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {"query": query, "source": source, "top_k": top_k}
+    if repo is not None:
+        body["repo"] = repo
     if kind is not None:
         body["kind"] = kind
     if tags is not None:
@@ -98,17 +101,23 @@ async def search_all(
 
 
 @mcp.tool()
-async def search_code(query: str, top_k: int = 10) -> list[dict[str, Any]]:
+async def search_code(
+    query: str, top_k: int = 10, repo: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Search only the indexed codebase for the given query.
 
     Use this for questions about code structure, implementation location,
     function/class definitions, or "where is X implemented" style questions.
     Returns up to `top_k` hits sorted by relevance, each with source="code",
-    ref (file:line-range), date (file mtime as YYYY-MM-DD), score, text
+    repo, ref (file:line-range), date (file mtime as YYYY-MM-DD), score, text
     (truncated to 2000 chars), and optional context (neighboring code chunks
     for continuity).
+
+    Every cached repository is searched unless `repo` narrows it to the named
+    ones; `list_repos` reports the names that exist, and an unknown name simply
+    matches nothing.
     """
-    return await _search(query, "code", top_k)
+    return await _search(query, "code", top_k, repo=repo)
 
 
 @mcp.tool()
