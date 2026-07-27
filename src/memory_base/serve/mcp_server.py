@@ -7,8 +7,8 @@ bind address (defaults 0.0.0.0:8765).
 Register with Claude Code:
     stdio (local):
         claude mcp add memory-base -- uv --directory <absolute-path> run python -m memory_base.serve.mcp_server
-    SSE (Docker):
-        claude mcp add --transport sse memory-base http://localhost:8765/sse
+    streamable HTTP (Docker):
+        claude mcp add --transport http memory-base http://localhost:8765/mcp
 
 Run directly:
     uv run python -m memory_base.serve.mcp_server

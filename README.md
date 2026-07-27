@@ -226,7 +226,7 @@ source means adding an adapter, not touching retrieval or serving.
 
 `mcp_server.py` is a thin proxy over the REST API — no logic of its own. Transport is
 stdio by default; `MCP_TRANSPORT=sse|streamable-http` with `MCP_HOST`/`MCP_PORT` serves
-over HTTP (Docker serves SSE on `:8765`).
+over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
 `search` · `search_code` · `search_memory` · `deep_search` · `save_memory` ·
 `ingest_document` (text formats only) · `ingest_repo` · `remove_repo` · `list_repos`
@@ -237,8 +237,8 @@ over HTTP (Docker serves SSE on `:8765`).
 uv sync
 docker compose up -d db redis            # pgvector on :5439, job state on :6379
 docker compose up -d --build api         # REST backend on :8010
-docker compose up -d --build mcp         # MCP server, SSE on :8765
-claude mcp add --transport sse memory-base http://localhost:8765/sse
+docker compose up -d --build mcp         # MCP server, streamable HTTP on :8765
+claude mcp add --transport http memory-base http://localhost:8765/mcp
 ```
 
 Index cached repos manually (the repo routes do this for you). The indexer runs inside the

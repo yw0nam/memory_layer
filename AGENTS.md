@@ -34,7 +34,7 @@ src/memory_base/
     notes.py          # validation + storage for agent-authored notes
     admin.py          # memory lifecycle operations (duplicates, archive, restore)
     access_log.py     # best-effort persistence of retrieval activity
-    mcp_server.py     # MCP server over REST (stdio | SSE | streamable-http), Docker serves SSE
+    mcp_server.py     # MCP server over REST (stdio | SSE | streamable-http), Docker serves streamable HTTP
   eval/
     retrieval.py      # reproducible retrieval evaluation with an atom-lane A/B report
 tests/                # pytest; DB/vLLM-dependent tests carry the `integration` marker
@@ -50,9 +50,9 @@ uv run pytest -m "not integration"                   # unit tests only (what CI 
 uv run ruff format --check . && uv run ruff check .  # lint (ruff is the only Python linter)
 docker compose up -d db redis                        # pgvector on :5439, job state on :6379
 docker compose up -d --build api                     # REST backend on :8010
-docker compose up -d --build mcp                     # MCP server, SSE on :8765
+docker compose up -d --build mcp                     # MCP server, streamable HTTP on :8765
 docker compose exec api uv run cocoindex update src/memory_base/ingest/code.py   # (re)index every cached repo
-claude mcp add --transport sse memory-base http://localhost:8765/sse
+claude mcp add --transport http memory-base http://localhost:8765/mcp
 ```
 
 Code repositories are added and removed by git URL at runtime — `POST /repos {url}`,

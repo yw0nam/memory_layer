@@ -6,7 +6,10 @@ directly with hand-built dicts (os.environ is never touched).
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
+import yaml
 
 from memory_base.serve.mcp_server import resolve_transport
 
@@ -45,3 +48,13 @@ def test_resolve_transport_invalid_transport_raises_value_error():
 def test_resolve_transport_non_numeric_port_raises_value_error():
     with pytest.raises(ValueError):
         resolve_transport({"MCP_PORT": "not-a-number"})
+
+
+def test_compose_mcp_service_serves_streamable_http():
+    compose = yaml.safe_load(
+        (pathlib.Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text()
+    )
+    environment = compose["services"]["mcp"]["environment"]
+    transport, _host, port = resolve_transport(environment)
+    assert transport == "streamable-http"
+    assert f"{port}:{port}" in compose["services"]["mcp"]["ports"]
