@@ -6,7 +6,6 @@ import asyncio
 
 import asyncpg
 
-from memory_base.core import config
 from memory_base.core.config import PG_SCHEMA
 
 
@@ -48,10 +47,6 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         CREATE INDEX IF NOT EXISTS memory_chunks__session ON {schema}.memory_chunks (session_id);
         CREATE INDEX IF NOT EXISTS memory_chunks__tags ON {schema}.memory_chunks
           USING GIN ((metadata->'tags'));
-        DROP TABLE IF EXISTS {schema}.ingest_state;
-        DROP TABLE IF EXISTS {schema}.df_stats;
-        DROP TABLE IF EXISTS {schema}.history_session_tokens;
-        DROP TABLE IF EXISTS {schema}.history_file_sessions;
         ALTER TABLE {schema}.memory_chunks
           ADD COLUMN IF NOT EXISTS last_hit_at double precision;
         ALTER TABLE {schema}.memory_chunks
@@ -114,7 +109,7 @@ _prepared_schemas: set[str] = set()
 
 async def ensure_schema_once(conn: asyncpg.Connection) -> None:
     """Run ensure_schema once per process for the current schema, coalescing concurrent callers."""
-    schema_name = config.PG_SCHEMA
+    schema_name = PG_SCHEMA
     if schema_name in _prepared_schemas:
         return
     async with _schema_once_lock:

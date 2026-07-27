@@ -55,7 +55,7 @@ class Hit:
         return self.rerank_score if self.rerank_score is not None else self.rrf
 
 
-def _rrf_fuse(lists: list[list[Any]]) -> dict[Any, float]:
+def rrf_fuse(lists: list[list[Any]]) -> dict[Any, float]:
     """score(d) = sum over lists of 1/(k + rank)."""
     scores: dict[Any, float] = {}
     for ranked in lists:
@@ -64,12 +64,12 @@ def _rrf_fuse(lists: list[list[Any]]) -> dict[Any, float]:
     return scores
 
 
-def _time_decay_list(rows: dict[Any, float]) -> list[Any]:
+def time_decay_list(rows: dict[Any, float]) -> list[Any]:
     """Candidates ranked purely by recency — one more voter in the RRF fusion."""
     return [k for k, _ in sorted(rows.items(), key=lambda kv: kv[1], reverse=True)]
 
 
-def _metadata_dict(value: Any) -> dict[str, Any]:
+def metadata_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     if isinstance(value, str):
@@ -105,7 +105,7 @@ def validate_search_options(
     return kind, normalized_tags
 
 
-def _history_predicates(
+def history_predicates(
     *,
     include_archived: bool,
     kind: str | None,
@@ -141,8 +141,8 @@ async def _search_code(conn: asyncpg.Connection, query: str, qvec_lit: str) -> l
         query,
     )
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
-    recency = _time_decay_list({r["id"]: r["mtime"] for r in by_id.values()})
-    scores = _rrf_fuse([[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency])
+    recency = time_decay_list({r["id"]: r["mtime"] for r in by_id.values()})
+    scores = rrf_fuse([[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency])
 
     hits = []
     for cid, score in scores.items():
@@ -172,7 +172,7 @@ async def _search_memory(
     exists = await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{PG_SCHEMA}.memory_chunks")
     if not exists:
         return []
-    predicates, filter_args = _history_predicates(
+    predicates, filter_args = history_predicates(
         include_archived=include_archived,
         kind=kind,
         tags=tags,
@@ -195,14 +195,14 @@ async def _search_memory(
         *filter_args,
     )
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
-    recency = _time_decay_list({r["id"]: r["ts_last_active"] for r in by_id.values()})
-    idf = _time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})
-    scores = _rrf_fuse([[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf])
+    recency = time_decay_list({r["id"]: r["ts_last_active"] for r in by_id.values()})
+    idf = time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})
+    scores = rrf_fuse([[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf])
 
     hits = []
     for cid, score in scores.items():
         r = by_id[cid]
-        metadata = _metadata_dict(r["metadata"])
+        metadata = metadata_dict(r["metadata"])
         hits.append(
             Hit(
                 source="memory",
@@ -230,7 +230,7 @@ async def _search_atoms(
     tags: list[str] | None = None,
 ) -> list[Hit]:
     tbl = f'"{PG_SCHEMA}"."memory_chunks"'
-    predicates, filter_args = _history_predicates(
+    predicates, filter_args = history_predicates(
         include_archived=include_archived,
         kind=kind,
         tags=tags,
@@ -264,7 +264,7 @@ async def _search_atoms(
     )[:ATOM_RETRIEVE_K]
     hits = []
     for row in collapsed:
-        metadata = _metadata_dict(row["metadata"])
+        metadata = metadata_dict(row["metadata"])
         hits.append(
             Hit(
                 source="memory",

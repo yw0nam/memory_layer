@@ -57,7 +57,7 @@ def test_admin_notes_defaults_older_than_days_to_90(monkeypatch):
     captured = {}
     rows = [{"id": "note:a", "hit_count": 0, "last_hit_at": None}]
 
-    def fake_list_old_notes(older_than_days):
+    async def fake_list_old_notes(older_than_days):
         captured["older_than_days"] = older_than_days
         return rows
 
@@ -71,7 +71,7 @@ def test_admin_notes_defaults_older_than_days_to_90(monkeypatch):
 def test_admin_notes_custom_older_than_days_reaches_admin(monkeypatch):
     captured = {}
 
-    def fake_list_old_notes(older_than_days):
+    async def fake_list_old_notes(older_than_days):
         captured["older_than_days"] = older_than_days
         return []
 
@@ -94,11 +94,11 @@ def test_admin_notes_delete_dry_run_by_default(monkeypatch):
     calls = {"notes_by_ids": None, "delete_notes": None}
     rows = [{"id": "note:a", "kind": "agent_note"}]
 
-    def fake_notes_by_ids(ids):
+    async def fake_notes_by_ids(ids):
         calls["notes_by_ids"] = ids
         return rows
 
-    def fake_delete_notes(ids):
+    async def fake_delete_notes(ids):
         calls["delete_notes"] = ids
         return 999
 
@@ -113,8 +113,15 @@ def test_admin_notes_delete_dry_run_by_default(monkeypatch):
 
 def test_admin_notes_delete_confirm_false_is_also_dry_run(monkeypatch):
     calls = {"delete_notes": None}
-    monkeypatch.setattr(admin, "notes_by_ids", lambda ids: [{"id": i} for i in ids])
-    monkeypatch.setattr(admin, "delete_notes", lambda ids: calls.__setitem__("delete_notes", ids))
+
+    async def fake_notes_by_ids(ids):
+        return [{"id": i} for i in ids]
+
+    async def fake_delete_notes(ids):
+        calls["delete_notes"] = ids
+
+    monkeypatch.setattr(admin, "notes_by_ids", fake_notes_by_ids)
+    monkeypatch.setattr(admin, "delete_notes", fake_delete_notes)
     response = client.post("/admin/notes/delete", json={"ids": ["note:a"], "confirm": False})
     assert response.status_code == 200
     assert calls["delete_notes"] is None
@@ -123,10 +130,10 @@ def test_admin_notes_delete_confirm_false_is_also_dry_run(monkeypatch):
 def test_admin_notes_delete_confirm_true_calls_delete_notes(monkeypatch):
     calls = {}
 
-    def fake_notes_by_ids(ids):
+    async def fake_notes_by_ids(ids):
         return [{"id": i} for i in ids]
 
-    def fake_delete_notes(ids):
+    async def fake_delete_notes(ids):
         calls["ids"] = ids
         return len(ids)
 
@@ -169,7 +176,7 @@ def test_admin_duplicates_defaults(monkeypatch):
     captured = {}
     pairs = [{"a": {"id": "x"}, "b": {"id": "y"}, "score": 0.95}]
 
-    def fake_find_duplicates(threshold, kind, limit):
+    async def fake_find_duplicates(threshold, kind, limit):
         captured["threshold"] = threshold
         captured["kind"] = kind
         captured["limit"] = limit
@@ -185,7 +192,7 @@ def test_admin_duplicates_defaults(monkeypatch):
 def test_admin_duplicates_custom_params_reach_admin(monkeypatch):
     captured = {}
 
-    def fake_find_duplicates(threshold, kind, limit):
+    async def fake_find_duplicates(threshold, kind, limit):
         captured["threshold"] = threshold
         captured["kind"] = kind
         captured["limit"] = limit
@@ -212,12 +219,12 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
     calls = {"archive_candidates": 0, "archive_rows": None}
     candidates = [{"id": "note:old", "kind": "agent_note", "hit_count": 0, "last_hit_at": None}]
 
-    def fake_archive_candidates(now):
+    async def fake_archive_candidates(now):
         calls["archive_candidates"] += 1
         assert isinstance(now, float)
         return candidates
 
-    def fake_archive_rows(ids, now):
+    async def fake_archive_rows(ids, now):
         calls["archive_rows"] = (ids, now)
         return len(ids)
 
@@ -237,10 +244,10 @@ def test_admin_archive_confirm_true_archives_exactly_candidate_ids(monkeypatch):
         {"id": "note:old2", "kind": "history", "hit_count": 2, "last_hit_at": 123.0},
     ]
 
-    def fake_archive_candidates(now):
+    async def fake_archive_candidates(now):
         return candidates
 
-    def fake_archive_rows(ids, now):
+    async def fake_archive_rows(ids, now):
         calls["ids"] = ids
         return len(ids)
 
@@ -259,10 +266,10 @@ def test_admin_restore_dry_run_by_default(monkeypatch):
     calls = {"restore_rows": None}
     rows = [{"id": "note:old", "kind": "agent_note"}]
 
-    def fake_rows_by_ids(ids):
+    async def fake_rows_by_ids(ids):
         return rows
 
-    def fake_restore_rows(ids):
+    async def fake_restore_rows(ids):
         calls["restore_rows"] = ids
         return len(ids)
 
@@ -277,10 +284,10 @@ def test_admin_restore_dry_run_by_default(monkeypatch):
 def test_admin_restore_confirm_true_calls_restore_rows(monkeypatch):
     calls = {}
 
-    def fake_rows_by_ids(ids):
+    async def fake_rows_by_ids(ids):
         return [{"id": i} for i in ids]
 
-    def fake_restore_rows(ids):
+    async def fake_restore_rows(ids):
         calls["ids"] = ids
         return len(ids)
 

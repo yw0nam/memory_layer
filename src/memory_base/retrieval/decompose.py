@@ -26,10 +26,10 @@ from memory_base.retrieval.search import (
     CANDIDATES_PER_SIGNAL,
     PER_FILE_CAP,
     TIME_DECAY_HALF_LIFE_DAYS,
-    _history_predicates,
-    _metadata_dict,
-    _rrf_fuse,
-    _time_decay_list,
+    history_predicates,
+    metadata_dict,
+    rrf_fuse,
+    time_decay_list,
 )
 
 DEEP_MAX_HOPS = int(os.getenv("DEEP_MAX_HOPS", "3"))
@@ -277,7 +277,7 @@ async def _atom_rows(
     include_archived: bool,
 ) -> list[Any]:
     tbl = f'"{PG_SCHEMA}"."memory_chunks"'
-    predicates, filter_args = _history_predicates(
+    predicates, filter_args = history_predicates(
         include_archived=include_archived,
         kind=kind,
         tags=tags,
@@ -316,7 +316,7 @@ def _collapse_atoms(rows: list[Any]) -> list[_Candidate]:
     )[:HOP_CANDIDATE_CAP]
     candidates = []
     for row in collapsed:
-        metadata = _metadata_dict(row["metadata"])
+        metadata = metadata_dict(row["metadata"])
         candidates.append(
             _Candidate(
                 parent_id=row["id"],
@@ -345,7 +345,7 @@ async def _memory_backup(
     exists = await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{PG_SCHEMA}.memory_chunks")
     if not exists:
         return []
-    predicates, filter_args = _history_predicates(
+    predicates, filter_args = history_predicates(
         include_archived=include_archived,
         kind=kind,
         tags=tags,
@@ -371,9 +371,9 @@ async def _memory_backup(
         *fts_args,
     )
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
-    recency = _time_decay_list({r["id"]: r["ts_last_active"] for r in by_id.values()})
-    idf = _time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})
-    scores = _rrf_fuse([[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf])
+    recency = time_decay_list({r["id"]: r["ts_last_active"] for r in by_id.values()})
+    idf = time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})
+    scores = rrf_fuse([[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf])
     now = time.time()
     for cid in scores:
         age_days = max(0.0, (now - by_id[cid]["ts_last_active"]) / 86400.0)
@@ -383,7 +383,7 @@ async def _memory_backup(
     candidates = []
     for cid, _score in ranked:
         r = by_id[cid]
-        metadata = _metadata_dict(r["metadata"])
+        metadata = metadata_dict(r["metadata"])
         key = metadata.get("source_ref", r["source_ref"])
         if counts.get(key, 0) >= PER_FILE_CAP:
             continue

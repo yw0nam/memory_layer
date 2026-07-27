@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from memory_base.core import config, schema
+from memory_base.core import schema
 
 
 class FakeConnection:
@@ -23,7 +23,7 @@ class FakeConnection:
 def _reset_once_state(monkeypatch):
     """Isolate the module-level once-guard state and PG_SCHEMA across tests."""
     monkeypatch.setattr(schema, "_prepared_schemas", set())
-    monkeypatch.setattr(config, "PG_SCHEMA", "test_schema")
+    monkeypatch.setattr(schema, "PG_SCHEMA", "test_schema")
 
 
 def test_ensure_schema_once_runs_ddl_once_for_repeated_calls(monkeypatch):
@@ -53,7 +53,7 @@ def test_ensure_schema_once_reruns_after_schema_change(monkeypatch):
     conn = FakeConnection()
 
     asyncio.run(schema.ensure_schema_once(conn))
-    monkeypatch.setattr(config, "PG_SCHEMA", "other_schema")
+    monkeypatch.setattr(schema, "PG_SCHEMA", "other_schema")
     asyncio.run(schema.ensure_schema_once(conn))
 
     assert calls == 2
@@ -85,3 +85,23 @@ def test_ensure_schema_itself_runs_every_time_called_directly():
     asyncio.run(schema.ensure_schema(conn))
 
     assert conn.calls == 2
+
+
+def test_rebinding_module_pg_schema_keeps_ddl_and_guard_in_sync(monkeypatch):
+    """Rebinding schema.PG_SCHEMA, as eval/retrieval.py's _set_schema does, must move
+    both the DDL target and the once-guard's recorded name together."""
+    captured_query = {}
+    real_execute = FakeConnection.execute
+
+    class RecordingConnection(FakeConnection):
+        async def execute(self, query, *args):
+            captured_query["sql"] = query
+            await real_execute(self, query, *args)
+
+    monkeypatch.setattr(schema, "PG_SCHEMA", "eval_rebound_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema_once(conn))
+
+    assert '"eval_rebound_schema".memory_chunks' in captured_query["sql"]
+    assert "eval_rebound_schema" in schema._prepared_schemas
