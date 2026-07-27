@@ -38,11 +38,24 @@ services:
       - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/repos_cache:/data/repos_cache
       - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/cocoindex_state:/data/cocoindex_state
     command: uv run --no-sync uvicorn memory_base.serve.api:app --host 0.0.0.0 --port 8010
+    # /health is liveness only; /health/services is the one that reaches the vLLM endpoints.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://localhost:8010/health")
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   mcp:
     build: .
     container_name: memory_base_mcp
-    depends_on: [api]
+    depends_on:
+      api:
+        condition: service_healthy
     ports:
       - "8765:8765"
     environment:

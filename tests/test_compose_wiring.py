@@ -81,3 +81,14 @@ def test_redis_survives_its_own_restart():
 
 def test_api_starts_after_redis():
     assert "redis" in API["depends_on"]
+
+
+def test_api_healthcheck_probes_liveness_not_the_vllm_endpoints():
+    """The container healthcheck must not go red because a backend model server is down."""
+    probe = " ".join(API["healthcheck"]["test"][1:])
+    assert "/health" in probe
+    assert "/health/services" not in probe
+
+
+def test_mcp_waits_for_a_healthy_api():
+    assert COMPOSE["services"]["mcp"]["depends_on"]["api"]["condition"] == "service_healthy"
