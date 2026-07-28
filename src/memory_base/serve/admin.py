@@ -10,6 +10,7 @@ from memory_base.core.config import PG_SCHEMA
 COLD_AGE_DAYS = int(os.getenv("COLD_AGE_DAYS", "180"))
 COLD_UNHIT_DAYS = int(os.getenv("COLD_UNHIT_DAYS", "90"))
 DAY_SECONDS = 86400.0
+DUPLICATE_NEIGHBORS = 5
 TEXT_LIMIT = 2000
 
 
@@ -84,13 +85,22 @@ async def find_duplicates(threshold: float, kind: str | None, limit: int) -> lis
                    left(a.content_raw, {TEXT_LIMIT}) AS a_text,
                    b.id AS b_id, b.chunk_kind AS b_kind,
                    left(b.content_raw, {TEXT_LIMIT}) AS b_text,
-                   1 - (a.embedding <=> b.embedding) AS score
+                   1 - b.distance AS score
             FROM "{PG_SCHEMA}".memory_chunks AS a
-            JOIN "{PG_SCHEMA}".memory_chunks AS b ON a.id < b.id
+            CROSS JOIN LATERAL (
+              SELECT candidate.id, candidate.chunk_kind, candidate.content_raw,
+                     candidate.embedding <=> a.embedding AS distance
+              FROM "{PG_SCHEMA}".memory_chunks AS candidate
+              WHERE candidate.archived_at IS NULL
+                AND candidate.id <> a.id
+                AND ($2::text IS NULL OR candidate.chunk_kind = $2)
+              ORDER BY candidate.embedding <=> a.embedding
+              LIMIT {DUPLICATE_NEIGHBORS}
+            ) AS b
             WHERE a.archived_at IS NULL
-              AND b.archived_at IS NULL
-              AND 1 - (a.embedding <=> b.embedding) >= $1
-              AND ($2::text IS NULL OR (a.chunk_kind = $2 AND b.chunk_kind = $2))
+              AND a.id < b.id
+              AND 1 - b.distance >= $1
+              AND ($2::text IS NULL OR a.chunk_kind = $2)
             ORDER BY score DESC
             LIMIT $3
             """,

@@ -314,8 +314,9 @@ async def run_document_job(
     origin: str | None,
 ) -> None:
     """Run one document pipeline and atomically publish its completed rows."""
+    document_lock = _document_locks[job.document_id]
     try:
-        async with _document_locks[job.document_id]:
+        async with document_lock:
             content_hash = _file_hash(upload_path)
             job.content_hash = content_hash
             job.touch()
@@ -349,6 +350,12 @@ async def run_document_job(
             job.rows_written = len(rows)
             job.touch(status="succeeded", stage="done")
     finally:
+        if (
+            not document_lock.locked()
+            and not document_lock._waiters
+            and _document_locks.get(job.document_id) is document_lock
+        ):
+            _document_locks.pop(job.document_id, None)
         upload_path.unlink(missing_ok=True)
 
 
