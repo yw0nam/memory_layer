@@ -127,6 +127,7 @@ def test_full_archive_and_note_lifecycle():
     old_id = f"archiveflow-old-{int(now_real)}"
     dup_a_id = f"archiveflow-dupa-{int(now_real)}"
     dup_b_id = f"archiveflow-dupb-{int(now_real)}"
+    distant_id = f"archiveflow-distant-{int(now_real)}"
 
     # Natural prose, not keyword soup: the reranker scores answer-like text and
     # buries non-informative token strings even on a verbatim match.
@@ -153,10 +154,19 @@ def test_full_archive_and_note_lifecycle():
             await _seed_row(conn, old_id, content_old, old_vec, old_ts, None)
             await _seed_row(conn, dup_a_id, content_dup_a, dup_a_vec, now_real, None)
             await _seed_row(conn, dup_b_id, content_dup_b, dup_b_vec, now_real, None)
+            await _seed_row(
+                conn,
+                distant_id,
+                "distant control row for duplicate detection",
+                _random_vec(seed=19),
+                now_real,
+                None,
+            )
         finally:
             await conn.close()
 
-    asyncio.run(_delete_rows([old_id, dup_a_id, dup_b_id]))
+    seeded_ids = [old_id, dup_a_id, dup_b_id, distant_id]
+    asyncio.run(_delete_rows(seeded_ids))
     asyncio.run(_seed_all())
     try:
         # ---- /admin/archive: dry-run lists our aged row, confirm archives it ----
@@ -231,6 +241,15 @@ def test_full_archive_and_note_lifecycle():
         duplicates = client.get("/admin/duplicates", params={"threshold": 0.95, "limit": 50})
         assert duplicates.status_code == 200
         pairs = duplicates.json()["pairs"]
-        assert any({p["a"]["id"], p["b"]["id"]} == {dup_a_id, dup_b_id} for p in pairs)
+        matching_pairs = [
+            pair for pair in pairs if {pair["a"]["id"], pair["b"]["id"]} == {dup_a_id, dup_b_id}
+        ]
+        assert len(matching_pairs) == 1
+        assert matching_pairs[0]["score"] >= 0.95
+        assert not any(
+            distant_id in {pair["a"]["id"], pair["b"]["id"]}
+            and {pair["a"]["id"], pair["b"]["id"]} & {dup_a_id, dup_b_id}
+            for pair in pairs
+        )
     finally:
-        asyncio.run(_delete_rows([old_id, dup_a_id, dup_b_id]))
+        asyncio.run(_delete_rows(seeded_ids))

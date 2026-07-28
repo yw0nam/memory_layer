@@ -20,7 +20,7 @@ import asyncpg
 
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
-from memory_base.serve import api
+from memory_base.serve import access_log, api
 from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0
@@ -86,6 +86,50 @@ async def _delete_retrieval_log(query_text: str) -> None:
         await conn.execute(f'DELETE FROM "{PG_SCHEMA}".retrieval_log WHERE query=$1', query_text)
     finally:
         await conn.close()
+
+
+@pytest.mark.integration
+@requires_db
+def test_log_retrieval_removes_rows_older_than_retention():
+    old_query = f"retention-old-{time.time_ns()}"
+    new_query = f"retention-new-{time.time_ns()}"
+    now = time.time()
+    old_ts = now - (access_log.RETRIEVAL_LOG_RETENTION_DAYS + 1) * 86400
+
+    async def _run() -> tuple[int, int]:
+        conn = await asyncpg.connect(db_url())
+        try:
+            await ensure_schema(conn)
+            await conn.execute(
+                f'INSERT INTO "{PG_SCHEMA}".retrieval_log(query, source, hit_ids, ts) '
+                "VALUES($1, 'memory', ARRAY[]::text[], $2)",
+                old_query,
+                old_ts,
+            )
+        finally:
+            await conn.close()
+
+        await access_log.log_retrieval(new_query, "memory", [], now=now)
+
+        conn = await asyncpg.connect(db_url())
+        try:
+            old_count = await conn.fetchval(
+                f'SELECT count(*) FROM "{PG_SCHEMA}".retrieval_log WHERE query=$1',
+                old_query,
+            )
+            new_count = await conn.fetchval(
+                f'SELECT count(*) FROM "{PG_SCHEMA}".retrieval_log WHERE query=$1',
+                new_query,
+            )
+            return old_count, new_count
+        finally:
+            await conn.execute(
+                f'DELETE FROM "{PG_SCHEMA}".retrieval_log WHERE query = ANY($1::text[])',
+                [old_query, new_query],
+            )
+            await conn.close()
+
+    assert asyncio.run(_run()) == (0, 1)
 
 
 # ---- POST /search logs retrieval_log + bumps hit columns ------------------
