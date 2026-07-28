@@ -350,6 +350,7 @@ async def run_document_job(
             job.rows_written = len(rows)
             job.touch(status="succeeded", stage="done")
     finally:
+        # A woken waiter keeps this briefly unlocked lock live so a new job cannot bypass it.
         if (
             not document_lock.locked()
             and not document_lock._waiters

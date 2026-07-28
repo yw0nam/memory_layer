@@ -81,26 +81,43 @@ async def find_duplicates(threshold: float, kind: str | None, limit: int) -> lis
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
-            SELECT a.id AS a_id, a.chunk_kind AS a_kind,
-                   left(a.content_raw, {TEXT_LIMIT}) AS a_text,
-                   b.id AS b_id, b.chunk_kind AS b_kind,
-                   left(b.content_raw, {TEXT_LIMIT}) AS b_text,
-                   1 - b.distance AS score
-            FROM "{PG_SCHEMA}".memory_chunks AS a
-            CROSS JOIN LATERAL (
-              SELECT candidate.id, candidate.chunk_kind, candidate.content_raw,
-                     candidate.embedding <=> a.embedding AS distance
-              FROM "{PG_SCHEMA}".memory_chunks AS candidate
-              WHERE candidate.archived_at IS NULL
-                AND candidate.id <> a.id
-                AND ($2::text IS NULL OR candidate.chunk_kind = $2)
-              ORDER BY candidate.embedding <=> a.embedding
-              LIMIT {DUPLICATE_NEIGHBORS}
-            ) AS b
-            WHERE a.archived_at IS NULL
-              AND a.id < b.id
-              AND 1 - b.distance >= $1
-              AND ($2::text IS NULL OR a.chunk_kind = $2)
+            WITH directed AS (
+              SELECT least(a.id, b.id) AS least_id,
+                     greatest(a.id, b.id) AS greatest_id,
+                     CASE WHEN a.id < b.id THEN a.chunk_kind ELSE b.chunk_kind END
+                       AS least_kind,
+                     CASE WHEN a.id < b.id THEN left(a.content_raw, {TEXT_LIMIT})
+                          ELSE left(b.content_raw, {TEXT_LIMIT}) END AS least_text,
+                     CASE WHEN a.id < b.id THEN b.chunk_kind ELSE a.chunk_kind END
+                       AS greatest_kind,
+                     CASE WHEN a.id < b.id THEN left(b.content_raw, {TEXT_LIMIT})
+                          ELSE left(a.content_raw, {TEXT_LIMIT}) END AS greatest_text,
+                     1 - b.distance AS score
+              FROM "{PG_SCHEMA}".memory_chunks AS a
+              CROSS JOIN LATERAL (
+                SELECT candidate.id, candidate.chunk_kind, candidate.content_raw,
+                       candidate.embedding <=> a.embedding AS distance
+                FROM "{PG_SCHEMA}".memory_chunks AS candidate
+                WHERE candidate.archived_at IS NULL
+                  AND candidate.id <> a.id
+                  AND ($2::text IS NULL OR candidate.chunk_kind = $2)
+                ORDER BY candidate.embedding <=> a.embedding
+                LIMIT {DUPLICATE_NEIGHBORS}
+              ) AS b
+              WHERE a.archived_at IS NULL
+                AND ($2::text IS NULL OR a.chunk_kind = $2)
+            ),
+            deduplicated AS (
+              SELECT DISTINCT ON (least_id, greatest_id)
+                     least_id AS a_id, least_kind AS a_kind, least_text AS a_text,
+                     greatest_id AS b_id, greatest_kind AS b_kind,
+                     greatest_text AS b_text, score
+              FROM directed
+              WHERE score >= $1
+              ORDER BY least_id, greatest_id, score DESC
+            )
+            SELECT a_id, a_kind, a_text, b_id, b_kind, b_text, score
+            FROM deduplicated
             ORDER BY score DESC
             LIMIT $3
             """,

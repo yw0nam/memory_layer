@@ -41,6 +41,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           hit_ids text[] NOT NULL,
           ts double precision NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS retrieval_log__ts ON {schema}.retrieval_log (ts);
         """
     )
 
