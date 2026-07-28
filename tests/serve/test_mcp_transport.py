@@ -52,7 +52,7 @@ def test_resolve_transport_non_numeric_port_raises_value_error():
 
 def test_compose_mcp_service_serves_streamable_http():
     compose = yaml.safe_load(
-        (pathlib.Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text()
+        (pathlib.Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text()
     )
     environment = compose["services"]["mcp"]["environment"]
     transport, _host, port = resolve_transport(environment)

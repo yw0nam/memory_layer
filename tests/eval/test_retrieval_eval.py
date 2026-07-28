@@ -10,7 +10,7 @@ import pytest
 from memory_base.adapters.document import chunk_markdown, read_csv_sample
 from memory_base.eval import retrieval
 
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = Path(__file__).parents[1] / "fixtures"
 EVAL_DOCS = FIXTURES / "eval_docs"
 
 
