@@ -37,19 +37,23 @@ async def acquire() -> AsyncIterator[asyncpg.Connection]:
 - The pool is bound to the event loop that created it (`_pool_loop`). If
   `get_pool()` runs on a different loop (test suites drive the app through
   separate `asyncio.run()` calls, where lifespan never runs), the stale pool is
-  discarded and a fresh one is created. Discarding without closing leaks the old
-  loop's connections until process exit — acceptable because it only happens in
-  test processes; long-lived servers stay on one loop.
+  `terminate()`d best-effort (terminate is synchronous and needs no live loop;
+  exceptions are swallowed) and a fresh pool is created — stale-loop backends
+  do not accumulate across test runs.
 - `acquire()` is the single entry point call sites use. It exists (rather than
   exposing the pool directly) so issue #73 can later wrap the acquisition in a
   transaction with `SET LOCAL app.user_id` without touching call sites again.
+- `acquire()` passes a bounded timeout to `pool.acquire()`
+  (`DB_POOL_ACQUIRE_TIMEOUT`, default 30 s) so a saturated pool fails loudly
+  instead of queueing forever — `asyncpg.connect()` was bounded too.
 - Pooled connections are reused across requests: call sites must not leave
   session state behind (no session-level `SET`, temp tables, or LISTEN — none
   exist today; asyncpg's release-time reset covers transactions and session
   settings but not temp tables or prepared statements). Future per-user context
   (#73) must be `SET LOCAL` inside a transaction.
-- `close_pool()` closes and resets the module globals so tests can cycle the
-  pool. A background job that acquires after shutdown recreates a pool that
+- `close_pool()` detaches and resets the module globals under `_pool_lock`,
+  then closes the captured pool — a concurrent `get_pool()` never observes a
+  closing pool. Tests can cycle the pool through it. A background job that acquires after shutdown recreates a pool that
   dies unclosed with the process; accepted — Postgres reaps the backends, and
   draining job tasks at shutdown is the upgrade path if it ever matters.
 
