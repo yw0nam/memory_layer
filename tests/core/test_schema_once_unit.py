@@ -104,4 +104,8 @@ def test_rebinding_module_pg_schema_keeps_ddl_and_guard_in_sync(monkeypatch):
     asyncio.run(schema.ensure_schema_once(conn))
 
     assert '"eval_rebound_schema".memory_chunks' in captured_query["sql"]
+    assert (
+        'CREATE INDEX IF NOT EXISTS retrieval_log__ts ON "eval_rebound_schema".retrieval_log (ts)'
+        in captured_query["sql"]
+    )
     assert "eval_rebound_schema" in schema._prepared_schemas

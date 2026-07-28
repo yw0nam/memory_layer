@@ -31,7 +31,7 @@ from memory_base.core.config import (
     vector_literal,
 )
 from memory_base.core.schema import ensure_schema
-from memory_base.serve import api
+from memory_base.serve import admin, api
 
 client = TestClient(api.app)
 
@@ -63,6 +63,12 @@ def _near_dup_vecs(seed: int) -> tuple[str, str]:
     return vector_literal(base), vector_literal(noisy)
 
 
+def _angled_vec(angle: float) -> str:
+    vector = np.zeros(EMB_DIM)
+    vector[:2] = [np.cos(angle), np.sin(angle)]
+    return vector_literal(vector)
+
+
 async def _seed_row(
     conn: asyncpg.Connection,
     row_id: str,
@@ -70,6 +76,7 @@ async def _seed_row(
     embedding_lit: str,
     ts_last_active: float,
     last_hit_at: float | None = None,
+    chunk_kind: str = "note",
 ) -> None:
     await conn.execute(
         f"""
@@ -77,7 +84,7 @@ async def _seed_row(
           (id, source_type, source_ref, chunk_kind, session_id, content_raw,
            distilled, embedding, ts_last_active, idf_score, metadata,
            hit_count, last_hit_at)
-        VALUES ($1,'agent_note','save_memory','note',$1,$2,$2,$3::halfvec,$4,NULL,
+        VALUES ($1,'agent_note','save_memory',$6,$1,$2,$2,$3::halfvec,$4,NULL,
                 '{{}}'::jsonb, 0, $5)
         ON CONFLICT (id) DO NOTHING
         """,
@@ -86,6 +93,7 @@ async def _seed_row(
         embedding_lit,
         ts_last_active,
         last_hit_at,
+        chunk_kind,
     )
 
 
@@ -251,5 +259,61 @@ def test_full_archive_and_note_lifecycle():
             and {pair["a"]["id"], pair["b"]["id"]} & {dup_a_id, dup_b_id}
             for pair in pairs
         )
+    finally:
+        asyncio.run(_delete_rows(seeded_ids))
+
+
+@pytest.mark.integration
+@requires_db
+def test_duplicates_keep_pair_found_only_from_larger_id_direction():
+    token = time.time_ns()
+    smaller_id = f"duplicate-recall-a-{token}"
+    larger_id = f"duplicate-recall-z-{token}"
+    blocker_ids = [f"duplicate-recall-m-{index}-{token}" for index in range(5)]
+    seeded_ids = [smaller_id, larger_id, *blocker_ids]
+    cluster_kind = f"duplicate-recall-{token}"
+    now = time.time()
+
+    async def _seed_cluster() -> None:
+        conn = await asyncpg.connect(db_url())
+        try:
+            await ensure_schema(conn)
+            await _seed_row(
+                conn,
+                smaller_id,
+                "asymmetric duplicate smaller",
+                _angled_vec(0),
+                now,
+                chunk_kind=cluster_kind,
+            )
+            await _seed_row(
+                conn,
+                larger_id,
+                "asymmetric duplicate larger",
+                _angled_vec(0.1),
+                now,
+                chunk_kind=cluster_kind,
+            )
+            for index, blocker_id in enumerate(blocker_ids, start=1):
+                await _seed_row(
+                    conn,
+                    blocker_id,
+                    f"closer neighbor {index}",
+                    _angled_vec(-0.01 * index),
+                    now,
+                    chunk_kind=cluster_kind,
+                )
+        finally:
+            await conn.close()
+
+    asyncio.run(_delete_rows(seeded_ids))
+    asyncio.run(_seed_cluster())
+    try:
+        pairs = asyncio.run(admin.find_duplicates(0.99, cluster_kind, 100))
+        matching_pairs = [
+            pair for pair in pairs if pair["a"]["id"] == smaller_id and pair["b"]["id"] == larger_id
+        ]
+        assert len(matching_pairs) == 1
+        assert matching_pairs[0]["score"] >= 0.99
     finally:
         asyncio.run(_delete_rows(seeded_ids))
