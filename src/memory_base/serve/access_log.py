@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import asyncpg
 
-from memory_base.core.config import DB_URL, PG_SCHEMA
+from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.retrieval.search import Hit
 
 LOGGER = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ async def log_retrieval(
     memory_ids = [hit.meta["id"] for hit in hits if hit.meta.get("id")]
     conn: asyncpg.Connection | None = None
     try:
-        conn = await asyncpg.connect(DB_URL)
+        conn = await asyncpg.connect(db_url())
         await conn.execute(
             f'INSERT INTO "{PG_SCHEMA}".retrieval_log(query, source, hit_ids, ts) '
             "VALUES($1,$2,$3,$4)",

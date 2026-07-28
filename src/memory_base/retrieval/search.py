@@ -16,12 +16,12 @@ from typing import Any
 import asyncpg
 
 from memory_base.core.config import (
-    DB_URL,
     OVERSAMPLE_FACTOR,
     PG_SCHEMA,
     RERANK_MODEL,
     SERVICE_TIMEOUT_SECONDS,
     VllmEmbedder,
+    db_url,
     require_env,
     vector_literal,
 )
@@ -435,7 +435,7 @@ async def search(
     qvec = await embedder.embed(query, query=True)
     qvec_lit = vector_literal(qvec)
 
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         hits: list[Hit] = []
         if source in ("code", "all"):

@@ -38,7 +38,7 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.core.config import DB_URL, PG_SCHEMA
+from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api, mcp_server
 from memory_base.serve.notes import build_note_row, save_note
 
@@ -225,7 +225,7 @@ def test_mcp_tool_list_unaffected_by_supersede():
 
 def _db_reachable() -> bool:
     async def _check() -> None:
-        conn = await asyncpg.connect(DB_URL, timeout=5)
+        conn = await asyncpg.connect(db_url(), timeout=5)
         await conn.close()
 
     try:
@@ -236,11 +236,11 @@ def _db_reachable() -> bool:
 
 
 _DB = _db_reachable()
-requires_db = pytest.mark.skipif(not _DB, reason=f"DB not reachable at {DB_URL}")
+requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
 
 
 async def _delete(note_id: str) -> None:
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         await conn.execute(f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1', note_id)
     finally:
@@ -248,7 +248,7 @@ async def _delete(note_id: str) -> None:
 
 
 async def _fetch_archived_at(note_id: str):
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         return await conn.fetchval(
             f'SELECT archived_at FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1', note_id

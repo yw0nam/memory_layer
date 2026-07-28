@@ -13,12 +13,12 @@ from typing import Any
 import asyncpg
 
 from memory_base.core.config import (
-    DB_URL,
     LLM_MODEL,
     OVERSAMPLE_FACTOR,
     PG_SCHEMA,
     SERVICE_TIMEOUT_SECONDS,
     VllmEmbedder,
+    db_url,
     llm_client,
     vector_literal,
 )
@@ -599,7 +599,7 @@ async def deep_search(
     deadline = time.monotonic() + DEEP_TIMEOUT_SECONDS
     embedder = VllmEmbedder()
     llm = llm_client()
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         return await _deep_loop(
             query,

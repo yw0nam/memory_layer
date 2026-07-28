@@ -177,6 +177,7 @@ class FakeConnection:
 
 
 def test_atomic_replacement_deletes_only_document_rows_then_inserts(monkeypatch):
+    monkeypatch.setenv("DB_URL", "postgres://fake/db")
     connection = FakeConnection()
 
     async def connect(url):

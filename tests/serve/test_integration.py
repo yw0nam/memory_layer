@@ -15,13 +15,13 @@ import pytest
 
 import asyncpg
 
-from memory_base.core.config import DB_URL, PG_SCHEMA
+from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve.notes import build_note_row, save_note
 
 
 def _db_reachable() -> bool:
     async def _check() -> None:
-        conn = await asyncpg.connect(DB_URL, timeout=5)
+        conn = await asyncpg.connect(db_url(), timeout=5)
         await conn.close()
 
     try:
@@ -32,9 +32,7 @@ def _db_reachable() -> bool:
 
 
 if not _db_reachable():
-    pytest.skip(
-        f"DB not reachable at {DB_URL}; skipping integration tests", allow_module_level=True
-    )
+    pytest.skip("DB is not configured or not reachable", allow_module_level=True)
 
 pytestmark = pytest.mark.integration
 
@@ -43,7 +41,7 @@ from memory_base.retrieval.search import search  # noqa: E402
 
 
 async def _delete_note(note_id: str) -> None:
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         await conn.execute(f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1', note_id)
     finally:

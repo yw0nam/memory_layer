@@ -19,7 +19,7 @@ from typing import Any
 import asyncpg
 
 from memory_base.core import config, schema as schema_module
-from memory_base.core.config import DB_URL, EMB_MODEL, RERANK_MODEL
+from memory_base.core.config import EMB_MODEL, RERANK_MODEL, db_url
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval import decompose as decompose_module
 from memory_base.retrieval import search as search_module
@@ -370,7 +370,7 @@ async def run_evaluation() -> None:
     os.environ["ATOMS_GENERATE"] = "true"
     schema_created = False
     try:
-        setup_conn = await asyncpg.connect(DB_URL, timeout=5)
+        setup_conn = await asyncpg.connect(db_url(), timeout=5)
         try:
             await setup_conn.execute(f'CREATE SCHEMA "{schema_name}"')
             schema_created = True
@@ -380,7 +380,7 @@ async def run_evaluation() -> None:
         for path in sorted(FIXTURE_DIR.iterdir()):
             if path.is_file():
                 await _ingest_fixture(path)
-        report_conn = await asyncpg.connect(DB_URL, timeout=5)
+        report_conn = await asyncpg.connect(db_url(), timeout=5)
         try:
             rows = await report_conn.fetch(
                 f'SELECT id, chunk_kind FROM "{schema_name}".memory_chunks'
@@ -404,7 +404,7 @@ async def run_evaluation() -> None:
     finally:
         try:
             if schema_created:
-                cleanup_conn = await asyncpg.connect(DB_URL, timeout=5)
+                cleanup_conn = await asyncpg.connect(db_url(), timeout=5)
                 try:
                     await cleanup_conn.execute(f'DROP SCHEMA "{schema_name}" CASCADE')
                 finally:

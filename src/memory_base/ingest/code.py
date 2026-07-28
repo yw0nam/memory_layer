@@ -25,7 +25,7 @@ from cocoindex.resources.chunk import Chunk
 from cocoindex.resources.file import FileLike, PatternFilePathMatcher
 from cocoindex.resources.id import IdGenerator
 
-from memory_base.core.config import DB_URL, PG_SCHEMA, VllmEmbedder
+from memory_base.core.config import PG_SCHEMA, VllmEmbedder, db_url
 
 TABLE_NAME = "code_chunks"
 CACHE_ROOT = pathlib.Path(
@@ -100,7 +100,7 @@ class CodeChunk:
 
 @coco.lifespan
 async def coco_lifespan(builder: coco.EnvironmentBuilder) -> AsyncIterator[None]:
-    async with asyncpg.create_pool(DB_URL) as pool:
+    async with asyncpg.create_pool(db_url()) as pool:
         builder.provide(PG_DB, pool)
         builder.provide(EMBEDDER, VllmEmbedder())
         yield

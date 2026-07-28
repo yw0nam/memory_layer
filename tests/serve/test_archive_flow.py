@@ -23,10 +23,10 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.core.config import (
-    DB_URL,
     EMB_DIM,
     PG_SCHEMA,
     VllmEmbedder,
+    db_url,
     embed_text,
     vector_literal,
 )
@@ -38,7 +38,7 @@ client = TestClient(api.app)
 
 def _db_reachable() -> bool:
     async def _check() -> None:
-        conn = await asyncpg.connect(DB_URL, timeout=5)
+        conn = await asyncpg.connect(db_url(), timeout=5)
         await conn.close()
 
     try:
@@ -49,7 +49,7 @@ def _db_reachable() -> bool:
 
 
 _DB = _db_reachable()
-requires_db = pytest.mark.skipif(not _DB, reason=f"DB not reachable at {DB_URL}")
+requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
 
 
 def _random_vec(seed: int) -> str:
@@ -90,7 +90,7 @@ async def _seed_row(
 
 
 async def _delete_rows(ids: list[str]) -> None:
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         await conn.execute(
             f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE id = ANY($1::text[])', ids
@@ -100,7 +100,7 @@ async def _delete_rows(ids: list[str]) -> None:
 
 
 async def _row_count(row_id: str) -> int:
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         return await conn.fetchval(
             f'SELECT count(*) FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1', row_id
@@ -110,7 +110,7 @@ async def _row_count(row_id: str) -> int:
 
 
 async def _archived_at(row_id: str):
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         return await conn.fetchval(
             f'SELECT archived_at FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1', row_id
@@ -147,7 +147,7 @@ def test_full_archive_and_note_lifecycle():
         # restore assertions go through full retrieval, where a random vector
         # would sink below the RRF candidate cut regardless of archived state.
         old_vec = await embed_text(VllmEmbedder(), content_old)
-        conn = await asyncpg.connect(DB_URL)
+        conn = await asyncpg.connect(db_url())
         try:
             await ensure_schema(conn)
             await _seed_row(conn, old_id, content_old, old_vec, old_ts, None)

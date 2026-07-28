@@ -44,6 +44,7 @@ class FakeAdminConnection:
 
 
 def test_archive_candidates_omit_atoms(monkeypatch):
+    monkeypatch.setenv("DB_URL", "postgres://fake/db")
     conn = FakeAdminConnection()
 
     async def connect(url):
@@ -56,6 +57,7 @@ def test_archive_candidates_omit_atoms(monkeypatch):
 
 
 def test_archiving_and_restoring_atom_id_are_noops(monkeypatch):
+    monkeypatch.setenv("DB_URL", "postgres://fake/db")
     conn = FakeAdminConnection()
 
     async def connect(url):
