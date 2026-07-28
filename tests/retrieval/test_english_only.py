@@ -22,7 +22,7 @@ import pytest
 from memory_base.core.config import LLM_MODEL, llm_client
 from memory_base.retrieval.decompose import _propose
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Hangul syllables, Hangul Jamo, Hangul compatibility Jamo, and Kana ranges,
 # as (low, high) codepoint bounds so this file stays ASCII in its logic.

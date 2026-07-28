@@ -37,7 +37,16 @@ src/memory_base/
     mcp_server.py     # MCP server over REST (stdio | SSE | streamable-http), Docker serves streamable HTTP
   eval/
     retrieval.py      # reproducible retrieval evaluation with an atom-lane A/B report
-tests/                # pytest; DB/vLLM-dependent tests carry the `integration` marker
+tests/                # pytest mirrors the covered src package; `integration` marks DB/vLLM dependence
+  core/
+  adapters/
+  ingest/
+  retrieval/
+  eval/
+  serve/
+  conftest.py         # shared pytest configuration and fixtures
+  fixtures/           # shared fixture data
+  test_compose_wiring.py # repository-level Compose wiring
 scripts/ci/           # CI helper scripts (test-guard)
 ```
 
