@@ -5,17 +5,18 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-import asyncpg
 import httpx
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from memory_base.core.config import db_url, require_env
+from memory_base.core import db
+from memory_base.core.config import require_env
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval.decompose import DeepResult, deep_search
 from memory_base.retrieval.search import Hit
@@ -54,11 +55,8 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
 
 async def db_healthy() -> bool:
     """Return whether the configured database accepts a simple query."""
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire(timeout=HEALTH_PROBE_TIMEOUT_SECONDS) as conn:
         return bool(await conn.fetchval("SELECT 1"))
-    finally:
-        await conn.close()
 
 
 async def _models_endpoint_healthy(env_var: str) -> bool:
@@ -356,7 +354,19 @@ async def admin_restore_route(request: Request) -> JSONResponse:
 
 setup_logging()
 
+
+@asynccontextmanager
+async def lifespan(app: Starlette):
+    """Close the shared database pool during application shutdown."""
+    del app
+    try:
+        yield
+    finally:
+        await db.close_pool()
+
+
 app = Starlette(
+    lifespan=lifespan,
     routes=[
         Route("/health", health, methods=["GET"]),
         Route("/health/services", health_services, methods=["GET"]),
@@ -374,5 +384,5 @@ app = Starlette(
         Route("/admin/duplicates", admin_duplicates_route, methods=["GET"]),
         Route("/admin/archive", admin_archive_route, methods=["POST"]),
         Route("/admin/restore", admin_restore_route, methods=["POST"]),
-    ]
+    ],
 )

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import os
 
-import asyncpg
-
-from memory_base.core.config import PG_SCHEMA, db_url
+from memory_base.core import db
+from memory_base.core.config import PG_SCHEMA
 
 COLD_AGE_DAYS = int(os.getenv("COLD_AGE_DAYS", "180"))
 COLD_UNHIT_DAYS = int(os.getenv("COLD_UNHIT_DAYS", "90"))
@@ -31,8 +30,7 @@ def is_cold(
 
 async def list_old_notes(older_than_days: int) -> list[dict]:
     """Return active agent notes older than the requested age."""
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
             SELECT id, content_raw AS text, ts_last_active, hit_count, last_hit_at
@@ -46,14 +44,11 @@ async def list_old_notes(older_than_days: int) -> list[dict]:
             older_than_days,
         )
         return [dict(row) for row in rows]
-    finally:
-        await conn.close()
 
 
 async def notes_by_ids(ids: list[str]) -> list[dict]:
     """Return agent notes matching the supplied identifiers."""
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
             SELECT id, content_raw AS text, ts_last_active, hit_count, last_hit_at,
@@ -65,14 +60,11 @@ async def notes_by_ids(ids: list[str]) -> list[dict]:
             ids,
         )
         return [dict(row) for row in rows]
-    finally:
-        await conn.close()
 
 
 async def delete_notes(ids: list[str]) -> int:
     """Delete agent notes matching the supplied identifiers."""
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         status = await conn.execute(
             f"""
             DELETE FROM "{PG_SCHEMA}".memory_chunks
@@ -81,14 +73,11 @@ async def delete_notes(ids: list[str]) -> int:
             ids,
         )
         return int(status.rsplit(" ", 1)[-1])
-    finally:
-        await conn.close()
 
 
 async def find_duplicates(threshold: float, kind: str | None, limit: int) -> list[dict]:
     """Return active row pairs meeting the cosine-similarity threshold."""
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
             SELECT a.id AS a_id, a.chunk_kind AS a_kind,
@@ -117,14 +106,11 @@ async def find_duplicates(threshold: float, kind: str | None, limit: int) -> lis
             }
             for row in rows
         ]
-    finally:
-        await conn.close()
 
 
 async def archive_candidates(now: float) -> list[dict]:
     """Return active rows matching the configured cold-tier rule."""
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
             SELECT id, chunk_kind AS kind,
@@ -143,14 +129,11 @@ async def archive_candidates(now: float) -> list[dict]:
             COLD_UNHIT_DAYS,
         )
         return [dict(row) for row in rows]
-    finally:
-        await conn.close()
 
 
 async def archive_rows(ids: list[str], now: float) -> int:
     """Archive active rows matching the supplied identifiers."""
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
@@ -162,14 +145,11 @@ async def archive_rows(ids: list[str], now: float) -> int:
             now,
         )
         return int(status.rsplit(" ", 1)[-1])
-    finally:
-        await conn.close()
 
 
 async def restore_rows(ids: list[str]) -> int:
     """Restore rows matching the supplied identifiers."""
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
@@ -180,14 +160,11 @@ async def restore_rows(ids: list[str]) -> int:
             ids,
         )
         return int(status.rsplit(" ", 1)[-1])
-    finally:
-        await conn.close()
 
 
 async def rows_by_ids(ids: list[str]) -> list[dict]:
     """Return lifecycle fields for rows matching the supplied identifiers."""
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
             SELECT id, chunk_kind AS kind, archived_at, hit_count, last_hit_at
@@ -198,5 +175,3 @@ async def rows_by_ids(ids: list[str]) -> list[dict]:
             ids,
         )
         return [dict(row) for row in rows]
-    finally:
-        await conn.close()

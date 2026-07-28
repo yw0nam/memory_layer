@@ -9,6 +9,7 @@ import time
 import numpy as np
 import pytest
 
+from memory_base.retrieval import decompose
 from memory_base.retrieval.decompose import (
     DEEP_MAX_HOPS,
     HOP_CANDIDATE_CAP,
@@ -886,7 +887,8 @@ class TestDeepSearchValidation:
         with pytest.raises(ValueError, match="max_hops"):
             asyncio.run(deep_search("q", max_hops=DEEP_MAX_HOPS + 1))
 
-    def test_max_hops_one_accepted(self):
+    def test_max_hops_one_accepted(self, monkeypatch):
+        monkeypatch.setattr(decompose, "VllmEmbedder", lambda: FakeEmbedder(fail=True))
         try:
             asyncio.run(deep_search("q", max_hops=1))
         except ValueError as e:
@@ -895,7 +897,8 @@ class TestDeepSearchValidation:
         except Exception:
             pass
 
-    def test_max_hops_at_max_accepted(self):
+    def test_max_hops_at_max_accepted(self, monkeypatch):
+        monkeypatch.setattr(decompose, "VllmEmbedder", lambda: FakeEmbedder(fail=True))
         try:
             asyncio.run(deep_search("q", max_hops=DEEP_MAX_HOPS))
         except ValueError as e:

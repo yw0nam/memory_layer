@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import time
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
@@ -146,10 +147,12 @@ def test_list_repos_survives_db_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(repos, "CACHE_ROOT", cache)
 
-    async def unreachable(*args, **kwargs):
+    @asynccontextmanager
+    async def unreachable():
         raise OSError("connection refused")
+        yield
 
-    monkeypatch.setattr(repos.asyncpg, "connect", unreachable)
+    monkeypatch.setattr(repos.db, "acquire", unreachable)
 
     listed = asyncio.run(repos.list_repos())
     assert [entry["name"] for entry in listed] == ["repo"]

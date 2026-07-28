@@ -37,6 +37,7 @@ if not _db_reachable():
 pytestmark = pytest.mark.integration
 
 from memory_base.serve import mcp_server  # noqa: E402
+from memory_base.core.db import acquire, close_pool, get_pool  # noqa: E402
 from memory_base.retrieval.search import search  # noqa: E402
 
 
@@ -83,6 +84,31 @@ def test_fts_exact_literal_hits_file_containing_it():
     # the spec docs indexed into code_chunks.
     hits = asyncio.run(search("halfvec", source="code", rerank=False))
     assert any("halfvec" in h.text.lower() for h in hits)
+
+
+def test_repeated_searches_keep_pool_backend_count_flat():
+    async def _run():
+        await get_pool()
+
+        async def backend_count() -> int:
+            async with acquire() as conn:
+                return await conn.fetchval(
+                    """
+                    SELECT count(*)
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND usename = current_user
+                      AND application_name = current_setting('application_name')
+                    """
+                )
+
+        before = await backend_count()
+        for _ in range(5):
+            await search("halfvec", source="code", rerank=False)
+            assert await backend_count() == before
+        await close_pool()
+
+    asyncio.run(_run())
 
 
 # ---- MCP in-process tool call ----------------------------------------------

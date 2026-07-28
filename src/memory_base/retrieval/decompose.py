@@ -10,15 +10,13 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-import asyncpg
-
+from memory_base.core import db
 from memory_base.core.config import (
     LLM_MODEL,
     OVERSAMPLE_FACTOR,
     PG_SCHEMA,
     SERVICE_TIMEOUT_SECONDS,
     VllmEmbedder,
-    db_url,
     llm_client,
     vector_literal,
 )
@@ -410,6 +408,13 @@ async def _memory_backup(
     return candidates
 
 
+async def _with_conn(conn: Any, fn: Any, *args: Any) -> Any:
+    if conn is not None:
+        return await fn(conn, *args)
+    async with db.acquire() as step_conn:
+        return await fn(step_conn, *args)
+
+
 async def _hop_retrieve(
     conn: Any,
     embedder: Any,
@@ -438,7 +443,15 @@ async def _hop_retrieve(
         except Exception:
             continue
         sq_lit = vector_literal(sq_vec)
-        rows = await _atom_rows(conn, sq_lit, excluded, kind, tags, include_archived)
+        rows = await _with_conn(
+            conn,
+            _atom_rows,
+            sq_lit,
+            excluded,
+            kind,
+            tags,
+            include_archived,
+        )
         all_rows.extend(rows)
     candidates = _collapse_atoms(all_rows)
     if candidates:
@@ -446,15 +459,24 @@ async def _hop_retrieve(
 
     if _remaining(deadline) <= 0:
         raise _Timeout()
-    rows = await _atom_rows(conn, qvec_lit, excluded, kind, tags, include_archived)
+    rows = await _with_conn(
+        conn,
+        _atom_rows,
+        qvec_lit,
+        excluded,
+        kind,
+        tags,
+        include_archived,
+    )
     candidates = _collapse_atoms(rows)
     if candidates:
         return candidates
 
     if _remaining(deadline) <= 0:
         raise _Timeout()
-    return await _memory_backup(
+    return await _with_conn(
         conn,
+        _memory_backup,
         question,
         qvec_lit,
         excluded,
@@ -595,18 +617,14 @@ async def deep_search(
     deadline = time.monotonic() + DEEP_TIMEOUT_SECONDS
     embedder = VllmEmbedder()
     llm = llm_client()
-    conn = await asyncpg.connect(db_url())
-    try:
-        return await _deep_loop(
-            query,
-            conn,
-            embedder,
-            llm,
-            max_hops,
-            kind,
-            tags,
-            include_archived,
-            deadline,
-        )
-    finally:
-        await conn.close()
+    return await _deep_loop(
+        query,
+        None,
+        embedder,
+        llm,
+        max_hops,
+        kind,
+        tags,
+        include_archived,
+        deadline,
+    )

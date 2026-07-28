@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 
 from memory_base.serve import admin
 
@@ -13,7 +14,6 @@ class FakeAdminConnection:
             "parent": {"chunk_kind": "doc", "archived_at": None},
             "atom": {"chunk_kind": "atom", "archived_at": None},
         }
-        self.closed = False
 
     async def fetch(self, query, *args):
         assert "chunk_kind <> 'atom'" in query
@@ -39,31 +39,27 @@ class FakeAdminConnection:
                 changed += 1
         return f"UPDATE {changed}"
 
-    async def close(self):
-        self.closed = True
-
 
 def test_archive_candidates_omit_atoms(monkeypatch):
-    monkeypatch.setenv("DB_URL", "postgres://fake/db")
     conn = FakeAdminConnection()
 
-    async def connect(url):
-        return conn
+    @asynccontextmanager
+    async def acquire():
+        yield conn
 
-    monkeypatch.setattr(admin.asyncpg, "connect", connect)
+    monkeypatch.setattr(admin.db, "acquire", acquire)
     rows = asyncio.run(admin.archive_candidates(2_000_000_000.0))
     assert [row["id"] for row in rows] == ["parent"]
-    assert conn.closed
 
 
 def test_archiving_and_restoring_atom_id_are_noops(monkeypatch):
-    monkeypatch.setenv("DB_URL", "postgres://fake/db")
     conn = FakeAdminConnection()
 
-    async def connect(url):
-        return conn
+    @asynccontextmanager
+    async def acquire():
+        yield conn
 
-    monkeypatch.setattr(admin.asyncpg, "connect", connect)
+    monkeypatch.setattr(admin.db, "acquire", acquire)
     assert asyncio.run(admin.archive_rows(["atom"], 2_000_000_000.0)) == 0
     assert asyncio.run(admin.restore_rows(["atom"])) == 0
     assert conn.rows["atom"]["archived_at"] is None
