@@ -479,6 +479,10 @@ async def _deep_loop(
     chosen_parent_ids: set[str] = set()
     trace: list[TraceEntry] = []
 
+    def _stop(hop: int, sub_questions: list[str], reason: str) -> DeepResult:
+        trace.append(TraceEntry(hop, sub_questions, None))
+        return DeepResult(evidence, trace, len(evidence), reason)
+
     if _remaining(deadline) <= 0:
         return DeepResult(evidence, trace, 0, "timeout")
     try:
@@ -504,15 +508,12 @@ async def _deep_loop(
                 deadline,
             )
         except _Timeout:
-            trace.append(TraceEntry(hop, [], None))
-            return DeepResult(evidence, trace, len(evidence), "timeout")
+            return _stop(hop, [], "timeout")
         except _LLMError:
-            trace.append(TraceEntry(hop, [], None))
-            return DeepResult(evidence, trace, len(evidence), "llm_error")
+            return _stop(hop, [], "llm_error")
 
         if not continue_flag:
-            trace.append(TraceEntry(hop, sub_questions, None))
-            return DeepResult(evidence, trace, len(evidence), "done")
+            return _stop(hop, sub_questions, "done")
 
         excluded = list(chosen_parent_ids)
         try:
@@ -529,12 +530,10 @@ async def _deep_loop(
                 deadline,
             )
         except _Timeout:
-            trace.append(TraceEntry(hop, sub_questions, None))
-            return DeepResult(evidence, trace, len(evidence), "timeout")
+            return _stop(hop, sub_questions, "timeout")
 
         if not candidates:
-            trace.append(TraceEntry(hop, sub_questions, None))
-            return DeepResult(evidence, trace, len(evidence), "no_candidates")
+            return _stop(hop, sub_questions, "no_candidates")
 
         try:
             selected_idx = await _select(
@@ -545,15 +544,12 @@ async def _deep_loop(
                 deadline,
             )
         except _Timeout:
-            trace.append(TraceEntry(hop, sub_questions, None))
-            return DeepResult(evidence, trace, len(evidence), "timeout")
+            return _stop(hop, sub_questions, "timeout")
         except _LLMError:
-            trace.append(TraceEntry(hop, sub_questions, None))
-            return DeepResult(evidence, trace, len(evidence), "llm_error")
+            return _stop(hop, sub_questions, "llm_error")
 
         if selected_idx is None:
-            trace.append(TraceEntry(hop, sub_questions, None))
-            return DeepResult(evidence, trace, len(evidence), "no_selection")
+            return _stop(hop, sub_questions, "no_selection")
 
         chosen = candidates[selected_idx]
         evidence.append(

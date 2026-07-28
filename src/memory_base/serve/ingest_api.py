@@ -232,6 +232,86 @@ async def _embed_rows(rows: Sequence[dict[str, Any]]) -> None:
         row["embedding"] = await embed_text(embedder, row.pop("embedding_text"))
 
 
+async def _csv_rows(
+    job: IngestJob,
+    upload_path: Path,
+    filename: str,
+    content_hash: str,
+    origin: str | None,
+    now: float,
+) -> list[dict[str, Any]]:
+    job.touch(stage="chunking")
+    sample = read_csv_sample(upload_path)
+    job.chunks_total = 1
+    job.touch(stage="enriching")
+    semaphore = asyncio.Semaphore(4)
+
+    def retried() -> None:
+        job.enrichment_retries += 1
+        job.touch()
+
+    async def summarize(text: str, context: str) -> dict[str, Any]:
+        try:
+            return await summarize_and_tag(
+                text,
+                context,
+                semaphore=semaphore,
+                on_retry=retried,
+            )
+        except EnrichmentError as exc:
+            raise EnrichmentError(f"CSV card 0: {exc}") from exc
+
+    card = await build_csv_card(sample, summarize)
+    job.chunks_done = 1
+    return [
+        map_csv_card_row(
+            card,
+            sample,
+            filename=filename,
+            document_id=job.document_id,
+            content_hash=content_hash,
+            origin=origin,
+            timestamp=now,
+        )
+    ]
+
+
+async def _markdown_rows(
+    job: IngestJob,
+    upload_path: Path,
+    filename: str,
+    extension: str,
+    content_hash: str,
+    origin: str | None,
+    now: float,
+) -> list[dict[str, Any]]:
+    conversion = await convert_to_markdown(upload_path)
+    if len(conversion.text) > EXTRACTED_MAX_CHARS:
+        raise DocumentError("extracted text exceeds 2000000 chars")
+    job.touch(stage="chunking")
+    chunking = chunk_markdown(conversion.text)
+    chunks = chunking.chunks
+    job.chunks_total = len(chunks)
+    job.chunks_dropped = chunking.dropped
+    if not chunks:
+        raise DocumentError("document produced zero accepted chunks")
+    if len(chunks) > MAX_ACCEPTED_CHUNKS:
+        raise DocumentError("document exceeds 2000 accepted chunks")
+    job.touch(stage="enriching")
+    enrichments = await _enrich_chunks(job, chunks)
+    return map_document_rows(
+        chunks,
+        enrichments,
+        filename=filename,
+        document_id=job.document_id,
+        content_hash=content_hash,
+        format_name=extension.removeprefix("."),
+        converter=conversion.converter,
+        origin=origin,
+        timestamp=now,
+    )
+
+
 async def run_document_job(
     job: IngestJob,
     upload_path: Path,
@@ -252,65 +332,16 @@ async def run_document_job(
             extension = extension_for(filename)
             now = time.time()
             if extension == ".csv":
-                job.touch(stage="chunking")
-                sample = read_csv_sample(upload_path)
-                job.chunks_total = 1
-                job.touch(stage="enriching")
-                semaphore = asyncio.Semaphore(4)
-
-                def retried() -> None:
-                    job.enrichment_retries += 1
-                    job.touch()
-
-                async def summarize(text: str, context: str) -> dict[str, Any]:
-                    try:
-                        return await summarize_and_tag(
-                            text,
-                            context,
-                            semaphore=semaphore,
-                            on_retry=retried,
-                        )
-                    except EnrichmentError as exc:
-                        raise EnrichmentError(f"CSV card 0: {exc}") from exc
-
-                card = await build_csv_card(sample, summarize)
-                job.chunks_done = 1
-                rows = [
-                    map_csv_card_row(
-                        card,
-                        sample,
-                        filename=filename,
-                        document_id=job.document_id,
-                        content_hash=content_hash,
-                        origin=origin,
-                        timestamp=now,
-                    )
-                ]
+                rows = await _csv_rows(job, upload_path, filename, content_hash, origin, now)
             else:
-                conversion = await convert_to_markdown(upload_path)
-                if len(conversion.text) > EXTRACTED_MAX_CHARS:
-                    raise DocumentError("extracted text exceeds 2000000 chars")
-                job.touch(stage="chunking")
-                chunking = chunk_markdown(conversion.text)
-                chunks = chunking.chunks
-                job.chunks_total = len(chunks)
-                job.chunks_dropped = chunking.dropped
-                if not chunks:
-                    raise DocumentError("document produced zero accepted chunks")
-                if len(chunks) > MAX_ACCEPTED_CHUNKS:
-                    raise DocumentError("document exceeds 2000 accepted chunks")
-                job.touch(stage="enriching")
-                enrichments = await _enrich_chunks(job, chunks)
-                rows = map_document_rows(
-                    chunks,
-                    enrichments,
-                    filename=filename,
-                    document_id=job.document_id,
-                    content_hash=content_hash,
-                    format_name=extension.removeprefix("."),
-                    converter=conversion.converter,
-                    origin=origin,
-                    timestamp=now,
+                rows = await _markdown_rows(
+                    job,
+                    upload_path,
+                    filename,
+                    extension,
+                    content_hash,
+                    origin,
+                    now,
                 )
 
             if not rows:
