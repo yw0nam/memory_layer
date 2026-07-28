@@ -17,6 +17,8 @@ DB_POOL_ACQUIRE_TIMEOUT = float(os.getenv("DB_POOL_ACQUIRE_TIMEOUT", "30"))
 
 _pool: asyncpg.Pool | None = None
 _pool_loop: asyncio.AbstractEventLoop | None = None
+# asyncio.Lock binds only on contention; later cross-loop contention can raise RuntimeError.
+# Uncontended cross-loop use remains safe.
 _pool_lock = asyncio.Lock()
 
 
@@ -68,12 +70,16 @@ async def close_pool() -> None:
         except Exception:
             pass
         return
-    await pool.close()
+    try:
+        await asyncio.wait_for(pool.close(), timeout=10)
+    except (TimeoutError, asyncio.TimeoutError):
+        pool.terminate()
 
 
 @asynccontextmanager
-async def acquire() -> AsyncIterator[asyncpg.Connection]:
+async def acquire(timeout: float | None = None) -> AsyncIterator[asyncpg.Connection]:
     """Acquire a connection from the shared pool."""
     pool = await get_pool()
-    async with pool.acquire(timeout=DB_POOL_ACQUIRE_TIMEOUT) as connection:
+    acquire_timeout = DB_POOL_ACQUIRE_TIMEOUT if timeout is None else timeout
+    async with pool.acquire(timeout=acquire_timeout) as connection:
         yield connection

@@ -408,6 +408,13 @@ async def _memory_backup(
     return candidates
 
 
+async def _with_conn(conn: Any, fn: Any, *args: Any) -> Any:
+    if conn is not None:
+        return await fn(conn, *args)
+    async with db.acquire() as step_conn:
+        return await fn(step_conn, *args)
+
+
 async def _hop_retrieve(
     conn: Any,
     embedder: Any,
@@ -436,11 +443,15 @@ async def _hop_retrieve(
         except Exception:
             continue
         sq_lit = vector_literal(sq_vec)
-        if conn is None:
-            async with db.acquire() as step_conn:
-                rows = await _atom_rows(step_conn, sq_lit, excluded, kind, tags, include_archived)
-        else:
-            rows = await _atom_rows(conn, sq_lit, excluded, kind, tags, include_archived)
+        rows = await _with_conn(
+            conn,
+            _atom_rows,
+            sq_lit,
+            excluded,
+            kind,
+            tags,
+            include_archived,
+        )
         all_rows.extend(rows)
     candidates = _collapse_atoms(all_rows)
     if candidates:
@@ -448,29 +459,31 @@ async def _hop_retrieve(
 
     if _remaining(deadline) <= 0:
         raise _Timeout()
-    if conn is None:
-        async with db.acquire() as step_conn:
-            rows = await _atom_rows(step_conn, qvec_lit, excluded, kind, tags, include_archived)
-    else:
-        rows = await _atom_rows(conn, qvec_lit, excluded, kind, tags, include_archived)
+    rows = await _with_conn(
+        conn,
+        _atom_rows,
+        qvec_lit,
+        excluded,
+        kind,
+        tags,
+        include_archived,
+    )
     candidates = _collapse_atoms(rows)
     if candidates:
         return candidates
 
     if _remaining(deadline) <= 0:
         raise _Timeout()
-    if conn is None:
-        async with db.acquire() as step_conn:
-            return await _memory_backup(
-                step_conn,
-                question,
-                qvec_lit,
-                excluded,
-                kind,
-                tags,
-                include_archived,
-            )
-    return await _memory_backup(conn, question, qvec_lit, excluded, kind, tags, include_archived)
+    return await _with_conn(
+        conn,
+        _memory_backup,
+        question,
+        qvec_lit,
+        excluded,
+        kind,
+        tags,
+        include_archived,
+    )
 
 
 async def _deep_loop(

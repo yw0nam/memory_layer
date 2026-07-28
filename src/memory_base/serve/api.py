@@ -55,7 +55,7 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
 
 async def db_healthy() -> bool:
     """Return whether the configured database accepts a simple query."""
-    async with db.acquire() as conn:
+    async with db.acquire(timeout=HEALTH_PROBE_TIMEOUT_SECONDS) as conn:
         return bool(await conn.fetchval("SELECT 1"))
 
 
