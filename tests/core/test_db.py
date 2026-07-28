@@ -11,6 +11,21 @@ import pytest
 from memory_base.core.config import db_url
 
 
+class StubPool:
+    def __init__(self):
+        self.loop = asyncio.get_running_loop()
+        self.closed = False
+        self.terminated = False
+
+    async def close(self):
+        if self.loop is not asyncio.get_running_loop() or self.loop.is_closed():
+            raise RuntimeError("Event loop is closed")
+        self.closed = True
+
+    def terminate(self):
+        self.terminated = True
+
+
 def test_request_paths_do_not_open_direct_asyncpg_connections():
     source_root = Path(__file__).parents[2] / "src" / "memory_base"
     offenders = [
@@ -20,6 +35,29 @@ def test_request_paths_do_not_open_direct_asyncpg_connections():
         if "asyncpg.connect(" in path.read_text()
     ]
     assert offenders == []
+
+
+def test_close_pool_terminates_pool_bound_to_closed_loop(monkeypatch):
+    from memory_base.core import db
+
+    pools = []
+
+    async def create_pool(*args, **kwargs):
+        del args, kwargs
+        pool = StubPool()
+        pools.append(pool)
+        return pool
+
+    monkeypatch.setenv("DB_URL", "postgresql://unused")
+    monkeypatch.setattr(db.asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(db, "_pool", None)
+    monkeypatch.setattr(db, "_pool_loop", None)
+
+    asyncio.run(db.get_pool())
+    asyncio.run(db.close_pool())
+
+    assert pools[0].terminated is True
+    assert pools[0].closed is False
 
 
 @pytest.mark.integration

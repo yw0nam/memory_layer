@@ -54,12 +54,21 @@ async def close_pool() -> None:
     """Close and drop the pool; safe to call when no pool exists."""
     global _pool, _pool_loop
 
+    running_loop = asyncio.get_running_loop()
     async with _pool_lock:
         pool = _pool
+        pool_loop = _pool_loop
         _pool = None
         _pool_loop = None
-    if pool is not None:
-        await pool.close()
+    if pool is None:
+        return
+    if pool_loop is not running_loop or pool_loop.is_closed():
+        try:
+            pool.terminate()
+        except Exception:
+            pass
+        return
+    await pool.close()
 
 
 @asynccontextmanager
