@@ -17,7 +17,6 @@ EMB_MODEL = os.getenv("EMB_MODEL", "Qwen/Qwen3-VL-Embedding-2B")
 RERANK_MODEL = os.getenv("RERANK_MODEL", "Qwen/Qwen3-Reranker-4B")
 EMB_DIM = 2048  # Qwen3-VL-Embedding-2B, no matryoshka -> halfvec(2048) in pgvector
 
-DB_URL = os.getenv("DB_URL", "postgres://memory:memory@localhost:5439/memory_base")
 PG_SCHEMA = "memory"
 SERVICE_TIMEOUT_SECONDS = 120
 OVERSAMPLE_FACTOR = 3  # atom candidate pool size relative to the final retrieve count
@@ -34,6 +33,10 @@ def require_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"{name} is not set; define it in .env")
     return value
+
+
+def db_url() -> str:
+    return require_env("DB_URL")
 
 
 def llm_client() -> AsyncOpenAI:

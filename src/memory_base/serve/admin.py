@@ -6,7 +6,7 @@ import os
 
 import asyncpg
 
-from memory_base.core.config import DB_URL, PG_SCHEMA
+from memory_base.core.config import PG_SCHEMA, db_url
 
 COLD_AGE_DAYS = int(os.getenv("COLD_AGE_DAYS", "180"))
 COLD_UNHIT_DAYS = int(os.getenv("COLD_UNHIT_DAYS", "90"))
@@ -31,7 +31,7 @@ def is_cold(
 
 async def list_old_notes(older_than_days: int) -> list[dict]:
     """Return active agent notes older than the requested age."""
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         rows = await conn.fetch(
             f"""
@@ -52,7 +52,7 @@ async def list_old_notes(older_than_days: int) -> list[dict]:
 
 async def notes_by_ids(ids: list[str]) -> list[dict]:
     """Return agent notes matching the supplied identifiers."""
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         rows = await conn.fetch(
             f"""
@@ -71,7 +71,7 @@ async def notes_by_ids(ids: list[str]) -> list[dict]:
 
 async def delete_notes(ids: list[str]) -> int:
     """Delete agent notes matching the supplied identifiers."""
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         status = await conn.execute(
             f"""
@@ -87,7 +87,7 @@ async def delete_notes(ids: list[str]) -> int:
 
 async def find_duplicates(threshold: float, kind: str | None, limit: int) -> list[dict]:
     """Return active row pairs meeting the cosine-similarity threshold."""
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         rows = await conn.fetch(
             f"""
@@ -123,7 +123,7 @@ async def find_duplicates(threshold: float, kind: str | None, limit: int) -> lis
 
 async def archive_candidates(now: float) -> list[dict]:
     """Return active rows matching the configured cold-tier rule."""
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         rows = await conn.fetch(
             f"""
@@ -149,7 +149,7 @@ async def archive_candidates(now: float) -> list[dict]:
 
 async def archive_rows(ids: list[str], now: float) -> int:
     """Archive active rows matching the supplied identifiers."""
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         status = await conn.execute(
             f"""
@@ -168,7 +168,7 @@ async def archive_rows(ids: list[str], now: float) -> int:
 
 async def restore_rows(ids: list[str]) -> int:
     """Restore rows matching the supplied identifiers."""
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         status = await conn.execute(
             f"""
@@ -186,7 +186,7 @@ async def restore_rows(ids: list[str]) -> int:
 
 async def rows_by_ids(ids: list[str]) -> list[dict]:
     """Return lifecycle fields for rows matching the supplied identifiers."""
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         rows = await conn.fetch(
             f"""

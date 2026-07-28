@@ -10,7 +10,7 @@ from typing import Any
 
 import asyncpg
 
-from memory_base.core.config import DB_URL, PG_SCHEMA, VllmEmbedder, embed_text
+from memory_base.core.config import PG_SCHEMA, VllmEmbedder, db_url, embed_text
 from memory_base.core.schema import ensure_schema_once
 
 NOTE_MAX_CHARS = 4000
@@ -62,7 +62,7 @@ async def save_note(
     """Validate, embed, and idempotently store an agent-authored memory."""
     row = build_note_row(content, kind, tags, time.time())
     embedding = await embed_text(VllmEmbedder(), row["raw"])
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         await ensure_schema_once(conn)
         async with conn.transaction():

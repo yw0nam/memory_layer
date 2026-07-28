@@ -26,6 +26,7 @@ from memory_base.retrieval import search as search_mod
                 )
             ),
         ),
+        ("DB_URL", lambda: config.db_url()),
     ],
 )
 def test_missing_env_var_raises_with_name(monkeypatch, name, action):

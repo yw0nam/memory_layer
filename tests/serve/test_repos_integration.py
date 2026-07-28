@@ -4,10 +4,9 @@ Postgres server and CocoIndex indexer (services configured via .env).
 Fully isolated and non-destructive: a throwaway database (`memory_base_it`) is
 created on the configured server for the run and dropped afterwards, and
 CocoIndex's LMDB state points at a temp dir. The configured DB_URL /
-COCOINDEX_DB are never written to. Both env vars and the DB_URL bound into the
-in-process modules are redirected for the test; the `run_index()` subprocess
-inherits the redirected env (config.load_dotenv uses override=False, so it does
-not clobber them).
+COCOINDEX_DB are never written to. Both env vars are redirected for the test;
+the `run_index()` subprocess inherits the redirected env (config.load_dotenv
+uses override=False, so it does not clobber them).
 
 Gated behind the `integration` marker; skipped when the DB server or the
 embedder is unreachable, keeping CI safe. Index/teardown run through the
@@ -27,7 +26,7 @@ import pytest
 
 import asyncpg
 
-from memory_base.core.config import DB_URL as CONFIGURED_DB
+from memory_base.core.config import db_url
 
 IT_DB_NAME = "memory_base_it"
 
@@ -37,8 +36,16 @@ def _with_db(url: str, db_name: str) -> str:
     return urlunsplit(parts._replace(path=f"/{db_name}"))
 
 
-ADMIN_DB = _with_db(CONFIGURED_DB, "postgres")
-IT_DB = _with_db(CONFIGURED_DB, IT_DB_NAME)
+try:
+    _CONFIGURED_DB = db_url()
+except RuntimeError:
+    pytest.skip(
+        "DB_URL is not configured; skipping integration tests",
+        allow_module_level=True,
+    )
+
+ADMIN_DB = _with_db(_CONFIGURED_DB, "postgres")
+IT_DB = _with_db(_CONFIGURED_DB, IT_DB_NAME)
 
 
 def _server_reachable() -> bool:
@@ -79,7 +86,6 @@ if not _emb_reachable():
 
 pytestmark = pytest.mark.integration
 
-from memory_base.retrieval import search as search_mod  # noqa: E402
 from memory_base.retrieval.search import search  # noqa: E402
 from memory_base.serve import api, repos  # noqa: E402
 
@@ -193,10 +199,8 @@ def isolated_stack(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_URL", IT_DB)
     monkeypatch.setenv("COCOINDEX_DB", str(tmp_path / "cocoindex_state"))
     monkeypatch.setenv("REPO_CACHE", str(cache))
-    monkeypatch.setattr(repos, "DB_URL", IT_DB)
     monkeypatch.setattr(repos, "CACHE_ROOT", cache)
     monkeypatch.setattr(repos, "registry", _CapturingRegistry())
-    monkeypatch.setattr(search_mod, "DB_URL", IT_DB)
     try:
         yield cache
     finally:

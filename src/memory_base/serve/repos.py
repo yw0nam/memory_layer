@@ -22,7 +22,7 @@ import asyncpg
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from memory_base.core.config import DB_URL, PG_SCHEMA
+from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import job_store
 from memory_base.serve.job_store import _iso_time
 
@@ -213,7 +213,7 @@ def remove(dest: Path) -> None:
 async def _repo_chunk_counts() -> dict[str, int]:
     """Chunk count per repo; empty when the table or the DB is unavailable."""
     try:
-        conn = await asyncpg.connect(DB_URL)
+        conn = await asyncpg.connect(db_url())
     except (OSError, asyncpg.PostgresError):
         return {}
     try:

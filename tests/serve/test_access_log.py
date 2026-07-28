@@ -18,7 +18,7 @@ from starlette.testclient import TestClient
 
 import asyncpg
 
-from memory_base.core.config import DB_URL, PG_SCHEMA
+from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
 from memory_base.serve import api
 from memory_base.serve.notes import build_note_row, save_note
@@ -34,7 +34,7 @@ def client():
 
 def _db_reachable() -> bool:
     async def _check() -> None:
-        conn = await asyncpg.connect(DB_URL, timeout=5)
+        conn = await asyncpg.connect(db_url(), timeout=5)
         await conn.close()
 
     try:
@@ -45,11 +45,11 @@ def _db_reachable() -> bool:
 
 
 _DB = _db_reachable()
-requires_db = pytest.mark.skipif(not _DB, reason=f"DB not reachable at {DB_URL}")
+requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
 
 
 async def _delete_note(note_id: str) -> None:
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         await conn.execute(f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1', note_id)
     finally:
@@ -57,7 +57,7 @@ async def _delete_note(note_id: str) -> None:
 
 
 async def _fetch_chunk(note_id: str):
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         return await conn.fetchrow(
             f'SELECT id, hit_count, last_hit_at FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1',
@@ -68,7 +68,7 @@ async def _fetch_chunk(note_id: str):
 
 
 async def _fetch_latest_retrieval_log(query_text: str, source: str):
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         return await conn.fetchrow(
             f'SELECT * FROM "{PG_SCHEMA}".retrieval_log WHERE query=$1 AND source=$2 '
@@ -81,7 +81,7 @@ async def _fetch_latest_retrieval_log(query_text: str, source: str):
 
 
 async def _delete_retrieval_log(query_text: str) -> None:
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         await conn.execute(f'DELETE FROM "{PG_SCHEMA}".retrieval_log WHERE query=$1', query_text)
     finally:
@@ -92,7 +92,7 @@ async def _delete_retrieval_log(query_text: str) -> None:
 
 
 async def _fetch_chunks_by_ids(ids: list[str]):
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         return await conn.fetch(
             f'SELECT id, hit_count, last_hit_at FROM "{PG_SCHEMA}".memory_chunks '
@@ -183,7 +183,7 @@ def test_save_memory_endpoint_roundtrip_and_dedup(client):
 @requires_db
 def test_ensure_schema_idempotent_and_adds_access_log_objects():
     async def _run():
-        conn = await asyncpg.connect(DB_URL)
+        conn = await asyncpg.connect(db_url())
         try:
             await ensure_schema(conn)
             await ensure_schema(conn)  # second call must not raise

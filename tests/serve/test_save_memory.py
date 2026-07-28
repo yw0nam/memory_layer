@@ -16,7 +16,7 @@ import pytest
 
 import asyncpg
 
-from memory_base.core.config import DB_URL, PG_SCHEMA
+from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.retrieval.search import search
 from memory_base.serve.mcp_server import save_memory
 from memory_base.serve.notes import build_note_row
@@ -128,7 +128,7 @@ def test_malformed_tags_rejected(tags):
 
 def _db_reachable() -> bool:
     async def _check() -> None:
-        conn = await asyncpg.connect(DB_URL, timeout=5)
+        conn = await asyncpg.connect(db_url(), timeout=5)
         await conn.close()
 
     try:
@@ -139,11 +139,11 @@ def _db_reachable() -> bool:
 
 
 _DB = _db_reachable()
-requires_db = pytest.mark.skipif(not _DB, reason=f"DB not reachable at {DB_URL}")
+requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
 
 
 async def _delete(note_id: str) -> None:
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         await conn.execute(f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1', note_id)
     finally:
@@ -151,7 +151,7 @@ async def _delete(note_id: str) -> None:
 
 
 async def _fetchrow(note_id: str):
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         return await conn.fetchrow(
             f'SELECT * FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1', note_id
@@ -161,7 +161,7 @@ async def _fetchrow(note_id: str):
 
 
 async def _count(note_id: str) -> int:
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         return await conn.fetchval(
             f'SELECT count(*) FROM "{PG_SCHEMA}".memory_chunks WHERE id=$1', note_id

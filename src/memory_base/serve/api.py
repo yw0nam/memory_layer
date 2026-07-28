@@ -15,7 +15,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from memory_base.core.config import DB_URL, require_env
+from memory_base.core.config import db_url, require_env
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval.decompose import DeepResult, deep_search
 from memory_base.retrieval.search import Hit
@@ -54,7 +54,7 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
 
 async def db_healthy() -> bool:
     """Return whether the configured database accepts a simple query."""
-    conn = await asyncpg.connect(DB_URL)
+    conn = await asyncpg.connect(db_url())
     try:
         return bool(await conn.fetchval("SELECT 1"))
     finally:

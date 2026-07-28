@@ -137,6 +137,7 @@ def test_list_repos_parses_local_clones(tmp_path, monkeypatch):
 
 
 def test_list_repos_survives_db_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_URL", "postgres://fake/db")
     origin = tmp_path / "origin"
     _make_git_repo(origin)
     cache = tmp_path / "cache"
