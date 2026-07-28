@@ -600,6 +600,87 @@ class TestDeepLoop:
         llm = FakeLLM(llm_responses)
         return conn, embedder, llm
 
+    def test_timeout_stop_trace(self):
+        class ExpiringCompletions(FakeCompletions):
+            async def create(self, **kwargs):
+                await asyncio.sleep(3600)
+
+        conn, embedder, llm = self._make_loop_args([])
+        llm.chat.completions = ExpiringCompletions([])
+        result = asyncio.run(
+            _deep_loop("q", conn, embedder, llm, 3, None, None, False, time.monotonic() + 0.15)
+        )
+        assert result.stopped_reason == "timeout"
+        assert len(result.trace) == 1
+        assert result.trace[-1].hop == 1
+        assert result.trace[-1].sub_questions == []
+        assert result.trace[-1].selected_ref is None
+
+    def test_llm_error_stop_trace(self):
+        conn, embedder, llm = self._make_loop_args(["bad json", "still bad"])
+        result = asyncio.run(
+            _deep_loop("q", conn, embedder, llm, 3, None, None, False, _far_future_deadline())
+        )
+        assert result.stopped_reason == "llm_error"
+        assert len(result.trace) == 1
+        assert result.trace[-1].hop == 1
+        assert result.trace[-1].sub_questions == []
+        assert result.trace[-1].selected_ref is None
+
+    def test_done_stop_trace(self):
+        conn, embedder, llm = self._make_loop_args([_propose_response(False, ["covered"])])
+        result = asyncio.run(
+            _deep_loop("q", conn, embedder, llm, 3, None, None, False, _far_future_deadline())
+        )
+        assert result.stopped_reason == "done"
+        assert len(result.trace) == 1
+        assert result.trace[-1].hop == 1
+        assert result.trace[-1].sub_questions == ["covered"]
+        assert result.trace[-1].selected_ref is None
+
+    def test_no_candidates_stop_trace(self):
+        conn, embedder, llm = self._make_loop_args(
+            [_propose_response(True, ["missing"])],
+            fetch_results=[[], [], [], []],
+            fetchval_results=[True],
+        )
+        result = asyncio.run(
+            _deep_loop("q", conn, embedder, llm, 3, None, None, False, _far_future_deadline())
+        )
+        assert result.stopped_reason == "no_candidates"
+        assert len(result.trace) == 1
+        assert result.trace[-1].hop == 1
+        assert result.trace[-1].sub_questions == ["missing"]
+        assert result.trace[-1].selected_ref is None
+
+    def test_no_selection_stop_trace(self):
+        conn, embedder, llm = self._make_loop_args(
+            [_propose_response(True, ["candidate"]), _select_response(None)],
+            fetch_results=[[_make_atom_row(ref="selected-ref")]],
+        )
+        result = asyncio.run(
+            _deep_loop("q", conn, embedder, llm, 3, None, None, False, _far_future_deadline())
+        )
+        assert result.stopped_reason == "no_selection"
+        assert len(result.trace) == 1
+        assert result.trace[-1].hop == 1
+        assert result.trace[-1].sub_questions == ["candidate"]
+        assert result.trace[-1].selected_ref is None
+
+    def test_max_hops_stop_trace(self):
+        conn, embedder, llm = self._make_loop_args(
+            [_propose_response(True, ["final"]), _select_response(1)],
+            fetch_results=[[_make_atom_row(ref="selected-ref")]],
+        )
+        result = asyncio.run(
+            _deep_loop("q", conn, embedder, llm, 1, None, None, False, _far_future_deadline())
+        )
+        assert result.stopped_reason == "max_hops"
+        assert len(result.trace) == 1
+        assert result.trace[-1].hop == 1
+        assert result.trace[-1].sub_questions == ["final"]
+        assert result.trace[-1].selected_ref == "selected-ref"
+
     def test_done_on_continue_false(self):
         llm_responses = [_propose_response(False)]
         conn, embedder, llm = self._make_loop_args(llm_responses)
