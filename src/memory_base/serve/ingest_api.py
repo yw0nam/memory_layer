@@ -15,7 +15,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePath
 from typing import Any
 
-import asyncpg
 from starlette.datastructures import UploadFile
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -35,9 +34,10 @@ from memory_base.adapters.document import (
     normalize_document_id,
     read_csv_sample,
 )
-from memory_base.core.config import PG_SCHEMA, VllmEmbedder, db_url, embed_text
-from memory_base.ingest.enrich import EnrichmentError, atomize_and_tag, summarize_and_tag
+from memory_base.core import db
+from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
+from memory_base.ingest.enrich import EnrichmentError, atomize_and_tag, summarize_and_tag
 from memory_base.serve import job_store
 from memory_base.serve.job_store import _iso_time
 
@@ -131,8 +131,7 @@ def _error(message: str, status_code: int) -> JSONResponse:
 
 
 async def _existing_content_hash(document_id: str) -> str | None:
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         await ensure_schema_once(conn)
         return await conn.fetchval(
             f"""
@@ -143,14 +142,11 @@ async def _existing_content_hash(document_id: str) -> str | None:
             """,
             document_id,
         )
-    finally:
-        await conn.close()
 
 
 async def replace_document_rows(document_id: str, rows: Sequence[dict[str, Any]]) -> None:
     """Replace one document's rows in a single transaction."""
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
             await conn.execute(
@@ -184,8 +180,6 @@ async def replace_document_rows(document_id: str, rows: Sequence[dict[str, Any]]
                     for row in rows
                 ],
             )
-    finally:
-        await conn.close()
 
 
 def _file_hash(path: Path) -> str:

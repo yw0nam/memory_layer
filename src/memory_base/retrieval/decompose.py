@@ -10,15 +10,13 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-import asyncpg
-
+from memory_base.core import db
 from memory_base.core.config import (
     LLM_MODEL,
     OVERSAMPLE_FACTOR,
     PG_SCHEMA,
     SERVICE_TIMEOUT_SECONDS,
     VllmEmbedder,
-    db_url,
     llm_client,
     vector_literal,
 )
@@ -438,7 +436,11 @@ async def _hop_retrieve(
         except Exception:
             continue
         sq_lit = vector_literal(sq_vec)
-        rows = await _atom_rows(conn, sq_lit, excluded, kind, tags, include_archived)
+        if conn is None:
+            async with db.acquire() as step_conn:
+                rows = await _atom_rows(step_conn, sq_lit, excluded, kind, tags, include_archived)
+        else:
+            rows = await _atom_rows(conn, sq_lit, excluded, kind, tags, include_archived)
         all_rows.extend(rows)
     candidates = _collapse_atoms(all_rows)
     if candidates:
@@ -446,22 +448,29 @@ async def _hop_retrieve(
 
     if _remaining(deadline) <= 0:
         raise _Timeout()
-    rows = await _atom_rows(conn, qvec_lit, excluded, kind, tags, include_archived)
+    if conn is None:
+        async with db.acquire() as step_conn:
+            rows = await _atom_rows(step_conn, qvec_lit, excluded, kind, tags, include_archived)
+    else:
+        rows = await _atom_rows(conn, qvec_lit, excluded, kind, tags, include_archived)
     candidates = _collapse_atoms(rows)
     if candidates:
         return candidates
 
     if _remaining(deadline) <= 0:
         raise _Timeout()
-    return await _memory_backup(
-        conn,
-        question,
-        qvec_lit,
-        excluded,
-        kind,
-        tags,
-        include_archived,
-    )
+    if conn is None:
+        async with db.acquire() as step_conn:
+            return await _memory_backup(
+                step_conn,
+                question,
+                qvec_lit,
+                excluded,
+                kind,
+                tags,
+                include_archived,
+            )
+    return await _memory_backup(conn, question, qvec_lit, excluded, kind, tags, include_archived)
 
 
 async def _deep_loop(
@@ -595,18 +604,14 @@ async def deep_search(
     deadline = time.monotonic() + DEEP_TIMEOUT_SECONDS
     embedder = VllmEmbedder()
     llm = llm_client()
-    conn = await asyncpg.connect(db_url())
-    try:
-        return await _deep_loop(
-            query,
-            conn,
-            embedder,
-            llm,
-            max_hops,
-            kind,
-            tags,
-            include_archived,
-            deadline,
-        )
-    finally:
-        await conn.close()
+    return await _deep_loop(
+        query,
+        None,
+        embedder,
+        llm,
+        max_hops,
+        kind,
+        tags,
+        include_archived,
+        deadline,
+    )

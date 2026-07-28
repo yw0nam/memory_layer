@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -161,7 +162,6 @@ class FakeTransaction:
 class FakeConnection:
     def __init__(self):
         self.calls = []
-        self.closed = False
 
     def transaction(self):
         return FakeTransaction()
@@ -172,22 +172,15 @@ class FakeConnection:
     async def executemany(self, query, args):
         self.calls.append(("executemany", query, args))
 
-    async def close(self):
-        self.closed = True
-
 
 def test_atomic_replacement_deletes_only_document_rows_then_inserts(monkeypatch):
-    monkeypatch.setenv("DB_URL", "postgres://fake/db")
     connection = FakeConnection()
 
-    async def connect(url):
-        return connection
+    @asynccontextmanager
+    async def acquire():
+        yield connection
 
-    async def no_schema(conn):
-        return None
-
-    monkeypatch.setattr(ingest_api.asyncpg, "connect", connect)
-    monkeypatch.setattr(ingest_api, "ensure_schema_once", no_schema)
+    monkeypatch.setattr(ingest_api.db, "acquire", acquire)
     row = {
         "id": "doc:guide.md:0",
         "source_type": "document",
@@ -202,12 +195,12 @@ def test_atomic_replacement_deletes_only_document_rows_then_inserts(monkeypatch)
         "metadata": {"content_hash": "hash"},
     }
     asyncio.run(ingest_api.replace_document_rows("guide.md", [row]))
-    delete, insert = connection.calls
+    delete = next(call for call in connection.calls if "DELETE FROM" in call[1])
+    insert = next(call for call in connection.calls if call[0] == "executemany")
     assert "source_type = 'document' AND source_ref = $1" in delete[1]
     assert delete[2] == ("guide.md",)
     assert insert[0] == "executemany"
     assert json.loads(insert[2][0][-1]) == {"content_hash": "hash"}
-    assert connection.closed
 
 
 def _job(document_id="guide.md"):

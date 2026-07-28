@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import asyncpg
 import pytest
+
+from memory_base.core.config import db_url
 
 
 def test_request_paths_do_not_open_direct_asyncpg_connections():
@@ -23,6 +26,15 @@ def test_request_paths_do_not_open_direct_asyncpg_connections():
 def test_pool_reuses_closes_and_rebinds_across_event_loops():
     from memory_base.core.db import close_pool, get_pool
 
+    async def db_reachable():
+        connection = await asyncpg.connect(db_url(), timeout=5)
+        await connection.close()
+
+    try:
+        asyncio.run(db_reachable())
+    except Exception:
+        pytest.skip("DB is not configured or not reachable")
+
     async def reuse_then_close():
         first = await get_pool()
         assert await get_pool() is first
@@ -32,6 +44,11 @@ def test_pool_reuses_closes_and_rebinds_across_event_loops():
         return replacement
 
     first_loop_pool = asyncio.run(reuse_then_close())
-    second_loop_pool = asyncio.run(get_pool())
+
+    async def rebind_then_close():
+        pool = await get_pool()
+        await close_pool()
+        return pool
+
+    second_loop_pool = asyncio.run(rebind_then_close())
     assert second_loop_pool is not first_loop_pool
-    asyncio.run(close_pool())

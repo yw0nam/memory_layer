@@ -15,13 +15,13 @@ from typing import Any
 
 import asyncpg
 
+from memory_base.core import db
 from memory_base.core.config import (
     OVERSAMPLE_FACTOR,
     PG_SCHEMA,
     RERANK_MODEL,
     SERVICE_TIMEOUT_SECONDS,
     VllmEmbedder,
-    db_url,
     require_env,
     vector_literal,
 )
@@ -435,8 +435,7 @@ async def search(
     qvec = await embedder.embed(query, query=True)
     qvec_lit = vector_literal(qvec)
 
-    conn = await asyncpg.connect(db_url())
-    try:
+    async with db.acquire() as conn:
         hits: list[Hit] = []
         if source in ("code", "all"):
             hits += await _search_code(conn, query, qvec_lit, repo=repo)
@@ -460,12 +459,11 @@ async def search(
                 tags=tags,
             )
             hits = _merge_atom_hits(hits, atom_hits)
-        if rerank:
-            hits = await _rerank(query, hits)
+    if rerank:
+        hits = await _rerank(query, hits)
+    async with db.acquire() as conn:
         await _restore_context(conn, hits)
-        return hits
-    finally:
-        await conn.close()
+    return hits
 
 
 async def _main() -> None:
