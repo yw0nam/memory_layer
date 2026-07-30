@@ -9,25 +9,6 @@ import asyncpg
 from memory_base.core.config import PG_SCHEMA
 
 
-def normalize_legacy_metadata(metadata: dict) -> dict:
-    """Return metadata with legacy tags normalized to the current array shape."""
-    if "tags" not in metadata:
-        return metadata
-    normalized = dict(metadata)
-    tags = metadata["tags"]
-    if not isinstance(tags, list):
-        normalized.pop("tags")
-        return normalized
-    values = list(
-        dict.fromkeys(tag.strip().lower() for tag in tags if isinstance(tag, str) and tag.strip())
-    )
-    if values:
-        normalized["tags"] = values
-    else:
-        normalized.pop("tags")
-    return normalized
-
-
 async def ensure_schema(conn: asyncpg.Connection) -> None:
     """Create the memory storage schema objects when they do not exist."""
     schema = f'"{PG_SCHEMA}"'
@@ -60,45 +41,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           hit_ids text[] NOT NULL,
           ts double precision NOT NULL
         );
-        WITH normalized AS (
-          SELECT id,
-                 CASE
-                   WHEN jsonb_typeof(metadata->'tags') = 'array' THEN
-                     coalesce(
-                       (
-                         SELECT jsonb_agg(tag ORDER BY first_ordinal)
-                         FROM (
-                           SELECT lower(btrim(value #>> '{{}}')) AS tag,
-                                  min(ordinality) AS first_ordinal
-                           FROM jsonb_array_elements(metadata->'tags')
-                                WITH ORDINALITY AS item(value, ordinality)
-                           WHERE jsonb_typeof(value) = 'string'
-                             AND btrim(value #>> '{{}}') <> ''
-                           GROUP BY lower(btrim(value #>> '{{}}'))
-                         ) AS unique_tags
-                       ),
-                       '[]'::jsonb
-                     )
-                   ELSE '[]'::jsonb
-                 END AS tags
-          FROM {schema}.memory_chunks
-          WHERE metadata ? 'tags'
-        ),
-        desired AS (
-          SELECT row.id,
-                 CASE
-                   WHEN jsonb_array_length(row.tags) = 0
-                     THEN chunk.metadata - 'tags'
-                   ELSE jsonb_set(chunk.metadata, '{{tags}}', row.tags)
-                 END AS metadata
-          FROM normalized AS row
-          JOIN {schema}.memory_chunks AS chunk ON chunk.id = row.id
-        )
-        UPDATE {schema}.memory_chunks AS chunk
-        SET metadata = desired.metadata
-        FROM desired
-        WHERE chunk.id = desired.id
-          AND chunk.metadata IS DISTINCT FROM desired.metadata;
+        CREATE INDEX IF NOT EXISTS retrieval_log__ts ON {schema}.retrieval_log (ts);
         """
     )
 

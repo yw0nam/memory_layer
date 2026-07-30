@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Sequence
 
@@ -11,6 +12,7 @@ from memory_base.core.config import PG_SCHEMA
 from memory_base.retrieval.search import Hit
 
 LOGGER = logging.getLogger(__name__)
+RETRIEVAL_LOG_RETENTION_DAYS = int(os.getenv("RETRIEVAL_LOG_RETENTION_DAYS", "180"))
 
 
 async def log_retrieval(
@@ -30,6 +32,12 @@ async def log_retrieval(
                 source,
                 hit_ids,
                 now,
+            )
+            await conn.execute(
+                f'DELETE FROM "{PG_SCHEMA}".retrieval_log '
+                "WHERE ts < $1 - $2::double precision * 86400",
+                now,
+                RETRIEVAL_LOG_RETENTION_DAYS,
             )
             if memory_ids:
                 await conn.execute(
