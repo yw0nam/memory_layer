@@ -15,11 +15,15 @@ from memory_base.core.config import vector_literal
 from memory_base.retrieval.search import (
     FUSED_TOP,
     PER_FILE_CAP,
+    QWEN3_RERANK_PREFIX,
+    QWEN3_RERANK_SUFFIX,
+    RERANK_TEXT_LIMIT,
     RRF_K,
     Hit,
     _apply_time_decay,
     _decay_targets,
     _dedup_cap,
+    rerank_payload,
     rrf_fuse,
 )
 
@@ -150,6 +154,52 @@ def test_hit_defaults_and_meta_dict_independence():
     assert h1.rerank_score is None
     h1.meta["x"] = 1
     assert h2.meta == {}  # default_factory gives each Hit its own dict
+
+
+# ---- rerank_payload --------------------------------------------------------
+
+
+def test_rerank_payload_templates_qwen3_model():
+    payload = rerank_payload("Qwen/Qwen3-Reranker-4B", "what is rrf", ["doc one", "doc two"])
+    assert payload["query"].startswith(QWEN3_RERANK_PREFIX)
+    assert "<Instruct>:" in payload["query"]
+    assert "<Query>: what is rrf" in payload["query"]
+    for doc, text in zip(payload["documents"], ["doc one", "doc two"], strict=True):
+        assert doc == f"<Document>: {text}{QWEN3_RERANK_SUFFIX}"
+
+
+def test_rerank_payload_leaves_non_qwen3_model_untemplated():
+    payload = rerank_payload("BAAI/bge-reranker-v2-m3", "what is rrf", ["doc one", "doc two"])
+    assert payload == {
+        "model": "BAAI/bge-reranker-v2-m3",
+        "query": "what is rrf",
+        "documents": ["doc one", "doc two"],
+    }
+
+
+def test_rerank_payload_gating_is_case_insensitive():
+    upper = rerank_payload("Qwen/Qwen3-Reranker-4B", "q", ["d"])
+    lower = rerank_payload("qwen/qwen3-reranker-4b", "q", ["d"])
+    assert upper["query"] == lower["query"]
+    assert upper["documents"] == lower["documents"]
+
+
+def test_rerank_payload_truncates_before_templating():
+    long_doc = "x" * (RERANK_TEXT_LIMIT + 500)
+    payload = rerank_payload("Qwen/Qwen3-Reranker-4B", "q", [long_doc])
+    templated = payload["documents"][0]
+    assert (
+        templated
+        == f"<Document>: {'x' * RERANK_TEXT_LIMIT}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    )
+    assert templated.endswith("<think>\n\n</think>\n\n")
+
+
+def test_rerank_payload_keeps_model_unchanged_in_both_branches():
+    qwen = rerank_payload("Qwen/Qwen3-Reranker-4B", "q", ["d"])
+    other = rerank_payload("BAAI/bge-reranker-v2-m3", "q", ["d"])
+    assert qwen["model"] == "Qwen/Qwen3-Reranker-4B"
+    assert other["model"] == "BAAI/bge-reranker-v2-m3"
 
 
 # ---- vector_literal -------------------------------------------------------
