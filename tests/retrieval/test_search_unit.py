@@ -15,6 +15,8 @@ from memory_base.core.config import vector_literal
 from memory_base.retrieval.search import (
     FUSED_TOP,
     PER_FILE_CAP,
+    QWEN3_RERANK_PREFIX,
+    QWEN3_RERANK_SUFFIX,
     RERANK_TEXT_LIMIT,
     RRF_K,
     Hit,
@@ -159,11 +161,11 @@ def test_hit_defaults_and_meta_dict_independence():
 
 def test_rerank_payload_templates_qwen3_model():
     payload = rerank_payload("Qwen/Qwen3-Reranker-4B", "what is rrf", ["doc one", "doc two"])
+    assert payload["query"].startswith(QWEN3_RERANK_PREFIX)
     assert "<Instruct>:" in payload["query"]
     assert "<Query>: what is rrf" in payload["query"]
     for doc, text in zip(payload["documents"], ["doc one", "doc two"], strict=True):
-        assert doc.startswith("<Document>: ")
-        assert doc.endswith("<think>\n\n</think>\n\n")
+        assert doc == f"<Document>: {text}{QWEN3_RERANK_SUFFIX}"
 
 
 def test_rerank_payload_leaves_non_qwen3_model_untemplated():
