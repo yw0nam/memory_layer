@@ -39,6 +39,18 @@ RERANK_TEXT_LIMIT = 4000
 NEIGHBOR_LINE_WINDOW = 40
 NEIGHBOR_LIMIT = 2
 
+# vLLM's official Qwen3 reranker example; byte-exact.
+QWEN3_RERANK_PREFIX = (
+    "<|im_start|>system\n"
+    "Judge whether the Document meets the requirements based on the Query and the "
+    'Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>\n'
+    "<|im_start|>user\n"
+)
+QWEN3_RERANK_SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+QWEN3_RERANK_INSTRUCTION = (
+    "Given a web search query, retrieve relevant passages that answer the query"
+)
+
 
 @dataclass
 class Hit:
@@ -376,6 +388,18 @@ def _dedup_cap(hits: list[Hit]) -> list[Hit]:
     return out
 
 
+def rerank_payload(model: str, query: str, texts: list[str]) -> dict:
+    """Build the /rerank request body, templated for Qwen3 rerankers."""
+    truncated = [text[:RERANK_TEXT_LIMIT] for text in texts]
+    if "qwen3-reranker" not in model.lower():
+        return {"model": model, "query": query, "documents": truncated}
+    templated_query = (
+        f"{QWEN3_RERANK_PREFIX}<Instruct>: {QWEN3_RERANK_INSTRUCTION}\n<Query>: {query}\n"
+    )
+    templated_docs = [f"<Document>: {text}{QWEN3_RERANK_SUFFIX}" for text in truncated]
+    return {"model": model, "query": templated_query, "documents": templated_docs}
+
+
 async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
     import httpx
 
@@ -384,11 +408,7 @@ async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
     async with httpx.AsyncClient(timeout=SERVICE_TIMEOUT_SECONDS) as client:
         r = await client.post(
             require_env("RERANK_URL").rstrip("/") + "/rerank",
-            json={
-                "model": RERANK_MODEL,
-                "query": query,
-                "documents": [h.text[:RERANK_TEXT_LIMIT] for h in hits],
-            },
+            json=rerank_payload(RERANK_MODEL, query, [h.text for h in hits]),
         )
         r.raise_for_status()
     for item in r.json()["results"]:

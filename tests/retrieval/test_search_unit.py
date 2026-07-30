@@ -186,7 +186,10 @@ def test_rerank_payload_truncates_before_templating():
     long_doc = "x" * (RERANK_TEXT_LIMIT + 500)
     payload = rerank_payload("Qwen/Qwen3-Reranker-4B", "q", [long_doc])
     templated = payload["documents"][0]
-    assert templated == f"<Document>: {'x' * RERANK_TEXT_LIMIT}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    assert (
+        templated
+        == f"<Document>: {'x' * RERANK_TEXT_LIMIT}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    )
     assert templated.endswith("<think>\n\n</think>\n\n")
 
 
