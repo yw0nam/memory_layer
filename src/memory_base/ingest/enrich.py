@@ -10,7 +10,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from memory_base.core.config import LLM_MODEL, SERVICE_TIMEOUT_SECONDS, llm_client
+from memory_base.core.config import SERVICE_TIMEOUT_SECONDS, llm_client, llm_model
 
 _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9 -]{1,40}$")
 _PRONOUN_RE = re.compile(
@@ -115,7 +115,7 @@ async def _json_call(
             async with semaphore or _NullAsyncContext():
                 response = await asyncio.wait_for(
                     llm_client().chat.completions.create(
-                        model=LLM_MODEL,
+                        model=llm_model(),
                         messages=messages,
                         response_format={"type": "json_object"},
                     ),

@@ -30,6 +30,9 @@ services:
       EMB_URL: ${EMB_URL}
       RERANK_URL: ${RERANK_URL}
       LLM_URL: ${LLM_URL}
+      EMB_MODEL: ${EMB_MODEL}
+      RERANK_MODEL: ${RERANK_MODEL}
+      LLM_MODEL: ${LLM_MODEL}
       REPO_CACHE: /data/repos_cache
       REDIS_URL: redis://redis:6379/0
     # ponytail: repo clones and the CocoIndex ledger live here; losing either

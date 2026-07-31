@@ -12,9 +12,6 @@ from openai import AsyncOpenAI
 
 load_dotenv()
 
-LLM_MODEL = os.getenv("LLM_MODEL", "GPT-OSS-120B")
-EMB_MODEL = os.getenv("EMB_MODEL", "Qwen/Qwen3-VL-Embedding-2B")
-RERANK_MODEL = os.getenv("RERANK_MODEL", "Qwen/Qwen3-Reranker-4B")
 EMB_DIM = 2048  # Qwen3-VL-Embedding-2B, no matryoshka -> halfvec(2048) in pgvector
 
 PG_SCHEMA = "memory"
@@ -39,6 +36,18 @@ def db_url() -> str:
     return require_env("DB_URL")
 
 
+def llm_model() -> str:
+    return require_env("LLM_MODEL")
+
+
+def emb_model() -> str:
+    return require_env("EMB_MODEL")
+
+
+def rerank_model() -> str:
+    return require_env("RERANK_MODEL")
+
+
 def llm_client() -> AsyncOpenAI:
     return AsyncOpenAI(base_url=require_env("LLM_URL"), api_key="EMPTY")
 
@@ -61,7 +70,7 @@ class VllmEmbedder:
     async def embed(self, text: str, *, query: bool = False) -> NDArray:
         if query:
             text = _QUERY_PREFIX + text
-        r = await self._client.embeddings.create(model=EMB_MODEL, input=text)
+        r = await self._client.embeddings.create(model=emb_model(), input=text)
         return np.asarray(r.data[0].embedding, dtype=np.float16)
 
 
