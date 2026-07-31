@@ -64,6 +64,12 @@ def test_every_stateful_service_persists_something():
         assert _mounts(service)
 
 
+def test_api_receives_every_backend_endpoint_and_model_name():
+    """Anything the container reads from the environment must be forwarded to it."""
+    for name in ("LLM_URL", "EMB_URL", "RERANK_URL", "LLM_MODEL", "EMB_MODEL", "RERANK_MODEL"):
+        assert API["environment"][name] == f"${{{name}}}"
+
+
 def test_api_reaches_redis_by_service_name():
     url = API["environment"]["REDIS_URL"]
     assert "redis" in url, "must address the compose service, not a host endpoint"

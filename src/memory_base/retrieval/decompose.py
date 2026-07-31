@@ -12,12 +12,12 @@ from typing import Any
 
 from memory_base.core import db
 from memory_base.core.config import (
-    LLM_MODEL,
     OVERSAMPLE_FACTOR,
     PG_SCHEMA,
     SERVICE_TIMEOUT_SECONDS,
     VllmEmbedder,
     llm_client,
+    llm_model,
     vector_literal,
 )
 from memory_base.retrieval.search import (
@@ -193,7 +193,7 @@ async def _llm_complete(llm: Any, messages: list[dict], deadline: float) -> str:
     try:
         response = await asyncio.wait_for(
             llm.chat.completions.create(
-                model=LLM_MODEL,
+                model=llm_model(),
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=0.0,

@@ -19,7 +19,7 @@ from typing import Any
 import asyncpg
 
 from memory_base.core import config, schema as schema_module
-from memory_base.core.config import EMB_MODEL, RERANK_MODEL, db_url
+from memory_base.core.config import db_url, emb_model, rerank_model
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval import decompose as decompose_module
 from memory_base.retrieval import search as search_module
@@ -356,7 +356,7 @@ def deep_gate_passes(
 
 async def run_evaluation() -> None:
     """Ingest checked-in fixtures into a scratch schema and print the A/B report."""
-    print(f"Models: embedding={EMB_MODEL} rerank={RERANK_MODEL}")
+    print(f"Models: embedding={emb_model()} rerank={rerank_model()}")
     missing_env = [name for name in REQUIRED_SERVICE_ENV if not os.getenv(name)]
     if missing_env:
         raise RuntimeError("missing required service configuration: " + ", ".join(missing_env))

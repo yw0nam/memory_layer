@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from memory_base.core.config import LLM_MODEL, llm_client
+from memory_base.core.config import llm_client, llm_model
 from memory_base.retrieval.decompose import _propose
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -66,7 +66,7 @@ def _require_llm() -> None:
     async def _check() -> None:
         await asyncio.wait_for(
             llm_client().chat.completions.create(
-                model=LLM_MODEL,
+                model=llm_model(),
                 messages=[{"role": "user", "content": "ping"}],
                 max_tokens=1,
             ),

@@ -19,9 +19,9 @@ from memory_base.core import db
 from memory_base.core.config import (
     OVERSAMPLE_FACTOR,
     PG_SCHEMA,
-    RERANK_MODEL,
     SERVICE_TIMEOUT_SECONDS,
     VllmEmbedder,
+    rerank_model,
     require_env,
     vector_literal,
 )
@@ -408,7 +408,7 @@ async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
     async with httpx.AsyncClient(timeout=SERVICE_TIMEOUT_SECONDS) as client:
         r = await client.post(
             require_env("RERANK_URL").rstrip("/") + "/rerank",
-            json=rerank_payload(RERANK_MODEL, query, [h.text for h in hits]),
+            json=rerank_payload(rerank_model(), query, [h.text for h in hits]),
         )
         r.raise_for_status()
     for item in r.json()["results"]:
