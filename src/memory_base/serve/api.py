@@ -20,10 +20,12 @@ from memory_base.core.config import require_env
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval.decompose import DeepResult, deep_search
 from memory_base.retrieval.search import Hit
+from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
 from memory_base.retrieval.search import validate_search_options
 from memory_base.serve import admin
 from memory_base.serve import ingest_api
+from memory_base.serve import namespaces
 from memory_base.serve import repos
 from memory_base.serve.access_log import log_retrieval
 from memory_base.serve.notes import save_note
@@ -164,6 +166,7 @@ async def search_route(request: Request) -> JSONResponse:
         kind, tags, repo = validate_search_options(
             source, body.get("kind"), body.get("tags"), body.get("repo")
         )
+        namespaces = normalize_namespaces(body.get("namespaces"))
         options: dict[str, Any] = {
             "source": source,
             "include_archived": include_archived,
@@ -176,6 +179,8 @@ async def search_route(request: Request) -> JSONResponse:
             options["repo"] = repo
         if "include_atoms" in body:
             options["include_atoms"] = include_atoms
+        if "namespaces" in body:
+            options["namespaces"] = namespaces
         hits = (await search(query, **options))[:top_k]
     except ValueError as exc:
         return _error(str(exc))
@@ -241,6 +246,7 @@ async def deep_search_route(request: Request) -> JSONResponse:
             kind=body.get("kind"),
             tags=body.get("tags"),
             include_archived=include_archived,
+            namespaces=body.get("namespaces"),
         )
     except ValueError as exc:
         return _error(str(exc))
@@ -267,12 +273,16 @@ async def save_memory_route(request: Request) -> JSONResponse:
     except Exception as exc:
         return _error(f"invalid JSON body: {exc}")
 
+    namespace = body.get("namespace", namespaces.DEFAULT_NAMESPACE)
+    if not isinstance(namespace, str) or not namespace.strip():
+        return _error("namespace must be a non-empty string")
     try:
         result = await save_note(
             body.get("content", ""),
             kind=body.get("kind", "note"),
             tags=body.get("tags"),
             supersedes=body.get("supersedes"),
+            namespace=namespace,
         )
     except ValueError as exc:
         return _error(str(exc))
@@ -352,6 +362,41 @@ async def admin_restore_route(request: Request) -> JSONResponse:
     return JSONResponse({"rows": rows})
 
 
+async def namespaces_create_route(request: Request) -> JSONResponse:
+    """Register a new namespace; 400 on a bad slug, 409 on a duplicate name."""
+    try:
+        body = await _json_body(request)
+    except Exception as exc:
+        return _error(f"invalid JSON body: {exc}")
+    try:
+        result = await namespaces.create_namespace(body.get("name"))
+    except namespaces.NamespaceExistsError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    except namespaces.NamespaceError as exc:
+        return _error(str(exc))
+    return JSONResponse(result, status_code=201)
+
+
+async def namespaces_list_route(request: Request) -> JSONResponse:
+    """List every registered namespace."""
+    del request
+    return JSONResponse(await namespaces.list_namespaces())
+
+
+async def namespaces_delete_route(request: Request) -> JSONResponse:
+    """Unregister a namespace: 400 for the reserved default, 404 unknown, 409 non-empty."""
+    name = request.path_params["name"]
+    try:
+        await namespaces.delete_namespace(name)
+    except namespaces.NamespaceReservedError as exc:
+        return _error(str(exc))
+    except namespaces.NamespaceNotFoundError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    except namespaces.NamespaceNotEmptyError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    return JSONResponse({"deleted": name})
+
+
 setup_logging()
 
 
@@ -379,6 +424,9 @@ app = Starlette(
         Route("/repos", repos.list_repos_route, methods=["GET"]),
         Route("/repos/jobs/{job_id}", repos.repo_job_route, methods=["GET"]),
         Route("/repos/{name}", repos.remove_repo_route, methods=["DELETE"]),
+        Route("/namespaces", namespaces_create_route, methods=["POST"]),
+        Route("/namespaces", namespaces_list_route, methods=["GET"]),
+        Route("/namespaces/{name}", namespaces_delete_route, methods=["DELETE"]),
         Route("/admin/notes", admin_notes_route, methods=["GET"]),
         Route("/admin/notes/delete", admin_notes_delete_route, methods=["POST"]),
         Route("/admin/duplicates", admin_duplicates_route, methods=["GET"]),

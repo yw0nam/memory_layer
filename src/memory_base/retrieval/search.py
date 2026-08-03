@@ -115,6 +115,16 @@ def _normalize_repo(repo: Any) -> list[str] | None:
     return normalized
 
 
+def normalize_namespaces(namespaces: Any) -> list[str] | None:
+    """Normalize an optional namespace filter; omitted or empty means every namespace."""
+    if namespaces is None:
+        return None
+    if not isinstance(namespaces, list) or any(not isinstance(ns, str) for ns in namespaces):
+        raise ValueError("namespaces must be a list of strings")
+    normalized = list(dict.fromkeys(ns.strip() for ns in namespaces if ns.strip()))
+    return normalized or None
+
+
 def validate_search_options(
     source: str,
     kind: Any,
@@ -139,6 +149,7 @@ def history_predicates(
     kind: str | None,
     tags: list[str] | None,
     alias: str = "",
+    namespaces: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
     prefix = f"{alias}." if alias else ""
     clauses = [f"{prefix}chunk_kind <> 'atom'"]
@@ -151,6 +162,9 @@ def history_predicates(
     if tags is not None:
         args.append(tags)
         clauses.append(f"{prefix}metadata->'tags' ?| ${len(args) + 1}::text[]")
+    if namespaces:
+        args.append(namespaces)
+        clauses.append(f"{prefix}namespace = ANY(${len(args) + 1}::text[])")
     return " AND ".join(clauses), args
 
 
@@ -214,6 +228,7 @@ async def _search_memory(
     include_archived: bool = False,
     kind: str | None = None,
     tags: list[str] | None = None,
+    namespaces: list[str] | None = None,
 ) -> list[Hit]:
     tbl = f'"{PG_SCHEMA}"."memory_chunks"'
     exists = await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{PG_SCHEMA}.memory_chunks")
@@ -223,6 +238,7 @@ async def _search_memory(
         include_archived=include_archived,
         kind=kind,
         tags=tags,
+        namespaces=namespaces,
     )
     columns = (
         "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
@@ -277,6 +293,7 @@ async def _search_atoms(
     include_archived: bool = False,
     kind: str | None = None,
     tags: list[str] | None = None,
+    namespaces: list[str] | None = None,
 ) -> list[Hit]:
     tbl = f'"{PG_SCHEMA}"."memory_chunks"'
     predicates, filter_args = history_predicates(
@@ -284,6 +301,7 @@ async def _search_atoms(
         kind=kind,
         tags=tags,
         alias="parent",
+        namespaces=namespaces,
     )
     rows = await conn.fetch(
         f"""
@@ -444,8 +462,10 @@ async def search(
     tags: list[str] | None = None,
     include_atoms: bool | None = None,
     repo: list[str] | None = None,
+    namespaces: list[str] | None = None,
 ) -> list[Hit]:
     kind, tags, repo = validate_search_options(source, kind, tags, repo)
+    namespaces = normalize_namespaces(namespaces)
     if include_atoms is not None and not isinstance(include_atoms, bool):
         raise ValueError("include_atoms must be a boolean")
     if include_atoms is None:
@@ -467,6 +487,7 @@ async def search(
                 include_archived=include_archived,
                 kind=kind,
                 tags=tags,
+                namespaces=namespaces,
             )
         _apply_time_decay(_decay_targets(hits, include_archived))
         hits = _dedup_cap(hits)
@@ -477,6 +498,7 @@ async def search(
                 include_archived=include_archived,
                 kind=kind,
                 tags=tags,
+                namespaces=namespaces,
             )
             hits = _merge_atom_hits(hits, atom_hits)
     if rerank:

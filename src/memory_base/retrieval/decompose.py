@@ -26,6 +26,7 @@ from memory_base.retrieval.search import (
     TIME_DECAY_HALF_LIFE_DAYS,
     history_predicates,
     metadata_dict,
+    normalize_namespaces,
     rrf_fuse,
     time_decay_list,
 )
@@ -275,6 +276,7 @@ async def _atom_rows(
     kind: str | None,
     tags: list[str] | None,
     include_archived: bool,
+    namespaces: list[str] | None = None,
 ) -> list[Any]:
     tbl = f'"{PG_SCHEMA}"."memory_chunks"'
     predicates, filter_args = history_predicates(
@@ -282,6 +284,7 @@ async def _atom_rows(
         kind=kind,
         tags=tags,
         alias="parent",
+        namespaces=namespaces,
     )
     excl_idx = len(filter_args) + 2
     excl_clause = f"parent.id != ALL(${excl_idx}::text[])"
@@ -341,6 +344,7 @@ async def _memory_backup(
     kind: str | None,
     tags: list[str] | None,
     include_archived: bool,
+    namespaces: list[str] | None = None,
 ) -> list[_Candidate]:
     tbl = f'"{PG_SCHEMA}"."memory_chunks"'
     exists = await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{PG_SCHEMA}.memory_chunks")
@@ -350,6 +354,7 @@ async def _memory_backup(
         include_archived=include_archived,
         kind=kind,
         tags=tags,
+        namespaces=namespaces,
     )
     excl_idx = len(filter_args) + 2
     excl_clause = f"id != ALL(${excl_idx}::text[])"
@@ -426,6 +431,7 @@ async def _hop_retrieve(
     tags: list[str] | None,
     include_archived: bool,
     deadline: float,
+    namespaces: list[str] | None = None,
 ) -> list[_Candidate]:
     all_rows: list[Any] = []
     for sq in sub_questions:
@@ -451,6 +457,7 @@ async def _hop_retrieve(
             kind,
             tags,
             include_archived,
+            namespaces,
         )
         all_rows.extend(rows)
     candidates = _collapse_atoms(all_rows)
@@ -467,6 +474,7 @@ async def _hop_retrieve(
         kind,
         tags,
         include_archived,
+        namespaces,
     )
     candidates = _collapse_atoms(rows)
     if candidates:
@@ -483,6 +491,7 @@ async def _hop_retrieve(
         kind,
         tags,
         include_archived,
+        namespaces,
     )
 
 
@@ -496,6 +505,7 @@ async def _deep_loop(
     tags: list[str] | None,
     include_archived: bool,
     deadline: float,
+    namespaces: list[str] | None = None,
 ) -> DeepResult:
     evidence: list[EvidenceEntry] = []
     chosen_parent_ids: set[str] = set()
@@ -550,6 +560,7 @@ async def _deep_loop(
                 tags,
                 include_archived,
                 deadline,
+                namespaces,
             )
         except _Timeout:
             return _stop(hop, sub_questions, "timeout")
@@ -600,6 +611,7 @@ async def deep_search(
     kind: str | None = None,
     tags: list[str] | None = None,
     include_archived: bool = False,
+    namespaces: list[str] | None = None,
 ) -> DeepResult:
     if max_hops is None:
         max_hops = DEEP_MAX_HOPS
@@ -613,6 +625,7 @@ async def deep_search(
         tags = list(dict.fromkeys(t.strip().lower() for t in tags if t.strip()))
         if not tags:
             raise ValueError("tags must be a non-empty list of strings")
+    namespaces = normalize_namespaces(namespaces)
 
     deadline = time.monotonic() + DEEP_TIMEOUT_SECONDS
     embedder = VllmEmbedder()
@@ -627,4 +640,5 @@ async def deep_search(
         tags,
         include_archived,
         deadline,
+        namespaces,
     )

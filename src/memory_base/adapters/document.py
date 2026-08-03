@@ -380,6 +380,7 @@ def _base_row(
     embedding_text: str,
     timestamp: float,
     metadata: dict[str, Any],
+    namespace: str = "default",
 ) -> dict[str, Any]:
     return {
         "id": row_id,
@@ -392,6 +393,7 @@ def _base_row(
         "embedding_text": embedding_text,
         "ts_last_active": timestamp,
         "idf_score": None,
+        "namespace": namespace,
         "metadata": metadata,
     }
 
@@ -407,6 +409,7 @@ def map_document_rows(
     converter: str,
     origin: str | None,
     timestamp: float,
+    namespace: str = "default",
 ) -> list[dict[str, Any]]:
     """Map enriched document chunks and atoms to memory_chunks row dictionaries."""
     if len(chunks) != len(enrichments):
@@ -440,6 +443,7 @@ def map_document_rows(
                 embedding_text=embedding_text,
                 timestamp=timestamp,
                 metadata=metadata,
+                namespace=namespace,
             )
         )
         for atom_index, question in enumerate(enrichment["atom_questions"]):
@@ -458,6 +462,7 @@ def map_document_rows(
                         "document_id": document_id,
                         "content_hash": content_hash,
                     },
+                    namespace=namespace,
                 )
             )
     return rows
@@ -473,6 +478,7 @@ def map_csv_card_row(
     origin: str | None,
     timestamp: float,
     card_index: int = 0,
+    namespace: str = "default",
 ) -> dict[str, Any]:
     """Map an enriched CSV card to a memory_chunks row dictionary."""
     summary = card["summary"]
@@ -484,6 +490,7 @@ def map_csv_card_row(
         distilled=summary,
         embedding_text=summary,
         timestamp=timestamp,
+        namespace=namespace,
         metadata={
             "filename": filename,
             "document_id": document_id,
