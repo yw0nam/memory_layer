@@ -331,10 +331,11 @@ async def run_document_job(
             content_hash = _file_hash(upload_path)
             job.content_hash = content_hash
             job.touch()
-            existing_hash = await _existing_content_hash(job.document_id, namespace)
-            if mode == "upsert" and existing_hash == content_hash:
-                job.touch(status="no_op", stage="done")
-                return
+            if mode == "upsert":
+                existing_hash = await _existing_content_hash(job.document_id, namespace)
+                if existing_hash == content_hash:
+                    job.touch(status="no_op", stage="done")
+                    return
 
             extension = extension_for(filename)
             now = time.time()
