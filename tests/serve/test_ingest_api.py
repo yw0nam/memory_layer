@@ -300,6 +300,35 @@ def test_identical_hash_is_no_op_without_conversion_or_write(monkeypatch, tmp_pa
     assert job.status == "no_op"
     assert job.stage == "done"
     assert called == []
+
+
+def test_force_mode_never_consults_existing_content_hash(monkeypatch, tmp_path):
+    """force mode must skip the DB lookup entirely (not just ignore its result):
+    a DB-unreachable environment must not hang/crash a force-mode job."""
+    ingest_api._document_locks.clear()
+    upload = tmp_path / "guide.md"
+    upload.write_text("force mode content")
+
+    async def forbidden_existing_hash(*args, **kwargs):
+        raise AssertionError("force mode must not call _existing_content_hash")
+
+    async def fake_markdown_rows(*args):
+        return [{"id": "row-1"}]
+
+    async def no_embed(rows):
+        return None
+
+    async def no_write(document_id, rows, namespace="default"):
+        return None
+
+    monkeypatch.setattr(ingest_api, "_existing_content_hash", forbidden_existing_hash)
+    monkeypatch.setattr(ingest_api, "_markdown_rows", fake_markdown_rows)
+    monkeypatch.setattr(ingest_api, "_embed_rows", no_embed)
+    monkeypatch.setattr(ingest_api, "replace_document_rows", no_write)
+    job = _job()
+    asyncio.run(ingest_api.run_document_job(job, upload, "guide.md", "force", None))
+    assert job.status == "succeeded"
+    assert job.stage == "done"
     assert not upload.exists()
     assert job.document_id not in ingest_api._document_locks
 
