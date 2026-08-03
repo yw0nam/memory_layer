@@ -183,6 +183,10 @@ def _patch_note_deps(monkeypatch, conn):
 
     monkeypatch.setattr(notes.db, "acquire", acquire)
     monkeypatch.setattr(notes, "embed_text", fake_embed_text)
+    # VllmEmbedder() is constructed eagerly as an argument to embed_text, so it
+    # must be faked too: its real constructor reaches EMB_URL, which no unit
+    # test/CI environment configures.
+    monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
     monkeypatch.setattr(notes, "ensure_schema_once", _noop)
 
 
