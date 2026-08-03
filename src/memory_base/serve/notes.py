@@ -29,8 +29,20 @@ def normalize_tags(tags: Any) -> list[str]:
     return list(dict.fromkeys(tag.strip().lower() for tag in tags if tag.strip()))
 
 
-def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) -> dict[str, Any]:
-    """Validate a note and map it to memory_chunks columns (no embedding)."""
+def build_note_row(
+    content: str,
+    kind: str,
+    tags: list[str] | None,
+    now: float,
+    namespace: str = DEFAULT_NAMESPACE,
+) -> dict[str, Any]:
+    """Validate a note and map it to memory_chunks columns (no embedding).
+
+    The id is namespace-qualified for every namespace but 'default', so
+    identical content saved into different namespaces gets independent rows
+    instead of colliding on id and silently no-opping the second save. The
+    'default' format stays exactly as before, preserving legacy idempotency.
+    """
     content = content.strip()
     if not content:
         raise ValueError("content must not be empty")
@@ -39,7 +51,11 @@ def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) 
     if kind not in NOTE_KINDS:
         raise ValueError(f"kind must be one of {NOTE_KINDS}")
     normalized_tags = normalize_tags(tags)
-    note_id = f"note:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
+    content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
+    if namespace == DEFAULT_NAMESPACE:
+        note_id = f"note:{content_hash}"
+    else:
+        note_id = f"note:{namespace}:{content_hash}"
     return {
         "id": note_id,
         "source_type": "agent_note",
@@ -62,7 +78,7 @@ async def save_note(
     namespace: str = DEFAULT_NAMESPACE,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory."""
-    row = build_note_row(content, kind, tags, time.time())
+    row = build_note_row(content, kind, tags, time.time(), namespace)
     embedding = await embed_text(VllmEmbedder(), row["raw"])
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
