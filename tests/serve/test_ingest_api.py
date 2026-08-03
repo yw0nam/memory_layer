@@ -11,8 +11,12 @@ from pathlib import Path
 import httpx
 import pytest
 
+import asyncpg
+
 from memory_base.adapters import document
-from memory_base.serve import api, ingest_api
+from memory_base.adapters.document import Chunk, map_document_rows
+from memory_base.core.config import PG_SCHEMA, VllmEmbedder, db_url, embed_text
+from memory_base.serve import api, ingest_api, namespaces
 
 
 @pytest.fixture(autouse=True)
@@ -454,3 +458,84 @@ def test_oversized_fast_worker_output_is_statted_before_read_and_removed(monkeyp
     with pytest.raises(document.ConversionError, match="exceeds 16 MB"):
         asyncio.run(document.convert_to_markdown(input_path))
     assert not output["path"].exists()
+
+
+# ---- integration: same document_id across namespaces must not collide -----
+
+
+def _db_reachable() -> bool:
+    async def _check() -> None:
+        conn = await asyncpg.connect(db_url(), timeout=5)
+        await conn.close()
+
+    try:
+        asyncio.run(_check())
+        return True
+    except Exception:
+        return False
+
+
+_DB = _db_reachable()
+requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
+
+
+async def _delete_document_rows(document_id: str) -> None:
+    conn = await asyncpg.connect(db_url())
+    try:
+        await conn.execute(
+            f'DELETE FROM "{PG_SCHEMA}".memory_chunks '
+            "WHERE source_type = 'document' AND source_ref = $1",
+            document_id,
+        )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.integration
+@requires_db
+def test_same_document_id_two_namespaces_no_pk_collision():
+    """Regression: ingesting the same document_id into a second namespace must
+    not crash with a UniqueViolation on the memory_chunks primary key, since
+    replace_document_rows deletes/inserts scoped by (source_ref, namespace)
+    but ids used to be namespace-independent (issue #81 review)."""
+    document_id = "zzz-namespace-collision-test.md"
+    chunks = [Chunk("Namespace collision regression check content.", (), 0)]
+    enrichments = [{"atom_questions": [], "tags": []}]
+
+    async def scenario():
+        await namespaces.create_namespace("zzz-collision-ns")
+        try:
+            embedding = await embed_text(VllmEmbedder(), "namespace collision check")
+            for ns in ("default", "zzz-collision-ns"):
+                rows = map_document_rows(
+                    chunks,
+                    enrichments,
+                    filename=document_id,
+                    document_id=document_id,
+                    content_hash="hash",
+                    format_name="md",
+                    converter="test",
+                    origin=None,
+                    timestamp=1.0,
+                    namespace=ns,
+                )
+                for row in rows:
+                    row["embedding"] = embedding
+                # must not raise asyncpg.UniqueViolationError
+                await ingest_api.replace_document_rows(document_id, rows, ns)
+
+            conn = await asyncpg.connect(db_url())
+            try:
+                count = await conn.fetchval(
+                    f'SELECT count(*) FROM "{PG_SCHEMA}".memory_chunks '
+                    "WHERE source_type = 'document' AND source_ref = $1",
+                    document_id,
+                )
+            finally:
+                await conn.close()
+            assert count == 2
+        finally:
+            await _delete_document_rows(document_id)
+            await namespaces.delete_namespace("zzz-collision-ns")
+
+    asyncio.run(scenario())

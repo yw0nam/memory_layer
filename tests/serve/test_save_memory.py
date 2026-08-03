@@ -18,8 +18,9 @@ import asyncpg
 
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.retrieval.search import search
+from memory_base.serve import namespaces
 from memory_base.serve.mcp_server import save_memory
-from memory_base.serve.notes import build_note_row
+from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0
 ID_RE = re.compile(r"^note:[0-9a-f]{16}$")
@@ -222,3 +223,30 @@ def test_saved_note_found_by_search(rest_in_process):
         assert any(h.meta.get("id") == note_id for h in hits)
     finally:
         asyncio.run(_delete(note_id))
+
+
+@pytest.mark.integration
+@requires_db
+def test_same_content_two_namespaces_are_independent_rows():
+    """Regression: identical content saved into two namespaces must not collide
+    on id and silently no-op the second namespace's save (issue #81 review)."""
+    content = "namespace independence regression: zzz_ns_dedup_marker unique text"
+    default_id = build_note_row(content, "note", None, NOW, "default")["id"]
+    team_id = build_note_row(content, "note", None, NOW, "team-ns-dedup-test")["id"]
+    assert default_id != team_id
+
+    async def scenario():
+        await namespaces.create_namespace("team-ns-dedup-test")
+        try:
+            result_default = await save_note(content, namespace="default")
+            result_team = await save_note(content, namespace="team-ns-dedup-test")
+            assert result_default["stored"] is True
+            assert result_team["stored"] is True
+            assert await _count(default_id) == 1
+            assert await _count(team_id) == 1
+        finally:
+            await _delete(default_id)
+            await _delete(team_id)
+            await namespaces.delete_namespace("team-ns-dedup-test")
+
+    asyncio.run(scenario())
