@@ -87,6 +87,30 @@ def test_ensure_schema_itself_runs_every_time_called_directly():
     assert conn.calls == 2
 
 
+def test_ensure_schema_adds_namespace_column_index_and_registry(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "test_schema")
+    captured = {}
+
+    class RecordingConnection(FakeConnection):
+        async def execute(self, query, *args):
+            captured["sql"] = query
+            await super().execute(query, *args)
+
+    conn = RecordingConnection()
+    asyncio.run(schema.ensure_schema(conn))
+    sql = captured["sql"]
+    assert (
+        'ALTER TABLE "test_schema".memory_chunks\n'
+        "          ADD COLUMN IF NOT EXISTS namespace text NOT NULL DEFAULT 'default';" in sql
+    )
+    assert 'memory_chunks__namespace ON "test_schema".memory_chunks (namespace)' in sql
+    assert 'CREATE TABLE IF NOT EXISTS "test_schema".namespaces' in sql
+    assert "name text PRIMARY KEY" in sql
+    assert "created_at double precision NOT NULL" in sql
+    assert "INSERT INTO \"test_schema\".namespaces (name, created_at) VALUES ('default', 0)" in sql
+    assert "ON CONFLICT (name) DO NOTHING;" in sql
+
+
 def test_rebinding_module_pg_schema_keeps_ddl_and_guard_in_sync(monkeypatch):
     """Rebinding schema.PG_SCHEMA, as eval/retrieval.py's _set_schema does, must move
     both the DDL target and the once-guard's recorded name together."""

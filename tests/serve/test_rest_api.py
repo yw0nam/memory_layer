@@ -233,6 +233,40 @@ def test_search_rejects_repo_filter_outside_code_source():
     assert 'source="code"' in response.json()["error"]
 
 
+def test_search_forwards_namespaces_filter(monkeypatch):
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post(
+        "/search", json={"query": "hello", "namespaces": [" team-a ", "team-a", "team-b"]}
+    )
+    assert response.status_code == 200
+    assert captured["namespaces"] == ["team-a", "team-b"]
+
+
+def test_search_omitted_namespaces_does_not_reach_search(monkeypatch):
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post("/search", json={"query": "hello"})
+    assert response.status_code == 200
+    assert "namespaces" not in captured
+
+
+def test_search_malformed_namespaces_400():
+    response = client.post("/search", json={"query": "hello", "namespaces": "team-a"})
+    assert response.status_code == 400
+    assert "namespaces" in response.json()["error"]
+
+
 def test_search_returns_hit_to_dict_shape(monkeypatch):
     hits = [_hit(source="code", ref="a.py:L1-L2", text="x", rrf=0.5, rerank_score=0.9)]
 
@@ -338,7 +372,7 @@ def test_save_memory_malformed_tags_400(tags):
 def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
     captured = {}
 
-    async def fake_save_note(content, kind="note", tags=None, supersedes=None):
+    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
         captured["content"] = content
         captured["kind"] = kind
         captured["tags"] = tags
@@ -377,6 +411,55 @@ def test_save_memory_malformed_json_400():
     assert "error" in response.json()
 
 
+def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
+    captured = {}
+
+    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+        captured["namespace"] = namespace
+        return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
+
+    monkeypatch.setattr(api, "save_note", fake_save_note)
+    response = client.post("/save_memory", json={"content": "distilled note text"})
+    assert response.status_code == 200
+    assert captured["namespace"] == "default"
+
+
+def test_save_memory_forwards_explicit_namespace(monkeypatch):
+    captured = {}
+
+    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+        captured["namespace"] = namespace
+        return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
+
+    monkeypatch.setattr(api, "save_note", fake_save_note)
+    response = client.post(
+        "/save_memory", json={"content": "distilled note text", "namespace": "team-a"}
+    )
+    assert response.status_code == 200
+    assert captured["namespace"] == "team-a"
+
+
+def test_save_memory_unregistered_namespace_400(monkeypatch):
+    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+        raise ValueError(f"unregistered namespace: {namespace}")
+
+    monkeypatch.setattr(api, "save_note", fake_save_note)
+    response = client.post(
+        "/save_memory", json={"content": "distilled note text", "namespace": "ghost"}
+    )
+    assert response.status_code == 400
+    assert "unregistered namespace" in response.json()["error"]
+
+
+@pytest.mark.parametrize("namespace", ["", "   ", 123, [], None])
+def test_save_memory_malformed_namespace_400(namespace):
+    response = client.post(
+        "/save_memory", json={"content": "distilled note text", "namespace": namespace}
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "namespace must be a non-empty string"
+
+
 # ---- source rename: history rejected, memory accepted ----------------------
 
 
@@ -409,6 +492,16 @@ def test_deep_search_empty_query_400():
     response = client.post("/search/deep", json={"query": "   "})
     assert response.status_code == 400
     assert "error" in response.json()
+
+
+def test_deep_search_malformed_namespaces_400(monkeypatch):
+    async def fake_deep_search(query, **kwargs):
+        raise ValueError("namespaces must be a list of strings")
+
+    monkeypatch.setattr(api, "deep_search", fake_deep_search)
+    response = client.post("/search/deep", json={"query": "hello", "namespaces": "team-a"})
+    assert response.status_code == 400
+    assert "namespaces" in response.json()["error"]
 
 
 def test_deep_search_invalid_max_hops_400(monkeypatch):
@@ -556,6 +649,39 @@ def test_deep_search_forwards_options(monkeypatch):
     assert captured["kind"] == "decision"
     assert captured["tags"] == ["infra"]
     assert captured["include_archived"] is True
+
+
+def test_deep_search_forwards_namespaces(monkeypatch):
+    captured = {}
+
+    async def fake_deep_search(query, **kwargs):
+        captured["query"] = query
+        captured.update(kwargs)
+        from memory_base.retrieval.decompose import DeepResult
+
+        return DeepResult(evidence=[], trace=[], hops_used=0, stopped_reason="done")
+
+    monkeypatch.setattr(api, "deep_search", fake_deep_search)
+    response = client.post(
+        "/search/deep", json={"query": "multi-hop question", "namespaces": ["team-a"]}
+    )
+    assert response.status_code == 200
+    assert captured["namespaces"] == ["team-a"]
+
+
+def test_deep_search_omitted_namespaces_forwards_none(monkeypatch):
+    captured = {}
+
+    async def fake_deep_search(query, **kwargs):
+        captured.update(kwargs)
+        from memory_base.retrieval.decompose import DeepResult
+
+        return DeepResult(evidence=[], trace=[], hops_used=0, stopped_reason="done")
+
+    monkeypatch.setattr(api, "deep_search", fake_deep_search)
+    response = client.post("/search/deep", json={"query": "hello"})
+    assert response.status_code == 200
+    assert captured["namespaces"] is None
 
 
 def test_deep_search_malformed_json_400():

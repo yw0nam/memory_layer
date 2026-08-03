@@ -8,11 +8,14 @@ Collection fails today: memory_base.serve.notes does not exist yet.
 
 from __future__ import annotations
 
+import asyncio
 import re
+from contextlib import asynccontextmanager
 
 import pytest
 
-from memory_base.serve.notes import build_note_row
+from memory_base.serve import notes
+from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0
 ID_RE = re.compile(r"^note:[0-9a-f]{16}$")
@@ -98,3 +101,76 @@ def test_oversized_content_rejected():
 def test_unknown_kind_rejected():
     with pytest.raises(ValueError):
         build_note_row("valid content", "reminder", None, NOW)
+
+
+# ---- save_note namespace gating (no DB/network) ----------------------------
+
+
+class FakeTransaction:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *args):
+        return None
+
+
+class FakeConnection:
+    def __init__(self, registered: bool):
+        self._registered = registered
+        self.insert_args: tuple | None = None
+
+    def transaction(self):
+        return FakeTransaction()
+
+    async def fetchval(self, query, *args):
+        if "namespaces" in query:
+            return self._registered
+        return True
+
+    async def execute(self, query, *args):
+        if "INSERT INTO" in query:
+            self.insert_args = args
+        return "INSERT 0 1"
+
+    async def fetch(self, query, *args):
+        return []
+
+
+def _patch_note_deps(monkeypatch, conn):
+    @asynccontextmanager
+    async def acquire(timeout=None):
+        yield conn
+
+    async def fake_embed_text(embedder, text):
+        return "[0]"
+
+    monkeypatch.setattr(notes.db, "acquire", acquire)
+    monkeypatch.setattr(notes, "embed_text", fake_embed_text)
+    monkeypatch.setattr(notes, "ensure_schema_once", _noop)
+
+
+async def _noop(conn):
+    return None
+
+
+def test_save_note_rejects_unregistered_namespace(monkeypatch):
+    conn = FakeConnection(registered=False)
+    _patch_note_deps(monkeypatch, conn)
+    with pytest.raises(ValueError, match="unregistered namespace"):
+        asyncio.run(save_note("distilled content", namespace="ghost"))
+    assert conn.insert_args is None
+
+
+def test_save_note_stamps_namespace_column_on_insert(monkeypatch):
+    conn = FakeConnection(registered=True)
+    _patch_note_deps(monkeypatch, conn)
+    asyncio.run(save_note("distilled content", namespace="team-a"))
+    assert conn.insert_args is not None
+    assert "team-a" in conn.insert_args
+
+
+def test_save_note_defaults_to_default_namespace(monkeypatch):
+    conn = FakeConnection(registered=True)
+    _patch_note_deps(monkeypatch, conn)
+    asyncio.run(save_note("distilled content"))
+    assert "default" in conn.insert_args

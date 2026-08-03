@@ -174,6 +174,26 @@ def test_document_row_ids_metadata_and_search_refs():
     assert atom["id"] == "doc:guide.md:0:atom:0"
     assert atom["metadata"]["parent_id"] == parent["id"]
     assert atom["source_ref"] == "guide.md"
+    assert parent["namespace"] == "default"
+    assert atom["namespace"] == "default"
+
+
+def test_document_rows_stamp_explicit_namespace():
+    chunks = [Chunk("Body text " * 30, ("Root",), 0)]
+    parent, atom = document.map_document_rows(
+        chunks,
+        [{"atom_questions": ["question"], "tags": []}],
+        filename="guide.md",
+        document_id="guide.md",
+        content_hash="abc",
+        format_name="md",
+        converter="markitdown:0.1.6",
+        origin=None,
+        timestamp=1.0,
+        namespace="team-a",
+    )
+    assert parent["namespace"] == "team-a"
+    assert atom["namespace"] == "team-a"
 
 
 def test_csv_sample_and_card_builder_use_header_first_twenty_rows(tmp_path):
@@ -214,6 +234,7 @@ def test_csv_card_row_mapping():
     assert row["content_raw"] == row["distilled"]
     assert row["metadata"]["search_ref"] == "names.csv#card-0"
     assert row["metadata"]["row_count"] == 1
+    assert row["namespace"] == "default"
 
 
 def test_csv_size_cap_is_enforced_before_reading(tmp_path):

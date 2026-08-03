@@ -15,6 +15,16 @@ from memory_base.adapters import document
 from memory_base.serve import api, ingest_api
 
 
+@pytest.fixture(autouse=True)
+def _default_namespace_registered(monkeypatch):
+    """POST /ingest/document checks namespace registration; assume 'default' exists."""
+
+    async def fake_namespace_exists(name):
+        return name == "default"
+
+    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+
+
 def _post(path, **kwargs):
     async def request():
         async with httpx.AsyncClient(
@@ -106,6 +116,60 @@ def test_rest_returns_413_when_upload_exceeds_limit(monkeypatch):
     assert set(response.json()) == {"error"}
 
 
+# ---- namespace validation ---------------------------------------------------
+
+
+def test_rest_ingest_omitted_namespace_uses_default(monkeypatch):
+    fake = AcceptingRegistry()
+    monkeypatch.setattr(ingest_api, "registry", fake)
+    response = _post(
+        "/ingest/document",
+        files={"file": ("guide.md", b"content")},
+    )
+    assert response.status_code == 202
+
+
+def test_rest_ingest_unregistered_namespace_400(monkeypatch):
+    fake = AcceptingRegistry()
+    monkeypatch.setattr(ingest_api, "registry", fake)
+
+    async def fake_namespace_exists(name):
+        return False
+
+    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+    response = _post(
+        "/ingest/document",
+        data={"namespace": "ghost"},
+        files={"file": ("guide.md", b"content")},
+    )
+    assert response.status_code == 400
+    assert "unregistered namespace" in response.json()["error"]
+    assert fake.runner is None
+
+
+def test_rest_ingest_registered_namespace_reaches_job_runner(monkeypatch):
+    fake = AcceptingRegistry()
+    monkeypatch.setattr(ingest_api, "registry", fake)
+    captured = {}
+
+    async def fake_namespace_exists(name):
+        return name == "team-a"
+
+    async def fake_run_document_job(job, upload_path, filename, mode, origin, namespace="default"):
+        captured["namespace"] = namespace
+
+    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+    monkeypatch.setattr(ingest_api, "run_document_job", fake_run_document_job)
+    response = _post(
+        "/ingest/document",
+        data={"namespace": "team-a"},
+        files={"file": ("guide.md", b"content")},
+    )
+    assert response.status_code == 202
+    asyncio.run(fake.runner())
+    assert captured["namespace"] == "team-a"
+
+
 def test_job_registry_queue_bound_ttl_and_completed_eviction():
     registry = ingest_api.JobRegistry(
         max_queued=1,
@@ -194,12 +258,13 @@ def test_atomic_replacement_deletes_only_document_rows_then_inserts(monkeypatch)
         "idf_score": None,
         "metadata": {"content_hash": "hash"},
     }
-    asyncio.run(ingest_api.replace_document_rows("guide.md", [row]))
+    asyncio.run(ingest_api.replace_document_rows("guide.md", [row], "default"))
     delete = next(call for call in connection.calls if "DELETE FROM" in call[1])
     insert = next(call for call in connection.calls if call[0] == "executemany")
-    assert "source_type = 'document' AND source_ref = $1" in delete[1]
-    assert delete[2] == ("guide.md",)
+    assert "source_type = 'document' AND source_ref = $1 AND namespace = $2" in delete[1]
+    assert delete[2] == ("guide.md", "default")
     assert insert[0] == "executemany"
+    assert insert[2][0][-2] == "default"
     assert json.loads(insert[2][0][-1]) == {"content_hash": "hash"}
 
 
@@ -217,7 +282,7 @@ def test_identical_hash_is_no_op_without_conversion_or_write(monkeypatch, tmp_pa
     expected_hash = ingest_api._file_hash(upload)
     called = []
 
-    async def existing(document_id):
+    async def existing(document_id, namespace="default"):
         return expected_hash
 
     async def forbidden(*args, **kwargs):
@@ -263,7 +328,7 @@ def test_concurrent_jobs_for_same_document_serialize_and_prune_lock(monkeypatch,
         async def no_embed(rows):
             return None
 
-        async def no_write(document_id, rows):
+        async def no_write(document_id, rows, namespace="default"):
             return None
 
         monkeypatch.setattr(ingest_api, "_markdown_rows", rows)
@@ -294,7 +359,7 @@ def test_csv_persistent_enrichment_failure_names_card_and_never_writes(monkeypat
     upload.write_text("name,value\none,1\n")
     writes = []
 
-    async def no_existing(document_id):
+    async def no_existing(document_id, namespace="default"):
         return None
 
     async def fail(*args, **kwargs):
@@ -319,7 +384,7 @@ def test_chunk_persistent_enrichment_failure_names_ordinal_and_never_writes(monk
     upload.write_text("source")
     writes = []
 
-    async def no_existing(document_id):
+    async def no_existing(document_id, namespace="default"):
         return None
 
     async def converted(path):
@@ -346,7 +411,7 @@ def test_zero_accepted_chunks_fails_before_enrichment_and_write(monkeypatch, tmp
     upload.write_text("content")
     writes = []
 
-    async def no_existing(document_id):
+    async def no_existing(document_id, namespace="default"):
         return None
 
     async def converted(path):

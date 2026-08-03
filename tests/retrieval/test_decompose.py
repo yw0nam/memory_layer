@@ -338,6 +338,19 @@ class TestSelect:
 
 
 class TestAtomRows:
+    def test_namespaces_filter_passthrough(self):
+        conn = FakeConnection([[]])
+        asyncio.run(_atom_rows(conn, "[1]", [], None, None, False, namespaces=["team-a"]))
+        sql, args = conn.queries[0]
+        assert "parent.namespace = ANY(" in sql
+        assert ["team-a"] in args
+
+    def test_omitted_namespaces_means_no_filter(self):
+        conn = FakeConnection([[]])
+        asyncio.run(_atom_rows(conn, "[1]", [], None, None, False))
+        sql, _ = conn.queries[0]
+        assert "namespace" not in sql
+
     def test_exclusion_predicate_before_limit(self):
         conn = FakeConnection([[]])
         asyncio.run(_atom_rows(conn, "[1]", ["p1", "p2"], None, None, False))
@@ -396,6 +409,16 @@ class TestCollapseAtoms:
 
 
 class TestMemoryBackup:
+    def test_namespaces_filter_passthrough(self):
+        conn = FakeConnection(fetch_results=[[], []], fetchval_results=[True])
+        asyncio.run(_memory_backup(conn, "q", "[1]", [], None, None, False, namespaces=["team-a"]))
+        vec_sql, vec_args = conn.queries[1]
+        fts_sql, fts_args = conn.queries[2]
+        for sql in (vec_sql, fts_sql):
+            assert "namespace = ANY(" in sql
+        assert ["team-a"] in vec_args
+        assert ["team-a"] in fts_args
+
     def test_exclusion_in_both_queries_before_limit(self):
         conn = FakeConnection(fetch_results=[[], []], fetchval_results=[True])
         asyncio.run(_memory_backup(conn, "q", "[1]", ["p1"], None, None, False))
@@ -874,6 +897,34 @@ class TestDeepLoop:
         assert "parent.chunk_kind =" in atom_sql[0]
         assert "parent.metadata->'tags' ?|" in atom_sql[0]
 
+    def test_namespaces_passthrough_in_retrieval(self):
+        llm_responses = [
+            _propose_response(True),
+            _select_response(1),
+            _propose_response(False),
+        ]
+        atom_row = _make_atom_row(parent_id="p1")
+        conn = FakeConnection(fetch_results=[[atom_row]])
+        embedder = FakeEmbedder()
+        llm = FakeLLM(llm_responses)
+        asyncio.run(
+            _deep_loop(
+                "q",
+                conn,
+                embedder,
+                llm,
+                3,
+                None,
+                None,
+                False,
+                _far_future_deadline(),
+                ["team-a"],
+            )
+        )
+        atom_sql = [q[0] for q in conn.queries if "atom.chunk_kind = 'atom'" in q[0]]
+        assert len(atom_sql) >= 1
+        assert "parent.namespace = ANY(" in atom_sql[0]
+
 
 # --- Validation tests ---
 
@@ -914,6 +965,10 @@ class TestDeepSearchValidation:
     def test_empty_tags_rejected(self):
         with pytest.raises(ValueError, match="tags"):
             asyncio.run(deep_search("q", tags=[]))
+
+    def test_malformed_namespaces_rejected(self):
+        with pytest.raises(ValueError, match="namespaces"):
+            asyncio.run(deep_search("q", namespaces="team-a"))
 
     def test_non_list_tags_rejected(self):
         with pytest.raises(ValueError, match="tags"):
