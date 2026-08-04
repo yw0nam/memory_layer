@@ -1,5 +1,8 @@
 # Retrieval benchmarks
 
+Any change to retrieval ranking, query construction, or fusion lands with
+before/after numbers from the method below in its PR.
+
 Doc-level retrieval quality of the hybrid search stack, measured on two corpora.
 Numbers are produced by the configuration in `retrieval/search.py`: BM25 FTS legs
 (`pg_textsearch`, `<@>` / `to_bm25query`), vector search over halfvec embeddings,
