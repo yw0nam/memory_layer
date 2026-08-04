@@ -25,6 +25,7 @@ from memory_base.retrieval.search import (
     FTS_RRF_WEIGHT,
     MEMORY_BM25_INDEX,
     PER_FILE_CAP,
+    TIEBREAK_RRF_WEIGHT,
     TIME_DECAY_HALF_LIFE_DAYS,
     history_predicates,
     metadata_dict,
@@ -383,7 +384,7 @@ async def _memory_backup(
     idf = time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})
     scores = rrf_fuse(
         [[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf],
-        [1.0, FTS_RRF_WEIGHT, 1.0, 1.0],
+        [1.0, FTS_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT],
     )
     now = time.time()
     for cid in scores:

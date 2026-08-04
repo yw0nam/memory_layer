@@ -41,6 +41,9 @@ NEIGHBOR_LIMIT = 2
 MEMORY_BM25_INDEX = "memory_chunks_bm25"
 CODE_BM25_INDEX = "code_chunks_bm25"
 FTS_RRF_WEIGHT = 0.2
+# Recency/idf are tie-breakers ("when relevance is otherwise equal, the newer wins");
+# ranked recency itself is enforced post-fusion by the time-decay multiplier.
+TIEBREAK_RRF_WEIGHT = 0.25
 # BM25 index scans cap candidates at bm25_catalog.bm25_limit (100 by default) before filters.
 
 # vLLM's official Qwen3 reranker example; byte-exact.
@@ -206,7 +209,7 @@ async def _search_code(
     recency = time_decay_list({r["id"]: r["mtime"] for r in by_id.values()})
     scores = rrf_fuse(
         [[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency],
-        [1.0, FTS_RRF_WEIGHT, 1.0],
+        [1.0, FTS_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT],
     )
 
     hits = []
@@ -272,7 +275,7 @@ async def _search_memory(
     idf = time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})
     scores = rrf_fuse(
         [[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf],
-        [1.0, FTS_RRF_WEIGHT, 1.0, 1.0],
+        [1.0, FTS_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT],
     )
 
     hits = []
