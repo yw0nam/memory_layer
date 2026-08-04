@@ -40,6 +40,7 @@ services:
     volumes:
       - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/repos_cache:/data/repos_cache
       - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/cocoindex_state:/data/cocoindex_state
+      - ./git-credentials:/run/git-credentials:ro
     command: uv run --no-sync uvicorn memory_base.serve.api:app --host 0.0.0.0 --port 8010
     # /health is liveness only; /health/services is the one that reaches the vLLM endpoints.
     healthcheck:

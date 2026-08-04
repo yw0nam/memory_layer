@@ -90,6 +90,10 @@ adding or removing a checkout adds or tears down its rows on the next run. Clone
 full history (`--filter=blob:none`, lazy blobs) precisely so each file carries its real
 last-commit time into time-decay scoring.
 
+`POST /repos` accepts http(s) URLs only, and rejects credentials embedded in the URL.
+Private repositories authenticate through the git credential store — see
+[Private repositories](#private-repositories).
+
 ### Read path 1 — hybrid search (`POST /search`)
 
 ```
@@ -284,6 +288,30 @@ Tuning knobs, all optional: `ATOM_RETRIEVE_K`, `ATOMS_RETRIEVE`, `ATOMS_GENERATE
 `NOTE_SIMILAR_THRESHOLD`, `DEEP_MAX_HOPS`, `DEEP_TIMEOUT_SECONDS`, `INGEST_MAX_BYTES`,
 `INGEST_MAX_QUEUED`, `INGEST_MAX_CONCURRENT_JOBS`, `REPO_MAX_QUEUED`, `REPO_MAX_BYTES`,
 `REPO_DISK_HEADROOM_BYTES`, `COLD_AGE_DAYS`, `COLD_UNHIT_DAYS`.
+
+### Private repositories
+
+`git-credentials` (gitignored) at the repo root holds one credential line per host and is
+mounted read-only at `/run/git-credentials`, where the container's system-wide
+`credential.helper` reads it. Create it before starting the api container — Docker mounts
+a directory in its place otherwise:
+
+```bash
+touch git-credentials                                   # empty — public repos only
+```
+
+Each line is a URL carrying the credential for one host, with any `@` or `:` inside the
+username or token percent-encoded:
+
+```
+https://user:token@github.com
+https://you%40example.com:api-token@bitbucket.org
+```
+
+Bitbucket API tokens use the Atlassian account email as the username. Credentials never
+enter repo URLs or git remotes, so `GET /repos` and job logs cannot leak them.
+`GIT_TERMINAL_PROMPT=0` makes a clone with no matching credential fail immediately instead
+of waiting on a prompt.
 
 `COCOINDEX_DB` is set by `docker-compose.yml`, not by `.env` — together with `REPO_CACHE`
 and `REDIS_URL` it points at a container-local path bound under `DATA_ROOT` on the host, so

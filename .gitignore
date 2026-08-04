@@ -4,3 +4,4 @@ __pycache__/
 .cocoindex/
 logs/
 .repos_cache/
+git-credentials

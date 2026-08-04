@@ -39,7 +39,6 @@ CACHE_ROOT = Path(
 PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 CODE_APP = "src/memory_base/ingest/code.py"
 
-_SCP_LIKE = re.compile(r"^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:.+$")
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
@@ -51,9 +50,11 @@ class RepoError(RuntimeError):
 
 
 def validate_repo_url(url: Any) -> str:
-    """Accept only http(s)/ssh URLs or git@host:path SSH form; no whitespace.
+    """Accept only http(s) URLs without userinfo or whitespace.
 
-    Blocks git argument/option injection at the request boundary.
+    Blocks git argument/option injection at the request boundary, and keeps
+    credentials out of remotes: private clones authenticate through the git
+    credential store, never through the URL.
     """
     if not isinstance(url, str) or not url.strip():
         raise ValueError("url is required")
@@ -62,14 +63,14 @@ def validate_repo_url(url: Any) -> str:
         raise ValueError("url must not contain whitespace")
     if url.startswith("-"):
         raise ValueError("url must not start with '-'")
-    scheme = urlsplit(url).scheme
-    if scheme in {"https", "http", "ssh"}:
-        if not urlsplit(url).netloc:
-            raise ValueError("url must include a host")
-        return url
-    if _SCP_LIKE.match(url):
-        return url
-    raise ValueError("url must be an http(s)/ssh URL or git@host:path SSH form")
+    parts = urlsplit(url)
+    if parts.scheme not in {"https", "http"}:
+        raise ValueError("url must be an http(s) URL")
+    if not parts.netloc:
+        raise ValueError("url must include a host")
+    if parts.username is not None:
+        raise ValueError("url must not embed credentials")
+    return url
 
 
 def _check_name(name: str) -> str:
