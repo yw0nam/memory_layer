@@ -395,7 +395,8 @@ async def _copy_upload(upload: UploadFile, suffix: str) -> Path:
 
 
 async def ingest_document_route(request: Request) -> JSONResponse:
-    """Validate and enqueue a multipart document upload."""
+    """Validate and enqueue a multipart document upload; omitted namespace lands in key.home."""
+    key = request.state.key
     try:
         form = await request.form()
     except Exception as exc:
@@ -434,12 +435,15 @@ async def ingest_document_route(request: Request) -> JSONResponse:
 
     namespace_value = form.get("namespace")
     if namespace_value is None or namespace_value == "":
-        namespace = namespaces.DEFAULT_NAMESPACE
+        namespace = key.home
     elif isinstance(namespace_value, str):
         namespace = namespace_value
     else:
         await upload.close()
         return _error("namespace must be a string", 400)
+    if not key.permits(namespace):
+        await upload.close()
+        return _error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
     if not await namespaces.namespace_exists(namespace):
         await upload.close()
         return _error(f"unregistered namespace: {namespace}", 400)

@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -28,6 +29,7 @@ from memory_base.serve import ingest_api
 from memory_base.serve import namespaces
 from memory_base.serve import repos
 from memory_base.serve.access_log import log_retrieval
+from memory_base.serve.auth import ApiKeyAuthMiddleware
 from memory_base.serve.notes import save_note
 
 TEXT_LIMIT = 2000
@@ -96,6 +98,10 @@ def _error(message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=400)
 
 
+def _forbidden(message: str) -> JSONResponse:
+    return JSONResponse({"error": message}, status_code=403)
+
+
 async def _json_body(request: Request) -> dict[str, Any]:
     body = await request.json()
     if not isinstance(body, dict):
@@ -135,7 +141,8 @@ async def health_services(request: Request) -> JSONResponse:
 
 
 async def search_route(request: Request) -> JSONResponse:
-    """Validate and execute a hybrid search request."""
+    """Validate and execute a hybrid search request, scoped to the caller's allowed namespaces."""
+    key = request.state.key
     try:
         body = await _json_body(request)
     except Exception as exc:
@@ -166,7 +173,9 @@ async def search_route(request: Request) -> JSONResponse:
         kind, tags, repo = validate_search_options(
             source, body.get("kind"), body.get("tags"), body.get("repo")
         )
-        namespaces = normalize_namespaces(body.get("namespaces"))
+        requested_namespaces = normalize_namespaces(body.get("namespaces"))
+        if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
+            return _forbidden("requested namespaces are outside the caller's allowed set")
         options: dict[str, Any] = {
             "source": source,
             "include_archived": include_archived,
@@ -179,8 +188,10 @@ async def search_route(request: Request) -> JSONResponse:
             options["repo"] = repo
         if "include_atoms" in body:
             options["include_atoms"] = include_atoms
-        if "namespaces" in body:
-            options["namespaces"] = namespaces
+        if requested_namespaces is not None:
+            options["namespaces"] = requested_namespaces
+        elif not key.is_admin:
+            options["namespaces"] = sorted(key.allowed)
         hits = (await search(query, **options))[:top_k]
     except ValueError as exc:
         return _error(str(exc))
@@ -222,7 +233,8 @@ def _serialize_deep_result(result: DeepResult) -> dict[str, Any]:
 
 
 async def deep_search_route(request: Request) -> JSONResponse:
-    """Validate and execute a deep search request."""
+    """Validate and execute a deep search request, scoped to the caller's allowed namespaces."""
+    key = request.state.key
     try:
         body = await _json_body(request)
     except Exception as exc:
@@ -240,13 +252,22 @@ async def deep_search_route(request: Request) -> JSONResponse:
         return _error("tags must be a non-empty list of strings")
 
     try:
+        requested_namespaces = normalize_namespaces(body.get("namespaces"))
+    except ValueError as exc:
+        return _error(str(exc))
+    if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
+        return _forbidden("requested namespaces are outside the caller's allowed set")
+    if requested_namespaces is None and not key.is_admin:
+        requested_namespaces = sorted(key.allowed)
+
+    try:
         result = await deep_search(
             query,
             max_hops=body.get("max_hops"),
             kind=body.get("kind"),
             tags=body.get("tags"),
             include_archived=include_archived,
-            namespaces=body.get("namespaces"),
+            namespaces=requested_namespaces,
         )
     except ValueError as exc:
         return _error(str(exc))
@@ -267,15 +288,18 @@ async def deep_search_route(request: Request) -> JSONResponse:
 
 
 async def save_memory_route(request: Request) -> JSONResponse:
-    """Validate and store an agent-authored memory request."""
+    """Validate and store an agent-authored memory request; omitted namespace lands in key.home."""
+    key = request.state.key
     try:
         body = await _json_body(request)
     except Exception as exc:
         return _error(f"invalid JSON body: {exc}")
 
-    namespace = body.get("namespace", namespaces.DEFAULT_NAMESPACE)
+    namespace = body.get("namespace", key.home)
     if not isinstance(namespace, str) or not namespace.strip():
         return _error("namespace must be a non-empty string")
+    if not key.permits(namespace):
+        return _forbidden(f"namespace {namespace!r} is outside the caller's allowed set")
     try:
         result = await save_note(
             body.get("content", ""),
@@ -289,18 +313,23 @@ async def save_memory_route(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+def _admin_scope(key) -> list[str] | None:
+    """None means unfiltered (an admin key); otherwise the caller's allowed set."""
+    return None if key.is_admin else sorted(key.allowed)
+
+
 async def admin_notes_route(request: Request) -> JSONResponse:
-    """List active agent notes older than a requested age."""
+    """List active agent notes older than a requested age, scoped to the caller's namespaces."""
     try:
         older_than_days = int(request.query_params.get("older_than_days", "90"))
     except ValueError:
         return _error("older_than_days must be an integer")
-    rows = await admin.list_old_notes(older_than_days)
+    rows = await admin.list_old_notes(older_than_days, namespaces=_admin_scope(request.state.key))
     return JSONResponse(rows)
 
 
 async def admin_notes_delete_route(request: Request) -> JSONResponse:
-    """Preview or delete selected agent notes."""
+    """Preview or delete selected agent notes, scoped to the caller's namespaces."""
     try:
         body = await _json_body(request)
     except Exception as exc:
@@ -308,17 +337,18 @@ async def admin_notes_delete_route(request: Request) -> JSONResponse:
     ids = _ids(body)
     if ids is None:
         return _error("ids must be a non-empty list")
-    rows = await admin.notes_by_ids(ids)
+    scope = _admin_scope(request.state.key)
+    rows = await admin.notes_by_ids(ids, namespaces=scope)
     if {row["id"] for row in rows} != set(ids):
         return _error("ids must refer only to agent_note rows")
     if body.get("confirm") is True:
-        deleted = await admin.delete_notes(ids)
+        deleted = await admin.delete_notes(ids, namespaces=scope)
         return JSONResponse({"deleted": deleted})
     return JSONResponse({"rows": rows})
 
 
 async def admin_duplicates_route(request: Request) -> JSONResponse:
-    """List active near-duplicate memory pairs."""
+    """List active near-duplicate memory pairs, scoped to the caller's namespaces."""
     try:
         threshold = float(request.query_params.get("threshold", "0.9"))
     except ValueError:
@@ -328,26 +358,31 @@ async def admin_duplicates_route(request: Request) -> JSONResponse:
         limit = int(request.query_params.get("limit", "50"))
     except ValueError:
         return _error("limit must be an integer")
-    pairs = await admin.find_duplicates(threshold, kind, limit)
+    pairs = await admin.find_duplicates(
+        threshold, kind, limit, namespaces=_admin_scope(request.state.key)
+    )
     return JSONResponse({"pairs": pairs})
 
 
 async def admin_archive_route(request: Request) -> JSONResponse:
-    """Preview or archive cold memory rows."""
+    """Preview or archive cold memory rows, scoped to the caller's namespaces."""
     try:
         body = await _json_body(request)
     except Exception as exc:
         return _error(f"invalid JSON body: {exc}")
     now = time.time()
-    candidates = await admin.archive_candidates(now)
+    scope = _admin_scope(request.state.key)
+    candidates = await admin.archive_candidates(now, namespaces=scope)
     if body.get("confirm") is True:
-        archived = await admin.archive_rows([row["id"] for row in candidates], now)
+        archived = await admin.archive_rows(
+            [row["id"] for row in candidates], now, namespaces=scope
+        )
         return JSONResponse({"archived": archived})
     return JSONResponse({"candidates": candidates})
 
 
 async def admin_restore_route(request: Request) -> JSONResponse:
-    """Preview or restore selected memory rows."""
+    """Preview or restore selected memory rows, scoped to the caller's namespaces."""
     try:
         body = await _json_body(request)
     except Exception as exc:
@@ -355,21 +390,28 @@ async def admin_restore_route(request: Request) -> JSONResponse:
     ids = _ids(body)
     if ids is None:
         return _error("ids must be a non-empty list")
+    scope = _admin_scope(request.state.key)
     if body.get("confirm") is True:
-        restored = await admin.restore_rows(ids)
+        restored = await admin.restore_rows(ids, namespaces=scope)
         return JSONResponse({"restored": restored})
-    rows = await admin.rows_by_ids(ids)
+    rows = await admin.rows_by_ids(ids, namespaces=scope)
     return JSONResponse({"rows": rows})
 
 
 async def namespaces_create_route(request: Request) -> JSONResponse:
-    """Register a new namespace; 400 on a bad slug, 409 on a duplicate name."""
+    """Register a new namespace; 400 on a bad slug, 409 on a duplicate name.
+
+    A private namespace records the caller's key label as owner.
+    """
+    key = request.state.key
     try:
         body = await _json_body(request)
     except Exception as exc:
         return _error(f"invalid JSON body: {exc}")
+    visibility = body.get("visibility", "public")
+    owner = key.label if visibility == "private" else None
     try:
-        result = await namespaces.create_namespace(body.get("name"))
+        result = await namespaces.create_namespace(body.get("name"), visibility, owner)
     except namespaces.NamespaceExistsError as exc:
         return JSONResponse({"error": str(exc)}, status_code=409)
     except namespaces.NamespaceError as exc:
@@ -378,14 +420,25 @@ async def namespaces_create_route(request: Request) -> JSONResponse:
 
 
 async def namespaces_list_route(request: Request) -> JSONResponse:
-    """List every registered namespace."""
-    del request
-    return JSONResponse(await namespaces.list_namespaces())
+    """List the caller's allowed namespaces (every namespace for an admin key)."""
+    key = request.state.key
+    rows = await namespaces.list_namespaces()
+    if not key.is_admin:
+        rows = [row for row in rows if row["name"] in key.allowed]
+    return JSONResponse(rows)
 
 
 async def namespaces_delete_route(request: Request) -> JSONResponse:
-    """Unregister a namespace: 400 for the reserved default, 404 unknown, 409 non-empty."""
+    """Unregister a namespace: 400 reserved, 404 unknown, 403 non-owner, 409 non-empty."""
+    key = request.state.key
     name = request.path_params["name"]
+    if name == namespaces.DEFAULT_NAMESPACE:
+        return _error("the 'default' namespace is reserved and cannot be deleted")
+    ns = await namespaces.get_namespace(name)
+    if ns is None:
+        return JSONResponse({"error": f"unknown namespace: {name}"}, status_code=404)
+    if not (key.is_admin or ns["owner"] == key.label):
+        return _forbidden(f"not permitted to delete namespace: {name}")
     try:
         await namespaces.delete_namespace(name)
     except namespaces.NamespaceReservedError as exc:
@@ -412,6 +465,7 @@ async def lifespan(app: Starlette):
 
 app = Starlette(
     lifespan=lifespan,
+    middleware=[Middleware(ApiKeyAuthMiddleware)],
     routes=[
         Route("/health", health, methods=["GET"]),
         Route("/health/services", health_services, methods=["GET"]),
