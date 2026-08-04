@@ -1,7 +1,10 @@
 services:
   db:
-    image: pgvector/pgvector:pg17
+    build:
+      context: .
+      dockerfile: db.Dockerfile
     container_name: memory_base_db
+    command: postgres -c shared_preload_libraries=pg_textsearch
     environment:
       POSTGRES_USER: memory
       POSTGRES_PASSWORD: memory
