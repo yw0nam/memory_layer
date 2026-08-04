@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import math
 import os
+import string
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -40,6 +41,137 @@ NEIGHBOR_LINE_WINDOW = 40
 NEIGHBOR_LIMIT = 2
 # Websearch negation loses its meaning after OR conversion; this syntax is unused here.
 FTS_TSQUERY_SQL = "replace(websearch_to_tsquery('simple', $1)::text, ' & ', ' | ')::tsquery"
+FTS_STOPWORDS = frozenset(
+    {
+        "i",
+        "me",
+        "my",
+        "myself",
+        "we",
+        "our",
+        "ours",
+        "ourselves",
+        "you",
+        "your",
+        "yours",
+        "yourself",
+        "yourselves",
+        "he",
+        "him",
+        "his",
+        "himself",
+        "she",
+        "her",
+        "hers",
+        "herself",
+        "it",
+        "its",
+        "itself",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "themselves",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "this",
+        "that",
+        "these",
+        "those",
+        "am",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "having",
+        "do",
+        "does",
+        "did",
+        "doing",
+        "a",
+        "an",
+        "the",
+        "and",
+        "but",
+        "if",
+        "or",
+        "because",
+        "as",
+        "until",
+        "while",
+        "of",
+        "at",
+        "by",
+        "for",
+        "with",
+        "about",
+        "against",
+        "between",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "to",
+        "from",
+        "up",
+        "down",
+        "in",
+        "out",
+        "on",
+        "off",
+        "over",
+        "under",
+        "again",
+        "further",
+        "then",
+        "once",
+        "here",
+        "there",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "any",
+        "both",
+        "each",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "nor",
+        "not",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "s",
+        "t",
+        "can",
+        "will",
+        "just",
+        "don",
+        "should",
+        "now",
+    }
+)
 
 # vLLM's official Qwen3 reranker example; byte-exact.
 QWEN3_RERANK_PREFIX = (
@@ -81,6 +213,26 @@ def rrf_fuse(lists: list[list[Any]]) -> dict[Any, float]:
 def time_decay_list(rows: dict[Any, float]) -> list[Any]:
     """Candidates ranked purely by recency — one more voter in the RRF fusion."""
     return [k for k, _ in sorted(rows.items(), key=lambda kv: kv[1], reverse=True)]
+
+
+def fts_query_text(query: str) -> str:
+    """Drop unquoted stopword terms so OR ranking is driven by content words."""
+    parts = query.split('"')
+    kept: list[str] = []
+    removed = False
+    for index, part in enumerate(parts):
+        if index % 2:
+            kept.append(f'"{part}"')
+            continue
+        for token in part.split():
+            normalized = token.strip(string.punctuation).lower()
+            if normalized in FTS_STOPWORDS:
+                removed = True
+            else:
+                kept.append(token)
+    if not removed or not kept:
+        return query
+    return " ".join(kept)
 
 
 def metadata_dict(value: Any) -> dict[str, Any]:
@@ -195,7 +347,7 @@ async def _search_code(
         f"WHERE to_tsvector('simple', code) @@ {FTS_TSQUERY_SQL}{repo_clause} "
         f"ORDER BY ts_rank_cd(to_tsvector('simple', code), {FTS_TSQUERY_SQL}) DESC "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
-        query,
+        fts_query_text(query),
         *repo_args,
     )
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
@@ -257,7 +409,7 @@ async def _search_memory(
         f"to_tsvector('simple', content_raw) @@ {FTS_TSQUERY_SQL} "
         f"ORDER BY ts_rank_cd(to_tsvector('simple', content_raw), {FTS_TSQUERY_SQL}) DESC "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
-        query,
+        fts_query_text(query),
         *filter_args,
     )
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}

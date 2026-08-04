@@ -25,6 +25,7 @@ from memory_base.retrieval.search import (
     FTS_TSQUERY_SQL,
     PER_FILE_CAP,
     TIME_DECAY_HALF_LIFE_DAYS,
+    fts_query_text,
     history_predicates,
     metadata_dict,
     normalize_namespaces,
@@ -369,7 +370,7 @@ async def _memory_backup(
         f"ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
         *vec_args,
     )
-    fts_args = [query, *filter_args, excluded]
+    fts_args = [fts_query_text(query), *filter_args, excluded]
     fts_rows = await conn.fetch(
         f"SELECT {columns} FROM {tbl} WHERE {predicates} AND {excl_clause} AND "
         f"to_tsvector('simple', content_raw) @@ {FTS_TSQUERY_SQL} "
