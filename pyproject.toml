@@ -27,7 +27,10 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-markers = ["integration: requires local DB/vLLM services"]
+markers = [
+    "integration: requires local DB/vLLM services",
+    "real_auth: exercises the real API-key auth path instead of the tests/serve stub",
+]
 testpaths = ["tests"]
 
 [build-system]
