@@ -65,6 +65,11 @@ and lifts hybrid above vector-only.
   embedder carries semantic matching.
 - Recency/idf RRF voters are tie-breakers (weight 0.25); ranked recency
   preference is enforced post-fusion by the time-decay multiplier.
-- The bm25 index scan returns up to `bm25_catalog.bm25_limit` (default 100)
-  candidates before outer predicate filters; namespace-heavy deployments can
-  raise the GUC.
+- The bm25 index scan streams candidates in score order and outer predicate
+  filters (e.g. namespace) do not truncate it: a row ranked below thousands of
+  foreign-namespace matches is still returned once the filter discards them
+  (measured with a target row at global rank 2001 behind 2000 higher-scoring
+  rows in another namespace). Small namespaces keep their FTS leg as other
+  tenants' data grows; a large foreign corpus costs scan depth, not recall
+  (FTS-only hit@10 0.97 -> 0.96 from 0x to 36x foreign noise on the 100-query
+  eval set).
