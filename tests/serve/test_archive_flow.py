@@ -213,8 +213,9 @@ def test_full_archive_and_note_lifecycle():
         archived_hits = [h for h in archived_search.json() if token in h["text"]]
         assert archived_hits
         # Archived rows may be superseded; the caller must be able to tell them apart.
+        # Only the token rows are asserted on: a lived-in database legitimately
+        # returns other archived rows in an include_archived search.
         assert all(h.get("archived") is True for h in archived_hits)
-        assert all("archived" not in h for h in archived_search.json() if token not in h["text"])
 
         # ---- /admin/restore: dry-run then confirm brings it back to default search ----
         restore_dry = client.post("/admin/restore", json={"ids": [old_id]})
@@ -225,6 +226,20 @@ def test_full_archive_and_note_lifecycle():
         assert restore_confirm.status_code == 200
         assert restore_confirm.json() == {"restored": 1}
         assert asyncio.run(_archived_at(old_id)) is None
+        # The flag tracks state: the same row loses it once restored.
+        restored_search = client.post(
+            "/search",
+            json={
+                "query": content_old,
+                "source": "memory",
+                "top_k": 20,
+                "include_archived": True,
+            },
+        )
+        assert restored_search.status_code == 200
+        restored_hits = [h for h in restored_search.json() if token in h["text"]]
+        assert restored_hits
+        assert all("archived" not in h for h in restored_hits)
         # Restore returns the row to the active pool; default-search RANKING is
         # not asserted because time decay legitimately buries a 200-day-old row.
         # Active-pool membership is verified via /admin/notes below (it filters
