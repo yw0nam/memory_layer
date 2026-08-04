@@ -53,6 +53,20 @@ def test_rrf_fuse_empty_lists_yields_empty_scores():
     assert rrf_fuse([[], []]) == {}
 
 
+def test_rrf_fuse_applies_explicit_per_list_weights():
+    scores = rrf_fuse([["a", "b"], ["a", "c"]], [2.0, 0.5])
+
+    assert scores["a"] == pytest.approx(2.5 / (RRF_K + 1))
+    assert scores["b"] == pytest.approx(2.0 / (RRF_K + 2))
+    assert scores["c"] == pytest.approx(0.5 / (RRF_K + 2))
+
+
+def test_rrf_fuse_none_weights_preserves_default_scores():
+    lists = [["a", "b"], ["a", "c"]]
+
+    assert rrf_fuse(lists, None) == rrf_fuse(lists)
+
+
 # ---- _apply_time_decay --------------------------------------------------
 
 

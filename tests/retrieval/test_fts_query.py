@@ -14,10 +14,6 @@ from memory_base.retrieval import decompose, search
 pytestmark = pytest.mark.integration
 
 
-def _tsquery_sql() -> str:
-    return getattr(search, "FTS_TSQUERY_SQL", "websearch_to_tsquery('simple', $1)")
-
-
 @pytest.fixture()
 def seeded_namespace():
     namespace = f"fts-test-{uuid.uuid4().hex}"
@@ -68,7 +64,7 @@ def seeded_namespace():
 
 
 def _fts_rows(namespace: str, query: str):
-    query_text = getattr(search, "fts_query_text", lambda value: value)(query)
+    index = getattr(search, "MEMORY_BM25_INDEX", "memory_chunks_bm25")
 
     async def fetch():
         async with db.acquire() as conn:
@@ -77,10 +73,10 @@ def _fts_rows(namespace: str, query: str):
                 SELECT source_ref
                 FROM "{PG_SCHEMA}".memory_chunks
                 WHERE namespace = $2
-                  AND to_tsvector('simple', content_raw) @@ {_tsquery_sql()}
-                ORDER BY ts_rank_cd(to_tsvector('simple', content_raw), {_tsquery_sql()}) DESC
+                  AND (content_raw <@> to_bm25query($1, '{index}')) < 0
+                ORDER BY content_raw <@> to_bm25query($1, '{index}')
                 """,
-                query_text,
+                query,
                 namespace,
             )
 
@@ -101,14 +97,18 @@ def test_exact_identifier_lookup_stays_on_top(seeded_namespace):
     assert rows[0]["source_ref"] == "identifier"
 
 
-def test_quoted_phrase_keeps_phrase_semantics(seeded_namespace):
-    rows = _fts_rows(seeded_namespace, '"reciprocal rank fusion"')
+def test_short_chunk_ranks_above_longer_matching_chunk(seeded_namespace):
+    rows = _fts_rows(seeded_namespace, "reciprocal rank fusion")
 
-    assert [row["source_ref"] for row in rows] == ["phrase"]
+    refs = [row["source_ref"] for row in rows]
+    assert refs[0] == "phrase"
+    assert "scattered" in refs
 
 
-def test_all_fts_legs_use_shared_tsquery_expression():
-    assert "FTS_TSQUERY_SQL" in inspect.getsource(search._search_memory)
-    assert "FTS_TSQUERY_SQL" in inspect.getsource(search._search_code)
-    assert decompose.FTS_TSQUERY_SQL is search.FTS_TSQUERY_SQL
-    assert "FTS_TSQUERY_SQL" in inspect.getsource(decompose._memory_backup)
+def test_all_fts_legs_use_shared_bm25_indexes():
+    assert "MEMORY_BM25_INDEX" in inspect.getsource(search._search_memory)
+    assert "CODE_BM25_INDEX" in inspect.getsource(search._search_code)
+    assert decompose.MEMORY_BM25_INDEX is search.MEMORY_BM25_INDEX
+    assert "MEMORY_BM25_INDEX" in inspect.getsource(decompose._memory_backup)
+    assert not hasattr(search, "FTS_TSQUERY_SQL")
+    assert not hasattr(search, "fts_query_text")
