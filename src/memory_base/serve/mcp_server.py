@@ -4,11 +4,18 @@ Transport is stdio by default (local dev); set MCP_TRANSPORT=sse|streamable-http
 to serve over HTTP instead (e.g. in Docker). MCP_HOST/MCP_PORT control the
 bind address (defaults 0.0.0.0:8765).
 
+Every REST call carries an X-API-Key: over streamable HTTP it is read from
+the incoming MCP request's own X-API-Key header and forwarded verbatim; over
+stdio (no HTTP request to read from) it comes from the MEMORY_API_KEY
+environment variable.
+
 Register with Claude Code:
     stdio (local):
-        claude mcp add memory-base -- uv --directory <absolute-path> run python -m memory_base.serve.mcp_server
+        claude mcp add memory-base --env MEMORY_API_KEY=<key> -- \\
+          uv --directory <absolute-path> run python -m memory_base.serve.mcp_server
     streamable HTTP (Docker):
-        claude mcp add --transport http memory-base http://localhost:8765/mcp
+        claude mcp add --transport http memory-base http://localhost:8765/mcp \\
+          --header "X-API-Key: <key>"
 
 Run directly:
     uv run python -m memory_base.serve.mcp_server
@@ -30,8 +37,7 @@ from memory_base.retrieval.decompose import DEEP_TIMEOUT_SECONDS
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
 REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
-DEFAULT_NAMESPACE = "default"
-NAMESPACE_HEADER = "x-memory-namespaces"
+API_KEY_HEADER = "x-api-key"
 
 mcp = FastMCP("memory-base")
 
@@ -48,45 +54,24 @@ def _raise_backend_error(response: httpx.Response) -> None:
     raise ValueError(message)
 
 
-def _allowed_namespaces(ctx: "Context | None") -> list[str]:
-    """The connection's ordered allowed namespace set from X-Memory-Namespaces.
-
-    First entry is the home namespace. No header (or no HTTP request, e.g.
-    stdio transport or a direct call outside a session) means ['default'].
-    """
+def _api_key(ctx: "Context | None") -> str | None:
+    """The caller's API key: the request's X-API-Key header, or MEMORY_API_KEY for stdio."""
     request = None
     if ctx is not None:
         try:
             request = ctx.request_context.request
         except ValueError:
             request = None
-    if request is None:
-        return [DEFAULT_NAMESPACE]
-    header = request.headers.get(NAMESPACE_HEADER)
-    if not header:
-        return [DEFAULT_NAMESPACE]
-    parsed = [part.strip() for part in header.split(",") if part.strip()]
-    return parsed or [DEFAULT_NAMESPACE]
+    if request is not None:
+        header = request.headers.get(API_KEY_HEADER)
+        if header:
+            return header
+    return os.environ.get("MEMORY_API_KEY")
 
 
-def _resolve_read_namespaces(namespace: str | None, ctx: "Context | None") -> list[str]:
-    """Search-tool resolution: no argument covers the whole allowed set."""
-    allowed = _allowed_namespaces(ctx)
-    if namespace is None:
-        return allowed
-    if namespace not in allowed:
-        raise ValueError(f"namespace {namespace!r} is outside the allowed set {allowed}")
-    return [namespace]
-
-
-def _resolve_write_namespace(namespace: str | None, ctx: "Context | None") -> str:
-    """Write-tool resolution: no argument goes to the home (first) entry."""
-    allowed = _allowed_namespaces(ctx)
-    if namespace is None:
-        return allowed[0]
-    if namespace not in allowed:
-        raise ValueError(f"namespace {namespace!r} is outside the allowed set {allowed}")
-    return namespace
+def _auth_headers(ctx: "Context | None") -> dict[str, str]:
+    api_key = _api_key(ctx)
+    return {API_KEY_HEADER: api_key} if api_key else {}
 
 
 async def _search(
@@ -98,7 +83,8 @@ async def _search(
     include_atoms: bool | None = None,
     include_archived: bool = False,
     repo: list[str] | None = None,
-    namespaces: list[str] | None = None,
+    namespace: str | None = None,
+    ctx: "Context | None" = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {"query": query, "source": source, "top_k": top_k}
     if repo is not None:
@@ -111,10 +97,10 @@ async def _search(
         body["include_atoms"] = include_atoms
     if include_archived:
         body["include_archived"] = True
-    if namespaces is not None:
-        body["namespaces"] = namespaces
+    if namespace is not None:
+        body["namespaces"] = [namespace]
     async with _client() as client:
-        response = await client.post("/search", json=body)
+        response = await client.post("/search", json=body, headers=_auth_headers(ctx))
         if response.status_code == 400:
             _raise_backend_error(response)
         response.raise_for_status()
@@ -143,18 +129,18 @@ async def search_all(
     `include_archived` widens the search to archived memory; use `search_memory`
     for the `kind`/`tags` filters, which apply to memory only.
 
-    `namespace` narrows the memory search to one namespace within this
-    connection's allowed set (see `save_memory`); omitted, it covers the
-    whole allowed set. A namespace outside the set raises an error.
+    `namespace` narrows the memory search to one namespace the caller's API
+    key can access; omitted, it covers every namespace the key can access.
+    A namespace the key cannot access is rejected by the server.
     """
-    namespaces = _resolve_read_namespaces(namespace, ctx)
     return await _search(
         query,
         "all",
         top_k,
         include_atoms=include_atoms,
         include_archived=include_archived,
-        namespaces=namespaces,
+        namespace=namespace,
+        ctx=ctx,
     )
 
 
@@ -180,8 +166,7 @@ async def search_code(
     matches nothing. `namespace` has no effect on code (code is not
     namespaced) but is accepted for a uniform tool shape.
     """
-    namespaces = _resolve_read_namespaces(namespace, ctx)
-    return await _search(query, "code", top_k, repo=repo, namespaces=namespaces)
+    return await _search(query, "code", top_k, repo=repo, namespace=namespace, ctx=ctx)
 
 
 @mcp.tool()
@@ -208,13 +193,20 @@ async def search_memory(
     recency weighting, and the rows it adds carry "archived": true because they
     may have been replaced by a newer note.
 
-    `namespace` narrows the search to one namespace within this connection's
-    allowed set; omitted, it covers the whole allowed set. A namespace outside
-    the set raises an error.
+    `namespace` narrows the search to one namespace the caller's API key can
+    access; omitted, it covers every namespace the key can access. A
+    namespace the key cannot access is rejected by the server.
     """
-    namespaces = _resolve_read_namespaces(namespace, ctx)
     return await _search(
-        query, "memory", top_k, kind, tags, include_atoms, include_archived, namespaces=namespaces
+        query,
+        "memory",
+        top_k,
+        kind,
+        tags,
+        include_atoms,
+        include_archived,
+        namespace=namespace,
+        ctx=ctx,
     )
 
 
@@ -239,24 +231,22 @@ async def save_memory(
     `kind` is "note" (default) or "decision". `tags` are optional labels.
     `supersedes` archives an older note by id.
 
-    `namespace` picks one namespace from this connection's allowed set;
-    omitted, the note lands in the home (first) namespace of that set. A
-    namespace outside the set raises an error.
+    `namespace` picks one namespace the caller's API key can access; omitted,
+    the note lands in the key's home namespace. A namespace the key cannot
+    access is rejected by the server.
 
     `stored` is False when identical content was already saved (idempotent no-op).
     """
-    resolved_namespace = _resolve_write_namespace(namespace, ctx)
+    body: dict[str, Any] = {
+        "content": content,
+        "kind": kind,
+        "tags": tags,
+        "supersedes": supersedes,
+    }
+    if namespace is not None:
+        body["namespace"] = namespace
     async with _client() as client:
-        response = await client.post(
-            "/save_memory",
-            json={
-                "content": content,
-                "kind": kind,
-                "tags": tags,
-                "supersedes": supersedes,
-                "namespace": resolved_namespace,
-            },
-        )
+        response = await client.post("/save_memory", json=body, headers=_auth_headers(ctx))
         if response.status_code == 400:
             _raise_backend_error(response)
         response.raise_for_status()
@@ -278,9 +268,9 @@ async def ingest_document(
     The filename must use a supported text extension: .md, .markdown, .txt,
     .rst, .html, or .htm. Binary documents upload through REST directly.
 
-    `namespace` picks one namespace from this connection's allowed set;
-    omitted, the document lands in the home (first) namespace of that set. A
-    namespace outside the set raises an error.
+    `namespace` picks one namespace the caller's API key can access; omitted,
+    the document lands in the key's home namespace. A namespace the key
+    cannot access is rejected by the server.
     """
     try:
         extension = extension_for(filename)
@@ -288,8 +278,9 @@ async def ingest_document(
         raise ValueError(str(exc)) from exc
     if extension not in MCP_TEXT_EXTENSIONS:
         raise ValueError("MCP document ingestion supports text formats only")
-    resolved_namespace = _resolve_write_namespace(namespace, ctx)
-    data = {"filename": filename, "mode": mode, "namespace": resolved_namespace}
+    data = {"filename": filename, "mode": mode}
+    if namespace is not None:
+        data["namespace"] = namespace
     if document_id is not None:
         data["document_id"] = document_id
     if origin is not None:
@@ -299,6 +290,7 @@ async def ingest_document(
             "/ingest/document",
             data=data,
             files={"file": (filename, content.encode("utf-8"))},
+            headers=_auth_headers(ctx),
         )
         if response.status_code in {400, 413, 415, 429}:
             _raise_backend_error(response)
@@ -312,6 +304,7 @@ async def ingest_repo(
     url: str,
     branch: str | None = None,
     name: str | None = None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Clone (or re-sync) a git repository into the code index.
 
@@ -328,7 +321,7 @@ async def ingest_repo(
     if name is not None:
         body["name"] = name
     async with _client() as client:
-        response = await client.post("/repos", json=body)
+        response = await client.post("/repos", json=body, headers=_auth_headers(ctx))
         if response.status_code in {400, 429}:
             _raise_backend_error(response)
         response.raise_for_status()
@@ -337,14 +330,14 @@ async def ingest_repo(
 
 
 @mcp.tool()
-async def remove_repo(name: str) -> dict[str, Any]:
+async def remove_repo(name: str, ctx: Context | None = None) -> dict[str, Any]:
     """Remove a repository from the code index by its cache name.
 
     Queues a re-index that tears down the removed repo's code chunks. Returns
     {job_id, status_url}; poll status_url for progress.
     """
     async with _client() as client:
-        response = await client.delete(f"/repos/{name}")
+        response = await client.delete(f"/repos/{name}", headers=_auth_headers(ctx))
         if response.status_code in {400, 404, 429}:
             _raise_backend_error(response)
         response.raise_for_status()
@@ -353,14 +346,14 @@ async def remove_repo(name: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def list_repos() -> list[dict[str, Any]]:
+async def list_repos(ctx: Context | None = None) -> list[dict[str, Any]]:
     """List indexed repositories.
 
     Returns one entry per cached repo with name, origin url, current branch,
     short head commit, and the number of indexed code chunks.
     """
     async with _client() as client:
-        response = await client.get("/repos")
+        response = await client.get("/repos", headers=_auth_headers(ctx))
         response.raise_for_status()
         return response.json()
 
@@ -386,12 +379,13 @@ async def deep_search(
 
     `include_archived` carries the same caveats as in `search_memory`.
 
-    `namespace` narrows retrieval to one namespace within this connection's
-    allowed set; omitted, it covers the whole allowed set. A namespace
-    outside the set raises an error.
+    `namespace` narrows retrieval to one namespace the caller's API key can
+    access; omitted, it covers every namespace the key can access. A
+    namespace the key cannot access is rejected by the server.
     """
-    namespaces = _resolve_read_namespaces(namespace, ctx)
-    body: dict[str, Any] = {"query": query, "namespaces": namespaces}
+    body: dict[str, Any] = {"query": query}
+    if namespace is not None:
+        body["namespaces"] = [namespace]
     if max_hops is not None:
         body["max_hops"] = max_hops
     if kind is not None:
@@ -403,7 +397,9 @@ async def deep_search(
     # +30s covers HTTP/round-trip slack beyond the server-side deep-search deadline.
     timeout = DEEP_TIMEOUT_SECONDS + 30
     async with _client() as client:
-        response = await client.post("/search/deep", json=body, timeout=timeout)
+        response = await client.post(
+            "/search/deep", json=body, timeout=timeout, headers=_auth_headers(ctx)
+        )
         if response.status_code == 400:
             _raise_backend_error(response)
         response.raise_for_status()
