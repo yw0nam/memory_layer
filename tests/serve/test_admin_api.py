@@ -9,36 +9,41 @@ request time, so every admin function is monkeypatched here directly on the
 Endpoint contract pinned by these tests:
 
 - ``GET /admin/notes?older_than_days=N`` (default 90) -> calls
-  ``admin.list_old_notes(N)``, response body is that list verbatim.
-  Non-integer ``older_than_days`` -> 400.
+  ``admin.list_old_notes(N, namespaces=<caller's scope>)``, response body is
+  that list verbatim. Non-integer ``older_than_days`` -> 400.
 - ``POST /admin/notes/delete {"ids": [...], "confirm": bool}``
-  - confirm missing/false (dry-run): calls ``admin.notes_by_ids(ids)``;
-    response ``{"rows": <that list>}``; ``admin.delete_notes`` is NOT called.
-  - confirm true: calls ``admin.delete_notes(ids) -> int``; response
-    ``{"deleted": <count>}``.
+  - confirm missing/false (dry-run): calls
+    ``admin.notes_by_ids(ids, namespaces=<scope>)``; response
+    ``{"rows": <that list>}``; ``admin.delete_notes`` is NOT called.
+  - confirm true: calls ``admin.delete_notes(ids, namespaces=<scope>) -> int``;
+    response ``{"deleted": <count>}``.
   - missing/empty ``ids``, or malformed JSON -> 400.
 - ``GET /admin/duplicates?threshold=0.9&kind=&limit=50`` -> calls
-  ``admin.find_duplicates(threshold, kind, limit)``; response
-  ``{"pairs": <that list>}``. Non-numeric ``threshold`` -> 400.
+  ``admin.find_duplicates(threshold, kind, limit, namespaces=<scope>)``;
+  response ``{"pairs": <that list>}``. Non-numeric ``threshold`` -> 400.
 - ``POST /admin/archive {"confirm": bool}``
-  - confirm missing/false (dry-run): calls ``admin.archive_candidates(now)``;
-    response ``{"candidates": <that list>}``; ``admin.archive_rows`` is NOT
-    called.
-  - confirm true: calls ``admin.archive_candidates(now)`` to get candidates,
-    then ``admin.archive_rows(<candidate ids>, now) -> int``; response
-    ``{"archived": <count>}``.
+  - confirm missing/false (dry-run): calls
+    ``admin.archive_candidates(now, namespaces=<scope>)``; response
+    ``{"candidates": <that list>}``; ``admin.archive_rows`` is NOT called.
+  - confirm true: calls ``admin.archive_candidates(now, namespaces=<scope>)``
+    to get candidates, then
+    ``admin.archive_rows(<candidate ids>, now, namespaces=<scope>) -> int``;
+    response ``{"archived": <count>}``.
 - ``POST /admin/restore {"ids": [...], "confirm": bool}``
-  - confirm missing/false (dry-run): calls ``admin.rows_by_ids(ids)``;
-    response ``{"rows": <that list>}``; ``admin.restore_rows`` is NOT called.
-  - confirm true: calls ``admin.restore_rows(ids) -> int``; response
-    ``{"restored": <count>}``.
+  - confirm missing/false (dry-run): calls
+    ``admin.rows_by_ids(ids, namespaces=<scope>)``; response
+    ``{"rows": <that list>}``; ``admin.restore_rows`` is NOT called.
+  - confirm true: calls ``admin.restore_rows(ids, namespaces=<scope>) -> int``;
+    response ``{"restored": <count>}``.
   - missing ``ids`` -> 400.
 - ``POST /search`` gains optional ``"include_archived"`` (default False),
   forwarded to ``memory_base.retrieval.search.search`` as the keyword
   ``include_archived``.
 
-Collection fails today: memory_base.serve.admin does not exist yet, and
-api.py has no /admin/* routes or include_archived wiring.
+``<scope>`` is ``None`` for an admin key (unfiltered) or the caller's
+sorted allowed-namespace list otherwise; the fixed ``test-key`` used by the
+client here stubs to an admin identity (see tests/serve/conftest.py), so
+every call below observes ``namespaces=None``.
 """
 
 from __future__ import annotations
@@ -47,7 +52,7 @@ from starlette.testclient import TestClient
 
 from memory_base.serve import admin, api
 
-client = TestClient(api.app)
+client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 
 # ---- GET /admin/notes ------------------------------------------------------
@@ -57,7 +62,7 @@ def test_admin_notes_defaults_older_than_days_to_90(monkeypatch):
     captured = {}
     rows = [{"id": "note:a", "hit_count": 0, "last_hit_at": None}]
 
-    async def fake_list_old_notes(older_than_days):
+    async def fake_list_old_notes(older_than_days, namespaces=None):
         captured["older_than_days"] = older_than_days
         return rows
 
@@ -71,7 +76,7 @@ def test_admin_notes_defaults_older_than_days_to_90(monkeypatch):
 def test_admin_notes_custom_older_than_days_reaches_admin(monkeypatch):
     captured = {}
 
-    async def fake_list_old_notes(older_than_days):
+    async def fake_list_old_notes(older_than_days, namespaces=None):
         captured["older_than_days"] = older_than_days
         return []
 
@@ -94,11 +99,11 @@ def test_admin_notes_delete_dry_run_by_default(monkeypatch):
     calls = {"notes_by_ids": None, "delete_notes": None}
     rows = [{"id": "note:a", "kind": "agent_note"}]
 
-    async def fake_notes_by_ids(ids):
+    async def fake_notes_by_ids(ids, namespaces=None):
         calls["notes_by_ids"] = ids
         return rows
 
-    async def fake_delete_notes(ids):
+    async def fake_delete_notes(ids, namespaces=None):
         calls["delete_notes"] = ids
         return 999
 
@@ -114,10 +119,10 @@ def test_admin_notes_delete_dry_run_by_default(monkeypatch):
 def test_admin_notes_delete_confirm_false_is_also_dry_run(monkeypatch):
     calls = {"delete_notes": None}
 
-    async def fake_notes_by_ids(ids):
+    async def fake_notes_by_ids(ids, namespaces=None):
         return [{"id": i} for i in ids]
 
-    async def fake_delete_notes(ids):
+    async def fake_delete_notes(ids, namespaces=None):
         calls["delete_notes"] = ids
 
     monkeypatch.setattr(admin, "notes_by_ids", fake_notes_by_ids)
@@ -130,10 +135,10 @@ def test_admin_notes_delete_confirm_false_is_also_dry_run(monkeypatch):
 def test_admin_notes_delete_confirm_true_calls_delete_notes(monkeypatch):
     calls = {}
 
-    async def fake_notes_by_ids(ids):
+    async def fake_notes_by_ids(ids, namespaces=None):
         return [{"id": i} for i in ids]
 
-    async def fake_delete_notes(ids):
+    async def fake_delete_notes(ids, namespaces=None):
         calls["ids"] = ids
         return len(ids)
 
@@ -176,7 +181,7 @@ def test_admin_duplicates_defaults(monkeypatch):
     captured = {}
     pairs = [{"a": {"id": "x"}, "b": {"id": "y"}, "score": 0.95}]
 
-    async def fake_find_duplicates(threshold, kind, limit):
+    async def fake_find_duplicates(threshold, kind, limit, namespaces=None):
         captured["threshold"] = threshold
         captured["kind"] = kind
         captured["limit"] = limit
@@ -192,7 +197,7 @@ def test_admin_duplicates_defaults(monkeypatch):
 def test_admin_duplicates_custom_params_reach_admin(monkeypatch):
     captured = {}
 
-    async def fake_find_duplicates(threshold, kind, limit):
+    async def fake_find_duplicates(threshold, kind, limit, namespaces=None):
         captured["threshold"] = threshold
         captured["kind"] = kind
         captured["limit"] = limit
@@ -219,12 +224,12 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
     calls = {"archive_candidates": 0, "archive_rows": None}
     candidates = [{"id": "note:old", "kind": "agent_note", "hit_count": 0, "last_hit_at": None}]
 
-    async def fake_archive_candidates(now):
+    async def fake_archive_candidates(now, namespaces=None):
         calls["archive_candidates"] += 1
         assert isinstance(now, float)
         return candidates
 
-    async def fake_archive_rows(ids, now):
+    async def fake_archive_rows(ids, now, namespaces=None):
         calls["archive_rows"] = (ids, now)
         return len(ids)
 
@@ -244,10 +249,10 @@ def test_admin_archive_confirm_true_archives_exactly_candidate_ids(monkeypatch):
         {"id": "note:old2", "kind": "history", "hit_count": 2, "last_hit_at": 123.0},
     ]
 
-    async def fake_archive_candidates(now):
+    async def fake_archive_candidates(now, namespaces=None):
         return candidates
 
-    async def fake_archive_rows(ids, now):
+    async def fake_archive_rows(ids, now, namespaces=None):
         calls["ids"] = ids
         return len(ids)
 
@@ -266,10 +271,10 @@ def test_admin_restore_dry_run_by_default(monkeypatch):
     calls = {"restore_rows": None}
     rows = [{"id": "note:old", "kind": "agent_note"}]
 
-    async def fake_rows_by_ids(ids):
+    async def fake_rows_by_ids(ids, namespaces=None):
         return rows
 
-    async def fake_restore_rows(ids):
+    async def fake_restore_rows(ids, namespaces=None):
         calls["restore_rows"] = ids
         return len(ids)
 
@@ -284,10 +289,10 @@ def test_admin_restore_dry_run_by_default(monkeypatch):
 def test_admin_restore_confirm_true_calls_restore_rows(monkeypatch):
     calls = {}
 
-    async def fake_rows_by_ids(ids):
+    async def fake_rows_by_ids(ids, namespaces=None):
         return [{"id": i} for i in ids]
 
-    async def fake_restore_rows(ids):
+    async def fake_restore_rows(ids, namespaces=None):
         calls["ids"] = ids
         return len(ids)
 

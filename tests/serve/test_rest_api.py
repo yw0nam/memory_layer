@@ -22,7 +22,7 @@ from starlette.testclient import TestClient
 from memory_base.retrieval.search import Hit
 from memory_base.serve import api
 
-client = TestClient(api.app)
+client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 
 def _hit(

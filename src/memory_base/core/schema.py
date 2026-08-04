@@ -43,6 +43,19 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         );
         INSERT INTO {schema}.namespaces (name, created_at) VALUES ('default', 0)
           ON CONFLICT (name) DO NOTHING;
+        ALTER TABLE {schema}.namespaces
+          ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'public'
+          CHECK (visibility IN ('public', 'private'));
+        ALTER TABLE {schema}.namespaces
+          ADD COLUMN IF NOT EXISTS owner text;
+        CREATE TABLE IF NOT EXISTS {schema}.api_keys (
+          key_hash text PRIMARY KEY,
+          label text NOT NULL,
+          home text NOT NULL DEFAULT 'default',
+          is_admin boolean NOT NULL DEFAULT false,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          revoked_at timestamptz
+        );
         CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
           id bigserial PRIMARY KEY,
           query text NOT NULL,

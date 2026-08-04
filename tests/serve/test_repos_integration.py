@@ -112,7 +112,9 @@ def _make_repo(path, marker: str) -> None:
 def _get(path):
     async def request():
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
+            transport=httpx.ASGITransport(app=api.app),
+            base_url="http://testserver",
+            headers={"X-API-Key": "test-key"},
         ) as client:
             return await client.get(path)
 
@@ -122,7 +124,9 @@ def _get(path):
 def _delete(path):
     async def request():
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
+            transport=httpx.ASGITransport(app=api.app),
+            base_url="http://testserver",
+            headers={"X-API-Key": "test-key"},
         ) as client:
             return await client.delete(path)
 

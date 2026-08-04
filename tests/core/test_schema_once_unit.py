@@ -111,6 +111,31 @@ def test_ensure_schema_adds_namespace_column_index_and_registry(monkeypatch):
     assert "ON CONFLICT (name) DO NOTHING;" in sql
 
 
+def test_ensure_schema_adds_api_keys_table_and_namespace_visibility(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "test_schema")
+    captured = {}
+
+    class RecordingConnection(FakeConnection):
+        async def execute(self, query, *args):
+            captured["sql"] = query
+            await super().execute(query, *args)
+
+    conn = RecordingConnection()
+    asyncio.run(schema.ensure_schema(conn))
+    sql = captured["sql"]
+    assert 'CREATE TABLE IF NOT EXISTS "test_schema".api_keys' in sql
+    assert "key_hash text PRIMARY KEY" in sql
+    assert "label text NOT NULL" in sql
+    assert "home text NOT NULL DEFAULT 'default'" in sql
+    assert "is_admin boolean NOT NULL DEFAULT false" in sql
+    assert "revoked_at timestamptz" in sql
+    assert (
+        "ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'public'\n"
+        "          CHECK (visibility IN ('public', 'private'));" in sql
+    )
+    assert "ADD COLUMN IF NOT EXISTS owner text;" in sql
+
+
 def test_rebinding_module_pg_schema_keeps_ddl_and_guard_in_sync(monkeypatch):
     """Rebinding schema.PG_SCHEMA, as eval/retrieval.py's _set_schema does, must move
     both the DDL target and the once-guard's recorded name together."""

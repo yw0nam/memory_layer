@@ -29,8 +29,8 @@ def is_cold(
     )
 
 
-async def list_old_notes(older_than_days: int) -> list[dict]:
-    """Return active agent notes older than the requested age."""
+async def list_old_notes(older_than_days: int, namespaces: list[str] | None = None) -> list[dict]:
+    """Return active agent notes older than the requested age, scoped to namespaces (None: all)."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -40,15 +40,17 @@ async def list_old_notes(older_than_days: int) -> list[dict]:
               AND archived_at IS NULL
               AND ts_last_active
                   < extract(epoch FROM now()) - $1::double precision * {DAY_SECONDS}
+              AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             ORDER BY ts_last_active ASC
             """,
             older_than_days,
+            namespaces,
         )
         return [dict(row) for row in rows]
 
 
-async def notes_by_ids(ids: list[str]) -> list[dict]:
-    """Return agent notes matching the supplied identifiers."""
+async def notes_by_ids(ids: list[str], namespaces: list[str] | None = None) -> list[dict]:
+    """Return agent notes matching the supplied identifiers, scoped to namespaces (None: all)."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -56,28 +58,34 @@ async def notes_by_ids(ids: list[str]) -> list[dict]:
                    archived_at
             FROM "{PG_SCHEMA}".memory_chunks
             WHERE source_type = 'agent_note' AND id = ANY($1::text[])
+              AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             ORDER BY ts_last_active ASC
             """,
             ids,
+            namespaces,
         )
         return [dict(row) for row in rows]
 
 
-async def delete_notes(ids: list[str]) -> int:
-    """Delete agent notes matching the supplied identifiers."""
+async def delete_notes(ids: list[str], namespaces: list[str] | None = None) -> int:
+    """Delete agent notes matching the supplied identifiers, scoped to namespaces (None: all)."""
     async with db.acquire() as conn:
         status = await conn.execute(
             f"""
             DELETE FROM "{PG_SCHEMA}".memory_chunks
             WHERE source_type = 'agent_note' AND id = ANY($1::text[])
+              AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             """,
             ids,
+            namespaces,
         )
         return int(status.rsplit(" ", 1)[-1])
 
 
-async def find_duplicates(threshold: float, kind: str | None, limit: int) -> list[dict]:
-    """Return active row pairs meeting the cosine-similarity threshold."""
+async def find_duplicates(
+    threshold: float, kind: str | None, limit: int, namespaces: list[str] | None = None
+) -> list[dict]:
+    """Return active row pairs meeting the cosine-similarity threshold, scoped to namespaces."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -101,11 +109,13 @@ async def find_duplicates(threshold: float, kind: str | None, limit: int) -> lis
                 WHERE candidate.archived_at IS NULL
                   AND candidate.id <> a.id
                   AND ($2::text IS NULL OR candidate.chunk_kind = $2)
+                  AND ($4::text[] IS NULL OR candidate.namespace = ANY($4::text[]))
                 ORDER BY candidate.embedding <=> a.embedding
                 LIMIT {DUPLICATE_NEIGHBORS}
               ) AS b
               WHERE a.archived_at IS NULL
                 AND ($2::text IS NULL OR a.chunk_kind = $2)
+                AND ($4::text[] IS NULL OR a.namespace = ANY($4::text[]))
             ),
             deduplicated AS (
               SELECT DISTINCT ON (least_id, greatest_id)
@@ -124,6 +134,7 @@ async def find_duplicates(threshold: float, kind: str | None, limit: int) -> lis
             threshold,
             kind,
             limit,
+            namespaces,
         )
         return [
             {
@@ -135,8 +146,8 @@ async def find_duplicates(threshold: float, kind: str | None, limit: int) -> lis
         ]
 
 
-async def archive_candidates(now: float) -> list[dict]:
-    """Return active rows matching the configured cold-tier rule."""
+async def archive_candidates(now: float, namespaces: list[str] | None = None) -> list[dict]:
+    """Return active rows matching the configured cold-tier rule, scoped to namespaces."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -149,17 +160,19 @@ async def archive_candidates(now: float) -> list[dict]:
               AND ts_last_active < $1 - $2::double precision * {DAY_SECONDS}
               AND coalesce(last_hit_at, ts_last_active)
                   < $1 - $3::double precision * {DAY_SECONDS}
+              AND ($4::text[] IS NULL OR namespace = ANY($4::text[]))
             ORDER BY ts_last_active ASC
             """,
             now,
             COLD_AGE_DAYS,
             COLD_UNHIT_DAYS,
+            namespaces,
         )
         return [dict(row) for row in rows]
 
 
-async def archive_rows(ids: list[str], now: float) -> int:
-    """Archive active rows matching the supplied identifiers."""
+async def archive_rows(ids: list[str], now: float, namespaces: list[str] | None = None) -> int:
+    """Archive active rows matching the supplied identifiers, scoped to namespaces."""
     async with db.acquire() as conn:
         status = await conn.execute(
             f"""
@@ -167,15 +180,17 @@ async def archive_rows(ids: list[str], now: float) -> int:
             SET archived_at = $2
             WHERE id = ANY($1::text[]) AND archived_at IS NULL
               AND chunk_kind <> 'atom'
+              AND ($3::text[] IS NULL OR namespace = ANY($3::text[]))
             """,
             ids,
             now,
+            namespaces,
         )
         return int(status.rsplit(" ", 1)[-1])
 
 
-async def restore_rows(ids: list[str]) -> int:
-    """Restore rows matching the supplied identifiers."""
+async def restore_rows(ids: list[str], namespaces: list[str] | None = None) -> int:
+    """Restore rows matching the supplied identifiers, scoped to namespaces."""
     async with db.acquire() as conn:
         status = await conn.execute(
             f"""
@@ -183,22 +198,26 @@ async def restore_rows(ids: list[str]) -> int:
             SET archived_at = NULL
             WHERE id = ANY($1::text[])
               AND chunk_kind <> 'atom'
+              AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             """,
             ids,
+            namespaces,
         )
         return int(status.rsplit(" ", 1)[-1])
 
 
-async def rows_by_ids(ids: list[str]) -> list[dict]:
-    """Return lifecycle fields for rows matching the supplied identifiers."""
+async def rows_by_ids(ids: list[str], namespaces: list[str] | None = None) -> list[dict]:
+    """Return lifecycle fields for rows matching the supplied identifiers, scoped to namespaces."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
             SELECT id, chunk_kind AS kind, archived_at, hit_count, last_hit_at
             FROM "{PG_SCHEMA}".memory_chunks
             WHERE id = ANY($1::text[])
+              AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             ORDER BY id
             """,
             ids,
+            namespaces,
         )
         return [dict(row) for row in rows]

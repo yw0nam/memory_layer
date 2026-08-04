@@ -47,7 +47,7 @@ NOW = 1_700_000_000.0
 
 @pytest.fixture()
 def client():
-    with TestClient(api.app) as c:
+    with TestClient(api.app, headers={"X-API-Key": "test-key"}) as c:
         yield c
 
 
@@ -166,7 +166,6 @@ def test_mcp_save_memory_posts_supersedes_in_body(monkeypatch):
         "kind": "note",
         "tags": None,
         "supersedes": "note:old0000000000",
-        "namespace": "default",
     }
     assert result["superseded"] == "note:old0000000000"
 
@@ -194,7 +193,6 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
         "kind": "note",
         "tags": None,
         "supersedes": None,
-        "namespace": "default",
     }
 
 

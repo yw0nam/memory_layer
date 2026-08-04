@@ -105,6 +105,63 @@ def test_create_namespace_duplicate_raises_exists_error(monkeypatch):
         asyncio.run(namespaces.create_namespace("team-a"))
 
 
+def test_create_namespace_defaults_to_public_no_owner(monkeypatch):
+    conn = FakeConnection(fetchval_results=["team-a"])
+    _patch_acquire(monkeypatch, conn)
+    result = asyncio.run(namespaces.create_namespace("team-a"))
+    assert result["visibility"] == "public"
+    assert result["owner"] is None
+    sql, args = conn.queries[0]
+    assert args[2] == "public"
+    assert args[3] is None
+
+
+def test_create_namespace_private_records_owner(monkeypatch):
+    conn = FakeConnection(fetchval_results=["team-a"])
+    _patch_acquire(monkeypatch, conn)
+    result = asyncio.run(namespaces.create_namespace("team-a", "private", "alice"))
+    assert result["visibility"] == "private"
+    assert result["owner"] == "alice"
+    sql, args = conn.queries[0]
+    assert args[2] == "private"
+    assert args[3] == "alice"
+
+
+def test_create_namespace_bad_visibility_rejected_before_touching_db(monkeypatch):
+    conn = FakeConnection()
+    _patch_acquire(monkeypatch, conn)
+    with pytest.raises(namespaces.NamespaceError, match="visibility"):
+        asyncio.run(namespaces.create_namespace("team-a", "hidden"))
+    assert conn.queries == []
+
+
+# ---- get_namespace -----------------------------------------------------------
+
+
+def test_get_namespace_returns_row(monkeypatch):
+    row = {"name": "team-a", "created_at": 5.0, "visibility": "private", "owner": "alice"}
+    conn = FakeConnection(fetch_results=[])
+    conn.fetchrow_results = [row]
+
+    async def fetchrow(query, *args):
+        return conn.fetchrow_results.pop(0)
+
+    conn.fetchrow = fetchrow
+    _patch_acquire(monkeypatch, conn)
+    assert asyncio.run(namespaces.get_namespace("team-a")) == row
+
+
+def test_get_namespace_returns_none_when_missing(monkeypatch):
+    conn = FakeConnection()
+
+    async def fetchrow(query, *args):
+        return None
+
+    conn.fetchrow = fetchrow
+    _patch_acquire(monkeypatch, conn)
+    assert asyncio.run(namespaces.get_namespace("ghost")) is None
+
+
 # ---- list_namespaces ---------------------------------------------------------
 
 

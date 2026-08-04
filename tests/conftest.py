@@ -31,3 +31,6 @@ def rest_in_process(monkeypatch):
         )
 
     monkeypatch.setattr(mcp_server, "_client", _client)
+    # mcp_server has no request context here (ctx=None), so it falls back to this env var;
+    # tests/serve/conftest.py's auth stub resolves "test-key" to an admin identity.
+    monkeypatch.setenv("MEMORY_API_KEY", "test-key")
