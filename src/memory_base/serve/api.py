@@ -24,12 +24,12 @@ from memory_base.retrieval.search import Hit
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
 from memory_base.retrieval.search import validate_search_options
+from memory_base.serve import access_log
 from memory_base.serve import admin
 from memory_base.serve import ingest_api
 from memory_base.serve import job_store
 from memory_base.serve import namespaces
 from memory_base.serve import repos
-from memory_base.serve.access_log import log_retrieval
 from memory_base.serve.auth import ApiKeyAuthMiddleware
 from memory_base.serve.notes import save_note
 
@@ -196,7 +196,7 @@ async def search_route(request: Request) -> JSONResponse:
         hits = (await search(query, **options))[:top_k]
     except ValueError as exc:
         return _error(str(exc))
-    await log_retrieval(query, source, hits)
+    access_log.record_retrieval(query, source, hits)
     return JSONResponse([hit_to_dict(hit) for hit in hits])
 
 
@@ -283,7 +283,7 @@ async def deep_search_route(request: Request) -> JSONResponse:
         )
         for entry in result.evidence
     ]
-    await log_retrieval(query, "memory", evidence_hits)
+    access_log.record_retrieval(query, "memory", evidence_hits)
 
     return JSONResponse(_serialize_deep_result(result))
 
@@ -456,13 +456,15 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: Starlette):
-    """Recover durable jobs, run workers, and close the pool in shutdown order."""
+    """Recover durable jobs, run workers and the hit flusher, and close the pool last."""
     del app
     await job_store.initialize()
     workers = job_store.start_workers()
+    flusher = access_log.start_flusher()
     try:
         yield
     finally:
+        await access_log.stop_flusher(flusher)
         await job_store.stop_workers(workers)
         await db.close_pool()
 

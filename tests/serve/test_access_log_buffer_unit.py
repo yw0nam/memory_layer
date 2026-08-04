@@ -23,6 +23,10 @@ from memory_base.serve import access_log, api
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 WRITE_VERBS = ("INSERT", "UPDATE", "DELETE")
+NOW = 1_700_000_000.0
+# tests/conftest.py stubs the lifespan flusher; these tests drive the real one.
+START_FLUSHER = access_log.start_flusher
+STOP_FLUSHER = access_log.stop_flusher
 
 
 class RecordingConnection:
@@ -131,10 +135,10 @@ def test_deep_search_request_performs_no_db_writes(monkeypatch, connection):
 
 def test_repeated_hits_on_one_chunk_collapse_into_one_update(connection):
     for _ in range(3):
-        access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=100.0)
-    access_log.record_retrieval("q", "memory", [_hit("chunk-b")], now=100.0)
+        access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=NOW)
+    access_log.record_retrieval("q", "memory", [_hit("chunk-b")], now=NOW)
 
-    asyncio.run(access_log.flush(now=100.0))
+    asyncio.run(access_log.flush(now=NOW))
 
     updates = connection.matching("UPDATE")
     assert len(updates) == 1
@@ -144,10 +148,10 @@ def test_repeated_hits_on_one_chunk_collapse_into_one_update(connection):
 
 
 def test_flush_writes_one_retrieval_log_row_per_recorded_search(connection):
-    access_log.record_retrieval("first", "memory", [_hit("chunk-a")], now=100.0)
-    access_log.record_retrieval("second", "all", [_hit("chunk-b")], now=101.0)
+    access_log.record_retrieval("first", "memory", [_hit("chunk-a")], now=NOW)
+    access_log.record_retrieval("second", "all", [_hit("chunk-b")], now=NOW + 1)
 
-    asyncio.run(access_log.flush(now=101.0))
+    asyncio.run(access_log.flush(now=NOW + 1))
 
     inserts = connection.matching("INSERT")
     assert len(inserts) == 1
@@ -157,11 +161,11 @@ def test_flush_writes_one_retrieval_log_row_per_recorded_search(connection):
 
 
 def test_flush_drains_the_buffer(connection):
-    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=100.0)
-    asyncio.run(access_log.flush(now=100.0))
+    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=NOW)
+    asyncio.run(access_log.flush(now=NOW))
     connection.statements.clear()
 
-    asyncio.run(access_log.flush(now=200.0))
+    asyncio.run(access_log.flush(now=NOW + 100))
 
     assert connection.statements == []
 
@@ -173,9 +177,9 @@ def test_flush_survives_a_failing_write(monkeypatch):
         yield  # pragma: no cover
 
     monkeypatch.setattr(db, "acquire", failing_acquire)
-    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=100.0)
+    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=NOW)
 
-    asyncio.run(access_log.flush(now=100.0))
+    asyncio.run(access_log.flush(now=NOW))
 
     assert access_log._pending_hits == {}
 
@@ -184,21 +188,21 @@ def test_flush_survives_a_failing_write(monkeypatch):
 
 
 def test_retention_delete_runs_at_most_once_per_hour(connection):
-    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=100.0)
-    asyncio.run(access_log.flush(now=100.0))
+    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=NOW)
+    asyncio.run(access_log.flush(now=NOW))
     assert len(connection.matching("DELETE")) == 1
 
-    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=200.0)
-    asyncio.run(access_log.flush(now=200.0))
+    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=NOW + 100)
+    asyncio.run(access_log.flush(now=NOW + 100))
     assert len(connection.matching("DELETE")) == 1
 
-    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=100.0 + 3601)
-    asyncio.run(access_log.flush(now=100.0 + 3601))
+    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=NOW + 3601)
+    asyncio.run(access_log.flush(now=NOW + 3601))
     assert len(connection.matching("DELETE")) == 2
 
 
 def test_retention_delete_runs_with_an_empty_buffer(connection):
-    asyncio.run(access_log.flush(now=100.0))
+    asyncio.run(access_log.flush(now=NOW))
 
     assert len(connection.matching("DELETE")) == 1
     assert connection.matching("INSERT") == []
@@ -214,7 +218,7 @@ def test_flusher_loop_flushes_on_the_configured_interval(monkeypatch, connection
     async def _run() -> None:
         stop = asyncio.Event()
         task = asyncio.create_task(access_log.flusher_loop(stop=stop))
-        access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=100.0)
+        access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=NOW)
         await asyncio.sleep(0.1)
         stop.set()
         await task
@@ -227,9 +231,9 @@ def test_flusher_loop_flushes_on_the_configured_interval(monkeypatch, connection
 
 def test_stop_flusher_flushes_pending_hits(connection):
     async def _run() -> None:
-        task = access_log.start_flusher()
-        access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=100.0)
-        await access_log.stop_flusher(task)
+        task = START_FLUSHER()
+        access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=NOW)
+        await STOP_FLUSHER(task)
 
     asyncio.run(_run())
 

@@ -6,7 +6,7 @@ at the module level, matching the existing convention (e.g.
 
 - ``api.search``       -- delegate for POST /search (memory_base.retrieval.search.search)
 - ``api.save_note``    -- delegate for POST /save_memory (memory_base.serve.notes.save_note)
-- ``api.log_retrieval``-- best-effort access logging after a search (memory_base.serve.access_log)
+- ``api.access_log``   -- buffered access logging after a search (memory_base.serve.access_log)
 - ``api.db_healthy``, ``api.embedding_healthy``, ``api.rerank_healthy``, ``api.llm_healthy``
   -- async dependency probes used by GET /health/services
 - ``api.hit_to_dict``  -- Hit -> {source, ref, date, score, text[, context]} serializer
@@ -46,11 +46,9 @@ def _hit(
 
 
 @pytest.fixture(autouse=True)
-def _no_op_access_log(monkeypatch):
-    async def fake_log_retrieval(query, source, hits):
-        return None
-
-    monkeypatch.setattr(api, "log_retrieval", fake_log_retrieval)
+def _empty_access_log_buffer(monkeypatch):
+    monkeypatch.setattr(api.access_log, "_pending_logs", [])
+    monkeypatch.setattr(api.access_log, "_pending_hits", {})
 
 
 # ---- GET /health and /health/services -------------------------------------------------------
