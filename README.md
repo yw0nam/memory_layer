@@ -128,8 +128,8 @@ Private repositories authenticate through the git credential store — see
                         ▼
                 code hits get ±40-line neighbour chunks as `context`
                         ▼
-                    hits[]  ─────► retrieval_log INSERT
-                                   hit_count++ / last_hit_at
+                    hits[]  ─────► in-process buffer
+                                   (flushed on an interval)
 ```
 
 Response text is truncated to 2000 chars. `score` is the rerank score, falling back to the
@@ -138,6 +138,14 @@ memory so they are not buried; code hits have no archived state and keep decayin
 paths mark archived rows `"archived": true` — on `/search` hits
 and on `/search/deep` evidence entries — since an archived note may have been superseded by
 a newer one.
+
+Both read paths write nothing to the database. Returned hit ids and per-chunk counters land
+in an in-process buffer that a background task flushes every `HIT_FLUSH_INTERVAL_SECONDS`
+(default 30) and on shutdown: one batched `retrieval_log` insert plus one deduplicated
+`hit_count` update, so repeated hits on a popular row collapse into a single `+ n`. The same
+cycle prunes `retrieval_log` rows older than `RETRIEVAL_LOG_RETENTION_DAYS` at startup and
+then at most hourly. An unclean stop loses at most one interval of counters, which only feed
+lifecycle decisions.
 
 ### Read path 2 — deep search (`POST /search/deep`)
 
@@ -172,7 +180,8 @@ Multi-hop decomposition over memory only, bounded by `DEEP_TIMEOUT_SECONDS` and
 ### Lifecycle loop
 
 ```
- row returned by a search ──► hit_count++ , last_hit_at
+ row returned by a search ──► buffered, then flushed
+                              hit_count += n , last_hit_at
                                    │
                                    ▼
         ts_last_active older than COLD_AGE_DAYS
@@ -317,7 +326,8 @@ Tuning knobs, all optional: `ATOM_RETRIEVE_K`, `ATOMS_RETRIEVE`, `ATOMS_GENERATE
 `NOTE_SIMILAR_THRESHOLD`, `DEEP_MAX_HOPS`, `DEEP_TIMEOUT_SECONDS`, `INGEST_MAX_BYTES`,
 `INGEST_BACKLOG_PER_KEY`, `INGEST_BACKLOG_MAX`, `INGEST_MAX_CONCURRENT_JOBS`,
 `REPO_MAX_QUEUED`, `REPO_MAX_BYTES`, `REPO_DISK_HEADROOM_BYTES`, `JOB_RETENTION_SECONDS`,
-`COLD_AGE_DAYS`, `COLD_UNHIT_DAYS`.
+`COLD_AGE_DAYS`, `COLD_UNHIT_DAYS`, `HIT_FLUSH_INTERVAL_SECONDS`,
+`RETRIEVAL_LOG_RETENTION_DAYS`.
 
 ### Private repositories
 

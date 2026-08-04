@@ -21,7 +21,7 @@ def isolate_unit_app_lifespan(request, monkeypatch):
     if request.node.get_closest_marker("integration") is not None:
         return
 
-    from memory_base.serve import job_store
+    from memory_base.serve import access_log, job_store
 
     async def initialize():
         return None
@@ -32,9 +32,17 @@ def isolate_unit_app_lifespan(request, monkeypatch):
     async def stop_workers(tasks):
         assert tasks == []
 
+    def start_flusher():
+        return None
+
+    async def stop_flusher(task):
+        assert task is None
+
     monkeypatch.setattr(job_store, "initialize", initialize)
     monkeypatch.setattr(job_store, "start_workers", start_workers)
     monkeypatch.setattr(job_store, "stop_workers", stop_workers)
+    monkeypatch.setattr(access_log, "start_flusher", start_flusher)
+    monkeypatch.setattr(access_log, "stop_flusher", stop_flusher)
 
 
 @pytest.fixture()
