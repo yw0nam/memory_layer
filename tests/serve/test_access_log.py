@@ -1,10 +1,11 @@
 """Integration tests for access logging.
 
 Exercises the real REST app against Postgres + vLLM (embedder/reranker): a
-POST /search must write one retrieval_log row and bump hit_count/last_hit_at
-on every returned memory_chunks hit; POST /save_memory must roundtrip through
-the real DB; ensure_schema must be idempotent and add the access-log columns
-and table. Skipped when the DB is unreachable, matching the pattern in
+POST /search buffers its activity and a forced flush must write one
+retrieval_log row and bump hit_count/last_hit_at on every returned
+memory_chunks hit; POST /save_memory must roundtrip through the real DB;
+ensure_schema must be idempotent and add the access-log columns and table.
+Skipped when the DB is unreachable, matching the pattern in
 tests/test_save_memory.py.
 """
 
@@ -90,7 +91,7 @@ async def _delete_retrieval_log(query_text: str) -> None:
 
 @pytest.mark.integration
 @requires_db
-def test_log_retrieval_removes_rows_older_than_retention():
+def test_flush_removes_rows_older_than_retention():
     old_query = f"retention-old-{time.time_ns()}"
     new_query = f"retention-new-{time.time_ns()}"
     now = time.time()
@@ -109,7 +110,9 @@ def test_log_retrieval_removes_rows_older_than_retention():
         finally:
             await conn.close()
 
-        await access_log.log_retrieval(new_query, "memory", [], now=now)
+        access_log.record_retrieval(new_query, "memory", [], now=now)
+        access_log._last_retention = 0.0
+        await access_log.flush(now=now)
 
         conn = await asyncpg.connect(db_url())
         try:
@@ -149,8 +152,8 @@ async def _fetch_chunks_by_ids(ids: list[str]):
 
 @pytest.mark.integration
 @requires_db
-def test_search_logs_retrieval_and_bumps_hit_columns(client):
-    """Every returned hit is logged and its memory_chunks row is bumped.
+def test_search_logs_retrieval_and_bumps_hit_columns_after_flush(client):
+    """Every returned hit is logged and its memory_chunks row is bumped on flush.
 
     Ranking is not asserted (which rows come back depends on the corpus);
     the pin is the mechanism: one retrieval_log row per search, and every
@@ -169,6 +172,8 @@ def test_search_logs_retrieval_and_bumps_hit_columns(client):
         assert response.status_code == 200
         assert response.json()
 
+        asyncio.run(access_log.flush())
+
         log_row = asyncio.run(_fetch_latest_retrieval_log(content, "memory"))
         assert log_row is not None
         assert log_row["query"] == content
@@ -181,6 +186,51 @@ def test_search_logs_retrieval_and_bumps_hit_columns(client):
         for row in bumped:
             assert row["hit_count"] >= 1
             assert row["last_hit_at"] is not None and row["last_hit_at"] >= t0
+    finally:
+        asyncio.run(_delete_note(note_id))
+        asyncio.run(_delete_retrieval_log(content))
+
+
+async def _fetch_logged_hit_counts(query_text: str, note_id: str) -> int:
+    conn = await asyncpg.connect(db_url())
+    try:
+        rows = await conn.fetch(
+            f'SELECT hit_ids FROM "{PG_SCHEMA}".retrieval_log WHERE query=$1',
+            query_text,
+        )
+    finally:
+        await conn.close()
+    return sum(1 for row in rows if note_id in row["hit_ids"])
+
+
+@pytest.mark.integration
+@requires_db
+def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
+    """Two searches collapse into one batched bump that /admin/notes reports."""
+    content = "access-log integration pin: zzzflushpin buffered counter advance marker"
+    note_id = build_note_row(content, "note", None, NOW)["id"]
+    asyncio.run(_delete_note(note_id))
+    asyncio.run(_delete_retrieval_log(content))
+    try:
+        asyncio.run(save_note(content))
+        baseline = asyncio.run(_fetch_chunk(note_id))["hit_count"]
+
+        for _ in range(2):
+            response = client.post(
+                "/search", json={"query": content, "source": "memory", "top_k": 5}
+            )
+            assert response.status_code == 200
+
+        asyncio.run(access_log.flush())
+
+        logged = asyncio.run(_fetch_logged_hit_counts(content, note_id))
+        assert logged >= 1
+        assert asyncio.run(_fetch_chunk(note_id))["hit_count"] == baseline + logged
+
+        listed = client.get("/admin/notes", params={"older_than_days": 0}).json()
+        note = next(row for row in listed if row["id"] == note_id)
+        assert note["hit_count"] == baseline + logged
+        assert note["last_hit_at"] is not None
     finally:
         asyncio.run(_delete_note(note_id))
         asyncio.run(_delete_retrieval_log(content))
