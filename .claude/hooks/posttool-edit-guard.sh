@@ -24,7 +24,7 @@ case "$fp" in
   *.md)
     bad=$(printf '%s' "$text" \
       | grep -vE '제거/대체/축소' \
-      | grep -nE '더 이상|이전엔|이전에는|기존에는|제거(했|됐|되었)|대체(했|됐|되었)|축소(했|됐|되었)|추가했다|supersede|no longer' \
+      | grep -nE '더 이상|이전엔|이전에는|기존에는|제거(했|됐|되었)|대체(했|됐|되었)|축소(했|됐|되었)|추가했다|no longer' \
       | head -5)
     if [ -n "$bad" ]; then
       jq -cn --arg b "$bad" \

@@ -2,84 +2,20 @@
 
 ## Core principles
 
-- **Low-signal data never reaches the DB.** Agent-authored notes arrive already distilled through the MCP `save_memory` tool (validation, dedup, supersede) and are stored without embedding raw text. Documents go through chunking and LLM enrichment (atomize/summarize) before embedding. Raw transcripts and raw files are never embedded directly; only distilled, high-signal content is stored.
+- **Low-signal data never reaches the DB.** Agent-authored notes arrive distilled through the MCP `save_memory` tool (validation, dedup, supersede) and are stored without embedding raw text. Documents go through chunking and LLM enrichment (atomize/summarize) before embedding. Raw transcripts and raw files are never embedded directly; only distilled, high-signal content is stored.
 - **Source-specific knowledge lives only in source adapters (`adapters/`).** `ingest/`, the storage schema, retrieval (`retrieval/`), and consumers (`serve/`) are source-agnostic. The `memory_chunks` and `code_chunks` tables are the only contract between the write side and the read side — adding a new source must not change retrieval or serving code.
+- **The REST API is the single backend.** Every consumer (MCP server, n8n, scripts) reaches stored chunks through it, never through the DB directly.
 - **Assemble verified engines; don't reinvent.** Chunking/incremental indexing/vector storage/serving use proven components (CocoIndex, pgvector, FastMCP). Design decisions are grounded in web research and confirmed with the user — not invented ad hoc.
+- **Endpoints and credentials live in `.env` (gitignored).** Never hardcode them.
 
-## Project structure
+## Working principles
 
-The REST API is the single backend: every consumer (MCP server, n8n, scripts) reaches
-stored chunks through it, never through the DB directly.
-
-```
-src/memory_base/
-  core/
-    config.py         # shared constants + LLM/embedding clients (vLLM, OpenAI-compatible)
-    schema.py         # memory_chunks + retrieval-log DDL
-    logger.py         # unified loguru setup: colored stderr + daily-rotated file sink
-  ingest/
-    enrich.py         # generic JSON-mode enrichment for stored content
-    code.py           # CocoIndex app: multi-repo code chunking + embedding over the repo cache
-  adapters/
-    document.py       # document conversion, chunking, CSV sampling, storage-row mapping
-    document_worker.py# killable MarkItDown conversion worker
-  retrieval/
-    search.py         # hybrid search: FTS + vector + IDF + time decay → RRF → rerank
-    decompose.py      # knowledge-aware decomposition: multi-hop retrieval over memory atoms
-  serve/
-    api.py            # Starlette REST API (search, deep search, save, repos, admin) — the backend
-    ingest_api.py     # bounded async document-ingestion orchestration
-    repos.py          # URL-driven git repo cache management + code re-indexing
-    job_store.py      # Redis mirror of job state: survives a restart, degrades to memory-only
-    notes.py          # validation + storage for agent-authored notes
-    admin.py          # memory lifecycle operations (duplicates, archive, restore)
-    access_log.py     # best-effort persistence of retrieval activity
-    mcp_server.py     # MCP server over REST (stdio | SSE | streamable-http), Docker serves streamable HTTP
-  eval/
-    retrieval.py      # reproducible retrieval evaluation with an atom-lane A/B report
-tests/                # pytest mirrors the covered src package; `integration` marks DB/vLLM dependence
-  core/
-  adapters/
-  ingest/
-  retrieval/
-  eval/
-  serve/
-  conftest.py         # shared pytest configuration and fixtures
-  fixtures/           # shared fixture data
-  test_compose_wiring.py # repository-level Compose wiring
-scripts/ci/           # CI helper scripts (test-guard)
-```
-
-## Commands
-
-```bash
-uv sync                                              # install deps + editable package
-uv run pytest                                        # all tests (integration skips if DB is down)
-uv run pytest -m "not integration"                   # unit tests only (what CI runs)
-uv run ruff format --check . && uv run ruff check .  # lint (ruff is the only Python linter)
-docker compose up -d db redis                        # pgvector on :5439, job state on :6379
-docker compose up -d --build api                     # REST backend on :8010
-docker compose up -d --build mcp                     # MCP server, streamable HTTP on :8765
-docker compose exec api uv run cocoindex update src/memory_base/ingest/code.py   # (re)index every cached repo
-claude mcp add --transport http memory-base http://localhost:8765/mcp
-```
-
-Code repositories are added and removed by git URL at runtime — `POST /repos {url}`,
-`DELETE /repos/{name}`, `GET /repos`, and the matching `ingest_repo` / `remove_repo` /
-`list_repos` MCP tools. Each mutation clones or removes a checkout under `REPO_CACHE` and
-re-runs the indexer, which mounts every cache subdirectory as an independent codebase.
-A checkout is bounded by `REPO_MAX_BYTES` (default 2 GiB): the git process is killed once the
-checkout grows past the cap, and a rejected clone leaves nothing behind. `POST /repos` answers
-`507` without creating a job unless free space covers `REPO_DISK_HEADROOM_BYTES` (default 1 GiB)
-plus one full-size checkout.
-Both repo and document ingestion answer `202 {job_id, status_url}`; poll that URL for the
-outcome.
-
-Endpoints and credentials live in `.env` (gitignored): `LLM_URL`, `EMB_URL`, `RERANK_URL`, `DB_URL`, `LLM_MODEL`, `EMB_MODEL`, `RERANK_MODEL`, `DATA_ROOT`. Never hardcode them.
-
-`DATA_ROOT` is the one host directory every container writes state into — `pgdata` (Postgres), `redis` (job state), `repos_cache` (git checkouts) and `cocoindex_state` (incremental ledger) are bound under it by `docker-compose.yml`. Compose refuses to start when it is unset rather than binding the host root. `REPO_CACHE` and `COCOINDEX_DB` are set by `docker-compose.yml` to container-local paths so the container never inherits a host location, and one ledger tracks one repo cache. Losing the repo cache or the ledger orphans `code_chunks` rows until the repos are re-added; losing the Redis directory drops job history only.
-
-Logging is configured once per process via `memory_base.core.logger.setup_logging()`; modules log through `loguru` or stdlib `logging` (intercepted into the same sinks). `LOG_DIR` (optional, default `logs/`) sets the file-sink directory.
+- **No backward compatibility.** Delete unused paths instead of adding compat layers, fallbacks, or migrations.
+- **Simplest implementation that fully meets current requirements.** No speculative abstractions, config values, or indirection layers.
+- **Grow the system in layers.** Start from the smallest end-to-end working version and add features on top of a working result; never trade working code for unfinished complexity.
+- **Components are modules with a clear separation of concerns.**
+- **Check installed dependencies first** before hand-rolling or adding a package; never claim a library lacks a feature without reading its docs and types.
+- **Architecture decisions are long-term.** No stopgaps that only get past today and need replacing later.
 
 ## Development work
 
