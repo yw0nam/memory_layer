@@ -79,7 +79,6 @@ def test_search_code_posts_to_search_with_source_code(monkeypatch):
         "query": "halfvec index",
         "source": "code",
         "top_k": 5,
-        "namespaces": ["default"],
     }
 
 
@@ -96,7 +95,6 @@ def test_search_memory_posts_with_source_memory(monkeypatch):
         "query": "burst gate",
         "source": "memory",
         "top_k": 3,
-        "namespaces": ["default"],
     }
 
 
@@ -124,7 +122,6 @@ def test_search_memory_forwards_filters_and_atom_option(monkeypatch):
         "kind": "decision",
         "tags": ["infra"],
         "include_atoms": False,
-        "namespaces": ["default"],
     }
 
 
@@ -217,7 +214,6 @@ def test_search_all_posts_with_source_all(monkeypatch):
         "query": "anything",
         "source": "all",
         "top_k": 10,
-        "namespaces": ["default"],
     }
 
 
@@ -253,7 +249,6 @@ def test_save_memory_posts_to_save_memory_and_returns_body(monkeypatch):
         "kind": "note",
         "tags": ["infra"],
         "supersedes": None,
-        "namespace": "default",
     }
     assert result == {"id": "note:abc", "kind": "note", "stored": True}
 
@@ -339,7 +334,7 @@ def test_deep_search_posts_to_search_deep(monkeypatch):
     result = asyncio.run(mcp_server.deep_search(query="multi-hop question"))
     assert captured["method"] == "POST"
     assert captured["path"] == "/search/deep"
-    assert captured["json"] == {"query": "multi-hop question", "namespaces": ["default"]}
+    assert captured["json"] == {"query": "multi-hop question"}
     assert result["stopped_reason"] == "done"
 
 
@@ -367,7 +362,6 @@ def test_deep_search_forwards_options(monkeypatch):
         "max_hops": 2,
         "kind": "decision",
         "tags": ["infra"],
-        "namespaces": ["default"],
     }
 
 
