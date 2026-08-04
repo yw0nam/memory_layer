@@ -305,10 +305,11 @@ username or token percent-encoded:
 
 ```
 https://user:token@github.com
-https://you%40example.com:api-token@bitbucket.org
+https://x-bitbucket-api-token-auth:api-token@bitbucket.org
 ```
 
-Bitbucket API tokens use the Atlassian account email as the username. Credentials never
+Bitbucket API tokens authenticate git over https with the static username
+`x-bitbucket-api-token-auth` (the account email is for the REST API only). Credentials never
 enter repo URLs or git remotes, so `GET /repos` and job logs cannot leak them.
 `GIT_TERMINAL_PROMPT=0` makes a clone with no matching credential fail immediately instead
 of waiting on a prompt.
