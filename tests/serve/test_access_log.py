@@ -81,6 +81,11 @@ async def _fetch_latest_retrieval_log(query_text: str, source: str):
         await conn.close()
 
 
+def _force_flush(client) -> None:
+    """Flush on the app's own event loop, exactly as the interval flusher does."""
+    client.portal.call(access_log.flush)
+
+
 async def _delete_retrieval_log(query_text: str) -> None:
     conn = await asyncpg.connect(db_url())
     try:
@@ -172,7 +177,7 @@ def test_search_logs_retrieval_and_bumps_hit_columns_after_flush(client):
         assert response.status_code == 200
         assert response.json()
 
-        asyncio.run(access_log.flush())
+        _force_flush(client)
 
         log_row = asyncio.run(_fetch_latest_retrieval_log(content, "memory"))
         assert log_row is not None
@@ -221,7 +226,7 @@ def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
             )
             assert response.status_code == 200
 
-        asyncio.run(access_log.flush())
+        _force_flush(client)
 
         logged = asyncio.run(_fetch_logged_hit_counts(content, note_id))
         assert logged >= 1
