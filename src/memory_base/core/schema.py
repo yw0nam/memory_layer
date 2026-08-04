@@ -21,8 +21,10 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           ts_last_active double precision NOT NULL, idf_score double precision,
           metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb
         );
-        CREATE INDEX IF NOT EXISTS memory_chunks__fts ON {schema}.memory_chunks
-          USING GIN (to_tsvector('simple', content_raw));
+        CREATE EXTENSION IF NOT EXISTS pg_textsearch;
+        DROP INDEX IF EXISTS {schema}.memory_chunks__fts;
+        CREATE INDEX IF NOT EXISTS memory_chunks_bm25 ON {schema}.memory_chunks
+          USING bm25(content_raw) WITH (text_config='english');
         CREATE INDEX IF NOT EXISTS memory_chunks__vec ON {schema}.memory_chunks
           USING hnsw (embedding halfvec_cosine_ops);
         CREATE INDEX IF NOT EXISTS memory_chunks__session ON {schema}.memory_chunks (session_id);

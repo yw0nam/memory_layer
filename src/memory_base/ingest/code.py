@@ -179,15 +179,15 @@ async def app_main(root_dir: pathlib.Path) -> None:
         pg_schema_name=PG_SCHEMA,
     )
     table.declare_vector_index(column="embedding", metric="cosine", method="hnsw")
-    # FTS over raw code: exact tokens (error strings, flags, identifiers).
-    # 'simple' config: no stemming — right for code identifiers.
     table.declare_sql_command_attachment(
-        name="fts_gin",
+        name="bm25",
         setup_sql=(
-            f'CREATE INDEX IF NOT EXISTS {TABLE_NAME}__fts ON "{PG_SCHEMA}"."{TABLE_NAME}" '
-            "USING GIN (to_tsvector('simple', code))"
+            "CREATE EXTENSION IF NOT EXISTS pg_textsearch; "
+            f'DROP INDEX IF EXISTS "{PG_SCHEMA}".{TABLE_NAME}__fts; '
+            f'CREATE INDEX IF NOT EXISTS code_chunks_bm25 ON "{PG_SCHEMA}"."{TABLE_NAME}" '
+            "USING bm25(code) WITH (text_config='simple')"
         ),
-        teardown_sql=f'DROP INDEX IF EXISTS "{PG_SCHEMA}".{TABLE_NAME}__fts',
+        teardown_sql=f'DROP INDEX IF EXISTS "{PG_SCHEMA}".code_chunks_bm25',
     )
 
     for entry in sorted(root_dir.iterdir()):

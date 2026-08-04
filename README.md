@@ -29,7 +29,7 @@ Raw transcripts and raw files are never embedded.
      │               │               │               │
      └───────────────┴───────┬───────┴───────────────┘
                              ▼
-              Postgres 17 + pgvector  :5439
+              Postgres 17 + pgvector + pg_textsearch  :5439
               memory_chunks · code_chunks · retrieval_log
 
   side services:  vLLM (LLM / embedding / rerank)    Redis :6379 (job state)
@@ -67,7 +67,7 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
 ┌──────────────────────────────────────┐      ┌────────────────────────┐
 │ memory.memory_chunks                 │      │ memory.code_chunks     │
 │ note │ decision │ doc │ atom         │      │ repo · file · L1-L40   │
-│ halfvec(2048) + HNSW + GIN FTS       │      │ halfvec + HNSW + FTS   │
+│ halfvec(2048) + HNSW + BM25          │      │ halfvec + HNSW + BM25  │
 └──────────────────────────────────────┘      └────────────────────────┘
         ▲                                                ▲
         └──── the only contract between write and read ──┘
@@ -108,7 +108,7 @@ Private repositories authenticate through the git credential store — see
  └───────┬────────────┘              └─────────┬──────────┘
          └──────────────┬───────────────────────┘
                         ▼
-                RRF   Σ 1/(60 + rank)
+                RRF   Σ w/(60 + rank)   w: vec 1.0 · fts 0.2 · rec/idf 0.25
                         ▼
                 ⏳ time decay (90-day half-life)
                         ▼
@@ -185,6 +185,24 @@ Multi-hop decomposition over memory only, bounded by `DEEP_TIMEOUT_SECONDS` and
 agent notes, and `POST /admin/restore` clears `archived_at`. Every mutating admin route
 previews by default and acts only with `{"confirm": true}`.
 
+## Retrieval quality
+
+Doc-level scores on two corpora — ZX Bank (RAG-Multi-Corpus, 71 docs / 100 queries,
+full ingest pipeline) and BEIR SciFact (5,183 docs / 300 queries):
+
+| corpus | mode | hit@5 | hit@10 | MRR@10 |
+|---|---|---|---|---|
+| ZX Bank | vector only | 0.93 | 0.95 | 0.84 |
+| ZX Bank | hybrid | 0.93 | **0.98** | 0.81 |
+| ZX Bank | hybrid + rerank (default) | 0.93 | 0.95 | 0.81 |
+| SciFact | vector only | 0.82 | 0.87 | 0.69 |
+| SciFact | hybrid | 0.82 | 0.89 | **0.71** |
+| SciFact | hybrid + rerank (default) | **0.86** | **0.90** | **0.75** |
+
+The BM25 leg adds recall the embedder misses (ZX hit@10 0.98 vs 0.95 vector-only) and
+lifts hybrid above vector-only outright on SciFact. Method, single-leg ablations, and
+known trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
+
 ## Storage
 
 `memory.memory_chunks` — one table for every non-code source.
@@ -195,7 +213,7 @@ previews by default and acts only with `{"confirm": true}`.
 | `source_type` | `agent_note` · `document` |
 | `source_ref` | `save_memory` or the document id |
 | `chunk_kind` | `note` · `decision` · `doc` · `atom` |
-| `content_raw` / `distilled` | stored text; searches read `distilled` first |
+| `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active`, `idf_score` | ranking signals |
 | `metadata` | jsonb: `tags`, `parent_id`, `heading_path`, `content_hash`, `search_ref`, … |
@@ -252,7 +270,7 @@ reading archived rows does not.
 
 ```bash
 uv sync
-docker compose up -d db redis            # pgvector on :5439, job state on :6379
+docker compose up -d --build db redis    # pgvector + pg_textsearch on :5439, job state on :6379
 docker compose up -d --build api         # REST backend on :8010
 docker compose up -d --build mcp         # MCP server, streamable HTTP on :8765
 claude mcp add --transport http memory-base http://localhost:8765/mcp

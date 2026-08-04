@@ -38,6 +38,13 @@ SEARCH_KINDS = ("doc", "note", "decision")
 RERANK_TEXT_LIMIT = 4000
 NEIGHBOR_LINE_WINDOW = 40
 NEIGHBOR_LIMIT = 2
+MEMORY_BM25_INDEX = "memory_chunks_bm25"
+CODE_BM25_INDEX = "code_chunks_bm25"
+FTS_RRF_WEIGHT = 0.2
+# Recency/idf are tie-breakers ("when relevance is otherwise equal, the newer wins");
+# ranked recency itself is enforced post-fusion by the time-decay multiplier.
+TIEBREAK_RRF_WEIGHT = 0.25
+# BM25 index scans cap candidates at bm25_catalog.bm25_limit (100 by default) before filters.
 
 # vLLM's official Qwen3 reranker example; byte-exact.
 QWEN3_RERANK_PREFIX = (
@@ -67,12 +74,14 @@ class Hit:
         return self.rerank_score if self.rerank_score is not None else self.rrf
 
 
-def rrf_fuse(lists: list[list[Any]]) -> dict[Any, float]:
-    """score(d) = sum over lists of 1/(k + rank)."""
+def rrf_fuse(lists: list[list[Any]], weights: list[float] | None = None) -> dict[Any, float]:
+    """Fuse ranked lists with score(d) = sum(weight / (k + rank))."""
+    if weights is None:
+        weights = [1.0] * len(lists)
     scores: dict[Any, float] = {}
-    for ranked in lists:
+    for ranked, weight in zip(lists, weights, strict=True):
         for rank, key in enumerate(ranked, start=1):
-            scores[key] = scores.get(key, 0.0) + 1.0 / (RRF_K + rank)
+            scores[key] = scores.get(key, 0.0) + weight / (RRF_K + rank)
     return scores
 
 
@@ -190,15 +199,18 @@ async def _search_code(
     )
     fts_rows = await conn.fetch(
         f"SELECT {columns} FROM {tbl} "
-        f"WHERE to_tsvector('simple', code) @@ websearch_to_tsquery('simple', $1){repo_clause} "
-        f"ORDER BY ts_rank_cd(to_tsvector('simple', code), websearch_to_tsquery('simple', $1)) DESC "
+        f"WHERE (code <@> to_bm25query($1, '{CODE_BM25_INDEX}')) < 0{repo_clause} "
+        f"ORDER BY code <@> to_bm25query($1, '{CODE_BM25_INDEX}') "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
         query,
         *repo_args,
     )
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
     recency = time_decay_list({r["id"]: r["mtime"] for r in by_id.values()})
-    scores = rrf_fuse([[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency])
+    scores = rrf_fuse(
+        [[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency],
+        [1.0, FTS_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT],
+    )
 
     hits = []
     for cid, score in scores.items():
@@ -252,8 +264,8 @@ async def _search_memory(
     )
     fts_rows = await conn.fetch(
         f"SELECT {columns} FROM {tbl} WHERE {predicates} AND "
-        "to_tsvector('simple', content_raw) @@ websearch_to_tsquery('simple', $1) "
-        f"ORDER BY ts_rank_cd(to_tsvector('simple', content_raw), websearch_to_tsquery('simple', $1)) DESC "
+        f"(content_raw <@> to_bm25query($1, '{MEMORY_BM25_INDEX}')) < 0 "
+        f"ORDER BY content_raw <@> to_bm25query($1, '{MEMORY_BM25_INDEX}') "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
         query,
         *filter_args,
@@ -261,7 +273,10 @@ async def _search_memory(
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
     recency = time_decay_list({r["id"]: r["ts_last_active"] for r in by_id.values()})
     idf = time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})
-    scores = rrf_fuse([[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf])
+    scores = rrf_fuse(
+        [[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf],
+        [1.0, FTS_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT],
+    )
 
     hits = []
     for cid, score in scores.items():

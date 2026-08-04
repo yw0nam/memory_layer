@@ -15,6 +15,7 @@
 - **Grow the system in layers.** Start from the smallest end-to-end working version and add features on top of a working result; never trade working code for unfinished complexity.
 - **Components are modules with a clear separation of concerns.**
 - **Check installed dependencies first** before hand-rolling or adding a package; never claim a library lacks a feature without reading its docs and types.
+- **Permissive licenses only.** Dependencies and Postgres extensions carry MIT-class licenses (MIT / BSD / Apache-2.0 / PostgreSQL); no copyleft (GPL/AGPL) — commercial deployment must stay unencumbered.
 - **Architecture decisions are long-term.** No stopgaps that only get past today and need replacing later.
 
 ## Development work
