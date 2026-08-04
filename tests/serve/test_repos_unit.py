@@ -46,8 +46,6 @@ def _delete(path):
     [
         "https://github.com/owner/repo.git",
         "http://example.com/owner/repo",
-        "ssh://git@github.com/owner/repo.git",
-        "git@github.com:owner/repo.git",
     ],
 )
 def test_validate_repo_url_accepts_supported_forms(url):
@@ -65,6 +63,10 @@ def test_validate_repo_url_accepts_supported_forms(url):
         "https://github.com/owner/repo.git\n--upload-pack=x",
         "--upload-pack=/bin/sh",
         "https://exa mple.com/repo.git",
+        "ssh://git@github.com/owner/repo.git",
+        "git@github.com:owner/repo.git",
+        "https://user:token@github.com/owner/repo.git",
+        "https://token@github.com/owner/repo.git",
     ],
 )
 def test_validate_repo_url_rejects_bad_forms(url):
@@ -80,8 +82,8 @@ def test_validate_repo_url_rejects_bad_forms(url):
     [
         ("https://github.com/owner/repo.git", "repo"),
         ("https://github.com/owner/repo", "repo"),
-        ("git@github.com:owner/my-repo.git", "my-repo"),
-        ("ssh://git@host/owner/repo.git/", "repo"),
+        ("https://github.com/owner/my-repo.git", "my-repo"),
+        ("https://host/owner/repo.git/", "repo"),
     ],
 )
 def test_derive_repo_name_from_url(url, expected):
