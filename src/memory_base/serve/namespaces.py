@@ -62,25 +62,44 @@ async def namespace_exists(name: str) -> bool:
         return await _exists_in_conn(conn, name)
 
 
-async def create_namespace(name: Any) -> dict[str, Any]:
-    """Register a new namespace; raises NamespaceExistsError on duplicate."""
+VISIBILITIES = ("public", "private")
+
+
+def validate_visibility(visibility: Any) -> str:
+    """Validate a namespace visibility value; defaults handled by the caller."""
+    if visibility not in VISIBILITIES:
+        raise NamespaceError(f"visibility must be one of {VISIBILITIES}")
+    return visibility
+
+
+async def create_namespace(
+    name: Any, visibility: str = "public", owner: str | None = None
+) -> dict[str, Any]:
+    """Register a new namespace; raises NamespaceExistsError on duplicate.
+
+    A private namespace records `owner` (the minting key's label); a public
+    one has no owner.
+    """
     validate_namespace_name(name)
+    validate_visibility(visibility)
     now = time.time()
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         inserted = await conn.fetchval(
             f"""
-            INSERT INTO "{PG_SCHEMA}".namespaces (name, created_at)
-            VALUES ($1, $2)
+            INSERT INTO "{PG_SCHEMA}".namespaces (name, created_at, visibility, owner)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT (name) DO NOTHING
             RETURNING name
             """,
             name,
             now,
+            visibility,
+            owner,
         )
     if inserted is None:
         raise NamespaceExistsError(f"namespace already exists: {name}")
-    return {"name": name, "created_at": now}
+    return {"name": name, "created_at": now, "visibility": visibility, "owner": owner}
 
 
 async def list_namespaces() -> list[dict[str, Any]]:
@@ -88,9 +107,22 @@ async def list_namespaces() -> list[dict[str, Any]]:
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         rows = await conn.fetch(
-            f'SELECT name, created_at FROM "{PG_SCHEMA}".namespaces ORDER BY created_at'
+            f'SELECT name, created_at, visibility, owner FROM "{PG_SCHEMA}".namespaces '
+            "ORDER BY created_at"
         )
     return [dict(row) for row in rows]
+
+
+async def get_namespace(name: str) -> dict[str, Any] | None:
+    """Fetch one namespace's registry row, or None if unregistered."""
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        row = await conn.fetchrow(
+            f'SELECT name, created_at, visibility, owner FROM "{PG_SCHEMA}".namespaces '
+            "WHERE name = $1",
+            name,
+        )
+    return dict(row) if row else None
 
 
 async def delete_namespace(name: str) -> None:
