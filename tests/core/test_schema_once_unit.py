@@ -136,6 +136,30 @@ def test_ensure_schema_adds_api_keys_table_and_namespace_visibility(monkeypatch)
     assert "ADD COLUMN IF NOT EXISTS owner text;" in sql
 
 
+def test_ensure_schema_adds_the_shared_jobs_table(monkeypatch):
+    captured = {}
+
+    class RecordingConnection(FakeConnection):
+        async def execute(self, query, *args):
+            captured["sql"] = query
+            await super().execute(query, *args)
+
+    asyncio.run(schema.ensure_schema(RecordingConnection()))
+    sql = captured["sql"]
+    assert 'CREATE TABLE IF NOT EXISTS "test_schema".jobs' in sql
+    for column in (
+        "job_id text PRIMARY KEY",
+        "kind text NOT NULL",
+        "key_id text NOT NULL",
+        "filename text",
+        "spool_path text",
+        "url text",
+        "branch text",
+        "enrichment_retries integer",
+    ):
+        assert column in sql
+
+
 def test_rebinding_module_pg_schema_keeps_ddl_and_guard_in_sync(monkeypatch):
     """Rebinding schema.PG_SCHEMA, as eval/retrieval.py's _set_schema does, must move
     both the DDL target and the once-guard's recorded name together."""

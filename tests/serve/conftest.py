@@ -22,7 +22,13 @@ TEST_API_KEY = "test-key"
 def _stub_api_key_auth(request, monkeypatch):
     if "real_auth" in request.keywords:
         return
-    identity = auth.KeyIdentity(label="test", home="default", is_admin=True, allowed=frozenset())
+    identity = auth.KeyIdentity(
+        key_id="test-key-hash",
+        label="test",
+        home="default",
+        is_admin=True,
+        allowed=frozenset(),
+    )
 
     async def fake_authenticate_request(plaintext_key):
         return identity if plaintext_key == TEST_API_KEY else None

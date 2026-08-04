@@ -41,21 +41,28 @@ def _post(path, **kwargs):
     return asyncio.run(request())
 
 
-class AcceptingRegistry:
+class AcceptingBacklog:
     def __init__(self):
         self.job = None
-        self.runner = None
+        self.kwargs = None
 
-    def has_capacity(self):
-        return True
-
-    def create(self, document_id):
+    async def admit(self, **kwargs):
+        self.kwargs = kwargs
         now = time.time()
-        self.job = ingest_api.IngestJob("job-1", document_id, created_at=now, updated_at=now)
+        self.job = ingest_api.IngestJob(
+            job_id="job-1",
+            document_id=kwargs["document_id"],
+            namespace=kwargs["namespace"],
+            origin=kwargs["origin"],
+            mode=kwargs["mode"],
+            filename=kwargs["filename"],
+            spool_path=kwargs["spool_path"],
+            key_id=kwargs["key_id"],
+            key_label=kwargs["key_label"],
+            created_at=now,
+            updated_at=now,
+        )
         return self.job
-
-    def start(self, job, runner):
-        self.runner = runner
 
 
 @pytest.mark.parametrize("extension", [".doc", ".xls", ".ppt", ".json", ""])
@@ -80,8 +87,8 @@ def test_rest_rejects_invalid_document_id_with_400(document_id):
 
 
 def test_rest_normalizes_document_id_and_returns_202(monkeypatch):
-    fake = AcceptingRegistry()
-    monkeypatch.setattr(ingest_api, "registry", fake)
+    fake = AcceptingBacklog()
+    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
     response = _post(
         "/ingest/document",
         data={"document_id": "Folder/Guide.MD", "origin": "local:item"},
@@ -94,24 +101,24 @@ def test_rest_normalizes_document_id_and_returns_202(monkeypatch):
         "status_url": "/ingest/jobs/job-1",
     }
     assert fake.job.document_id == "guide.md"
-    assert fake.runner is not None
+    assert fake.kwargs["filename"] == "GUIDE.MD"
+    Path(fake.kwargs["spool_path"]).unlink(missing_ok=True)
 
 
-def test_rest_returns_429_when_queue_is_full(monkeypatch):
-    fake = AcceptingRegistry()
-    fake.has_capacity = lambda: False
-    monkeypatch.setattr(ingest_api, "registry", fake)
+def test_rest_returns_distinct_429_when_per_key_backlog_is_full(monkeypatch):
+    async def full(**kwargs):
+        raise ingest_api.job_store.BacklogFullError("document per-key backlog limit reached")
+
+    monkeypatch.setattr(ingest_api.job_store, "admit_document", full)
     response = _post(
         "/ingest/document",
         files={"file": ("guide.md", b"content")},
     )
     assert response.status_code == 429
-    assert response.json() == {"error": "document ingest queue is full"}
+    assert response.json() == {"error": "document per-key backlog limit reached"}
 
 
 def test_rest_returns_413_when_upload_exceeds_limit(monkeypatch):
-    fake = AcceptingRegistry()
-    monkeypatch.setattr(ingest_api, "registry", fake)
     monkeypatch.setattr(ingest_api, "INGEST_MAX_BYTES", 5)
     response = _post(
         "/ingest/document",
@@ -125,19 +132,18 @@ def test_rest_returns_413_when_upload_exceeds_limit(monkeypatch):
 
 
 def test_rest_ingest_omitted_namespace_uses_default(monkeypatch):
-    fake = AcceptingRegistry()
-    monkeypatch.setattr(ingest_api, "registry", fake)
+    fake = AcceptingBacklog()
+    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
     response = _post(
         "/ingest/document",
         files={"file": ("guide.md", b"content")},
     )
     assert response.status_code == 202
+    assert fake.kwargs["namespace"] == "default"
+    Path(fake.kwargs["spool_path"]).unlink(missing_ok=True)
 
 
 def test_rest_ingest_unregistered_namespace_400(monkeypatch):
-    fake = AcceptingRegistry()
-    monkeypatch.setattr(ingest_api, "registry", fake)
-
     async def fake_namespace_exists(name):
         return False
 
@@ -149,60 +155,41 @@ def test_rest_ingest_unregistered_namespace_400(monkeypatch):
     )
     assert response.status_code == 400
     assert "unregistered namespace" in response.json()["error"]
-    assert fake.runner is None
 
 
-def test_rest_ingest_registered_namespace_reaches_job_runner(monkeypatch):
-    fake = AcceptingRegistry()
-    monkeypatch.setattr(ingest_api, "registry", fake)
-    captured = {}
+def test_rest_ingest_registered_namespace_is_persisted(monkeypatch):
+    fake = AcceptingBacklog()
+    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
 
     async def fake_namespace_exists(name):
         return name == "team-a"
 
-    async def fake_run_document_job(job, upload_path, filename, mode, origin, namespace="default"):
-        captured["namespace"] = namespace
-
     monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
-    monkeypatch.setattr(ingest_api, "run_document_job", fake_run_document_job)
     response = _post(
         "/ingest/document",
         data={"namespace": "team-a"},
         files={"file": ("guide.md", b"content")},
     )
     assert response.status_code == 202
-    asyncio.run(fake.runner())
-    assert captured["namespace"] == "team-a"
-
-
-def test_job_registry_queue_bound_ttl_and_completed_eviction():
-    registry = ingest_api.JobRegistry(
-        max_queued=1,
-        max_concurrent=1,
-        ttl_seconds=10,
-        max_completed=2,
-    )
-    first = registry.create("first.md")
-    with pytest.raises(OverflowError):
-        registry.create("second.md")
-
-    first.status = "succeeded"
-    first.updated_at = 100
-    assert asyncio.run(registry.get(first.job_id)) is None
-
-    now = time.time()
-    for index in range(3):
-        job = registry.create(f"{index}.md")
-        job.status = "succeeded"
-        job.updated_at = now + index
-    registry.cleanup(now + 3)
-    assert len(registry.jobs) == 2
-    assert [job.document_id for job in registry.jobs.values()] == ["1.md", "2.md"]
+    assert fake.kwargs["namespace"] == "team-a"
+    Path(fake.kwargs["spool_path"]).unlink(missing_ok=True)
 
 
 def test_job_response_has_exact_status_schema():
     now = time.time()
-    job = ingest_api.IngestJob("id", "doc.md", created_at=now, updated_at=now)
+    job = ingest_api.IngestJob.for_document(
+        job_id="id",
+        document_id="doc.md",
+        namespace="default",
+        origin=None,
+        mode="force",
+        filename="doc.md",
+        spool_path="/spool/id.md",
+        key_id="hash",
+        key_label="label",
+        created_at=now,
+        updated_at=now,
+    )
     assert set(job.response()) == {
         "job_id",
         "document_id",

@@ -32,25 +32,25 @@ def _post(path, **kwargs):
     return asyncio.run(request())
 
 
-class AcceptingRegistry:
+class AcceptingBacklog:
     """Accepts every job so a rejection can only come from the guard."""
 
     def __init__(self):
         self.job = None
-        self.runner = None
 
-    def has_capacity(self):
-        return True
-
-    def create(self, name, action):
+    async def admit(self, **kwargs):
         now = time.time()
-        self.job = repos.RepoJob("job-1", name, action, created_at=now, updated_at=now)
-        return self.job
-
-    def start(self, job, runner):
-        self.runner = runner
-
-    async def get(self, job_id):
+        self.job = repos.RepoJob.for_repo(
+            job_id="job-1",
+            name=kwargs["name"],
+            action=kwargs["action"],
+            url=kwargs["url"],
+            branch=kwargs["branch"],
+            key_id=kwargs["key_id"],
+            key_label=kwargs["key_label"],
+            created_at=now,
+            updated_at=now,
+        )
         return self.job
 
 
@@ -335,13 +335,13 @@ def test_post_repos_refuses_when_free_space_is_below_the_headroom(monkeypatch, t
     monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
     monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
     _fake_usage(monkeypatch, total=100 * 1024**3, free=200 * 1024**2)
-    registry = AcceptingRegistry()
-    monkeypatch.setattr(repos, "registry", registry)
+    backlog = AcceptingBacklog()
+    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
     assert response.status_code == 507
-    assert registry.job is None
+    assert backlog.job is None
 
 
 def test_an_empty_volume_smaller_than_the_headroom_still_refuses(monkeypatch, tmp_path):
@@ -349,13 +349,13 @@ def test_an_empty_volume_smaller_than_the_headroom_still_refuses(monkeypatch, tm
     monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
     monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
     _fake_usage(monkeypatch, total=512 * 1024**2, free=512 * 1024**2)
-    registry = AcceptingRegistry()
-    monkeypatch.setattr(repos, "registry", registry)
+    backlog = AcceptingBacklog()
+    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
     assert response.status_code == 507
-    assert registry.job is None
+    assert backlog.job is None
 
 
 def test_admission_requires_room_for_a_full_size_checkout(monkeypatch, tmp_path):
@@ -364,13 +364,13 @@ def test_admission_requires_room_for_a_full_size_checkout(monkeypatch, tmp_path)
     monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
     monkeypatch.setattr(repos, "REPO_MAX_BYTES", 2 * 1024**3)
     _fake_usage(monkeypatch, total=100 * 1024**3, free=3 * 1024**3 - 1)
-    registry = AcceptingRegistry()
-    monkeypatch.setattr(repos, "registry", registry)
+    backlog = AcceptingBacklog()
+    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
     assert response.status_code == 507
-    assert registry.job is None
+    assert backlog.job is None
 
 
 def test_an_unreadable_volume_refuses_rather_than_admits(monkeypatch, tmp_path):
@@ -381,13 +381,13 @@ def test_an_unreadable_volume_refuses_rather_than_admits(monkeypatch, tmp_path):
         raise OSError("EIO")
 
     monkeypatch.setattr(repos.shutil, "disk_usage", unreadable)
-    registry = AcceptingRegistry()
-    monkeypatch.setattr(repos, "registry", registry)
+    backlog = AcceptingBacklog()
+    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
     assert response.status_code == 507
-    assert registry.job is None
+    assert backlog.job is None
 
 
 def test_post_repos_proceeds_when_the_disk_has_room(monkeypatch, tmp_path):
@@ -395,21 +395,21 @@ def test_post_repos_proceeds_when_the_disk_has_room(monkeypatch, tmp_path):
     monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
     monkeypatch.setattr(repos, "REPO_MAX_BYTES", 2 * 1024**3)
     _fake_usage(monkeypatch, total=100 * 1024**3, free=50 * 1024**3)
-    registry = AcceptingRegistry()
-    monkeypatch.setattr(repos, "registry", registry)
+    backlog = AcceptingBacklog()
+    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
     assert response.status_code == 202
-    assert registry.job is not None
+    assert backlog.job is not None
 
 
 def test_an_absent_cache_root_does_not_block_ingestion(monkeypatch, tmp_path):
     """The cache dir is created on first use; its absence is not a full disk."""
     monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path / "not-created-yet")
     _fake_usage(monkeypatch, total=100 * 1024**3, free=50 * 1024**3)
-    registry = AcceptingRegistry()
-    monkeypatch.setattr(repos, "registry", registry)
+    backlog = AcceptingBacklog()
+    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 

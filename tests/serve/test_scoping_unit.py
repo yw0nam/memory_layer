@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
+from pathlib import Path
 
 from starlette.testclient import TestClient
 
@@ -15,7 +15,11 @@ ALLOWED = {"default", HOME}
 
 def _non_admin_client(monkeypatch):
     identity = auth.KeyIdentity(
-        label="alice", home=HOME, is_admin=False, allowed=frozenset(ALLOWED)
+        key_id="alice-hash",
+        label="alice",
+        home=HOME,
+        is_admin=False,
+        allowed=frozenset(ALLOWED),
     )
 
     async def fake_authenticate_request(plaintext_key):
@@ -77,8 +81,13 @@ def test_save_memory_rejects_namespace_outside_allowed_set(monkeypatch):
 
 
 def test_ingest_document_omitted_namespace_lands_in_key_home(monkeypatch):
-    fake = _AcceptingRegistry()
-    monkeypatch.setattr(ingest_api, "registry", fake)
+    captured = {}
+
+    async def admit(**kwargs):
+        captured.update(kwargs)
+        return ingest_api.IngestJob.for_document(**kwargs)
+
+    monkeypatch.setattr(ingest_api.job_store, "admit_document", admit)
 
     async def fake_namespace_exists(name):
         return name == HOME
@@ -87,17 +96,8 @@ def test_ingest_document_omitted_namespace_lands_in_key_home(monkeypatch):
     client = _non_admin_client(monkeypatch)
     response = client.post("/ingest/document", files={"file": ("guide.md", b"content")})
     assert response.status_code == 202
-    assert fake.runner is not None
-
-    captured = {}
-
-    async def fake_run_document_job(job, upload_path, filename, mode, origin, namespace):
-        captured["namespace"] = namespace
-        upload_path.unlink(missing_ok=True)
-
-    monkeypatch.setattr(ingest_api, "run_document_job", fake_run_document_job)
-    asyncio.run(fake.runner())
     assert captured["namespace"] == HOME
+    Path(captured["spool_path"]).unlink(missing_ok=True)
 
 
 def test_ingest_document_rejects_namespace_outside_allowed_set(monkeypatch):
@@ -109,18 +109,3 @@ def test_ingest_document_rejects_namespace_outside_allowed_set(monkeypatch):
     )
     assert response.status_code == 403
     assert "error" in response.json()
-
-
-class _AcceptingRegistry:
-    def __init__(self):
-        self.runner = None
-
-    def has_capacity(self):
-        return True
-
-    def create(self, document_id):
-        now = time.time()
-        return ingest_api.IngestJob("job-1", document_id, created_at=now, updated_at=now)
-
-    def start(self, job, runner):
-        self.runner = runner

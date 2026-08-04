@@ -18,7 +18,11 @@ client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 def _non_admin_client(monkeypatch, label, allowed):
     identity = auth.KeyIdentity(
-        label=label, home="default", is_admin=False, allowed=frozenset(allowed)
+        key_id=f"{label}-hash",
+        label=label,
+        home="default",
+        is_admin=False,
+        allowed=frozenset(allowed),
     )
 
     async def fake_authenticate_request(plaintext_key):
