@@ -3,6 +3,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
+RUN git config --system credential.helper "store --file=/run/git-credentials"
+ENV GIT_TERMINAL_PROMPT=0
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY src/ src/

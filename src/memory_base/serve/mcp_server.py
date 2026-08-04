@@ -308,7 +308,7 @@ async def ingest_repo(
 ) -> dict[str, Any]:
     """Clone (or re-sync) a git repository into the code index.
 
-    `url` is an http(s)/ssh git URL or the git@host:path SSH form. `branch`
+    `url` is an http(s) git URL with no embedded credentials. `branch`
     selects the branch on the initial clone only. `name` overrides the cache
     directory name (derived from the URL basename by default). Re-issuing this
     for an existing name fast-forwards its current branch instead of

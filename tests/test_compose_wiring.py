@@ -19,6 +19,11 @@ def _mounts(service: str) -> list[str]:
     return COMPOSE["services"][service]["volumes"]
 
 
+def _state_mounts(service: str) -> list[str]:
+    """Writable mounts only; a read-only mount carries config into the container, not state."""
+    return [mount for mount in _mounts(service) if not mount.endswith(":ro")]
+
+
 def _split(mount: str) -> tuple[str, str]:
     """Source and target of a short-syntax mount; the source may hold colons itself."""
     variable, brace, rest = mount.rpartition("}")
@@ -40,16 +45,21 @@ def test_api_persists_repo_cache_on_a_volume():
     assert API["environment"]["REPO_CACHE"] in _mount_targets()
 
 
+def test_api_reads_git_credentials_read_only():
+    """Private clones authenticate from this file; the container must not be able to write it."""
+    assert "./git-credentials:/run/git-credentials:ro" in _mounts("api")
+
+
 def test_every_stateful_mount_sits_under_the_data_root():
     for service in STATEFUL_SERVICES:
-        for mount in _mounts(service):
+        for mount in _state_mounts(service):
             assert DATA_ROOT.match(_split(mount)[0]), f"{service}: {mount}"
 
 
 def test_an_unset_data_root_fails_instead_of_mounting_the_host_root():
     """A bare ${DATA_ROOT} would expand to nothing and bind / into the container."""
     for service in STATEFUL_SERVICES:
-        for mount in _mounts(service):
+        for mount in _state_mounts(service):
             source = _split(mount)[0]
             assert ":?" in source, f"{service}: {mount} must fail when DATA_ROOT is unset"
 
