@@ -16,6 +16,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from memory_base.serve import mcp_server
 
@@ -331,3 +332,37 @@ def test_ingest_document_explicit_namespace_forwarded(monkeypatch):
     asyncio.run(mcp_server.ingest_document("# Guide", "guide.md", namespace="team-a"))
     assert b'name="namespace"' in captured["body"]
     assert b"team-a" in captured["body"]
+
+
+@pytest.mark.parametrize(
+    "tool_call",
+    [
+        pytest.param(lambda: mcp_server.search_memory(query="q"), id="search"),
+        pytest.param(lambda: mcp_server.save_memory("content"), id="save-memory"),
+        pytest.param(
+            lambda: mcp_server.ingest_document("content", "guide.md"), id="ingest-document"
+        ),
+        pytest.param(lambda: mcp_server.deep_search(query="q"), id="deep-search"),
+        pytest.param(
+            lambda: mcp_server.ingest_repo("https://github.com/o/repo.git"), id="ingest-repo"
+        ),
+        pytest.param(lambda: mcp_server.remove_repo("repo"), id="remove-repo"),
+        pytest.param(lambda: mcp_server.list_repos(), id="list-repos"),
+    ],
+)
+def test_tools_preserve_forbidden_backend_message(monkeypatch, tool_call):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": "namespace access denied"})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="namespace access denied"):
+        asyncio.run(tool_call())
+
+
+def test_search_preserves_unauthorized_backend_message(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "invalid or missing API key"})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="invalid or missing API key"):
+        asyncio.run(mcp_server.search_memory(query="q"))

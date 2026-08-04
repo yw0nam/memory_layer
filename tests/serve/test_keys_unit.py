@@ -112,6 +112,15 @@ def test_revoke_key_matches_by_prefix(monkeypatch):
     assert args[0] == "abcd1234"
 
 
+@pytest.mark.parametrize("prefix", ["", "abcdefg"])
+def test_revoke_key_rejects_prefix_shorter_than_eight_characters(monkeypatch, prefix):
+    conn = FakeConnection()
+    _patch_acquire(monkeypatch, conn)
+    with pytest.raises(ValueError, match="at least 8 characters"):
+        asyncio.run(keys.revoke_key(prefix))
+    assert conn.executed == []
+
+
 # ---- CLI parsing ------------------------------------------------------------------
 
 
@@ -132,6 +141,11 @@ def test_cli_revoke_parses_prefix():
     args = keys.build_parser().parse_args(["revoke", "abcd1234"])
     assert args.command == "revoke"
     assert args.prefix_or_hash == "abcd1234"
+
+
+def test_cli_revoke_reports_short_prefix_cleanly():
+    with pytest.raises(SystemExit, match="at least 8 characters"):
+        keys.main(["revoke", "short"])
 
 
 def test_cli_list_parses():
