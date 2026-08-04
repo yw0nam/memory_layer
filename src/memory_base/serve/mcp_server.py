@@ -101,7 +101,7 @@ async def _search(
         body["namespaces"] = [namespace]
     async with _client() as client:
         response = await client.post("/search", json=body, headers=_auth_headers(ctx))
-        if response.status_code == 400:
+        if response.status_code in {400, 401, 403}:
             _raise_backend_error(response)
         response.raise_for_status()
         return response.json()
@@ -247,7 +247,7 @@ async def save_memory(
         body["namespace"] = namespace
     async with _client() as client:
         response = await client.post("/save_memory", json=body, headers=_auth_headers(ctx))
-        if response.status_code == 400:
+        if response.status_code in {400, 401, 403}:
             _raise_backend_error(response)
         response.raise_for_status()
         return response.json()
@@ -292,7 +292,7 @@ async def ingest_document(
             files={"file": (filename, content.encode("utf-8"))},
             headers=_auth_headers(ctx),
         )
-        if response.status_code in {400, 413, 415, 429}:
+        if response.status_code in {400, 401, 403, 413, 415, 429}:
             _raise_backend_error(response)
         response.raise_for_status()
         payload = response.json()
@@ -322,7 +322,7 @@ async def ingest_repo(
         body["name"] = name
     async with _client() as client:
         response = await client.post("/repos", json=body, headers=_auth_headers(ctx))
-        if response.status_code in {400, 429}:
+        if response.status_code in {400, 401, 403, 429}:
             _raise_backend_error(response)
         response.raise_for_status()
         payload = response.json()
@@ -338,7 +338,7 @@ async def remove_repo(name: str, ctx: Context | None = None) -> dict[str, Any]:
     """
     async with _client() as client:
         response = await client.delete(f"/repos/{name}", headers=_auth_headers(ctx))
-        if response.status_code in {400, 404, 429}:
+        if response.status_code in {400, 401, 403, 404, 429}:
             _raise_backend_error(response)
         response.raise_for_status()
         payload = response.json()
@@ -354,6 +354,8 @@ async def list_repos(ctx: Context | None = None) -> list[dict[str, Any]]:
     """
     async with _client() as client:
         response = await client.get("/repos", headers=_auth_headers(ctx))
+        if response.status_code in {401, 403}:
+            _raise_backend_error(response)
         response.raise_for_status()
         return response.json()
 
@@ -400,7 +402,7 @@ async def deep_search(
         response = await client.post(
             "/search/deep", json=body, timeout=timeout, headers=_auth_headers(ctx)
         )
-        if response.status_code == 400:
+        if response.status_code in {400, 401, 403}:
             _raise_backend_error(response)
         response.raise_for_status()
         return response.json()

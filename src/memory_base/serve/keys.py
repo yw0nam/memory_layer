@@ -23,6 +23,10 @@ class HomeNamespaceError(ValueError):
     """A key-provisioning request is invalid."""
 
 
+class KeyPrefixError(ValueError):
+    """A key prefix is too short to revoke safely."""
+
+
 async def _home_is_accessible(conn: Any, home: str, label: str, is_admin: bool) -> bool:
     row = await conn.fetchrow(
         f'SELECT visibility, owner FROM "{PG_SCHEMA}".namespaces WHERE name = $1', home
@@ -72,6 +76,8 @@ async def list_keys() -> list[dict[str, Any]]:
 
 async def revoke_key(prefix_or_hash: str) -> int:
     """Revoke every active key whose hash starts with `prefix_or_hash`; returns the count."""
+    if len(prefix_or_hash) < 8:
+        raise KeyPrefixError("key hash prefix must be at least 8 characters")
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         status = await conn.execute(
@@ -128,7 +134,10 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "list":
         _print_keys(asyncio.run(list_keys()))
     elif args.command == "revoke":
-        count = asyncio.run(revoke_key(args.prefix_or_hash))
+        try:
+            count = asyncio.run(revoke_key(args.prefix_or_hash))
+        except KeyPrefixError as exc:
+            raise SystemExit(str(exc)) from exc
         print(f"revoked {count} key(s)")
 
 
