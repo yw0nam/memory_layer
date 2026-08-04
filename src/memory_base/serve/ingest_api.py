@@ -1,4 +1,4 @@
-"""Bounded asynchronous document-ingestion REST orchestration."""
+"""Durable asynchronous document-ingestion REST orchestration."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import os
 import tempfile
 import time
 import uuid
-from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePath
@@ -43,8 +42,7 @@ from memory_base.serve import namespaces
 from memory_base.serve.job_store import _iso_time
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))
-INGEST_MAX_QUEUED = int(os.getenv("INGEST_MAX_QUEUED", "10"))
-INGEST_MAX_CONCURRENT_JOBS = int(os.getenv("INGEST_MAX_CONCURRENT_JOBS", "2"))
+INGEST_SPOOL = job_store.INGEST_SPOOL
 MAX_ACCEPTED_CHUNKS = 2_000
 MAX_TOTAL_ROWS = 5_000
 TERMINAL_STATUSES = frozenset({"succeeded", "failed", "no_op"})
@@ -54,6 +52,13 @@ TERMINAL_STATUSES = frozenset({"succeeded", "failed", "no_op"})
 class IngestJob:
     job_id: str
     document_id: str
+    namespace: str = "default"
+    origin: str | None = None
+    mode: str = "upsert"
+    filename: str = ""
+    spool_path: str = ""
+    key_id: str = ""
+    key_label: str = ""
     status: str = "queued"
     stage: str = "queued"
     chunks_total: int = 0
@@ -73,58 +78,60 @@ class IngestJob:
             self.stage = stage
         self.updated_at = time.time()
 
-    def mark_running(self) -> None:
-        self.touch(status="running", stage="converting")
+    @property
+    def kind(self) -> str:
+        return "document"
 
-    def mark_succeeded(self) -> None:
-        pass  # run_document_job sets its own terminal status (succeeded or no_op)
+    @classmethod
+    def for_document(cls, **values):
+        now = time.time()
+        values.setdefault("created_at", now)
+        values.setdefault("updated_at", now)
+        return cls(**values)
 
-    def mark_failed(self) -> None:
-        self.touch(status="failed", stage="done")
+    @classmethod
+    def from_row(cls, row: dict[str, Any]):
+        return cls(
+            job_id=row["job_id"],
+            document_id=row["document_id"],
+            namespace=row["namespace"],
+            origin=row["origin"],
+            mode=row["mode"],
+            filename=row["filename"],
+            spool_path=row["spool_path"],
+            key_id=row["key_id"],
+            key_label=row["key_label"],
+            status=row["status"],
+            stage=row["stage"],
+            chunks_total=row["chunks_total"],
+            chunks_done=row["chunks_done"],
+            chunks_dropped=row["chunks_dropped"],
+            rows_written=row["rows_written"],
+            enrichment_retries=row["enrichment_retries"],
+            content_hash=row["content_hash"],
+            error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     def response(self) -> dict[str, Any]:
-        payload = asdict(self)
+        payload = {
+            key: value
+            for key, value in asdict(self).items()
+            if key
+            not in {
+                "namespace",
+                "origin",
+                "mode",
+                "filename",
+                "spool_path",
+                "key_id",
+                "key_label",
+            }
+        }
         payload["created_at"] = _iso_time(self.created_at)
         payload["updated_at"] = _iso_time(self.updated_at)
         return payload
-
-
-class JobRegistry(job_store.JobRegistry):
-    """Retain bounded document-ingest job state, keyed by document rather than by name+action."""
-
-    def __init__(
-        self,
-        *,
-        max_queued: int = INGEST_MAX_QUEUED,
-        max_concurrent: int = INGEST_MAX_CONCURRENT_JOBS,
-        ttl_seconds: int = job_store.JOB_TTL_SECONDS,
-        max_completed: int = job_store.MAX_COMPLETED_JOBS,
-    ) -> None:
-        super().__init__(
-            kind="document",
-            job_cls=IngestJob,
-            terminal_statuses=TERMINAL_STATUSES,
-            queue_full_message="document ingest queue is full",
-            max_queued=max_queued,
-            max_concurrent=max_concurrent,
-            ttl_seconds=ttl_seconds,
-            max_completed=max_completed,
-        )
-
-    def create(self, document_id: str) -> IngestJob:
-        now = time.time()
-        job = IngestJob(
-            job_id=uuid.uuid4().hex,
-            document_id=document_id,
-            created_at=now,
-            updated_at=now,
-        )
-        self.register(job)
-        return job
-
-
-registry = JobRegistry()
-_document_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 def _error(message: str, status_code: int) -> JSONResponse:
@@ -242,9 +249,11 @@ async def _csv_rows(
     namespace: str = "default",
 ) -> list[dict[str, Any]]:
     job.touch(stage="chunking")
+    await job_store.update_document_progress(job)
     sample = read_csv_sample(upload_path)
     job.chunks_total = 1
     job.touch(stage="enriching")
+    await job_store.update_document_progress(job)
     semaphore = asyncio.Semaphore(4)
 
     def retried() -> None:
@@ -292,6 +301,7 @@ async def _markdown_rows(
     if len(conversion.text) > EXTRACTED_MAX_CHARS:
         raise DocumentError("extracted text exceeds 2000000 chars")
     job.touch(stage="chunking")
+    await job_store.update_document_progress(job)
     chunking = chunk_markdown(conversion.text)
     chunks = chunking.chunks
     job.chunks_total = len(chunks)
@@ -301,6 +311,7 @@ async def _markdown_rows(
     if len(chunks) > MAX_ACCEPTED_CHUNKS:
         raise DocumentError("document exceeds 2000 accepted chunks")
     job.touch(stage="enriching")
+    await job_store.update_document_progress(job)
     enrichments = await _enrich_chunks(job, chunks)
     return map_document_rows(
         chunks,
@@ -318,66 +329,64 @@ async def _markdown_rows(
 
 async def run_document_job(
     job: IngestJob,
-    upload_path: Path,
-    filename: str,
-    mode: str,
-    origin: str | None,
-    namespace: str = "default",
+    upload_path: Path | None = None,
+    filename: str | None = None,
+    mode: str | None = None,
+    origin: str | None = None,
+    namespace: str | None = None,
 ) -> None:
     """Run one document pipeline and atomically publish its completed rows."""
-    document_lock = _document_locks[job.document_id]
-    try:
-        async with document_lock:
-            content_hash = _file_hash(upload_path)
-            job.content_hash = content_hash
-            job.touch()
-            if mode == "upsert":
-                existing_hash = await _existing_content_hash(job.document_id, namespace)
-                if existing_hash == content_hash:
-                    job.touch(status="no_op", stage="done")
-                    return
+    upload_path = upload_path or Path(job.spool_path)
+    filename = filename or job.filename
+    mode = mode or job.mode
+    origin = job.origin if origin is None else origin
+    namespace = namespace or job.namespace
+    if not await namespaces.namespace_exists(namespace):
+        raise RuntimeError(f"namespace was deleted before document job started: {namespace}")
+    content_hash = _file_hash(upload_path)
+    job.content_hash = content_hash
+    await job_store.update_document_progress(job)
+    if mode == "upsert":
+        existing_hash = await _existing_content_hash(job.document_id, namespace)
+        if existing_hash == content_hash:
+            job.touch(status="no_op", stage="done")
+            return
 
-            extension = extension_for(filename)
-            now = time.time()
-            if extension == ".csv":
-                rows = await _csv_rows(
-                    job, upload_path, filename, content_hash, origin, now, namespace
-                )
-            else:
-                rows = await _markdown_rows(
-                    job,
-                    upload_path,
-                    filename,
-                    extension,
-                    content_hash,
-                    origin,
-                    now,
-                    namespace,
-                )
+    extension = extension_for(filename)
+    now = time.time()
+    if extension == ".csv":
+        rows = await _csv_rows(job, upload_path, filename, content_hash, origin, now, namespace)
+    else:
+        rows = await _markdown_rows(
+            job,
+            upload_path,
+            filename,
+            extension,
+            content_hash,
+            origin,
+            now,
+            namespace,
+        )
 
-            if not rows:
-                raise DocumentError("document produced zero accepted rows")
-            if len(rows) > MAX_TOTAL_ROWS:
-                raise DocumentError("document exceeds 5000 total rows")
-            job.touch(stage="embedding")
-            await _embed_rows(rows)
-            job.touch(stage="writing")
-            await replace_document_rows(job.document_id, rows, namespace)
-            job.rows_written = len(rows)
-            job.touch(status="succeeded", stage="done")
-    finally:
-        # A woken waiter keeps this briefly unlocked lock live so a new job cannot bypass it.
-        if (
-            not document_lock.locked()
-            and not document_lock._waiters
-            and _document_locks.get(job.document_id) is document_lock
-        ):
-            _document_locks.pop(job.document_id, None)
-        upload_path.unlink(missing_ok=True)
+    if not rows:
+        raise DocumentError("document produced zero accepted rows")
+    if len(rows) > MAX_TOTAL_ROWS:
+        raise DocumentError("document exceeds 5000 total rows")
+    job.touch(stage="embedding")
+    await job_store.update_document_progress(job)
+    await _embed_rows(rows)
+    job.touch(stage="writing")
+    await job_store.update_document_progress(job)
+    await replace_document_rows(job.document_id, rows, namespace)
+    job.rows_written = len(rows)
+    job.touch(status="succeeded", stage="done")
 
 
 async def _copy_upload(upload: UploadFile, suffix: str) -> Path:
-    descriptor, name = tempfile.mkstemp(prefix="memory-base-upload-", suffix=suffix)
+    INGEST_SPOOL.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(
+        prefix="memory-base-upload-", suffix=suffix, dir=INGEST_SPOOL
+    )
     os.close(descriptor)
     path = Path(name)
     size = 0
@@ -448,10 +457,6 @@ async def ingest_document_route(request: Request) -> JSONResponse:
         await upload.close()
         return _error(f"unregistered namespace: {namespace}", 400)
 
-    if not registry.has_capacity():
-        await upload.close()
-        return _error("document ingest queue is full", 429)
-
     try:
         upload_path = await _copy_upload(upload, extension)
     except OverflowError as exc:
@@ -460,21 +465,23 @@ async def ingest_document_route(request: Request) -> JSONResponse:
         await upload.close()
 
     try:
-        job = registry.create(document_id)
-    except OverflowError as exc:
+        job = await job_store.admit_document(
+            job_id=uuid.uuid4().hex,
+            key_id=key.key_id,
+            key_label=key.label,
+            namespace=namespace,
+            document_id=document_id,
+            origin=origin_value,
+            mode=str(mode),
+            filename=filename,
+            spool_path=str(upload_path),
+        )
+    except job_store.BacklogFullError as exc:
         upload_path.unlink(missing_ok=True)
         return _error(str(exc), 429)
-    registry.start(
-        job,
-        lambda: run_document_job(
-            job,
-            upload_path,
-            filename,
-            str(mode),
-            origin_value,
-            namespace,
-        ),
-    )
+    except Exception:
+        upload_path.unlink(missing_ok=True)
+        raise
     return JSONResponse(
         {
             "job_id": job.job_id,
@@ -486,8 +493,19 @@ async def ingest_document_route(request: Request) -> JSONResponse:
 
 
 async def ingest_job_route(request: Request) -> JSONResponse:
-    """Return retained ingestion job state."""
-    job = await registry.get(request.path_params["job_id"])
+    """Return durable ingestion job state."""
+    job = await job_store.get_job(request.path_params["job_id"], kind="document")
     if job is None:
         return _error("ingest job not found", 404)
     return JSONResponse(job.response())
+
+
+async def ingest_jobs_route(request: Request) -> JSONResponse:
+    """List document jobs newest first within the caller's namespace scope."""
+    key = request.state.key
+    jobs = await job_store.list_document_jobs(
+        namespaces=None if key.is_admin else sorted(key.allowed),
+        origin=request.query_params.get("origin"),
+        status=request.query_params.get("status"),
+    )
+    return JSONResponse({"jobs": [job.response() for job in jobs]})

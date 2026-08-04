@@ -40,14 +40,20 @@ def test_generate_key_is_random_and_url_safe():
 
 
 def test_admin_permits_any_namespace():
-    identity = auth.KeyIdentity(label="alice", home="default", is_admin=True, allowed=frozenset())
+    identity = auth.KeyIdentity(
+        key_id="hash", label="alice", home="default", is_admin=True, allowed=frozenset()
+    )
     assert identity.permits("anything")
     assert identity.permits_all({"a", "b", "c"})
 
 
 def test_non_admin_permits_only_allowed_set():
     identity = auth.KeyIdentity(
-        label="alice", home="default", is_admin=False, allowed=frozenset({"default", "team-a"})
+        key_id="hash",
+        label="alice",
+        home="default",
+        is_admin=False,
+        allowed=frozenset({"default", "team-a"}),
     )
     assert identity.permits("team-a")
     assert not identity.permits("team-b")
@@ -96,6 +102,7 @@ def test_authenticate_request_admin_skips_namespace_query(monkeypatch):
     _patch_acquire(monkeypatch, conn)
     identity = asyncio.run(auth.authenticate_request("plaintext"))
     assert identity.label == "alice"
+    assert identity.key_id == auth.hash_key("plaintext")
     assert identity.is_admin is True
     assert conn._fetch == []  # never queried namespaces for an admin
 
@@ -140,7 +147,9 @@ def _client(monkeypatch, identity):
 
 
 def test_missing_api_key_401(monkeypatch):
-    identity = auth.KeyIdentity(label="alice", home="default", is_admin=True, allowed=frozenset())
+    identity = auth.KeyIdentity(
+        key_id="hash", label="alice", home="default", is_admin=True, allowed=frozenset()
+    )
 
     async def run():
         async with _client(monkeypatch, identity) as client:
@@ -152,7 +161,9 @@ def test_missing_api_key_401(monkeypatch):
 
 
 def test_unknown_api_key_401(monkeypatch):
-    identity = auth.KeyIdentity(label="alice", home="default", is_admin=True, allowed=frozenset())
+    identity = auth.KeyIdentity(
+        key_id="hash", label="alice", home="default", is_admin=True, allowed=frozenset()
+    )
 
     async def run():
         async with _client(monkeypatch, identity) as client:
@@ -196,7 +207,11 @@ def test_health_is_exempt_from_authentication(monkeypatch):
 
 def test_valid_key_attaches_identity_to_request_state(monkeypatch):
     identity = auth.KeyIdentity(
-        label="alice", home="default", is_admin=False, allowed=frozenset({"default"})
+        key_id="hash",
+        label="alice",
+        home="default",
+        is_admin=False,
+        allowed=frozenset({"default"}),
     )
 
     async def run():

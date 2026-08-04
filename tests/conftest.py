@@ -15,6 +15,28 @@ def model_names(monkeypatch):
         monkeypatch.setenv(name, os.getenv(name) or "test-model")
 
 
+@pytest.fixture(autouse=True)
+def isolate_unit_app_lifespan(request, monkeypatch):
+    """Keep ordinary tests independent of Postgres-backed worker startup."""
+    if request.node.get_closest_marker("integration") is not None:
+        return
+
+    from memory_base.serve import job_store
+
+    async def initialize():
+        return None
+
+    def start_workers():
+        return []
+
+    async def stop_workers(tasks):
+        assert tasks == []
+
+    monkeypatch.setattr(job_store, "initialize", initialize)
+    monkeypatch.setattr(job_store, "start_workers", start_workers)
+    monkeypatch.setattr(job_store, "stop_workers", stop_workers)
+
+
 @pytest.fixture()
 def rest_in_process(monkeypatch):
     """Route the MCP proxy at the REST app in-process (no server on :8010).

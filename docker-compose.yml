@@ -14,17 +14,10 @@ services:
     volumes:
       - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/pgdata:/var/lib/postgresql/data
 
-  redis:
-    image: redis:8-alpine
-    container_name: memory_base_redis
-    command: redis-server --appendonly yes
-    volumes:
-      - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/redis:/data
-
   api:
     build: .
     container_name: memory_base_api
-    depends_on: [db, redis]
+    depends_on: [db]
     ports:
       - "8010:8010"
     environment:
@@ -37,12 +30,13 @@ services:
       RERANK_MODEL: ${RERANK_MODEL}
       LLM_MODEL: ${LLM_MODEL}
       REPO_CACHE: /data/repos_cache
-      REDIS_URL: redis://redis:6379/0
+      INGEST_SPOOL: /data/ingest-spool
     # ponytail: repo clones and the CocoIndex ledger live here; losing either
     # directory orphans code_chunks rows until the repos are re-added.
     volumes:
       - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/repos_cache:/data/repos_cache
       - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/cocoindex_state:/data/cocoindex_state
+      - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/ingest-spool:/data/ingest-spool
       - ./git-credentials:/run/git-credentials:ro
     command: uv run --no-sync uvicorn memory_base.serve.api:app --host 0.0.0.0 --port 8010
     # /health is liveness only; /health/services is the one that reaches the vLLM endpoints.

@@ -178,7 +178,17 @@ def test_index_command_skips_dependency_sync():
 
 def test_repo_job_response_shape():
     now = time.time()
-    job = repos.RepoJob("id", "repo", "ingest", created_at=now, updated_at=now)
+    job = repos.RepoJob.for_repo(
+        job_id="id",
+        name="repo",
+        action="ingest",
+        url="https://example.com/repo.git",
+        branch=None,
+        key_id="hash",
+        key_label="label",
+        created_at=now,
+        updated_at=now,
+    )
     assert set(job.response()) == {
         "job_id",
         "name",
@@ -190,50 +200,38 @@ def test_repo_job_response_shape():
     }
 
 
-def test_repo_job_registry_queue_bound_and_ttl():
-    registry = repos.RepoJobRegistry(max_queued=1, ttl_seconds=10, max_completed=2)
-    first = registry.create("a", "ingest")
-    with pytest.raises(OverflowError):
-        registry.create("b", "ingest")
-    first.status = "succeeded"
-    first.updated_at = 100
-    assert asyncio.run(registry.get(first.job_id)) is None
-
-
 # ---- REST routes -----------------------------------------------------------
 
 
-class AcceptingRegistry:
+class AcceptingBacklog:
     def __init__(self):
         self.job = None
-        self.runner = None
-        self.capacity = True
 
-    def has_capacity(self):
-        return self.capacity
-
-    def create(self, name, action):
+    async def admit(self, **kwargs):
         now = time.time()
-        self.job = repos.RepoJob("job-1", name, action, created_at=now, updated_at=now)
+        self.job = repos.RepoJob.for_repo(
+            job_id="job-1",
+            name=kwargs["name"],
+            action=kwargs["action"],
+            url=kwargs["url"],
+            branch=kwargs["branch"],
+            key_id=kwargs["key_id"],
+            key_label=kwargs["key_label"],
+            created_at=now,
+            updated_at=now,
+        )
         return self.job
-
-    def start(self, job, runner):
-        self.runner = runner
-
-    async def get(self, job_id):
-        return self.job if self.job and self.job.job_id == job_id else None
 
 
 def test_post_repos_rejects_bad_url_with_400(monkeypatch):
-    monkeypatch.setattr(repos, "registry", AcceptingRegistry())
     response = _post("/repos", json={"url": "ftp://bad/repo.git"})
     assert response.status_code == 400
     assert set(response.json()) == {"error"}
 
 
 def test_post_repos_returns_202_and_shape(monkeypatch):
-    fake = AcceptingRegistry()
-    monkeypatch.setattr(repos, "registry", fake)
+    fake = AcceptingBacklog()
+    monkeypatch.setattr(repos.job_store, "admit_repo", fake.admit)
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
     assert response.status_code == 202
     body = response.json()
@@ -243,20 +241,20 @@ def test_post_repos_returns_202_and_shape(monkeypatch):
         "status": "queued",
         "status_url": "/repos/jobs/job-1",
     }
-    assert fake.runner is not None
+    assert fake.job.url == "https://github.com/owner/repo.git"
 
 
 def test_post_repos_returns_429_when_full(monkeypatch):
-    fake = AcceptingRegistry()
-    fake.capacity = False
-    monkeypatch.setattr(repos, "registry", fake)
+    async def full(**kwargs):
+        raise repos.job_store.BacklogFullError("repo job queue is full")
+
+    monkeypatch.setattr(repos.job_store, "admit_repo", full)
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
     assert response.status_code == 429
 
 
 def test_delete_unknown_repo_returns_404(monkeypatch, tmp_path):
     monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
-    monkeypatch.setattr(repos, "registry", AcceptingRegistry())
     response = _delete("/repos/ghost")
     assert response.status_code == 404
 
@@ -264,9 +262,9 @@ def test_delete_unknown_repo_returns_404(monkeypatch, tmp_path):
 def test_delete_existing_repo_returns_202(monkeypatch, tmp_path):
     (tmp_path / "repo").mkdir()
     monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
-    fake = AcceptingRegistry()
-    monkeypatch.setattr(repos, "registry", fake)
+    fake = AcceptingBacklog()
+    monkeypatch.setattr(repos.job_store, "admit_repo", fake.admit)
     response = _delete("/repos/repo")
     assert response.status_code == 202
     assert response.json()["name"] == "repo"
-    assert fake.runner is not None
+    assert fake.job.action == "remove"

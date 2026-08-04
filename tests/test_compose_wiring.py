@@ -11,7 +11,7 @@ COMPOSE = yaml.safe_load(
     (pathlib.Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text()
 )
 API = COMPOSE["services"]["api"]
-STATEFUL_SERVICES = ("db", "redis", "api")
+STATEFUL_SERVICES = ("db", "api")
 DATA_ROOT = re.compile(r"^\$\{DATA_ROOT:\?[^}]+\}/")
 
 
@@ -43,6 +43,11 @@ def test_api_persists_cocoindex_state_on_a_volume():
 
 def test_api_persists_repo_cache_on_a_volume():
     assert API["environment"]["REPO_CACHE"] in _mount_targets()
+
+
+def test_api_persists_ingest_spool_on_a_volume():
+    assert API["environment"]["INGEST_SPOOL"] == "/data/ingest-spool"
+    assert API["environment"]["INGEST_SPOOL"] in _mount_targets()
 
 
 def test_api_reads_git_credentials_read_only():
@@ -80,23 +85,8 @@ def test_api_receives_every_backend_endpoint_and_model_name():
         assert API["environment"][name] == f"${{{name}}}"
 
 
-def test_api_reaches_redis_by_service_name():
-    url = API["environment"]["REDIS_URL"]
-    assert "redis" in url, "must address the compose service, not a host endpoint"
-    assert "localhost" not in url and "127.0.0.1" not in url
-
-
-def test_redis_survives_its_own_restart():
-    """Job state is what Redis holds; losing it on restart restores the 404 bug."""
-    redis = COMPOSE["services"]["redis"]
-    assert "appendonly yes" in " ".join(
-        redis["command"] if isinstance(redis["command"], list) else [redis["command"]]
-    )
-    assert any(_split(mount)[1] == "/data" for mount in _mounts("redis"))
-
-
-def test_api_starts_after_redis():
-    assert "redis" in API["depends_on"]
+def test_api_depends_only_on_postgres():
+    assert API["depends_on"] == ["db"]
 
 
 def test_api_healthcheck_probes_liveness_not_the_vllm_endpoints():

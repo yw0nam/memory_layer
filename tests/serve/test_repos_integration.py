@@ -143,31 +143,17 @@ async def _repo_row_count(repo: str) -> int:
         await conn.close()
 
 
-class _CapturingRegistry:
-    """Records the job runner without executing it, so route calls stay side-
-    effect free (the real background index is driven explicitly in the test).
-    Firing a real index here would deadlock: the fire-and-forget task is
-    cancelled when the request loop closes, orphaning a `cocoindex update` that
-    holds the single-writer LMDB lock the explicit teardown then blocks on.
-    """
+class _CapturingBacklog:
+    """Records durable route admission without running a background index."""
 
     def __init__(self):
         self.job = None
 
-    def has_capacity(self):
-        return True
-
-    def create(self, name, action):
-        import time
-
-        now = time.time()
-        self.job = repos.RepoJob("job-it", name, action, created_at=now, updated_at=now)
+    async def admit(self, **kwargs):
+        self.job = repos.RepoJob.for_repo(**kwargs)
         return self.job
 
-    def start(self, job, runner):
-        self._runner = runner
-
-    async def get(self, job_id):
+    async def get(self, job_id, *, kind):
         return self.job if self.job and self.job.job_id == job_id else None
 
 
@@ -204,7 +190,9 @@ def isolated_stack(tmp_path, monkeypatch):
     monkeypatch.setenv("COCOINDEX_DB", str(tmp_path / "cocoindex_state"))
     monkeypatch.setenv("REPO_CACHE", str(cache))
     monkeypatch.setattr(repos, "CACHE_ROOT", cache)
-    monkeypatch.setattr(repos, "registry", _CapturingRegistry())
+    backlog = _CapturingBacklog()
+    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
+    monkeypatch.setattr(repos.job_store, "get_job", backlog.get)
     try:
         yield cache
     finally:

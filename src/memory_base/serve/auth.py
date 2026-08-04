@@ -37,6 +37,7 @@ def generate_key() -> str:
 class KeyIdentity:
     """A request's authenticated caller: an admin sees every namespace."""
 
+    key_id: str
     label: str
     home: str
     is_admin: bool
@@ -61,10 +62,11 @@ async def authenticate_request(plaintext_key: str) -> KeyIdentity | None:
     """Look up a plaintext key; None for missing/unknown/revoked."""
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
+        key_id = hash_key(plaintext_key)
         row = await conn.fetchrow(
             f'SELECT label, home, is_admin FROM "{PG_SCHEMA}".api_keys '
             "WHERE key_hash = $1 AND revoked_at IS NULL",
-            hash_key(plaintext_key),
+            key_id,
         )
         if row is None:
             return None
@@ -74,7 +76,11 @@ async def authenticate_request(plaintext_key: str) -> KeyIdentity | None:
             else await _owned_or_public_namespaces(conn, row["label"])
         )
         return KeyIdentity(
-            label=row["label"], home=row["home"], is_admin=row["is_admin"], allowed=allowed
+            key_id=key_id,
+            label=row["label"],
+            home=row["home"],
+            is_admin=row["is_admin"],
+            allowed=allowed,
         )
 
 

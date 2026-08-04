@@ -66,6 +66,47 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           ts double precision NOT NULL
         );
         CREATE INDEX IF NOT EXISTS retrieval_log__ts ON {schema}.retrieval_log (ts);
+        CREATE TABLE IF NOT EXISTS {schema}.jobs (
+          job_id text PRIMARY KEY,
+          kind text NOT NULL CHECK (kind IN ('document', 'repo')),
+          status text NOT NULL DEFAULT 'queued'
+            CHECK (status IN ('queued', 'running', 'succeeded', 'no_op', 'failed')),
+          key_id text NOT NULL,
+          key_label text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          error text,
+          namespace text,
+          document_id text,
+          origin text,
+          mode text,
+          filename text,
+          spool_path text,
+          stage text,
+          content_hash text,
+          chunks_total integer NOT NULL DEFAULT 0,
+          chunks_done integer NOT NULL DEFAULT 0,
+          chunks_dropped integer NOT NULL DEFAULT 0,
+          rows_written integer NOT NULL DEFAULT 0,
+          enrichment_retries integer NOT NULL DEFAULT 0,
+          name text,
+          action text CHECK (action IS NULL OR action IN ('ingest', 'remove')),
+          url text,
+          branch text,
+          CHECK (kind <> 'document' OR
+            (namespace IS NOT NULL AND document_id IS NOT NULL AND mode IS NOT NULL
+             AND filename IS NOT NULL AND spool_path IS NOT NULL AND stage IS NOT NULL)),
+          CHECK (kind <> 'repo' OR (name IS NOT NULL AND action IS NOT NULL)),
+          CHECK (kind <> 'repo' OR action <> 'ingest' OR url IS NOT NULL)
+        );
+        CREATE INDEX IF NOT EXISTS jobs__claim
+          ON {schema}.jobs (kind, status, key_id, created_at);
+        CREATE INDEX IF NOT EXISTS jobs__document_active
+          ON {schema}.jobs (namespace, document_id, status) WHERE kind = 'document';
+        CREATE INDEX IF NOT EXISTS jobs__document_list
+          ON {schema}.jobs (kind, created_at DESC) WHERE kind = 'document';
+        CREATE INDEX IF NOT EXISTS jobs__retention
+          ON {schema}.jobs (status, updated_at);
         """
     )
 

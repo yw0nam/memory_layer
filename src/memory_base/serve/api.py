@@ -26,6 +26,7 @@ from memory_base.retrieval.search import search
 from memory_base.retrieval.search import validate_search_options
 from memory_base.serve import admin
 from memory_base.serve import ingest_api
+from memory_base.serve import job_store
 from memory_base.serve import namespaces
 from memory_base.serve import repos
 from memory_base.serve.access_log import log_retrieval
@@ -455,11 +456,14 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: Starlette):
-    """Close the shared database pool during application shutdown."""
+    """Recover durable jobs, run workers, and close the pool in shutdown order."""
     del app
+    await job_store.initialize()
+    workers = job_store.start_workers()
     try:
         yield
     finally:
+        await job_store.stop_workers(workers)
         await db.close_pool()
 
 
@@ -473,6 +477,7 @@ app = Starlette(
         Route("/search/deep", deep_search_route, methods=["POST"]),
         Route("/save_memory", save_memory_route, methods=["POST"]),
         Route("/ingest/document", ingest_api.ingest_document_route, methods=["POST"]),
+        Route("/ingest/jobs", ingest_api.ingest_jobs_route, methods=["GET"]),
         Route("/ingest/jobs/{job_id}", ingest_api.ingest_job_route, methods=["GET"]),
         Route("/repos", repos.ingest_repo_route, methods=["POST"]),
         Route("/repos", repos.list_repos_route, methods=["GET"]),
