@@ -15,6 +15,7 @@
 - **Grow the system in layers.** Start from the smallest end-to-end working version and add features on top of a working result; never trade working code for unfinished complexity.
 - **Components are modules with a clear separation of concerns.**
 - **Check installed dependencies first** before hand-rolling or adding a package; never claim a library lacks a feature without reading its docs and types.
+- **Permissive licenses only.** Dependencies and Postgres extensions carry MIT-class licenses (MIT / BSD / Apache-2.0 / PostgreSQL); no copyleft (GPL/AGPL) — commercial deployment must stay unencumbered.
 - **Architecture decisions are long-term.** No stopgaps that only get past today and need replacing later.
 
 ## Development work
@@ -23,6 +24,7 @@
 - **GitHub tracker in English.** Issues, issue comments, and PR titles/bodies are written in English (chat with the user is any language); enforced by the `pr-title` CI job.
 - **Tests accompany behavior.** New or changed behavior ships its test in the same PR; the `test-guard` CI job enforces this (`skip-tests` label bypasses). Write the failing test first (`test:`), then implementation (`feat:`), then refactor if needed (`refactor:`).
 - **Verify what you can verify before asking the user.** Anything observable (CLI output / DB state / MCP responses / logs) — verify yourself and attach proof to the PR's Runtime-evidence section; ask the user only for things that genuinely require them.
+- **Ranking changes ship with measurements.** Any change to retrieval ranking, query construction, or fusion lands with before/after numbers from the benchmark method in `docs/benchmarks/retrieval.md`.
 - **Comments: minimal, present-tense only.** Comment only what the code cannot say itself, in one line; no decision-history, spec-citation, or issue-number breadcrumbs. And Should use only English other language is not allowed.
 - **Docs: current-state only.** Write what the system *is*, declaratively, matching the code — no change-narrative, no PR/issue numbers as prose, no dated changelogs, no future/unbuilt work (`PostToolUse` docs guard enforces this).
 
