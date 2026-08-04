@@ -33,7 +33,7 @@ from memory_base.core.config import (
 from memory_base.core.schema import ensure_schema
 from memory_base.serve import admin, api
 
-client = TestClient(api.app)
+client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 
 def _db_reachable() -> bool:

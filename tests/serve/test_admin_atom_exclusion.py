@@ -23,7 +23,7 @@ class FakeAdminConnection:
             if row["chunk_kind"] != "atom" and row["archived_at"] is None
         ]
 
-    async def execute(self, query, ids, timestamp=None):
+    async def execute(self, query, ids, timestamp=None, namespaces=None):
         assert "chunk_kind <> 'atom'" in query
         changed = 0
         for row_id in ids:

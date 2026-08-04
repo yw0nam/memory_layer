@@ -47,7 +47,7 @@ NOW = 1_700_000_000.0
 
 @pytest.fixture()
 def client():
-    with TestClient(api.app) as c:
+    with TestClient(api.app, headers={"X-API-Key": "test-key"}) as c:
         yield c
 
 
