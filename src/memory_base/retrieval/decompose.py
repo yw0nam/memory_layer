@@ -22,10 +22,10 @@ from memory_base.core.config import (
 )
 from memory_base.retrieval.search import (
     CANDIDATES_PER_SIGNAL,
-    FTS_TSQUERY_SQL,
+    FTS_RRF_WEIGHT,
+    MEMORY_BM25_INDEX,
     PER_FILE_CAP,
     TIME_DECAY_HALF_LIFE_DAYS,
-    fts_query_text,
     history_predicates,
     metadata_dict,
     normalize_namespaces,
@@ -370,18 +370,21 @@ async def _memory_backup(
         f"ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
         *vec_args,
     )
-    fts_args = [fts_query_text(query), *filter_args, excluded]
+    fts_args = [query, *filter_args, excluded]
     fts_rows = await conn.fetch(
         f"SELECT {columns} FROM {tbl} WHERE {predicates} AND {excl_clause} AND "
-        f"to_tsvector('simple', content_raw) @@ {FTS_TSQUERY_SQL} "
-        f"ORDER BY ts_rank_cd(to_tsvector('simple', content_raw), {FTS_TSQUERY_SQL}) DESC "
+        f"(content_raw <@> to_bm25query($1, '{MEMORY_BM25_INDEX}')) < 0 "
+        f"ORDER BY content_raw <@> to_bm25query($1, '{MEMORY_BM25_INDEX}') "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
         *fts_args,
     )
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
     recency = time_decay_list({r["id"]: r["ts_last_active"] for r in by_id.values()})
     idf = time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})
-    scores = rrf_fuse([[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf])
+    scores = rrf_fuse(
+        [[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf],
+        [1.0, FTS_RRF_WEIGHT, 1.0, 1.0],
+    )
     now = time.time()
     for cid in scores:
         age_days = max(0.0, (now - by_id[cid]["ts_last_active"]) / 86400.0)

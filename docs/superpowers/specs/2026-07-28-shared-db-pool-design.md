@@ -110,7 +110,7 @@ A per-request connection could idle through slow model calls harmlessly; a
 pooled one starves other requests. Invariant: **a pooled connection is never
 held across an await of an embedding, LLM, or rerank HTTP call.**
 
-- `retrieval/search.py` `search()`: the FTS/vector/atom queries run inside one
+- `retrieval/search.py` `search()`: the BM25/vector/atom queries run inside one
   `acquire()` block which is exited before `_rerank` (HTTP call);
   `_restore_context` then runs in a second short `acquire()` block.
 - `retrieval/decompose.py`: acquire per DB step inside the multi-hop loop
