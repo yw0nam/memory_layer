@@ -20,7 +20,7 @@ import os
 from typing import Any, Mapping
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
 from memory_base.adapters.document import extension_for
@@ -30,6 +30,8 @@ from memory_base.retrieval.decompose import DEEP_TIMEOUT_SECONDS
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
 REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
+DEFAULT_NAMESPACE = "default"
+NAMESPACE_HEADER = "x-memory-namespaces"
 
 mcp = FastMCP("memory-base")
 
@@ -46,6 +48,47 @@ def _raise_backend_error(response: httpx.Response) -> None:
     raise ValueError(message)
 
 
+def _allowed_namespaces(ctx: "Context | None") -> list[str]:
+    """The connection's ordered allowed namespace set from X-Memory-Namespaces.
+
+    First entry is the home namespace. No header (or no HTTP request, e.g.
+    stdio transport or a direct call outside a session) means ['default'].
+    """
+    request = None
+    if ctx is not None:
+        try:
+            request = ctx.request_context.request
+        except ValueError:
+            request = None
+    if request is None:
+        return [DEFAULT_NAMESPACE]
+    header = request.headers.get(NAMESPACE_HEADER)
+    if not header:
+        return [DEFAULT_NAMESPACE]
+    parsed = [part.strip() for part in header.split(",") if part.strip()]
+    return parsed or [DEFAULT_NAMESPACE]
+
+
+def _resolve_read_namespaces(namespace: str | None, ctx: "Context | None") -> list[str]:
+    """Search-tool resolution: no argument covers the whole allowed set."""
+    allowed = _allowed_namespaces(ctx)
+    if namespace is None:
+        return allowed
+    if namespace not in allowed:
+        raise ValueError(f"namespace {namespace!r} is outside the allowed set {allowed}")
+    return [namespace]
+
+
+def _resolve_write_namespace(namespace: str | None, ctx: "Context | None") -> str:
+    """Write-tool resolution: no argument goes to the home (first) entry."""
+    allowed = _allowed_namespaces(ctx)
+    if namespace is None:
+        return allowed[0]
+    if namespace not in allowed:
+        raise ValueError(f"namespace {namespace!r} is outside the allowed set {allowed}")
+    return namespace
+
+
 async def _search(
     query: str,
     source: str,
@@ -55,6 +98,7 @@ async def _search(
     include_atoms: bool | None = None,
     include_archived: bool = False,
     repo: list[str] | None = None,
+    namespaces: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {"query": query, "source": source, "top_k": top_k}
     if repo is not None:
@@ -67,6 +111,8 @@ async def _search(
         body["include_atoms"] = include_atoms
     if include_archived:
         body["include_archived"] = True
+    if namespaces is not None:
+        body["namespaces"] = namespaces
     async with _client() as client:
         response = await client.post("/search", json=body)
         if response.status_code == 400:
@@ -81,6 +127,8 @@ async def search_all(
     top_k: int = 10,
     include_atoms: bool | None = None,
     include_archived: bool = False,
+    namespace: str | None = None,
+    ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search both code and memory for the given query.
 
@@ -94,15 +142,29 @@ async def search_all(
 
     `include_archived` widens the search to archived memory; use `search_memory`
     for the `kind`/`tags` filters, which apply to memory only.
+
+    `namespace` narrows the memory search to one namespace within this
+    connection's allowed set (see `save_memory`); omitted, it covers the
+    whole allowed set. A namespace outside the set raises an error.
     """
+    namespaces = _resolve_read_namespaces(namespace, ctx)
     return await _search(
-        query, "all", top_k, include_atoms=include_atoms, include_archived=include_archived
+        query,
+        "all",
+        top_k,
+        include_atoms=include_atoms,
+        include_archived=include_archived,
+        namespaces=namespaces,
     )
 
 
 @mcp.tool()
 async def search_code(
-    query: str, top_k: int = 10, repo: list[str] | None = None
+    query: str,
+    top_k: int = 10,
+    repo: list[str] | None = None,
+    namespace: str | None = None,
+    ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search only the indexed codebase for the given query.
 
@@ -115,9 +177,11 @@ async def search_code(
 
     Every cached repository is searched unless `repo` narrows it to the named
     ones; `list_repos` reports the names that exist, and an unknown name simply
-    matches nothing.
+    matches nothing. `namespace` has no effect on code (code is not
+    namespaced) but is accepted for a uniform tool shape.
     """
-    return await _search(query, "code", top_k, repo=repo)
+    namespaces = _resolve_read_namespaces(namespace, ctx)
+    return await _search(query, "code", top_k, repo=repo, namespaces=namespaces)
 
 
 @mcp.tool()
@@ -128,6 +192,8 @@ async def search_memory(
     tags: list[str] | None = None,
     include_atoms: bool | None = None,
     include_archived: bool = False,
+    namespace: str | None = None,
+    ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search only stored memory for the given query.
 
@@ -141,8 +207,15 @@ async def search_memory(
     question is explicitly about superseded or historical content: it also drops
     recency weighting, and the rows it adds carry "archived": true because they
     may have been replaced by a newer note.
+
+    `namespace` narrows the search to one namespace within this connection's
+    allowed set; omitted, it covers the whole allowed set. A namespace outside
+    the set raises an error.
     """
-    return await _search(query, "memory", top_k, kind, tags, include_atoms, include_archived)
+    namespaces = _resolve_read_namespaces(namespace, ctx)
+    return await _search(
+        query, "memory", top_k, kind, tags, include_atoms, include_archived, namespaces=namespaces
+    )
 
 
 @mcp.tool()
@@ -151,6 +224,8 @@ async def save_memory(
     kind: str = "note",
     tags: list[str] | None = None,
     supersedes: str | None = None,
+    namespace: str | None = None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Store a distilled memory worth recalling in a future session.
 
@@ -164,8 +239,13 @@ async def save_memory(
     `kind` is "note" (default) or "decision". `tags` are optional labels.
     `supersedes` archives an older note by id.
 
+    `namespace` picks one namespace from this connection's allowed set;
+    omitted, the note lands in the home (first) namespace of that set. A
+    namespace outside the set raises an error.
+
     `stored` is False when identical content was already saved (idempotent no-op).
     """
+    resolved_namespace = _resolve_write_namespace(namespace, ctx)
     async with _client() as client:
         response = await client.post(
             "/save_memory",
@@ -174,6 +254,7 @@ async def save_memory(
                 "kind": kind,
                 "tags": tags,
                 "supersedes": supersedes,
+                "namespace": resolved_namespace,
             },
         )
         if response.status_code == 400:
@@ -189,11 +270,17 @@ async def ingest_document(
     document_id: str | None = None,
     origin: str | None = None,
     mode: str = "upsert",
+    namespace: str | None = None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Queue a text document for conversion, enrichment, and atomic storage.
 
     The filename must use a supported text extension: .md, .markdown, .txt,
     .rst, .html, or .htm. Binary documents upload through REST directly.
+
+    `namespace` picks one namespace from this connection's allowed set;
+    omitted, the document lands in the home (first) namespace of that set. A
+    namespace outside the set raises an error.
     """
     try:
         extension = extension_for(filename)
@@ -201,7 +288,8 @@ async def ingest_document(
         raise ValueError(str(exc)) from exc
     if extension not in MCP_TEXT_EXTENSIONS:
         raise ValueError("MCP document ingestion supports text formats only")
-    data = {"filename": filename, "mode": mode}
+    resolved_namespace = _resolve_write_namespace(namespace, ctx)
+    data = {"filename": filename, "mode": mode, "namespace": resolved_namespace}
     if document_id is not None:
         data["document_id"] = document_id
     if origin is not None:
@@ -284,6 +372,8 @@ async def deep_search(
     kind: str | None = None,
     tags: list[str] | None = None,
     include_archived: bool = False,
+    namespace: str | None = None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Multi-hop decomposition over stored memory for complex questions.
 
@@ -295,8 +385,13 @@ async def deep_search(
     hops_used and stopped_reason. Archived evidence carries "archived": true.
 
     `include_archived` carries the same caveats as in `search_memory`.
+
+    `namespace` narrows retrieval to one namespace within this connection's
+    allowed set; omitted, it covers the whole allowed set. A namespace
+    outside the set raises an error.
     """
-    body: dict[str, Any] = {"query": query}
+    namespaces = _resolve_read_namespaces(namespace, ctx)
+    body: dict[str, Any] = {"query": query, "namespaces": namespaces}
     if max_hops is not None:
         body["max_hops"] = max_hops
     if kind is not None:

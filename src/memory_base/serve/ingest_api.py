@@ -39,6 +39,7 @@ from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
 from memory_base.ingest.enrich import EnrichmentError, atomize_and_tag, summarize_and_tag
 from memory_base.serve import job_store
+from memory_base.serve import namespaces
 from memory_base.serve.job_store import _iso_time
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))
@@ -130,38 +131,42 @@ def _error(message: str, status_code: int) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status_code)
 
 
-async def _existing_content_hash(document_id: str) -> str | None:
+async def _existing_content_hash(document_id: str, namespace: str = "default") -> str | None:
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         return await conn.fetchval(
             f"""
             SELECT metadata->>'content_hash'
             FROM "{PG_SCHEMA}".memory_chunks
-            WHERE source_type = 'document' AND source_ref = $1
+            WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
             LIMIT 1
             """,
             document_id,
+            namespace,
         )
 
 
-async def replace_document_rows(document_id: str, rows: Sequence[dict[str, Any]]) -> None:
-    """Replace one document's rows in a single transaction."""
+async def replace_document_rows(
+    document_id: str, rows: Sequence[dict[str, Any]], namespace: str = "default"
+) -> None:
+    """Replace one document's rows, within one namespace, in a single transaction."""
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
             await conn.execute(
                 f"""
                 DELETE FROM "{PG_SCHEMA}".memory_chunks
-                WHERE source_type = 'document' AND source_ref = $1
+                WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
                 """,
                 document_id,
+                namespace,
             )
             await conn.executemany(
                 f"""
                 INSERT INTO "{PG_SCHEMA}".memory_chunks
                   (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-                   distilled, embedding, ts_last_active, idf_score, metadata)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb)
+                   distilled, embedding, ts_last_active, idf_score, namespace, metadata)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11,$12::jsonb)
                 """,
                 [
                     (
@@ -175,6 +180,7 @@ async def replace_document_rows(document_id: str, rows: Sequence[dict[str, Any]]
                         row["embedding"],
                         row["ts_last_active"],
                         row["idf_score"],
+                        row.get("namespace", namespace),
                         json.dumps(row["metadata"], ensure_ascii=False),
                     )
                     for row in rows
@@ -233,6 +239,7 @@ async def _csv_rows(
     content_hash: str,
     origin: str | None,
     now: float,
+    namespace: str = "default",
 ) -> list[dict[str, Any]]:
     job.touch(stage="chunking")
     sample = read_csv_sample(upload_path)
@@ -266,6 +273,7 @@ async def _csv_rows(
             content_hash=content_hash,
             origin=origin,
             timestamp=now,
+            namespace=namespace,
         )
     ]
 
@@ -278,6 +286,7 @@ async def _markdown_rows(
     content_hash: str,
     origin: str | None,
     now: float,
+    namespace: str = "default",
 ) -> list[dict[str, Any]]:
     conversion = await convert_to_markdown(upload_path)
     if len(conversion.text) > EXTRACTED_MAX_CHARS:
@@ -303,6 +312,7 @@ async def _markdown_rows(
         converter=conversion.converter,
         origin=origin,
         timestamp=now,
+        namespace=namespace,
     )
 
 
@@ -312,6 +322,7 @@ async def run_document_job(
     filename: str,
     mode: str,
     origin: str | None,
+    namespace: str = "default",
 ) -> None:
     """Run one document pipeline and atomically publish its completed rows."""
     document_lock = _document_locks[job.document_id]
@@ -320,14 +331,18 @@ async def run_document_job(
             content_hash = _file_hash(upload_path)
             job.content_hash = content_hash
             job.touch()
-            if mode == "upsert" and await _existing_content_hash(job.document_id) == content_hash:
-                job.touch(status="no_op", stage="done")
-                return
+            if mode == "upsert":
+                existing_hash = await _existing_content_hash(job.document_id, namespace)
+                if existing_hash == content_hash:
+                    job.touch(status="no_op", stage="done")
+                    return
 
             extension = extension_for(filename)
             now = time.time()
             if extension == ".csv":
-                rows = await _csv_rows(job, upload_path, filename, content_hash, origin, now)
+                rows = await _csv_rows(
+                    job, upload_path, filename, content_hash, origin, now, namespace
+                )
             else:
                 rows = await _markdown_rows(
                     job,
@@ -337,6 +352,7 @@ async def run_document_job(
                     content_hash,
                     origin,
                     now,
+                    namespace,
                 )
 
             if not rows:
@@ -346,7 +362,7 @@ async def run_document_job(
             job.touch(stage="embedding")
             await _embed_rows(rows)
             job.touch(stage="writing")
-            await replace_document_rows(job.document_id, rows)
+            await replace_document_rows(job.document_id, rows, namespace)
             job.rows_written = len(rows)
             job.touch(status="succeeded", stage="done")
     finally:
@@ -415,6 +431,19 @@ async def ingest_document_route(request: Request) -> JSONResponse:
     if origin_value is not None and not isinstance(origin_value, str):
         await upload.close()
         return _error("origin must be a string", 400)
+
+    namespace_value = form.get("namespace")
+    if namespace_value is None or namespace_value == "":
+        namespace = namespaces.DEFAULT_NAMESPACE
+    elif isinstance(namespace_value, str):
+        namespace = namespace_value
+    else:
+        await upload.close()
+        return _error("namespace must be a string", 400)
+    if not await namespaces.namespace_exists(namespace):
+        await upload.close()
+        return _error(f"unregistered namespace: {namespace}", 400)
+
     if not registry.has_capacity():
         await upload.close()
         return _error("document ingest queue is full", 429)
@@ -439,6 +468,7 @@ async def ingest_document_route(request: Request) -> JSONResponse:
             filename,
             str(mode),
             origin_value,
+            namespace,
         ),
     )
     return JSONResponse(

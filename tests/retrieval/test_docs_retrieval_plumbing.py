@@ -15,6 +15,8 @@ from memory_base.retrieval.search import (
     _search_atoms,
     _search_code,
     _search_memory,
+    history_predicates,
+    normalize_namespaces,
     validate_search_options,
 )
 
@@ -113,6 +115,67 @@ def test_code_hit_carries_repo():
     hits = asyncio.run(_search_code(conn, "query", "[1]"))
     assert hits[0].meta["repo"] == "YUI"
     assert all("repo = ANY" not in q for q, _ in conn.queries)
+
+
+# ---- namespaces filter -----------------------------------------------------
+
+
+def test_normalize_namespaces_none_means_no_filter():
+    assert normalize_namespaces(None) is None
+
+
+def test_normalize_namespaces_empty_list_means_no_filter():
+    assert normalize_namespaces([]) is None
+
+
+def test_normalize_namespaces_dedupes_and_strips():
+    assert normalize_namespaces([" team-a ", "team-b", "team-a"]) == ["team-a", "team-b"]
+
+
+@pytest.mark.parametrize("namespaces", ["team-a", [1], [None]])
+def test_normalize_namespaces_rejects_non_list_of_str(namespaces):
+    with pytest.raises(ValueError, match="namespaces"):
+        normalize_namespaces(namespaces)
+
+
+def test_history_predicates_omits_namespace_clause_by_default():
+    predicates, args = history_predicates(include_archived=False, kind=None, tags=None)
+    assert "namespace" not in predicates
+    assert args == []
+
+
+def test_history_predicates_adds_namespace_any_clause():
+    predicates, args = history_predicates(
+        include_archived=False, kind=None, tags=None, namespaces=["team-a", "team-b"]
+    )
+    assert "namespace = ANY($2::text[])" in predicates
+    assert args == [["team-a", "team-b"]]
+
+
+def test_history_predicates_namespace_clause_uses_alias():
+    predicates, _ = history_predicates(
+        include_archived=False, kind=None, tags=None, alias="parent", namespaces=["team-a"]
+    )
+    assert "parent.namespace = ANY(" in predicates
+
+
+def test_search_memory_filters_by_namespace():
+    conn = FakeSearchConnection([[], []])
+    asyncio.run(_search_memory(conn, "query", "[1]", namespaces=["team-a"]))
+    vector_sql, vector_args = conn.queries[1]
+    fts_sql, fts_args = conn.queries[2]
+    for sql in (vector_sql, fts_sql):
+        assert "namespace = ANY($" in sql
+    assert vector_args == ("[1]", ["team-a"])
+    assert fts_args == ("query", ["team-a"])
+
+
+def test_search_atoms_filters_by_parent_namespace():
+    conn = FakeSearchConnection([[]])
+    asyncio.run(_search_atoms(conn, "[1]", namespaces=["team-a"]))
+    sql, args = conn.queries[0]
+    assert "parent.namespace = ANY(" in sql
+    assert args == ("[1]", ["team-a"])
 
 
 def test_memory_filters_are_inside_both_candidate_queries():

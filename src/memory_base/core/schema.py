@@ -34,6 +34,15 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           ADD COLUMN IF NOT EXISTS hit_count bigint NOT NULL DEFAULT 0;
         ALTER TABLE {schema}.memory_chunks
           ADD COLUMN IF NOT EXISTS archived_at double precision;
+        ALTER TABLE {schema}.memory_chunks
+          ADD COLUMN IF NOT EXISTS namespace text NOT NULL DEFAULT 'default';
+        CREATE INDEX IF NOT EXISTS memory_chunks__namespace ON {schema}.memory_chunks (namespace);
+        CREATE TABLE IF NOT EXISTS {schema}.namespaces (
+          name text PRIMARY KEY,
+          created_at double precision NOT NULL
+        );
+        INSERT INTO {schema}.namespaces (name, created_at) VALUES ('default', 0)
+          ON CONFLICT (name) DO NOTHING;
         CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
           id bigserial PRIMARY KEY,
           query text NOT NULL,

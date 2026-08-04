@@ -370,6 +370,19 @@ async def build_csv_card(
     return await summarize(context, "The input is a sampled tabular document.")
 
 
+def _qualify_document_id(namespace: str, document_id: str) -> str:
+    """Namespace-qualify a document_id for row-id construction.
+
+    'default' keeps the legacy unqualified id so existing rows are
+    unaffected; every other namespace gets a distinct id space so the same
+    document_id ingested into two namespaces never collides on the
+    memory_chunks primary key.
+    """
+    if namespace == "default":
+        return document_id
+    return f"{namespace}:{document_id}"
+
+
 def _base_row(
     *,
     row_id: str,
@@ -380,6 +393,7 @@ def _base_row(
     embedding_text: str,
     timestamp: float,
     metadata: dict[str, Any],
+    namespace: str = "default",
 ) -> dict[str, Any]:
     return {
         "id": row_id,
@@ -392,6 +406,7 @@ def _base_row(
         "embedding_text": embedding_text,
         "ts_last_active": timestamp,
         "idf_score": None,
+        "namespace": namespace,
         "metadata": metadata,
     }
 
@@ -407,15 +422,17 @@ def map_document_rows(
     converter: str,
     origin: str | None,
     timestamp: float,
+    namespace: str = "default",
 ) -> list[dict[str, Any]]:
     """Map enriched document chunks and atoms to memory_chunks row dictionaries."""
     if len(chunks) != len(enrichments):
         raise ValueError("every chunk requires one enrichment result")
     rows: list[dict[str, Any]] = []
+    qualified_document_id = _qualify_document_id(namespace, document_id)
     for chunk, enrichment in zip(chunks, enrichments, strict=True):
         if chunk.ordinal is None:
             raise ValueError("chunk ordinals must be assigned before row mapping")
-        parent_id = f"doc:{document_id}:{chunk.ordinal}"
+        parent_id = f"doc:{qualified_document_id}:{chunk.ordinal}"
         heading = " > ".join(chunk.heading_path)
         metadata = {
             "filename": filename,
@@ -440,6 +457,7 @@ def map_document_rows(
                 embedding_text=embedding_text,
                 timestamp=timestamp,
                 metadata=metadata,
+                namespace=namespace,
             )
         )
         for atom_index, question in enumerate(enrichment["atom_questions"]):
@@ -458,6 +476,7 @@ def map_document_rows(
                         "document_id": document_id,
                         "content_hash": content_hash,
                     },
+                    namespace=namespace,
                 )
             )
     return rows
@@ -473,17 +492,20 @@ def map_csv_card_row(
     origin: str | None,
     timestamp: float,
     card_index: int = 0,
+    namespace: str = "default",
 ) -> dict[str, Any]:
     """Map an enriched CSV card to a memory_chunks row dictionary."""
     summary = card["summary"]
+    qualified_document_id = _qualify_document_id(namespace, document_id)
     return _base_row(
-        row_id=f"doc:{document_id}:card:{card_index}",
+        row_id=f"doc:{qualified_document_id}:card:{card_index}",
         document_id=document_id,
         kind="doc",
         raw=summary,
         distilled=summary,
         embedding_text=summary,
         timestamp=timestamp,
+        namespace=namespace,
         metadata={
             "filename": filename,
             "document_id": document_id,

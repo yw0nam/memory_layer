@@ -11,6 +11,8 @@ from typing import Any
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
+from memory_base.serve import namespaces
+from memory_base.serve.namespaces import DEFAULT_NAMESPACE
 
 NOTE_MAX_CHARS = 4000
 NOTE_KINDS = ("note", "decision")
@@ -27,8 +29,20 @@ def normalize_tags(tags: Any) -> list[str]:
     return list(dict.fromkeys(tag.strip().lower() for tag in tags if tag.strip()))
 
 
-def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) -> dict[str, Any]:
-    """Validate a note and map it to memory_chunks columns (no embedding)."""
+def build_note_row(
+    content: str,
+    kind: str,
+    tags: list[str] | None,
+    now: float,
+    namespace: str = DEFAULT_NAMESPACE,
+) -> dict[str, Any]:
+    """Validate a note and map it to memory_chunks columns (no embedding).
+
+    The id is namespace-qualified for every namespace but 'default', so
+    identical content saved into different namespaces gets independent rows
+    instead of colliding on id and silently no-opping the second save. The
+    'default' format stays exactly as before, preserving legacy idempotency.
+    """
     content = content.strip()
     if not content:
         raise ValueError("content must not be empty")
@@ -37,7 +51,11 @@ def build_note_row(content: str, kind: str, tags: list[str] | None, now: float) 
     if kind not in NOTE_KINDS:
         raise ValueError(f"kind must be one of {NOTE_KINDS}")
     normalized_tags = normalize_tags(tags)
-    note_id = f"note:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
+    content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
+    if namespace == DEFAULT_NAMESPACE:
+        note_id = f"note:{content_hash}"
+    else:
+        note_id = f"note:{namespace}:{content_hash}"
     return {
         "id": note_id,
         "source_type": "agent_note",
@@ -57,22 +75,25 @@ async def save_note(
     kind: str = "note",
     tags: list[str] | None = None,
     supersedes: str | None = None,
+    namespace: str = DEFAULT_NAMESPACE,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory."""
-    row = build_note_row(content, kind, tags, time.time())
+    row = build_note_row(content, kind, tags, time.time(), namespace)
     embedding = await embed_text(VllmEmbedder(), row["raw"])
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
+        await namespaces.require_registered(conn, namespace)
         async with conn.transaction():
             if supersedes is not None:
                 exists = await conn.fetchval(
                     f"""
                     SELECT EXISTS(
                       SELECT 1 FROM "{PG_SCHEMA}".memory_chunks
-                      WHERE id = $1 AND source_type = 'agent_note'
+                      WHERE id = $1 AND source_type = 'agent_note' AND namespace = $2
                     )
                     """,
                     supersedes,
+                    namespace,
                 )
                 if not exists:
                     raise ValueError(f"unknown supersedes id: {supersedes}")
@@ -81,8 +102,8 @@ async def save_note(
                 f"""
                 INSERT INTO "{PG_SCHEMA}".memory_chunks
                   (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-                   distilled, embedding, ts_last_active, idf_score, metadata)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb)
+                   distilled, embedding, ts_last_active, idf_score, namespace, metadata)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11,$12::jsonb)
                 ON CONFLICT (id) DO NOTHING
                 """,
                 row["id"],
@@ -95,6 +116,7 @@ async def save_note(
                 embedding,
                 row["timestamp"],
                 row["idf"],
+                namespace,
                 json.dumps(row["metadata"], ensure_ascii=False),
             )
             if supersedes is not None:
@@ -102,10 +124,11 @@ async def save_note(
                     f"""
                     UPDATE "{PG_SCHEMA}".memory_chunks
                     SET archived_at = $2
-                    WHERE id = $1
+                    WHERE id = $1 AND namespace = $3
                     """,
                     supersedes,
                     row["timestamp"],
+                    namespace,
                 )
             excluded_ids = [row["id"]]
             if supersedes is not None:
@@ -117,6 +140,7 @@ async def save_note(
                 FROM "{PG_SCHEMA}".memory_chunks
                 WHERE source_type = 'agent_note'
                   AND archived_at IS NULL
+                  AND namespace = $4
                   AND id <> ALL($2::text[])
                   AND 1 - (embedding <=> $1::halfvec) > $3
                 ORDER BY score DESC
@@ -125,6 +149,7 @@ async def save_note(
                 embedding,
                 excluded_ids,
                 NOTE_SIMILAR_THRESHOLD,
+                namespace,
             )
     return {
         "id": row["id"],

@@ -174,6 +174,53 @@ def test_document_row_ids_metadata_and_search_refs():
     assert atom["id"] == "doc:guide.md:0:atom:0"
     assert atom["metadata"]["parent_id"] == parent["id"]
     assert atom["source_ref"] == "guide.md"
+    assert parent["namespace"] == "default"
+    assert atom["namespace"] == "default"
+
+
+def test_document_rows_stamp_explicit_namespace():
+    chunks = [Chunk("Body text " * 30, ("Root",), 0)]
+    parent, atom = document.map_document_rows(
+        chunks,
+        [{"atom_questions": ["question"], "tags": []}],
+        filename="guide.md",
+        document_id="guide.md",
+        content_hash="abc",
+        format_name="md",
+        converter="markitdown:0.1.6",
+        origin=None,
+        timestamp=1.0,
+        namespace="team-a",
+    )
+    assert parent["namespace"] == "team-a"
+    assert atom["namespace"] == "team-a"
+    # non-default namespace qualifies the id so it never collides with another
+    # namespace's row for the same document_id (default keeps the legacy id).
+    assert parent["id"] == "doc:team-a:guide.md:0"
+    assert atom["id"] == "doc:team-a:guide.md:0:atom:0"
+    assert atom["metadata"]["parent_id"] == parent["id"]
+
+
+def test_document_rows_same_document_id_different_namespaces_have_disjoint_ids():
+    chunks = [Chunk("Body text " * 30, ("Root",), 0)]
+    enrichments = [{"atom_questions": ["question"], "tags": []}]
+    kwargs = dict(
+        filename="guide.md",
+        document_id="guide.md",
+        content_hash="abc",
+        format_name="md",
+        converter="markitdown:0.1.6",
+        origin=None,
+        timestamp=1.0,
+    )
+    default_rows = document.map_document_rows(chunks, enrichments, **kwargs, namespace="default")
+    team_a_rows = document.map_document_rows(chunks, enrichments, **kwargs, namespace="team-a")
+    team_b_rows = document.map_document_rows(chunks, enrichments, **kwargs, namespace="team-b")
+    all_ids = [row["id"] for rows in (default_rows, team_a_rows, team_b_rows) for row in rows]
+    assert len(all_ids) == len(set(all_ids))
+    # default keeps the pre-namespace id format exactly.
+    assert default_rows[0]["id"] == "doc:guide.md:0"
+    assert default_rows[1]["id"] == "doc:guide.md:0:atom:0"
 
 
 def test_csv_sample_and_card_builder_use_header_first_twenty_rows(tmp_path):
@@ -214,6 +261,24 @@ def test_csv_card_row_mapping():
     assert row["content_raw"] == row["distilled"]
     assert row["metadata"]["search_ref"] == "names.csv#card-0"
     assert row["metadata"]["row_count"] == 1
+    assert row["namespace"] == "default"
+
+
+def test_csv_card_row_same_document_id_different_namespaces_have_disjoint_ids():
+    sample = document.CSVSample(["name"], [["one"]], 1, 1)
+    card = {"summary": "A one-column name table.", "tags": ["name table"]}
+    kwargs = dict(
+        filename="names.csv",
+        document_id="names.csv",
+        content_hash="hash",
+        origin=None,
+        timestamp=2.0,
+    )
+    default_row = document.map_csv_card_row(card, sample, **kwargs, namespace="default")
+    team_a_row = document.map_csv_card_row(card, sample, **kwargs, namespace="team-a")
+    assert default_row["id"] == "doc:names.csv:card:0"
+    assert team_a_row["id"] == "doc:team-a:names.csv:card:0"
+    assert default_row["id"] != team_a_row["id"]
 
 
 def test_csv_size_cap_is_enforced_before_reading(tmp_path):

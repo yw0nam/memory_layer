@@ -11,8 +11,22 @@ from pathlib import Path
 import httpx
 import pytest
 
+import asyncpg
+
 from memory_base.adapters import document
-from memory_base.serve import api, ingest_api
+from memory_base.adapters.document import Chunk, map_document_rows
+from memory_base.core.config import PG_SCHEMA, VllmEmbedder, db_url, embed_text
+from memory_base.serve import api, ingest_api, namespaces
+
+
+@pytest.fixture(autouse=True)
+def _default_namespace_registered(monkeypatch):
+    """POST /ingest/document checks namespace registration; assume 'default' exists."""
+
+    async def fake_namespace_exists(name):
+        return name == "default"
+
+    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
 
 
 def _post(path, **kwargs):
@@ -106,6 +120,60 @@ def test_rest_returns_413_when_upload_exceeds_limit(monkeypatch):
     assert set(response.json()) == {"error"}
 
 
+# ---- namespace validation ---------------------------------------------------
+
+
+def test_rest_ingest_omitted_namespace_uses_default(monkeypatch):
+    fake = AcceptingRegistry()
+    monkeypatch.setattr(ingest_api, "registry", fake)
+    response = _post(
+        "/ingest/document",
+        files={"file": ("guide.md", b"content")},
+    )
+    assert response.status_code == 202
+
+
+def test_rest_ingest_unregistered_namespace_400(monkeypatch):
+    fake = AcceptingRegistry()
+    monkeypatch.setattr(ingest_api, "registry", fake)
+
+    async def fake_namespace_exists(name):
+        return False
+
+    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+    response = _post(
+        "/ingest/document",
+        data={"namespace": "ghost"},
+        files={"file": ("guide.md", b"content")},
+    )
+    assert response.status_code == 400
+    assert "unregistered namespace" in response.json()["error"]
+    assert fake.runner is None
+
+
+def test_rest_ingest_registered_namespace_reaches_job_runner(monkeypatch):
+    fake = AcceptingRegistry()
+    monkeypatch.setattr(ingest_api, "registry", fake)
+    captured = {}
+
+    async def fake_namespace_exists(name):
+        return name == "team-a"
+
+    async def fake_run_document_job(job, upload_path, filename, mode, origin, namespace="default"):
+        captured["namespace"] = namespace
+
+    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+    monkeypatch.setattr(ingest_api, "run_document_job", fake_run_document_job)
+    response = _post(
+        "/ingest/document",
+        data={"namespace": "team-a"},
+        files={"file": ("guide.md", b"content")},
+    )
+    assert response.status_code == 202
+    asyncio.run(fake.runner())
+    assert captured["namespace"] == "team-a"
+
+
 def test_job_registry_queue_bound_ttl_and_completed_eviction():
     registry = ingest_api.JobRegistry(
         max_queued=1,
@@ -194,12 +262,13 @@ def test_atomic_replacement_deletes_only_document_rows_then_inserts(monkeypatch)
         "idf_score": None,
         "metadata": {"content_hash": "hash"},
     }
-    asyncio.run(ingest_api.replace_document_rows("guide.md", [row]))
+    asyncio.run(ingest_api.replace_document_rows("guide.md", [row], "default"))
     delete = next(call for call in connection.calls if "DELETE FROM" in call[1])
     insert = next(call for call in connection.calls if call[0] == "executemany")
-    assert "source_type = 'document' AND source_ref = $1" in delete[1]
-    assert delete[2] == ("guide.md",)
+    assert "source_type = 'document' AND source_ref = $1 AND namespace = $2" in delete[1]
+    assert delete[2] == ("guide.md", "default")
     assert insert[0] == "executemany"
+    assert insert[2][0][-2] == "default"
     assert json.loads(insert[2][0][-1]) == {"content_hash": "hash"}
 
 
@@ -217,7 +286,7 @@ def test_identical_hash_is_no_op_without_conversion_or_write(monkeypatch, tmp_pa
     expected_hash = ingest_api._file_hash(upload)
     called = []
 
-    async def existing(document_id):
+    async def existing(document_id, namespace="default"):
         return expected_hash
 
     async def forbidden(*args, **kwargs):
@@ -231,6 +300,35 @@ def test_identical_hash_is_no_op_without_conversion_or_write(monkeypatch, tmp_pa
     assert job.status == "no_op"
     assert job.stage == "done"
     assert called == []
+
+
+def test_force_mode_never_consults_existing_content_hash(monkeypatch, tmp_path):
+    """force mode must skip the DB lookup entirely (not just ignore its result):
+    a DB-unreachable environment must not hang/crash a force-mode job."""
+    ingest_api._document_locks.clear()
+    upload = tmp_path / "guide.md"
+    upload.write_text("force mode content")
+
+    async def forbidden_existing_hash(*args, **kwargs):
+        raise AssertionError("force mode must not call _existing_content_hash")
+
+    async def fake_markdown_rows(*args):
+        return [{"id": "row-1"}]
+
+    async def no_embed(rows):
+        return None
+
+    async def no_write(document_id, rows, namespace="default"):
+        return None
+
+    monkeypatch.setattr(ingest_api, "_existing_content_hash", forbidden_existing_hash)
+    monkeypatch.setattr(ingest_api, "_markdown_rows", fake_markdown_rows)
+    monkeypatch.setattr(ingest_api, "_embed_rows", no_embed)
+    monkeypatch.setattr(ingest_api, "replace_document_rows", no_write)
+    job = _job()
+    asyncio.run(ingest_api.run_document_job(job, upload, "guide.md", "force", None))
+    assert job.status == "succeeded"
+    assert job.stage == "done"
     assert not upload.exists()
     assert job.document_id not in ingest_api._document_locks
 
@@ -263,7 +361,7 @@ def test_concurrent_jobs_for_same_document_serialize_and_prune_lock(monkeypatch,
         async def no_embed(rows):
             return None
 
-        async def no_write(document_id, rows):
+        async def no_write(document_id, rows, namespace="default"):
             return None
 
         monkeypatch.setattr(ingest_api, "_markdown_rows", rows)
@@ -294,7 +392,7 @@ def test_csv_persistent_enrichment_failure_names_card_and_never_writes(monkeypat
     upload.write_text("name,value\none,1\n")
     writes = []
 
-    async def no_existing(document_id):
+    async def no_existing(document_id, namespace="default"):
         return None
 
     async def fail(*args, **kwargs):
@@ -319,7 +417,7 @@ def test_chunk_persistent_enrichment_failure_names_ordinal_and_never_writes(monk
     upload.write_text("source")
     writes = []
 
-    async def no_existing(document_id):
+    async def no_existing(document_id, namespace="default"):
         return None
 
     async def converted(path):
@@ -346,7 +444,7 @@ def test_zero_accepted_chunks_fails_before_enrichment_and_write(monkeypatch, tmp
     upload.write_text("content")
     writes = []
 
-    async def no_existing(document_id):
+    async def no_existing(document_id, namespace="default"):
         return None
 
     async def converted(path):
@@ -389,3 +487,84 @@ def test_oversized_fast_worker_output_is_statted_before_read_and_removed(monkeyp
     with pytest.raises(document.ConversionError, match="exceeds 16 MB"):
         asyncio.run(document.convert_to_markdown(input_path))
     assert not output["path"].exists()
+
+
+# ---- integration: same document_id across namespaces must not collide -----
+
+
+def _db_reachable() -> bool:
+    async def _check() -> None:
+        conn = await asyncpg.connect(db_url(), timeout=5)
+        await conn.close()
+
+    try:
+        asyncio.run(_check())
+        return True
+    except Exception:
+        return False
+
+
+_DB = _db_reachable()
+requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
+
+
+async def _delete_document_rows(document_id: str) -> None:
+    conn = await asyncpg.connect(db_url())
+    try:
+        await conn.execute(
+            f'DELETE FROM "{PG_SCHEMA}".memory_chunks '
+            "WHERE source_type = 'document' AND source_ref = $1",
+            document_id,
+        )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.integration
+@requires_db
+def test_same_document_id_two_namespaces_no_pk_collision():
+    """Regression: ingesting the same document_id into a second namespace must
+    not crash with a UniqueViolation on the memory_chunks primary key, since
+    replace_document_rows deletes/inserts scoped by (source_ref, namespace)
+    but ids used to be namespace-independent (issue #81 review)."""
+    document_id = "zzz-namespace-collision-test.md"
+    chunks = [Chunk("Namespace collision regression check content.", (), 0)]
+    enrichments = [{"atom_questions": [], "tags": []}]
+
+    async def scenario():
+        await namespaces.create_namespace("zzz-collision-ns")
+        try:
+            embedding = await embed_text(VllmEmbedder(), "namespace collision check")
+            for ns in ("default", "zzz-collision-ns"):
+                rows = map_document_rows(
+                    chunks,
+                    enrichments,
+                    filename=document_id,
+                    document_id=document_id,
+                    content_hash="hash",
+                    format_name="md",
+                    converter="test",
+                    origin=None,
+                    timestamp=1.0,
+                    namespace=ns,
+                )
+                for row in rows:
+                    row["embedding"] = embedding
+                # must not raise asyncpg.UniqueViolationError
+                await ingest_api.replace_document_rows(document_id, rows, ns)
+
+            conn = await asyncpg.connect(db_url())
+            try:
+                count = await conn.fetchval(
+                    f'SELECT count(*) FROM "{PG_SCHEMA}".memory_chunks '
+                    "WHERE source_type = 'document' AND source_ref = $1",
+                    document_id,
+                )
+            finally:
+                await conn.close()
+            assert count == 2
+        finally:
+            await _delete_document_rows(document_id)
+            await namespaces.delete_namespace("zzz-collision-ns")
+
+    asyncio.run(scenario())
