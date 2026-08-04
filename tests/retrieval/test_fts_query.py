@@ -30,6 +30,7 @@ def seeded_namespace():
         "the final mention of fusion.",
         "filler-a": "Quarterly accounting policies and branch office schedules.",
         "filler-b": "Customer support procedures for routine card replacements.",
+        "stopword-noise": "What did we do in the of it? What did they say about it in the end?",
     }
     embedding = vector_literal(np.zeros(EMB_DIM, dtype=np.float16))
 
@@ -67,6 +68,8 @@ def seeded_namespace():
 
 
 def _fts_rows(namespace: str, query: str):
+    query_text = getattr(search, "fts_query_text", lambda value: value)(query)
+
     async def fetch():
         async with db.acquire() as conn:
             return await conn.fetch(
@@ -77,7 +80,7 @@ def _fts_rows(namespace: str, query: str):
                   AND to_tsvector('simple', content_raw) @@ {_tsquery_sql()}
                 ORDER BY ts_rank_cd(to_tsvector('simple', content_raw), {_tsquery_sql()}) DESC
                 """,
-                query,
+                query_text,
                 namespace,
             )
 
@@ -89,6 +92,7 @@ def test_natural_language_query_matches_best_chunk(seeded_namespace):
 
     assert rows
     assert rows[0]["source_ref"] == "natural"
+    assert "stopword-noise" not in [row["source_ref"] for row in rows]
 
 
 def test_exact_identifier_lookup_stays_on_top(seeded_namespace):
