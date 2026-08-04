@@ -22,6 +22,7 @@ from memory_base.core.config import (
 )
 from memory_base.retrieval.search import (
     CANDIDATES_PER_SIGNAL,
+    FTS_TSQUERY_SQL,
     PER_FILE_CAP,
     TIME_DECAY_HALF_LIFE_DAYS,
     history_predicates,
@@ -371,9 +372,8 @@ async def _memory_backup(
     fts_args = [query, *filter_args, excluded]
     fts_rows = await conn.fetch(
         f"SELECT {columns} FROM {tbl} WHERE {predicates} AND {excl_clause} AND "
-        "to_tsvector('simple', content_raw) @@ websearch_to_tsquery('simple', $1) "
-        f"ORDER BY ts_rank_cd(to_tsvector('simple', content_raw), "
-        f"websearch_to_tsquery('simple', $1)) DESC "
+        f"to_tsvector('simple', content_raw) @@ {FTS_TSQUERY_SQL} "
+        f"ORDER BY ts_rank_cd(to_tsvector('simple', content_raw), {FTS_TSQUERY_SQL}) DESC "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
         *fts_args,
     )

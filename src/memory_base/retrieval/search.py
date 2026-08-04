@@ -38,6 +38,8 @@ SEARCH_KINDS = ("doc", "note", "decision")
 RERANK_TEXT_LIMIT = 4000
 NEIGHBOR_LINE_WINDOW = 40
 NEIGHBOR_LIMIT = 2
+# Websearch negation loses its meaning after OR conversion; this syntax is unused here.
+FTS_TSQUERY_SQL = "replace(websearch_to_tsquery('simple', $1)::text, ' & ', ' | ')::tsquery"
 
 # vLLM's official Qwen3 reranker example; byte-exact.
 QWEN3_RERANK_PREFIX = (
@@ -190,8 +192,8 @@ async def _search_code(
     )
     fts_rows = await conn.fetch(
         f"SELECT {columns} FROM {tbl} "
-        f"WHERE to_tsvector('simple', code) @@ websearch_to_tsquery('simple', $1){repo_clause} "
-        f"ORDER BY ts_rank_cd(to_tsvector('simple', code), websearch_to_tsquery('simple', $1)) DESC "
+        f"WHERE to_tsvector('simple', code) @@ {FTS_TSQUERY_SQL}{repo_clause} "
+        f"ORDER BY ts_rank_cd(to_tsvector('simple', code), {FTS_TSQUERY_SQL}) DESC "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
         query,
         *repo_args,
@@ -252,8 +254,8 @@ async def _search_memory(
     )
     fts_rows = await conn.fetch(
         f"SELECT {columns} FROM {tbl} WHERE {predicates} AND "
-        "to_tsvector('simple', content_raw) @@ websearch_to_tsquery('simple', $1) "
-        f"ORDER BY ts_rank_cd(to_tsvector('simple', content_raw), websearch_to_tsquery('simple', $1)) DESC "
+        f"to_tsvector('simple', content_raw) @@ {FTS_TSQUERY_SQL} "
+        f"ORDER BY ts_rank_cd(to_tsvector('simple', content_raw), {FTS_TSQUERY_SQL}) DESC "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
         query,
         *filter_args,
