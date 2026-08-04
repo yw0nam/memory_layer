@@ -27,12 +27,9 @@ from memory_base.core.config import PG_SCHEMA
 from memory_base.serve import job_store
 from memory_base.serve.job_store import _iso_time
 
-REPO_MAX_QUEUED = int(os.getenv("REPO_MAX_QUEUED", "10"))
 REPO_MAX_BYTES = int(os.getenv("REPO_MAX_BYTES", str(2 * 1024**3)))
 DISK_HEADROOM_BYTES = int(os.getenv("REPO_DISK_HEADROOM_BYTES", str(1024**3)))
 SIZE_POLL_SECONDS = 5
-TERMINAL_STATUSES = frozenset({"succeeded", "failed"})
-
 CACHE_ROOT = Path(
     os.getenv("REPO_CACHE", Path(__file__).resolve().parents[3] / ".repos_cache")
 ).resolve()
@@ -209,7 +206,7 @@ async def pull(dest: Path) -> None:
 
 
 def remove(dest: Path) -> None:
-    shutil.rmtree(dest)
+    shutil.rmtree(dest, ignore_errors=True)
 
 
 async def _repo_chunk_counts() -> dict[str, int]:
@@ -273,73 +270,59 @@ async def run_index() -> None:
         raise RepoError(err.decode(errors="replace").strip()[-2000:] or "cocoindex update failed")
 
 
-# ---- job registry ---------------------------------------------------------
+# ---- durable job model ----------------------------------------------------
 
 
 @dataclass
 class RepoJob:
     job_id: str
     name: str
-    action: str  # "ingest" | "remove"
+    action: str
+    url: str | None = None
+    branch: str | None = None
+    key_id: str = ""
+    key_label: str = ""
     status: str = "queued"
     error: str | None = None
     created_at: float = 0.0
     updated_at: float = 0.0
 
-    def touch(self, *, status: str | None = None) -> None:
-        if status is not None:
-            self.status = status
-        self.updated_at = time.time()
+    @property
+    def kind(self) -> str:
+        return "repo"
 
-    def mark_running(self) -> None:
-        self.touch(status="running")
+    @classmethod
+    def for_repo(cls, **values):
+        now = time.time()
+        values.setdefault("created_at", now)
+        values.setdefault("updated_at", now)
+        return cls(**values)
 
-    def mark_succeeded(self) -> None:
-        self.touch(status="succeeded")
-
-    def mark_failed(self) -> None:
-        self.touch(status="failed")
+    @classmethod
+    def from_row(cls, row: dict[str, Any]):
+        return cls(
+            job_id=row["job_id"],
+            name=row["name"],
+            action=row["action"],
+            url=row["url"],
+            branch=row["branch"],
+            key_id=row["key_id"],
+            key_label=row["key_label"],
+            status=row["status"],
+            error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     def response(self) -> dict[str, Any]:
-        payload = asdict(self)
+        payload = {
+            key: value
+            for key, value in asdict(self).items()
+            if key not in {"url", "branch", "key_id", "key_label"}
+        }
         payload["created_at"] = _iso_time(self.created_at)
         payload["updated_at"] = _iso_time(self.updated_at)
         return payload
-
-
-class RepoJobRegistry(job_store.JobRegistry):
-    """Bounded repo-job state; serializes index runs under a semaphore."""
-
-    def __init__(
-        self,
-        *,
-        max_queued: int = REPO_MAX_QUEUED,
-        max_concurrent: int = 1,
-        ttl_seconds: int = job_store.JOB_TTL_SECONDS,
-        max_completed: int = job_store.MAX_COMPLETED_JOBS,
-    ) -> None:
-        # ponytail: serialize index runs; coalesce only if bursts get heavy.
-        super().__init__(
-            kind="repo",
-            job_cls=RepoJob,
-            terminal_statuses=TERMINAL_STATUSES,
-            queue_full_message="repo job queue is full",
-            max_queued=max_queued,
-            max_concurrent=max_concurrent,
-            ttl_seconds=ttl_seconds,
-            max_completed=max_completed,
-        )
-
-    def create(self, name: str, action: str) -> RepoJob:
-        now = time.time()
-        job = RepoJob(
-            job_id=uuid.uuid4().hex, name=name, action=action, created_at=now, updated_at=now
-        )
-        self.register(job)
-        return job
-
-
-registry = RepoJobRegistry()
 
 
 # ---- job runners ----------------------------------------------------------
@@ -347,7 +330,17 @@ registry = RepoJobRegistry()
 
 async def _run_ingest_job(url: str, dest: Path, branch: str | None) -> None:
     if dest.exists():
-        await pull(dest)
+        try:
+            valid = (dest / ".git").exists() and bool(
+                await _run_git("-C", str(dest), "rev-parse", "--git-dir")
+            )
+        except RepoError:
+            valid = False
+        if valid:
+            await pull(dest)
+        else:
+            shutil.rmtree(dest, ignore_errors=True)
+            await clone(url, dest, branch)
     else:
         await clone(url, dest, branch)
     await run_index()
@@ -408,20 +401,25 @@ async def ingest_repo_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return _error(str(exc), 400)
 
-    if not registry.has_capacity():
-        return _error("repo job queue is full", 429)
     if _low_on_disk():
         return _error(
             f"free disk space below the {DISK_HEADROOM_BYTES} byte headroom "
             f"plus the {REPO_MAX_BYTES} byte checkout cap",
             507,
         )
-    dest = CACHE_ROOT / name
     try:
-        job = registry.create(name, "ingest")
-    except OverflowError as exc:
+        key = request.state.key
+        job = await job_store.admit_repo(
+            job_id=uuid.uuid4().hex,
+            key_id=key.key_id,
+            key_label=key.label,
+            name=name,
+            action="ingest",
+            url=url,
+            branch=branch,
+        )
+    except job_store.BacklogFullError as exc:
         return _error(str(exc), 429)
-    registry.start(job, lambda: _run_ingest_job(url, dest, branch))
     return JSONResponse(
         {
             "job_id": job.job_id,
@@ -442,13 +440,19 @@ async def remove_repo_route(request: Request) -> JSONResponse:
     dest = CACHE_ROOT / name
     if not dest.is_dir():
         return _error("repo not found", 404)
-    if not registry.has_capacity():
-        return _error("repo job queue is full", 429)
     try:
-        job = registry.create(name, "remove")
-    except OverflowError as exc:
+        key = request.state.key
+        job = await job_store.admit_repo(
+            job_id=uuid.uuid4().hex,
+            key_id=key.key_id,
+            key_label=key.label,
+            name=name,
+            action="remove",
+            url=None,
+            branch=None,
+        )
+    except job_store.BacklogFullError as exc:
         return _error(str(exc), 429)
-    registry.start(job, lambda: _run_remove_job(dest))
     return JSONResponse(
         {
             "job_id": job.job_id,
@@ -467,8 +471,8 @@ async def list_repos_route(request: Request) -> JSONResponse:
 
 
 async def repo_job_route(request: Request) -> JSONResponse:
-    """Return retained repo job state."""
-    job = await registry.get(request.path_params["job_id"])
+    """Return durable repo job state."""
+    job = await job_store.get_job(request.path_params["job_id"], kind="repo")
     if job is None:
         return _error("repo job not found", 404)
     return JSONResponse(job.response())

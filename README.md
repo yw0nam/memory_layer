@@ -30,9 +30,9 @@ Raw transcripts and raw files are never embedded.
      └───────────────┴───────┬───────┴───────────────┘
                              ▼
               Postgres 17 + pgvector + pg_textsearch  :5439
-              memory_chunks · code_chunks · retrieval_log
+              memory_chunks · code_chunks · jobs · retrieval_log
 
-  side services:  vLLM (LLM / embedding / rerank)    Redis :6379 (job state)
+  side services:  vLLM (LLM / embedding / rerank)
 ```
 
 Every consumer reaches stored chunks through the REST API, never through the database
@@ -78,12 +78,19 @@ Notes are stored exactly as written — the server never summarizes. The respons
 consolidate instead of accumulating near-duplicates. A prior-note id in the payload
 archives that row.
 
-Document jobs are bounded (`INGEST_MAX_QUEUED` queued, `INGEST_MAX_CONCURRENT_JOBS`
-running) and observable at `GET /ingest/jobs/{job_id}`: `queued → converting → chunking →
-enriching → embedding → writing → done`, with `chunks_total`, `chunks_done`,
-`chunks_dropped`, `rows_written`, `enrichment_retries`. Re-uploading identical bytes in
-`upsert` mode short-circuits to `no_op`. CSV takes a sampling branch instead: header plus
-the first 20 rows become one knowledge card.
+Document uploads enter a durable Postgres backlog capped by `INGEST_BACKLOG_PER_KEY` and
+`INGEST_BACKLOG_MAX`. Two document workers dispatch fairly across API keys while serializing
+jobs for the same document. Jobs and their spooled uploads survive API restarts; startup
+requeues interrupted work and fails a job clearly when its spool file is missing. Jobs are
+observable at `GET /ingest/jobs/{job_id}` and listable at `GET /ingest/jobs`, with optional
+`origin` and `status` filters. Their stages are `queued → converting → chunking → enriching →
+embedding → writing → done`, with `chunks_total`, `chunks_done`, `chunks_dropped`,
+`rows_written`, and `enrichment_retries`. Re-uploading identical bytes in `upsert` mode
+short-circuits to `no_op`. CSV takes a sampling branch instead: header plus the first 20 rows
+become one knowledge card.
+
+Repo jobs use the same durable jobs table and dispatch one at a time, so interrupted clone,
+pull, remove, and index work is retried after an API restart.
 
 The code indexer mounts every subdirectory of `REPO_CACHE` as an independent codebase, so
 adding or removing a checkout adds or tears down its rows on the next run. Clones keep
@@ -235,6 +242,7 @@ source means adding an adapter, not touching retrieval or serving.
 | `POST` | `/search/deep` | multi-hop memory search — `query`, `max_hops`, `kind`, `tags`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, `kind`, `tags`, and the optional id of a prior note to archive |
 | `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin` |
+| `GET` | `/ingest/jobs` | newest document jobs, optionally filtered by exact `origin` and `status` |
 | `GET` | `/ingest/jobs/{job_id}` | document job state |
 | `POST` | `/repos` | add or re-sync a git repo — `url`, `branch`, `name` |
 | `GET` | `/repos` | cached repos with url, branch, head, chunk count |
@@ -270,7 +278,7 @@ reading archived rows does not.
 
 ```bash
 uv sync
-docker compose up -d --build db redis    # pgvector + pg_textsearch on :5439, job state on :6379
+docker compose up -d --build db          # pgvector + pg_textsearch on :5439
 docker compose up -d --build api         # REST backend on :8010
 docker compose up -d --build mcp         # MCP server, streamable HTTP on :8765
 claude mcp add --transport http memory-base http://localhost:8765/mcp
@@ -278,6 +286,9 @@ claude mcp add --transport http memory-base http://localhost:8765/mcp
 
 Index cached repos manually (the repo routes do this for you). The indexer runs inside the
 API container, which owns the only copy of the ledger and the repo cache:
+
+Do not run `cocoindex update` manually while an API repo job is active; manual runs are not
+covered by the server's repo-job serialization.
 
 ```bash
 docker compose exec api uv run cocoindex update src/memory_base/ingest/code.py     # incremental
@@ -298,14 +309,15 @@ by the indexer.
 | `LLM_MODEL`, `EMB_MODEL`, `RERANK_MODEL` | model names |
 | `DB_URL` | Postgres connection string |
 | `REPO_CACHE` | git checkout root |
-| `REDIS_URL` | job-state mirror |
+| `INGEST_SPOOL` | durable uploaded-document spool root |
 | `REST_URL` | backend the MCP server proxies to |
 | `LOG_DIR` | file-sink directory (default `logs/`) |
 
 Tuning knobs, all optional: `ATOM_RETRIEVE_K`, `ATOMS_RETRIEVE`, `ATOMS_GENERATE`,
 `NOTE_SIMILAR_THRESHOLD`, `DEEP_MAX_HOPS`, `DEEP_TIMEOUT_SECONDS`, `INGEST_MAX_BYTES`,
-`INGEST_MAX_QUEUED`, `INGEST_MAX_CONCURRENT_JOBS`, `REPO_MAX_QUEUED`, `REPO_MAX_BYTES`,
-`REPO_DISK_HEADROOM_BYTES`, `COLD_AGE_DAYS`, `COLD_UNHIT_DAYS`.
+`INGEST_BACKLOG_PER_KEY`, `INGEST_BACKLOG_MAX`, `INGEST_MAX_CONCURRENT_JOBS`,
+`REPO_MAX_QUEUED`, `REPO_MAX_BYTES`, `REPO_DISK_HEADROOM_BYTES`, `JOB_RETENTION_SECONDS`,
+`COLD_AGE_DAYS`, `COLD_UNHIT_DAYS`.
 
 ### Private repositories
 
@@ -333,9 +345,10 @@ enter repo URLs or git remotes, so `GET /repos` and job logs cannot leak them.
 of waiting on a prompt.
 
 `COCOINDEX_DB` is set by `docker-compose.yml`, not by `.env` — together with `REPO_CACHE`
-and `REDIS_URL` it points at a container-local path bound under `DATA_ROOT` on the host, so
-one ledger tracks one repo cache. Losing the repo cache or the ledger orphans `code_chunks`
-rows until the repos are re-added; losing the Redis directory drops job history only.
+and `INGEST_SPOOL` it points at a container-local path bound under `DATA_ROOT` on the host,
+so one ledger tracks one repo cache and uploaded documents remain available across API
+restarts. Losing the repo cache or the ledger orphans `code_chunks` rows until the repos are
+re-added.
 
 ## Development
 

@@ -268,7 +268,6 @@ def _job(document_id="guide.md"):
 
 
 def test_identical_hash_is_no_op_without_conversion_or_write(monkeypatch, tmp_path):
-    ingest_api._document_locks.clear()
     upload = tmp_path / "guide.md"
     upload.write_text("same content")
     expected_hash = ingest_api._file_hash(upload)
@@ -293,7 +292,6 @@ def test_identical_hash_is_no_op_without_conversion_or_write(monkeypatch, tmp_pa
 def test_force_mode_never_consults_existing_content_hash(monkeypatch, tmp_path):
     """force mode must skip the DB lookup entirely (not just ignore its result):
     a DB-unreachable environment must not hang/crash a force-mode job."""
-    ingest_api._document_locks.clear()
     upload = tmp_path / "guide.md"
     upload.write_text("force mode content")
 
@@ -317,62 +315,7 @@ def test_force_mode_never_consults_existing_content_hash(monkeypatch, tmp_path):
     asyncio.run(ingest_api.run_document_job(job, upload, "guide.md", "force", None))
     assert job.status == "succeeded"
     assert job.stage == "done"
-    assert not upload.exists()
-    assert job.document_id not in ingest_api._document_locks
-
-
-def test_concurrent_jobs_for_same_document_serialize_and_prune_lock(monkeypatch, tmp_path):
-    ingest_api._document_locks.clear()
-    first_upload = tmp_path / "first.md"
-    second_upload = tmp_path / "second.md"
-    first_upload.write_text("first")
-    second_upload.write_text("second")
-
-    async def run_jobs():
-        first_entered = asyncio.Event()
-        release_first = asyncio.Event()
-        active = 0
-        max_active = 0
-        calls = 0
-
-        async def rows(*args):
-            nonlocal active, calls, max_active
-            calls += 1
-            active += 1
-            max_active = max(max_active, active)
-            if calls == 1:
-                first_entered.set()
-                await release_first.wait()
-            active -= 1
-            return [{"id": f"row-{calls}"}]
-
-        async def no_embed(rows):
-            return None
-
-        async def no_write(document_id, rows, namespace="default"):
-            return None
-
-        monkeypatch.setattr(ingest_api, "_markdown_rows", rows)
-        monkeypatch.setattr(ingest_api, "_embed_rows", no_embed)
-        monkeypatch.setattr(ingest_api, "replace_document_rows", no_write)
-
-        first = asyncio.create_task(
-            ingest_api.run_document_job(_job("shared.md"), first_upload, "first.md", "force", None)
-        )
-        await first_entered.wait()
-        second = asyncio.create_task(
-            ingest_api.run_document_job(
-                _job("shared.md"), second_upload, "second.md", "force", None
-            )
-        )
-        await asyncio.sleep(0)
-        assert calls == 1
-        release_first.set()
-        await asyncio.gather(first, second)
-        return max_active
-
-    assert asyncio.run(run_jobs()) == 1
-    assert "shared.md" not in ingest_api._document_locks
+    assert upload.exists()
 
 
 def test_csv_persistent_enrichment_failure_names_card_and_never_writes(monkeypatch, tmp_path):
@@ -397,7 +340,7 @@ def test_csv_persistent_enrichment_failure_names_card_and_never_writes(monkeypat
             ingest_api.run_document_job(_job("data.csv"), upload, "data.csv", "force", None)
         )
     assert writes == []
-    assert not upload.exists()
+    assert upload.exists()
 
 
 def test_chunk_persistent_enrichment_failure_names_ordinal_and_never_writes(monkeypatch, tmp_path):
@@ -424,7 +367,7 @@ def test_chunk_persistent_enrichment_failure_names_ordinal_and_never_writes(monk
     with pytest.raises(ingest_api.EnrichmentError, match="chunk 0"):
         asyncio.run(ingest_api.run_document_job(_job(), upload, "guide.md", "force", None))
     assert writes == []
-    assert not upload.exists()
+    assert upload.exists()
 
 
 def test_zero_accepted_chunks_fails_before_enrichment_and_write(monkeypatch, tmp_path):

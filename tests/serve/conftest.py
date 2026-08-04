@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from memory_base.serve import auth
+from memory_base.serve import auth, ingest_api, job_store
 
 TEST_API_KEY = "test-key"
 
@@ -34,3 +34,10 @@ def _stub_api_key_auth(request, monkeypatch):
         return identity if plaintext_key == TEST_API_KEY else None
 
     monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_ingest_spool(monkeypatch, tmp_path):
+    spool = tmp_path / "ingest-spool"
+    monkeypatch.setattr(ingest_api, "INGEST_SPOOL", spool)
+    monkeypatch.setattr(job_store, "INGEST_SPOOL", spool)
