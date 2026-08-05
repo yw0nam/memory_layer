@@ -161,8 +161,8 @@ def test_ensure_schema_adds_the_shared_jobs_table(monkeypatch):
 
 
 def test_rebinding_module_pg_schema_keeps_ddl_and_guard_in_sync(monkeypatch):
-    """Rebinding schema.PG_SCHEMA, as eval/retrieval.py's _set_schema does, must move
-    both the DDL target and the once-guard's recorded name together."""
+    """Rebinding schema.PG_SCHEMA, as eval/retrieval.py's _scratch_schema_scope does,
+    must move both the DDL target and the once-guard's recorded name together."""
     captured_query = {}
     real_execute = FakeConnection.execute
 

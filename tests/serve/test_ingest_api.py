@@ -280,7 +280,7 @@ def test_identical_hash_is_no_op_without_conversion_or_write(monkeypatch, tmp_pa
     expected_hash = ingest_api._file_hash(upload)
     called = []
 
-    async def existing(document_id, namespace="default"):
+    async def existing(document_id, namespace="default", schema=None):
         return expected_hash
 
     async def forbidden(*args, **kwargs):
@@ -311,7 +311,7 @@ def test_force_mode_never_consults_existing_content_hash(monkeypatch, tmp_path):
     async def no_embed(rows):
         return None
 
-    async def no_write(document_id, rows, namespace="default"):
+    async def no_write(document_id, rows, namespace="default", schema=None):
         return None
 
     monkeypatch.setattr(ingest_api, "_existing_content_hash", forbidden_existing_hash)
@@ -330,7 +330,7 @@ def test_csv_persistent_enrichment_failure_names_card_and_never_writes(monkeypat
     upload.write_text("name,value\none,1\n")
     writes = []
 
-    async def no_existing(document_id, namespace="default"):
+    async def no_existing(document_id, namespace="default", schema=None):
         return None
 
     async def fail(*args, **kwargs):
@@ -355,7 +355,7 @@ def test_markdown_ingest_calls_no_llm_and_writes_doc_rows_with_caller_tags(monke
     upload.write_text("source")
     written = []
 
-    async def no_existing(document_id, namespace="default"):
+    async def no_existing(document_id, namespace="default", schema=None):
         return None
 
     async def converted(path):
@@ -369,7 +369,7 @@ def test_markdown_ingest_calls_no_llm_and_writes_doc_rows_with_caller_tags(monke
             row["embedding"] = "[0]"
             row.pop("embedding_text")
 
-    async def write(document_id, rows, namespace="default"):
+    async def write(document_id, rows, namespace="default", schema=None):
         written.extend(rows)
 
     monkeypatch.setattr(ingest_api, "_existing_content_hash", no_existing)
@@ -433,7 +433,7 @@ def test_zero_accepted_chunks_fails_before_enrichment_and_write(monkeypatch, tmp
     upload.write_text("content")
     writes = []
 
-    async def no_existing(document_id, namespace="default"):
+    async def no_existing(document_id, namespace="default", schema=None):
         return None
 
     async def converted(path):
