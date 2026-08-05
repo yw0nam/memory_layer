@@ -319,6 +319,7 @@ by the indexer.
 | `LLM_URL`, `EMB_URL`, `RERANK_URL` | vLLM OpenAI-compatible endpoints |
 | `LLM_MODEL`, `EMB_MODEL`, `RERANK_MODEL` | model names |
 | `DB_URL` | Postgres connection string |
+| `POSTGRES_PASSWORD` | required; consumed by docker-compose for the db service and the api `DB_URL` |
 | `REPO_CACHE` | git checkout root |
 | `INGEST_SPOOL` | durable uploaded-document spool root |
 | `REST_URL` | backend the MCP server proxies to |
