@@ -12,12 +12,12 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
 from memory_base.serve import namespaces
+from memory_base.serve.http import TEXT_LIMIT
 from memory_base.serve.namespaces import DEFAULT_NAMESPACE
 
 NOTE_MAX_CHARS = 4000
 NOTE_KINDS = ("note", "decision")
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
-TEXT_LIMIT = 2000
 
 
 def normalize_tags(tags: Any) -> list[str]:

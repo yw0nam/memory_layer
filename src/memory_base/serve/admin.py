@@ -6,12 +6,12 @@ import os
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
+from memory_base.serve.http import TEXT_LIMIT
 
 COLD_AGE_DAYS = int(os.getenv("COLD_AGE_DAYS", "180"))
 COLD_UNHIT_DAYS = int(os.getenv("COLD_UNHIT_DAYS", "90"))
 DAY_SECONDS = 86400.0
 DUPLICATE_NEIGHBORS = 5
-TEXT_LIMIT = 2000
 
 
 def is_cold(

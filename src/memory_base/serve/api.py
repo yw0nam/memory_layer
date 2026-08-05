@@ -30,9 +30,11 @@ from memory_base.serve import job_store
 from memory_base.serve import namespaces
 from memory_base.serve import repos
 from memory_base.serve.auth import ApiKeyAuthMiddleware
+from memory_base.serve.http import TEXT_LIMIT
+from memory_base.serve.http import error
+from memory_base.serve.http import json_body
 from memory_base.serve.notes import save_note
 
-TEXT_LIMIT = 2000
 SOURCES = ("all", "code", "memory")
 HEALTH_PROBE_TIMEOUT_SECONDS = 5.0
 
@@ -94,21 +96,6 @@ async def _probe(check: Callable[[], Awaitable[bool]]) -> bool:
         return False
 
 
-def _error(message: str) -> JSONResponse:
-    return JSONResponse({"error": message}, status_code=400)
-
-
-def _forbidden(message: str) -> JSONResponse:
-    return JSONResponse({"error": message}, status_code=403)
-
-
-async def _json_body(request: Request) -> dict[str, Any]:
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise ValueError("JSON body must be an object")
-    return body
-
-
 def _ids(body: dict[str, Any]) -> list[str] | None:
     ids = body.get("ids")
     if not isinstance(ids, list) or not ids or any(not isinstance(item, str) for item in ids):
@@ -144,38 +131,38 @@ async def search_route(request: Request) -> JSONResponse:
     """Validate and execute a hybrid search request, scoped to the caller's allowed namespaces."""
     key = request.state.key
     try:
-        body = await _json_body(request)
+        body = await json_body(request)
     except Exception as exc:
-        return _error(f"invalid JSON body: {exc}")
+        return error(f"invalid JSON body: {exc}")
 
     query = body.get("query")
     if not isinstance(query, str) or not query.strip():
-        return _error("query must be a non-empty string")
+        return error("query must be a non-empty string")
     source = body.get("source", "all")
     if source not in SOURCES:
-        return _error(f"source must be one of {SOURCES}")
+        return error(f"source must be one of {SOURCES}")
     top_k = body.get("top_k", 10)
     if isinstance(top_k, bool) or not isinstance(top_k, int):
-        return _error("top_k must be an integer")
+        return error("top_k must be an integer")
 
     include_archived = body.get("include_archived", False)
     if not isinstance(include_archived, bool):
-        return _error("include_archived must be a boolean")
+        return error("include_archived must be a boolean")
 
     include_atoms = body.get("include_atoms")
     if "include_atoms" in body and not isinstance(include_atoms, bool):
-        return _error("include_atoms must be a boolean")
+        return error("include_atoms must be a boolean")
     if "tags" in body and body["tags"] is None:
-        return _error("tags must be a non-empty list of strings")
+        return error("tags must be a non-empty list of strings")
     if "repo" in body and body["repo"] is None:
-        return _error("repo must be a non-empty list of strings")
+        return error("repo must be a non-empty list of strings")
     try:
         kind, tags, repo = validate_search_options(
             source, body.get("kind"), body.get("tags"), body.get("repo")
         )
         requested_namespaces = normalize_namespaces(body.get("namespaces"))
         if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
-            return _forbidden("requested namespaces are outside the caller's allowed set")
+            return error("requested namespaces are outside the caller's allowed set", 403)
         options: dict[str, Any] = {
             "source": source,
             "include_archived": include_archived,
@@ -194,7 +181,7 @@ async def search_route(request: Request) -> JSONResponse:
             options["namespaces"] = sorted(key.allowed)
         hits = (await search(query, **options))[:top_k]
     except ValueError as exc:
-        return _error(str(exc))
+        return error(str(exc))
     access_log.record_retrieval(query, source, hits)
     return JSONResponse([hit_to_dict(hit) for hit in hits])
 
@@ -203,15 +190,15 @@ async def save_memory_route(request: Request) -> JSONResponse:
     """Validate and store an agent-authored memory request; omitted namespace lands in key.home."""
     key = request.state.key
     try:
-        body = await _json_body(request)
+        body = await json_body(request)
     except Exception as exc:
-        return _error(f"invalid JSON body: {exc}")
+        return error(f"invalid JSON body: {exc}")
 
     namespace = body.get("namespace", key.home)
     if not isinstance(namespace, str) or not namespace.strip():
-        return _error("namespace must be a non-empty string")
+        return error("namespace must be a non-empty string")
     if not key.permits(namespace):
-        return _forbidden(f"namespace {namespace!r} is outside the caller's allowed set")
+        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
     try:
         result = await save_note(
             body.get("content", ""),
@@ -221,7 +208,7 @@ async def save_memory_route(request: Request) -> JSONResponse:
             namespace=namespace,
         )
     except ValueError as exc:
-        return _error(str(exc))
+        return error(str(exc))
     return JSONResponse(result)
 
 
@@ -235,7 +222,7 @@ async def admin_notes_route(request: Request) -> JSONResponse:
     try:
         older_than_days = int(request.query_params.get("older_than_days", "90"))
     except ValueError:
-        return _error("older_than_days must be an integer")
+        return error("older_than_days must be an integer")
     rows = await admin.list_old_notes(older_than_days, namespaces=_admin_scope(request.state.key))
     return JSONResponse(rows)
 
@@ -243,16 +230,16 @@ async def admin_notes_route(request: Request) -> JSONResponse:
 async def admin_notes_delete_route(request: Request) -> JSONResponse:
     """Preview or delete selected agent notes, scoped to the caller's namespaces."""
     try:
-        body = await _json_body(request)
+        body = await json_body(request)
     except Exception as exc:
-        return _error(f"invalid JSON body: {exc}")
+        return error(f"invalid JSON body: {exc}")
     ids = _ids(body)
     if ids is None:
-        return _error("ids must be a non-empty list")
+        return error("ids must be a non-empty list")
     scope = _admin_scope(request.state.key)
     rows = await admin.notes_by_ids(ids, namespaces=scope)
     if {row["id"] for row in rows} != set(ids):
-        return _error("ids must refer only to agent_note rows")
+        return error("ids must refer only to agent_note rows")
     if body.get("confirm") is True:
         deleted = await admin.delete_notes(ids, namespaces=scope)
         return JSONResponse({"deleted": deleted})
@@ -264,12 +251,12 @@ async def admin_duplicates_route(request: Request) -> JSONResponse:
     try:
         threshold = float(request.query_params.get("threshold", "0.9"))
     except ValueError:
-        return _error("threshold must be a number")
+        return error("threshold must be a number")
     kind = request.query_params.get("kind") or None
     try:
         limit = int(request.query_params.get("limit", "50"))
     except ValueError:
-        return _error("limit must be an integer")
+        return error("limit must be an integer")
     pairs = await admin.find_duplicates(
         threshold, kind, limit, namespaces=_admin_scope(request.state.key)
     )
@@ -279,9 +266,9 @@ async def admin_duplicates_route(request: Request) -> JSONResponse:
 async def admin_archive_route(request: Request) -> JSONResponse:
     """Preview or archive cold memory rows, scoped to the caller's namespaces."""
     try:
-        body = await _json_body(request)
+        body = await json_body(request)
     except Exception as exc:
-        return _error(f"invalid JSON body: {exc}")
+        return error(f"invalid JSON body: {exc}")
     now = time.time()
     scope = _admin_scope(request.state.key)
     candidates = await admin.archive_candidates(now, namespaces=scope)
@@ -296,12 +283,12 @@ async def admin_archive_route(request: Request) -> JSONResponse:
 async def admin_restore_route(request: Request) -> JSONResponse:
     """Preview or restore selected memory rows, scoped to the caller's namespaces."""
     try:
-        body = await _json_body(request)
+        body = await json_body(request)
     except Exception as exc:
-        return _error(f"invalid JSON body: {exc}")
+        return error(f"invalid JSON body: {exc}")
     ids = _ids(body)
     if ids is None:
-        return _error("ids must be a non-empty list")
+        return error("ids must be a non-empty list")
     scope = _admin_scope(request.state.key)
     if body.get("confirm") is True:
         restored = await admin.restore_rows(ids, namespaces=scope)
@@ -317,9 +304,9 @@ async def namespaces_create_route(request: Request) -> JSONResponse:
     """
     key = request.state.key
     try:
-        body = await _json_body(request)
+        body = await json_body(request)
     except Exception as exc:
-        return _error(f"invalid JSON body: {exc}")
+        return error(f"invalid JSON body: {exc}")
     visibility = body.get("visibility", "public")
     owner = key.label if visibility == "private" else None
     try:
@@ -327,7 +314,7 @@ async def namespaces_create_route(request: Request) -> JSONResponse:
     except namespaces.NamespaceExistsError as exc:
         return JSONResponse({"error": str(exc)}, status_code=409)
     except namespaces.NamespaceError as exc:
-        return _error(str(exc))
+        return error(str(exc))
     return JSONResponse(result, status_code=201)
 
 
@@ -345,16 +332,16 @@ async def namespaces_delete_route(request: Request) -> JSONResponse:
     key = request.state.key
     name = request.path_params["name"]
     if name == namespaces.DEFAULT_NAMESPACE:
-        return _error("the 'default' namespace is reserved and cannot be deleted")
+        return error("the 'default' namespace is reserved and cannot be deleted")
     ns = await namespaces.get_namespace(name)
     if ns is None:
         return JSONResponse({"error": f"unknown namespace: {name}"}, status_code=404)
     if not (key.is_admin or ns["owner"] == key.label):
-        return _forbidden(f"not permitted to delete namespace: {name}")
+        return error(f"not permitted to delete namespace: {name}", 403)
     try:
         await namespaces.delete_namespace(name)
     except namespaces.NamespaceReservedError as exc:
-        return _error(str(exc))
+        return error(str(exc))
     except namespaces.NamespaceNotFoundError as exc:
         return JSONResponse({"error": str(exc)}, status_code=404)
     except namespaces.NamespaceNotEmptyError as exc:

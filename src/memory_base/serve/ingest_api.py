@@ -37,7 +37,8 @@ from memory_base.core.schema import ensure_schema_once
 from memory_base.ingest.enrich import EnrichmentError, summarize_and_tag
 from memory_base.serve import job_store
 from memory_base.serve import namespaces
-from memory_base.serve.job_store import _iso_time
+from memory_base.serve.http import error
+from memory_base.serve.job_store import iso_time
 from memory_base.serve.notes import normalize_tags
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))
@@ -130,13 +131,9 @@ class IngestJob:
                 "tags",
             }
         }
-        payload["created_at"] = _iso_time(self.created_at)
-        payload["updated_at"] = _iso_time(self.updated_at)
+        payload["created_at"] = iso_time(self.created_at)
+        payload["updated_at"] = iso_time(self.updated_at)
         return payload
-
-
-def _error(message: str, status_code: int) -> JSONResponse:
-    return JSONResponse({"error": message}, status_code=status_code)
 
 
 async def _existing_content_hash(
@@ -393,17 +390,17 @@ async def ingest_document_route(request: Request) -> JSONResponse:
     try:
         form = await request.form()
     except Exception as exc:
-        return _error(f"malformed multipart form: {exc}", 400)
+        return error(f"malformed multipart form: {exc}", 400)
     upload = form.get("file")
     if not isinstance(upload, UploadFile) or not upload.filename:
-        return _error("file is required", 400)
+        return error("file is required", 400)
 
     filename = PurePath(upload.filename.replace("\\", "/")).name
     try:
         extension = extension_for(filename)
     except UnsupportedDocumentError as exc:
         await upload.close()
-        return _error(str(exc), 415)
+        return error(str(exc), 415)
 
     raw_document_id = form.get("document_id")
     try:
@@ -415,21 +412,21 @@ async def ingest_document_route(request: Request) -> JSONResponse:
             raise DocumentError("document_id must be a string")
     except DocumentError as exc:
         await upload.close()
-        return _error(str(exc), 400)
+        return error(str(exc), 400)
 
     mode = form.get("mode", "upsert")
     if mode not in {"upsert", "force"}:
         await upload.close()
-        return _error("mode must be one of ('upsert', 'force')", 400)
+        return error("mode must be one of ('upsert', 'force')", 400)
     origin_value = form.get("origin")
     if origin_value is not None and not isinstance(origin_value, str):
         await upload.close()
-        return _error("origin must be a string", 400)
+        return error("origin must be a string", 400)
 
     raw_tags = form.getlist("tags")
     if any(not isinstance(tag, str) or not tag.strip() for tag in raw_tags):
         await upload.close()
-        return _error("tags must be non-empty strings", 400)
+        return error("tags must be non-empty strings", 400)
     tags = normalize_tags(list(raw_tags))
 
     namespace_value = form.get("namespace")
@@ -439,18 +436,18 @@ async def ingest_document_route(request: Request) -> JSONResponse:
         namespace = namespace_value
     else:
         await upload.close()
-        return _error("namespace must be a string", 400)
+        return error("namespace must be a string", 400)
     if not key.permits(namespace):
         await upload.close()
-        return _error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
+        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
     if not await namespaces.namespace_exists(namespace):
         await upload.close()
-        return _error(f"unregistered namespace: {namespace}", 400)
+        return error(f"unregistered namespace: {namespace}", 400)
 
     try:
         upload_path = await _copy_upload(upload, extension)
     except OverflowError as exc:
-        return _error(str(exc), 413)
+        return error(str(exc), 413)
     finally:
         await upload.close()
 
@@ -469,7 +466,7 @@ async def ingest_document_route(request: Request) -> JSONResponse:
         )
     except job_store.BacklogFullError as exc:
         upload_path.unlink(missing_ok=True)
-        return _error(str(exc), 429)
+        return error(str(exc), 429)
     except Exception:
         upload_path.unlink(missing_ok=True)
         raise
@@ -487,7 +484,7 @@ async def ingest_job_route(request: Request) -> JSONResponse:
     """Return durable ingestion job state."""
     job = await job_store.get_job(request.path_params["job_id"], kind="document")
     if job is None:
-        return _error("ingest job not found", 404)
+        return error("ingest job not found", 404)
     return JSONResponse(job.response())
 
 
