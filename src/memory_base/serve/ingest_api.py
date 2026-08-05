@@ -139,13 +139,16 @@ def _error(message: str, status_code: int) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status_code)
 
 
-async def _existing_content_hash(document_id: str, namespace: str = "default") -> str | None:
+async def _existing_content_hash(
+    document_id: str, namespace: str = "default", schema: str | None = None
+) -> str | None:
+    schema = PG_SCHEMA if schema is None else schema
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         return await conn.fetchval(
             f"""
             SELECT metadata->>'content_hash'
-            FROM "{PG_SCHEMA}".memory_chunks
+            FROM "{schema}".memory_chunks
             WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
             LIMIT 1
             """,
@@ -155,15 +158,22 @@ async def _existing_content_hash(document_id: str, namespace: str = "default") -
 
 
 async def replace_document_rows(
-    document_id: str, rows: Sequence[dict[str, Any]], namespace: str = "default"
+    document_id: str,
+    rows: Sequence[dict[str, Any]],
+    namespace: str = "default",
+    schema: str | None = None,
 ) -> None:
-    """Replace one document's rows, within one namespace, in a single transaction."""
+    """Replace one document's rows, within one namespace, in a single transaction.
+
+    schema overrides PG_SCHEMA for this call; only the eval harness passes it.
+    """
+    schema = PG_SCHEMA if schema is None else schema
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
             await conn.execute(
                 f"""
-                DELETE FROM "{PG_SCHEMA}".memory_chunks
+                DELETE FROM "{schema}".memory_chunks
                 WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
                 """,
                 document_id,
@@ -171,7 +181,7 @@ async def replace_document_rows(
             )
             await conn.executemany(
                 f"""
-                INSERT INTO "{PG_SCHEMA}".memory_chunks
+                INSERT INTO "{schema}".memory_chunks
                   (id, source_type, source_ref, chunk_kind, session_id, content_raw,
                    distilled, embedding, ts_last_active, idf_score, namespace, metadata)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11,$12::jsonb)
@@ -304,8 +314,12 @@ async def run_document_job(
     mode: str | None = None,
     origin: str | None = None,
     namespace: str | None = None,
+    schema: str | None = None,
 ) -> None:
-    """Run one document pipeline and atomically publish its completed rows."""
+    """Run one document pipeline and atomically publish its completed rows.
+
+    schema overrides PG_SCHEMA for this call; only the eval harness passes it.
+    """
     upload_path = upload_path or Path(job.spool_path)
     filename = filename or job.filename
     mode = mode or job.mode
@@ -317,7 +331,7 @@ async def run_document_job(
     job.content_hash = content_hash
     await job_store.update_document_progress(job)
     if mode == "upsert":
-        existing_hash = await _existing_content_hash(job.document_id, namespace)
+        existing_hash = await _existing_content_hash(job.document_id, namespace, schema=schema)
         if existing_hash == content_hash:
             job.touch(status="no_op", stage="done")
             return
@@ -347,7 +361,7 @@ async def run_document_job(
     await _embed_rows(rows)
     job.touch(stage="writing")
     await job_store.update_document_progress(job)
-    await replace_document_rows(job.document_id, rows, namespace)
+    await replace_document_rows(job.document_id, rows, namespace, schema=schema)
     job.rows_written = len(rows)
     job.touch(status="succeeded", stage="done")
 

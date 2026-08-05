@@ -181,8 +181,10 @@ async def _search_code(
     query: str,
     qvec_lit: str,
     repo: list[str] | None = None,
+    schema: str | None = None,
 ) -> list[Hit]:
-    tbl = f'"{PG_SCHEMA}"."code_chunks"'
+    schema = PG_SCHEMA if schema is None else schema
+    tbl = f'"{schema}"."code_chunks"'
     columns = "id, repo, filename, code, start_line, end_line, mtime"
     # ponytail: the planner picks a seq scan at this corpus size, so the filter runs
     # before the distance sort. Once it switches to the HNSW index, set
@@ -240,9 +242,11 @@ async def _search_memory(
     kind: str | None = None,
     tags: list[str] | None = None,
     namespaces: list[str] | None = None,
+    schema: str | None = None,
 ) -> list[Hit]:
-    tbl = f'"{PG_SCHEMA}"."memory_chunks"'
-    exists = await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{PG_SCHEMA}.memory_chunks")
+    schema = PG_SCHEMA if schema is None else schema
+    tbl = f'"{schema}"."memory_chunks"'
+    exists = await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{schema}.memory_chunks")
     if not exists:
         return []
     predicates, filter_args = history_predicates(
@@ -308,8 +312,10 @@ async def _search_atoms(
     kind: str | None = None,
     tags: list[str] | None = None,
     namespaces: list[str] | None = None,
+    schema: str | None = None,
 ) -> list[Hit]:
-    tbl = f'"{PG_SCHEMA}"."memory_chunks"'
+    schema = PG_SCHEMA if schema is None else schema
+    tbl = f'"{schema}"."memory_chunks"'
     predicates, filter_args = history_predicates(
         include_archived=include_archived,
         kind=kind,
@@ -449,9 +455,12 @@ async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
     return hits[:RERANK_TOP]
 
 
-async def _restore_context(conn: asyncpg.Connection, hits: list[Hit]) -> None:
+async def _restore_context(
+    conn: asyncpg.Connection, hits: list[Hit], schema: str | None = None
+) -> None:
     """Re-attach neighboring code chunks so cut-off premises come back."""
-    tbl = f'"{PG_SCHEMA}"."code_chunks"'
+    schema = PG_SCHEMA if schema is None else schema
+    tbl = f'"{schema}"."code_chunks"'
     for h in hits:
         if h.source != "code":
             continue
@@ -477,7 +486,9 @@ async def search(
     include_atoms: bool | None = None,
     repo: list[str] | None = None,
     namespaces: list[str] | None = None,
+    schema: str | None = None,
 ) -> list[Hit]:
+    """schema overrides PG_SCHEMA for this call; only the eval harness passes it."""
     kind, tags, repo = validate_search_options(source, kind, tags, repo)
     namespaces = normalize_namespaces(namespaces)
     if include_atoms is not None and not isinstance(include_atoms, bool):
@@ -492,7 +503,7 @@ async def search(
     async with db.acquire() as conn:
         hits: list[Hit] = []
         if source in ("code", "all"):
-            hits += await _search_code(conn, query, qvec_lit, repo=repo)
+            hits += await _search_code(conn, query, qvec_lit, repo=repo, schema=schema)
         if source in ("memory", "all"):
             hits += await _search_memory(
                 conn,
@@ -502,6 +513,7 @@ async def search(
                 kind=kind,
                 tags=tags,
                 namespaces=namespaces,
+                schema=schema,
             )
         _apply_time_decay(_decay_targets(hits, include_archived))
         hits = _dedup_cap(hits)
@@ -513,12 +525,13 @@ async def search(
                 kind=kind,
                 tags=tags,
                 namespaces=namespaces,
+                schema=schema,
             )
             hits = _merge_atom_hits(hits, atom_hits)
     if rerank:
         hits = await _rerank(query, hits)
     async with db.acquire() as conn:
-        await _restore_context(conn, hits)
+        await _restore_context(conn, hits, schema=schema)
     return hits
 
 

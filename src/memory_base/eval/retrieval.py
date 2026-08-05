@@ -12,13 +12,13 @@ import time
 import uuid
 from collections import defaultdict
 from collections.abc import Collection, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import asyncpg
 
-from memory_base.core import config, schema as schema_module
+from memory_base.core import schema as schema_module
 from memory_base.core.config import db_url, emb_model, rerank_model
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval import search as search_module
@@ -144,20 +144,30 @@ def load_labels(path: Path = LABELS_PATH) -> list[EvalLabel]:
     return labels
 
 
-def _set_schema(schema_name: str) -> dict[Any, str]:
-    modules = (config, schema_module, ingest_api, search_module)
-    previous = {module: module.PG_SCHEMA for module in modules}
-    for module in modules:
-        module.PG_SCHEMA = schema_name
-    return previous
+@contextmanager
+def _scratch_schema_scope(schema_name: str):
+    """Point core.schema.ensure_schema[_once] at the scratch schema for this run.
+
+    search() and ingest_api.run_document_job() take an explicit `schema` argument
+    instead (their PG_SCHEMA reads are fully contained in functions the eval calls
+    directly). ensure_schema_once has no such argument: it is also called,
+    unparameterized, from serve/* modules reachable transitively while ingesting a
+    fixture (e.g. namespaces.namespace_exists, invoked from run_document_job) that
+    are out of scope for the eval to parameterize — doing so would grow serving-layer
+    signatures for the eval's sake. Rebinding the module global for the duration of
+    the run is the smallest change that still keeps those calls scoped to the scratch
+    schema; core/schema.py's test suite documents that the DDL target and the
+    once-guard's cache key move together when PG_SCHEMA is rebound this way.
+    """
+    previous = schema_module.PG_SCHEMA
+    schema_module.PG_SCHEMA = schema_name
+    try:
+        yield
+    finally:
+        schema_module.PG_SCHEMA = previous
 
 
-def _restore_schema(previous: dict[Any, str]) -> None:
-    for module, schema_name in previous.items():
-        module.PG_SCHEMA = schema_name
-
-
-async def _ingest_fixture(path: Path) -> ingest_api.IngestJob:
+async def _ingest_fixture(path: Path, schema: str) -> ingest_api.IngestJob:
     descriptor, temp_name = tempfile.mkstemp(
         prefix="memory-base-eval-",
         suffix=path.suffix,
@@ -181,6 +191,7 @@ async def _ingest_fixture(path: Path) -> ingest_api.IngestJob:
             path.name,
             "force",
             f"eval-fixture:{path.name}",
+            schema=schema,
         )
         if job.status != "succeeded":
             raise RuntimeError(f"fixture ingest did not succeed for {path.name}: {job.status}")
@@ -192,6 +203,7 @@ async def _ingest_fixture(path: Path) -> ingest_api.IngestJob:
 async def _evaluate_mode(
     labels: Sequence[EvalLabel],
     corpus_ids: Collection[str],
+    schema: str,
     *,
     include_atoms: bool,
 ) -> list[QueryMetrics]:
@@ -202,6 +214,7 @@ async def _evaluate_mode(
             source="memory",
             rerank=True,
             include_atoms=include_atoms,
+            schema=schema,
         )
         retrieved_ids = [row_id for hit in hits if isinstance((row_id := hit.meta.get("id")), str)]
         results.append(score_query(label, retrieved_ids, corpus_ids))
@@ -262,45 +275,42 @@ async def run_evaluation() -> None:
 
     labels = load_labels()
     schema_name = f"memory_eval_{os.getpid()}_{uuid.uuid4().hex[:12]}"
-    previous_schema = _set_schema(schema_name)
     schema_created = False
-    try:
-        setup_conn = await asyncpg.connect(db_url(), timeout=5)
+    with _scratch_schema_scope(schema_name):
         try:
-            await setup_conn.execute(f'CREATE SCHEMA "{schema_name}"')
-            schema_created = True
-            await schema_module.ensure_schema(setup_conn)
-        finally:
-            await setup_conn.close()
-        for path in sorted(FIXTURE_DIR.iterdir()):
-            if path.is_file():
-                await _ingest_fixture(path)
-        report_conn = await asyncpg.connect(db_url(), timeout=5)
-        try:
-            rows = await report_conn.fetch(
-                f'SELECT id, chunk_kind FROM "{schema_name}".memory_chunks'
+            setup_conn = await asyncpg.connect(db_url(), timeout=5)
+            try:
+                await setup_conn.execute(f'CREATE SCHEMA "{schema_name}"')
+                schema_created = True
+                await schema_module.ensure_schema(setup_conn)
+            finally:
+                await setup_conn.close()
+            for path in sorted(FIXTURE_DIR.iterdir()):
+                if path.is_file():
+                    await _ingest_fixture(path, schema_name)
+            report_conn = await asyncpg.connect(db_url(), timeout=5)
+            try:
+                rows = await report_conn.fetch(
+                    f'SELECT id, chunk_kind FROM "{schema_name}".memory_chunks'
+                )
+            finally:
+                await report_conn.close()
+            corpus_ids = {row["id"] for row in rows}
+            parent_count = sum(row["chunk_kind"] != "atom" for row in rows)
+            print(
+                f"Corpus: fixtures={len(list(FIXTURE_DIR.iterdir()))} "
+                f"parents={parent_count} rows={len(rows)} schema={schema_name}"
             )
+            off_results = await _evaluate_mode(labels, corpus_ids, schema_name, include_atoms=False)
+            on_results = await _evaluate_mode(labels, corpus_ids, schema_name, include_atoms=True)
+            _print_report(off_results, on_results)
         finally:
-            await report_conn.close()
-        corpus_ids = {row["id"] for row in rows}
-        parent_count = sum(row["chunk_kind"] != "atom" for row in rows)
-        print(
-            f"Corpus: fixtures={len(list(FIXTURE_DIR.iterdir()))} "
-            f"parents={parent_count} rows={len(rows)} schema={schema_name}"
-        )
-        off_results = await _evaluate_mode(labels, corpus_ids, include_atoms=False)
-        on_results = await _evaluate_mode(labels, corpus_ids, include_atoms=True)
-        _print_report(off_results, on_results)
-    finally:
-        try:
             if schema_created:
                 cleanup_conn = await asyncpg.connect(db_url(), timeout=5)
                 try:
                     await cleanup_conn.execute(f'DROP SCHEMA "{schema_name}" CASCADE')
                 finally:
                     await cleanup_conn.close()
-        finally:
-            _restore_schema(previous_schema)
 
 
 def main() -> None:
