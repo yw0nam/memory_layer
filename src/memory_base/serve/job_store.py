@@ -405,7 +405,7 @@ async def _run_claimed(job) -> None:
     try:
         destination = repos.CACHE_ROOT / job.name
         if job.action == "ingest":
-            await repos._run_ingest_job(job.url, destination, job.branch)
+            await repos._run_ingest_job(job.url, destination, job.branch, job.key_label)
         else:
             await repos._run_remove_job(destination)
         await mark_terminal(job, "succeeded")

@@ -103,6 +103,13 @@ last-commit time into time-decay scoring.
 Private repositories authenticate through the git credential store — see
 [Private repositories](#private-repositories).
 
+A repo's owner is the key label that first ingested it, recorded in
+`REPO_CACHE/.owners/<name>` after the first successful clone or pull and never
+transferred by later re-ingests. `DELETE /repos/{name}` is restricted to the owner or an
+admin key; a repo with no owner record (ingested before ownership tracking, or never
+successfully ingested) is admin-only to remove. `GET /repos` reports each repo's owner,
+`null` when unrecorded.
+
 ### Read path 1 — hybrid search (`POST /search`)
 
 ```
@@ -256,8 +263,8 @@ source means adding an adapter, not touching retrieval or serving.
 | `GET` | `/ingest/jobs` | newest document jobs, optionally filtered by exact `origin` and `status` |
 | `GET` | `/ingest/jobs/{job_id}` | document job state |
 | `POST` | `/repos` | add or re-sync a git repo — `url`, `branch`, `name` |
-| `GET` | `/repos` | cached repos with url, branch, head, chunk count |
-| `DELETE` | `/repos/{name}` | remove a repo and re-index |
+| `GET` | `/repos` | cached repos with url, branch, head, chunk count, owner |
+| `DELETE` | `/repos/{name}` | remove a repo and re-index — the repo's owner or an admin key only |
 | `GET` | `/repos/jobs/{job_id}` | repo job state |
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
 | `POST` | `/admin/notes/delete` | preview, or delete with `confirm` |

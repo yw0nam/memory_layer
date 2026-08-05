@@ -222,7 +222,7 @@ async def _repo_chunk_counts() -> dict[str, int]:
 
 
 async def list_repos() -> list[dict[str, Any]]:
-    """List cached repos with origin URL, current branch, HEAD, and chunk counts."""
+    """List cached repos with origin URL, current branch, HEAD, chunk count, and owner."""
     counts = await _repo_chunk_counts()
     result: list[dict[str, Any]] = []
     if not CACHE_ROOT.exists():
@@ -244,9 +244,34 @@ async def list_repos() -> list[dict[str, Any]]:
                 "branch": await _git("rev-parse", "--abbrev-ref", "HEAD"),
                 "head": await _git("rev-parse", "--short", "HEAD"),
                 "chunks": counts.get(entry.name, 0),
+                "owner": _read_owner(entry.name),
             }
         )
     return result
+
+
+# ---- ownership --------------------------------------------------------------
+
+
+def _owner_path(name: str) -> Path:
+    """Sidecar path recording a repo's owning key label; CACHE_ROOT is read live for tests."""
+    return CACHE_ROOT / ".owners" / name
+
+
+def _read_owner(name: str) -> str | None:
+    try:
+        return _owner_path(name).read_text().strip()
+    except FileNotFoundError:
+        return None
+
+
+def _record_owner_if_absent(name: str, label: str) -> None:
+    """Fix ownership to the first successful ingest; re-ingest never overwrites it."""
+    path = _owner_path(name)
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(label)
 
 
 # ---- index runner ---------------------------------------------------------
@@ -328,7 +353,7 @@ class RepoJob:
 # ---- job runners ----------------------------------------------------------
 
 
-async def _run_ingest_job(url: str, dest: Path, branch: str | None) -> None:
+async def _run_ingest_job(url: str, dest: Path, branch: str | None, key_label: str) -> None:
     if dest.exists():
         try:
             valid = (dest / ".git").exists() and bool(
@@ -343,11 +368,13 @@ async def _run_ingest_job(url: str, dest: Path, branch: str | None) -> None:
             await clone(url, dest, branch)
     else:
         await clone(url, dest, branch)
+    _record_owner_if_absent(dest.name, key_label)
     await run_index()
 
 
 async def _run_remove_job(dest: Path) -> None:
     remove(dest)
+    _owner_path(dest.name).unlink(missing_ok=True)
     await run_index()
 
 
@@ -432,7 +459,11 @@ async def ingest_repo_route(request: Request) -> JSONResponse:
 
 
 async def remove_repo_route(request: Request) -> JSONResponse:
-    """Remove a cached repo and queue a code re-index to tear down its rows."""
+    """Remove a cached repo and queue a code re-index to tear down its rows.
+
+    Restricted to an admin key or the repo's owner (the key label that first
+    ingested it); a repo with no owner record is admin-only (fail-closed).
+    """
     try:
         name = _check_name(request.path_params["name"])
     except ValueError as exc:
@@ -440,8 +471,10 @@ async def remove_repo_route(request: Request) -> JSONResponse:
     dest = CACHE_ROOT / name
     if not dest.is_dir():
         return _error("repo not found", 404)
+    key = request.state.key
+    if not key.is_admin and _read_owner(name) != key.label:
+        return _error("only the repo owner or an admin can remove this repo", 403)
     try:
-        key = request.state.key
         job = await job_store.admit_repo(
             job_id=uuid.uuid4().hex,
             key_id=key.key_id,
