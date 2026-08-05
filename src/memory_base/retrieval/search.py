@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import math
 import os
 import time
@@ -94,8 +95,6 @@ def metadata_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     if isinstance(value, str):
-        import json
-
         decoded = json.loads(value)
         return decoded if isinstance(decoded, dict) else {}
     return {}

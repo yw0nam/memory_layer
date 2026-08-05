@@ -25,7 +25,6 @@ from memory_base.adapters.document import (
     build_csv_card,
     chunk_markdown,
     convert_to_markdown,
-    default_document_id,
     extension_for,
     map_csv_card_row,
     map_document_rows,
@@ -45,7 +44,6 @@ INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))
 INGEST_SPOOL = job_store.INGEST_SPOOL
 MAX_ACCEPTED_CHUNKS = 2_000
 MAX_TOTAL_ROWS = 5_000
-TERMINAL_STATUSES = frozenset({"succeeded", "failed", "no_op"})
 
 
 @dataclass
@@ -396,7 +394,7 @@ async def ingest_document_route(request: Request) -> JSONResponse:
     raw_document_id = form.get("document_id")
     try:
         if raw_document_id is None or raw_document_id == "":
-            document_id = default_document_id(filename)
+            document_id = normalize_document_id(filename)
         elif isinstance(raw_document_id, str):
             document_id = normalize_document_id(raw_document_id)
         else:

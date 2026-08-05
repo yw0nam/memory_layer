@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import re
@@ -68,7 +69,7 @@ async def _json_call(
         if attempt:
             await _notify_retry(on_retry)
         try:
-            async with semaphore or _NullAsyncContext():
+            async with semaphore or contextlib.nullcontext():
                 response = await asyncio.wait_for(
                     llm_client().chat.completions.create(
                         model=llm_model(),
@@ -86,14 +87,6 @@ async def _json_call(
         except Exception as exc:
             last_error = str(exc) or type(exc).__name__
     raise EnrichmentError(f"enrichment failed after retry: {last_error}")
-
-
-class _NullAsyncContext:
-    async def __aenter__(self) -> None:
-        return None
-
-    async def __aexit__(self, *args: object) -> None:
-        return None
 
 
 async def summarize_and_tag(
