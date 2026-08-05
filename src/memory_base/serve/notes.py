@@ -11,6 +11,7 @@ from typing import Any
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
+from memory_base.retrieval.search import normalize_tags
 from memory_base.serve import namespaces
 from memory_base.serve.http import TEXT_LIMIT
 from memory_base.serve.namespaces import DEFAULT_NAMESPACE
@@ -18,15 +19,6 @@ from memory_base.serve.namespaces import DEFAULT_NAMESPACE
 NOTE_MAX_CHARS = 4000
 NOTE_KINDS = ("note", "decision")
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
-
-
-def normalize_tags(tags: Any) -> list[str]:
-    """Validate and normalize note tags."""
-    if tags is None:
-        return []
-    if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
-        raise ValueError("tags must be a list of strings")
-    return list(dict.fromkeys(tag.strip().lower() for tag in tags if tag.strip()))
 
 
 def build_note_row(
@@ -50,7 +42,7 @@ def build_note_row(
         raise ValueError(f"content exceeds {NOTE_MAX_CHARS} chars")
     if kind not in NOTE_KINDS:
         raise ValueError(f"kind must be one of {NOTE_KINDS}")
-    normalized_tags = normalize_tags(tags)
+    normalized_tags = normalize_tags(tags, allow_empty=True)
     content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
     if namespace == DEFAULT_NAMESPACE:
         note_id = f"note:{content_hash}"

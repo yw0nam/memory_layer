@@ -22,7 +22,6 @@ from memory_base.core.logger import setup_logging
 from memory_base.retrieval.search import Hit
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
-from memory_base.retrieval.search import validate_search_options
 from memory_base.serve import access_log
 from memory_base.serve import admin
 from memory_base.serve import ingest_api
@@ -149,17 +148,13 @@ async def search_route(request: Request) -> JSONResponse:
     if not isinstance(include_archived, bool):
         return error("include_archived must be a boolean")
 
-    include_atoms = body.get("include_atoms")
-    if "include_atoms" in body and not isinstance(include_atoms, bool):
-        return error("include_atoms must be a boolean")
+    # Explicit null is a caller error distinct from an omitted key; search() sees
+    # only the resolved value and cannot tell the two apart, so this stays here.
     if "tags" in body and body["tags"] is None:
         return error("tags must be a non-empty list of strings")
     if "repo" in body and body["repo"] is None:
         return error("repo must be a non-empty list of strings")
     try:
-        kind, tags, repo = validate_search_options(
-            source, body.get("kind"), body.get("tags"), body.get("repo")
-        )
         requested_namespaces = normalize_namespaces(body.get("namespaces"))
         if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
             return error("requested namespaces are outside the caller's allowed set", 403)
@@ -168,13 +163,13 @@ async def search_route(request: Request) -> JSONResponse:
             "include_archived": include_archived,
         }
         if "kind" in body:
-            options["kind"] = kind
+            options["kind"] = body["kind"]
         if "tags" in body:
-            options["tags"] = tags
+            options["tags"] = body["tags"]
         if "repo" in body:
-            options["repo"] = repo
+            options["repo"] = body["repo"]
         if "include_atoms" in body:
-            options["include_atoms"] = include_atoms
+            options["include_atoms"] = body["include_atoms"]
         if requested_namespaces is not None:
             options["namespaces"] = requested_namespaces
         elif not key.is_admin:
