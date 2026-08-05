@@ -24,6 +24,10 @@ JOB_RETENTION_SECONDS = int(os.getenv("JOB_RETENTION_SECONDS", str(7 * 24 * 60 *
 INGEST_SPOOL = Path(os.getenv("INGEST_SPOOL", "/data/ingest-spool"))
 WORKER_IDLE_SECONDS = 1.0
 TERMINAL_STATUSES = frozenset({"succeeded", "no_op", "failed"})
+# key_ids under this prefix are invisible to an unscoped claim_job call; only a
+# caller that passes the matching only_key_prefix can see and claim them. Real
+# key_ids are sha256 hex digests and can never collide with it.
+RESERVED_KEY_PREFIX = "it-"
 
 
 class BacklogFullError(RuntimeError):
@@ -168,6 +172,8 @@ WITH eligible AS (
   SELECT queued.job_id, queued.key_id, queued.created_at
   FROM "{PG_SCHEMA}".jobs queued
   WHERE queued.kind = 'document' AND queued.status = 'queued'
+    AND CASE WHEN $1::text IS NULL THEN queued.key_id NOT LIKE '{RESERVED_KEY_PREFIX}%'
+         ELSE queued.key_id LIKE $1 || '%' END
     AND NOT EXISTS (
       SELECT 1 FROM "{PG_SCHEMA}".jobs active
       WHERE active.kind = 'document' AND active.status = 'running'
@@ -206,6 +212,8 @@ WITH candidate AS (
   SELECT queued.job_id
   FROM "{PG_SCHEMA}".jobs queued
   WHERE queued.kind = 'repo' AND queued.status = 'queued'
+    AND CASE WHEN $1::text IS NULL THEN queued.key_id NOT LIKE '{RESERVED_KEY_PREFIX}%'
+         ELSE queued.key_id LIKE $1 || '%' END
     AND NOT EXISTS (
       SELECT 1 FROM "{PG_SCHEMA}".jobs active
       WHERE active.kind = 'repo' AND active.status = 'running'
@@ -222,8 +230,13 @@ RETURNING jobs.*
 '''
 
 
-async def claim_job(kind: str, *, connection=None):
-    """Claim one job atomically in the kind-specific fair order."""
+async def claim_job(kind: str, *, connection=None, only_key_prefix: str | None = None):
+    """Claim one job atomically in the kind-specific fair order.
+
+    With only_key_prefix unset, rows under RESERVED_KEY_PREFIX are skipped, so
+    integration-test jobs stay invisible to production workers by construction.
+    Passing only_key_prefix claims exactly the reserved rows under that prefix.
+    """
     if kind not in {"document", "repo"}:
         raise ValueError(f"unsupported job kind: {kind}")
     async with _connection(connection) as conn:
@@ -231,7 +244,9 @@ async def claim_job(kind: str, *, connection=None):
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtext('memory-jobs-claim-' || $1))", kind
             )
-            row = await conn.fetchrow(DOCUMENT_CLAIM_SQL if kind == "document" else REPO_CLAIM_SQL)
+            row = await conn.fetchrow(
+                DOCUMENT_CLAIM_SQL if kind == "document" else REPO_CLAIM_SQL, only_key_prefix
+            )
     return _row_to_job(row) if row else None
 
 
