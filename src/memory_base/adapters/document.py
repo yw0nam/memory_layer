@@ -19,7 +19,6 @@ SUPPORTED_EXTENSIONS = frozenset(
     {".md", ".markdown", ".txt", ".rst", ".html", ".htm", ".pdf", ".docx", ".pptx", ".csv"}
 )
 MCP_TEXT_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".rst", ".html", ".htm"})
-LEGACY_EXTENSIONS = frozenset({".doc", ".xls", ".ppt"})
 CSV_MAX_BYTES = 5 * 1024 * 1024
 CONVERSION_MAX_BYTES = 16 * 1024 * 1024
 CONVERSION_TIMEOUT_SECONDS = 120
@@ -90,11 +89,6 @@ def normalize_document_id(value: str) -> str:
             "document_id must match ^[a-z0-9][a-z0-9._-]{0,120}$ after normalization"
         )
     return normalized
-
-
-def default_document_id(filename: str) -> str:
-    """Derive a document identity from a filename."""
-    return normalize_document_id(filename)
 
 
 def _flush_paragraph(

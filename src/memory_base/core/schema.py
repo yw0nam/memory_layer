@@ -6,7 +6,7 @@ import asyncio
 
 import asyncpg
 
-from memory_base.core.config import PG_SCHEMA
+from memory_base.core.config import EMB_DIM, PG_SCHEMA
 
 
 async def ensure_schema(conn: asyncpg.Connection) -> None:
@@ -17,7 +17,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         CREATE TABLE IF NOT EXISTS {schema}.memory_chunks (
           id text PRIMARY KEY, source_type text NOT NULL, source_ref text NOT NULL,
           chunk_kind text NOT NULL, session_id text NOT NULL, content_raw text NOT NULL,
-          distilled text, embedding halfvec(2048) NOT NULL,
+          distilled text, embedding halfvec({EMB_DIM}) NOT NULL,
           ts_last_active double precision NOT NULL, idf_score double precision,
           metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb
         );
