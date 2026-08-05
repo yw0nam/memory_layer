@@ -16,6 +16,7 @@ import asyncpg
 from memory_base.adapters import document
 from memory_base.adapters.document import Chunk, map_document_rows
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, db_url, embed_text
+from memory_base.ingest import enrich
 from memory_base.serve import api, ingest_api, namespaces
 
 
@@ -59,6 +60,7 @@ class AcceptingBacklog:
             spool_path=kwargs["spool_path"],
             key_id=kwargs["key_id"],
             key_label=kwargs["key_label"],
+            tags=kwargs["tags"],
             created_at=now,
             updated_at=now,
         )
@@ -260,10 +262,15 @@ def test_atomic_replacement_deletes_only_document_rows_then_inserts(monkeypatch)
     assert json.loads(insert[2][0][-1]) == {"content_hash": "hash"}
 
 
-def _job(document_id="guide.md"):
+def _job(document_id="guide.md", tags=None):
     now = time.time()
     return ingest_api.IngestJob(
-        "job", document_id, status="running", created_at=now, updated_at=now
+        "job",
+        document_id,
+        status="running",
+        tags=list(tags or []),
+        created_at=now,
+        updated_at=now,
     )
 
 
@@ -343,31 +350,82 @@ def test_csv_persistent_enrichment_failure_names_card_and_never_writes(monkeypat
     assert upload.exists()
 
 
-def test_chunk_persistent_enrichment_failure_names_ordinal_and_never_writes(monkeypatch, tmp_path):
+def test_markdown_ingest_calls_no_llm_and_writes_doc_rows_with_caller_tags(monkeypatch, tmp_path):
     upload = tmp_path / "guide.md"
     upload.write_text("source")
-    writes = []
+    written = []
 
     async def no_existing(document_id, namespace="default"):
         return None
 
     async def converted(path):
-        return document.ConversionResult("Useful document prose. " * 20, "markitdown:0.1.2")
+        return document.ConversionResult("Useful document prose. " * 40, "markitdown:0.1.2")
 
-    async def fail(*args, **kwargs):
-        raise ingest_api.EnrichmentError("enrichment failed after retry")
+    def forbidden_llm():
+        raise AssertionError("document ingest must not call the LLM")
 
-    async def write(*args, **kwargs):
-        writes.append(True)
+    async def embed(rows):
+        for row in rows:
+            row["embedding"] = "[0]"
+            row.pop("embedding_text")
+
+    async def write(document_id, rows, namespace="default"):
+        written.extend(rows)
 
     monkeypatch.setattr(ingest_api, "_existing_content_hash", no_existing)
     monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
-    monkeypatch.setattr(ingest_api, "atomize_and_tag", fail)
+    monkeypatch.setattr(enrich, "llm_client", forbidden_llm)
+    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
     monkeypatch.setattr(ingest_api, "replace_document_rows", write)
-    with pytest.raises(ingest_api.EnrichmentError, match="chunk 0"):
-        asyncio.run(ingest_api.run_document_job(_job(), upload, "guide.md", "force", None))
-    assert writes == []
-    assert upload.exists()
+    job = _job(tags=["zx bank", "policy"])
+    asyncio.run(ingest_api.run_document_job(job, upload, "guide.md", "force", None))
+    assert job.status == "succeeded"
+    assert written
+    assert {row["chunk_kind"] for row in written} == {"doc"}
+    assert all(row["metadata"]["tags"] == ["zx bank", "policy"] for row in written)
+    assert job.chunks_done == job.chunks_total == len(written)
+
+
+def test_rest_repeated_tags_are_normalized_and_persisted_on_the_job(monkeypatch):
+    fake = AcceptingBacklog()
+    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    response = _post(
+        "/ingest/document",
+        data={"tags": ["  ZX Bank ", "policy", "zx bank"]},
+        files={"file": ("guide.md", b"content")},
+    )
+    assert response.status_code == 202
+    assert fake.kwargs["tags"] == ["zx bank", "policy"]
+    assert fake.job.tags == ["zx bank", "policy"]
+    Path(fake.kwargs["spool_path"]).unlink(missing_ok=True)
+
+
+def test_rest_omitted_tags_default_to_empty_list(monkeypatch):
+    fake = AcceptingBacklog()
+    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    response = _post("/ingest/document", files={"file": ("guide.md", b"content")})
+    assert response.status_code == 202
+    assert fake.kwargs["tags"] == []
+    Path(fake.kwargs["spool_path"]).unlink(missing_ok=True)
+
+
+def test_rest_rejects_blank_tag_with_400():
+    response = _post(
+        "/ingest/document",
+        data={"tags": ["policy", "   "]},
+        files={"file": ("guide.md", b"content")},
+    )
+    assert response.status_code == 400
+    assert set(response.json()) == {"error"}
+
+
+def test_rest_rejects_non_string_tag_with_400():
+    response = _post(
+        "/ingest/document",
+        files=[("file", ("guide.md", b"content")), ("tags", ("tag.md", b"not a string"))],
+    )
+    assert response.status_code == 400
+    assert set(response.json()) == {"error"}
 
 
 def test_zero_accepted_chunks_fails_before_enrichment_and_write(monkeypatch, tmp_path):
@@ -460,7 +518,6 @@ def test_same_document_id_two_namespaces_no_pk_collision():
     but ids used to be namespace-independent (issue #81 review)."""
     document_id = "zzz-namespace-collision-test.md"
     chunks = [Chunk("Namespace collision regression check content.", (), 0)]
-    enrichments = [{"atom_questions": [], "tags": []}]
 
     async def scenario():
         await namespaces.create_namespace("zzz-collision-ns")
@@ -469,7 +526,7 @@ def test_same_document_id_two_namespaces_no_pk_collision():
             for ns in ("default", "zzz-collision-ns"):
                 rows = map_document_rows(
                     chunks,
-                    enrichments,
+                    tags=[],
                     filename=document_id,
                     document_id=document_id,
                     content_hash="hash",

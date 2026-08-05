@@ -15,8 +15,8 @@ optional cross-encoder reranking.
   (document-level ranking); hit@k = any ground-truth doc in the top k,
   MRR@10 = reciprocal rank of the first ground-truth doc within the top 10.
 - **ZX Bank**: the ZX Bank organization of the public RAG-Multi-Corpus dataset —
-  71 markdown documents ingested through the full document pipeline (chunking +
-  enrichment) into an isolated namespace; 100 QA queries sampled
+  71 markdown documents ingested through the document pipeline (deterministic
+  chunking + junk gate) into an isolated namespace; 100 QA queries sampled
   deterministically (every `len/100`-th row) from the dataset's query CSV,
   ground truth from its `Supporting Facts` filenames.
 - **SciFact**: the BEIR SciFact test split — 5,183 title+abstract records seeded

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-import os
 import re
 from collections.abc import Callable
 from typing import Any
@@ -13,21 +12,10 @@ from typing import Any
 from memory_base.core.config import SERVICE_TIMEOUT_SECONDS, llm_client, llm_model
 
 _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9 -]{1,40}$")
-_PRONOUN_RE = re.compile(
-    r"\b(it|its|he|him|his|she|her|hers|they|them|their|the company|the person)\b",
-    re.IGNORECASE,
-)
 
 
 class EnrichmentError(RuntimeError):
     """Raised when both enrichment attempts fail validation."""
-
-
-def _env_enabled(name: str, default: bool = True) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def normalize_enrichment_tags(value: Any) -> list[str]:
@@ -44,38 +32,6 @@ def normalize_enrichment_tags(value: Any) -> list[str]:
             seen.add(tag)
             tags.append(tag)
     return tags[:7]
-
-
-def parse_atom_response(payload: Any, *, atoms_generate: bool = True) -> dict[str, Any] | None:
-    """Validate and normalize atom enrichment JSON."""
-    if not isinstance(payload, dict):
-        return None
-    questions = payload.get("atom_questions")
-    raw_tags = payload.get("tags")
-    if not isinstance(questions, list) or not isinstance(raw_tags, list):
-        return None
-    tags = normalize_enrichment_tags(raw_tags)
-    if not tags:
-        return None
-    atoms: list[str] = []
-    seen: set[str] = set()
-    if atoms_generate:
-        for item in questions:
-            if not isinstance(item, str):
-                continue
-            question = item.strip()
-            key = question.casefold()
-            if (
-                question
-                and len(question) <= 200
-                and not _PRONOUN_RE.search(question)
-                and key not in seen
-            ):
-                seen.add(key)
-                atoms.append(question)
-            if len(atoms) == 10:
-                break
-    return {"atom_questions": atoms, "tags": tags}
 
 
 def parse_summary_response(payload: Any) -> dict[str, Any] | None:
@@ -138,47 +94,6 @@ class _NullAsyncContext:
 
     async def __aexit__(self, *args: object) -> None:
         return None
-
-
-async def atomize_and_tag(
-    text: str,
-    context: str,
-    *,
-    semaphore: asyncio.Semaphore | None = None,
-    on_retry: Callable[[], Any] | None = None,
-) -> dict[str, Any]:
-    """Generate entity-explicit atom questions and English tags."""
-    atoms_generate = _env_enabled("ATOMS_GENERATE")
-    atom_instruction = (
-        "Extract diverse questions answerable by the content. Every question must contain "
-        "necessary entity names and must not use pronouns such as it, he, she, they, the "
-        "company, or the person. Return at most 10 questions."
-        if atoms_generate
-        else "Return an empty atom_questions list."
-    )
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You understand source content and return only valid JSON. All generated "
-                "questions and tags are English."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"{atom_instruction}\nGenerate 3 to 7 concise topical tag phrases.\n"
-                'Return {"atom_questions": [...], "tags": [...]}.\n\n'
-                f"Context:\n{context}\n\nContent:\n{text}"
-            ),
-        },
-    ]
-    return await _json_call(
-        messages,
-        lambda payload: parse_atom_response(payload, atoms_generate=atoms_generate),
-        semaphore=semaphore,
-        on_retry=on_retry,
-    )
 
 
 async def summarize_and_tag(

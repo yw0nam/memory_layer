@@ -366,8 +366,6 @@ async def run_evaluation() -> None:
     multi_hop_labels = [label for label in labels if label.query_class == MULTI_HOP_CLASS]
     schema_name = f"memory_eval_{os.getpid()}_{uuid.uuid4().hex[:12]}"
     previous_schema = _set_schema(schema_name)
-    previous_atoms_generate = os.environ.get("ATOMS_GENERATE")
-    os.environ["ATOMS_GENERATE"] = "true"
     schema_created = False
     try:
         setup_conn = await asyncpg.connect(db_url(), timeout=5)
@@ -411,10 +409,6 @@ async def run_evaluation() -> None:
                     await cleanup_conn.close()
         finally:
             _restore_schema(previous_schema)
-            if previous_atoms_generate is None:
-                os.environ.pop("ATOMS_GENERATE", None)
-            else:
-                os.environ["ATOMS_GENERATE"] = previous_atoms_generate
 
 
 def main() -> None:

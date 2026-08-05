@@ -82,6 +82,7 @@ async def admit_document(
     mode: str,
     filename: str,
     spool_path: str,
+    tags: list[str],
     connection=None,
 ):
     """Insert a document job atomically with the per-key and global cap checks."""
@@ -112,8 +113,8 @@ async def admit_document(
             row = await conn.fetchrow(
                 f'''INSERT INTO "{PG_SCHEMA}".jobs
                 (job_id, kind, status, key_id, key_label, namespace, document_id,
-                 origin, mode, filename, spool_path, stage)
-                VALUES ($1, 'document', 'queued', $2, $3, $4, $5, $6, $7, $8, $9, 'queued')
+                 origin, mode, filename, spool_path, stage, tags)
+                VALUES ($1, 'document', 'queued', $2, $3, $4, $5, $6, $7, $8, $9, 'queued', $10)
                 RETURNING *''',
                 job_id,
                 key_id,
@@ -124,6 +125,7 @@ async def admit_document(
                 mode,
                 filename,
                 spool_path,
+                tags,
             )
     return _row_to_job(row)
 

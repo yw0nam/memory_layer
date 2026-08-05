@@ -2,7 +2,7 @@
 
 ## Core principles
 
-- **Low-signal data never reaches the DB.** Agent-authored notes arrive distilled through the MCP `save_memory` tool (validation, dedup, supersede) and are stored without embedding raw text. Documents go through chunking and LLM enrichment (atomize/summarize) before embedding. Raw transcripts and raw files are never embedded directly; only distilled, high-signal content is stored.
+- **Low-signal data never reaches the DB.** Agent-authored notes arrive distilled through the MCP `save_memory` tool (validation, dedup, supersede) and are stored without embedding raw text. Documents go through deterministic chunking and a junk gate before embedding, with tags supplied by the uploader; only the CSV branch calls an LLM, to summarize a sampled table into one card. Raw transcripts and raw files are never embedded directly; only distilled, high-signal content is stored.
 - **Source-specific knowledge lives only in source adapters (`adapters/`).** `ingest/`, the storage schema, retrieval (`retrieval/`), and consumers (`serve/`) are source-agnostic. The `memory_chunks` and `code_chunks` tables are the only contract between the write side and the read side — adding a new source must not change retrieval or serving code.
 - **The REST API is the single backend.** Every consumer (MCP server, n8n, scripts) reaches stored chunks through it, never through the DB directly.
 - **Assemble verified engines; don't reinvent.** Chunking/incremental indexing/vector storage/serving use proven components (CocoIndex, pgvector, FastMCP). Design decisions are grounded in web research and confirmed with the user — not invented ad hoc.

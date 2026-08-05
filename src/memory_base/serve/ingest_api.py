@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -20,7 +20,6 @@ from starlette.responses import JSONResponse
 
 from memory_base.adapters.document import (
     EXTRACTED_MAX_CHARS,
-    Chunk,
     DocumentError,
     UnsupportedDocumentError,
     build_csv_card,
@@ -36,10 +35,11 @@ from memory_base.adapters.document import (
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
-from memory_base.ingest.enrich import EnrichmentError, atomize_and_tag, summarize_and_tag
+from memory_base.ingest.enrich import EnrichmentError, summarize_and_tag
 from memory_base.serve import job_store
 from memory_base.serve import namespaces
 from memory_base.serve.job_store import _iso_time
+from memory_base.serve.notes import normalize_tags
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))
 INGEST_SPOOL = job_store.INGEST_SPOOL
@@ -59,6 +59,7 @@ class IngestJob:
     spool_path: str = ""
     key_id: str = ""
     key_label: str = ""
+    tags: list[str] = field(default_factory=list)
     status: str = "queued"
     stage: str = "queued"
     chunks_total: int = 0
@@ -101,6 +102,7 @@ class IngestJob:
             spool_path=row["spool_path"],
             key_id=row["key_id"],
             key_label=row["key_label"],
+            tags=list(row["tags"]),
             status=row["status"],
             stage=row["stage"],
             chunks_total=row["chunks_total"],
@@ -127,6 +129,7 @@ class IngestJob:
                 "spool_path",
                 "key_id",
                 "key_label",
+                "tags",
             }
         }
         payload["created_at"] = _iso_time(self.created_at)
@@ -201,36 +204,6 @@ def _file_hash(path: Path) -> str:
         for block in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
-
-
-def _chunk_context(chunk: Chunk) -> str:
-    if not chunk.heading_path:
-        return "This is a chunk from an uploaded document."
-    return "Document heading path: " + " > ".join(chunk.heading_path)
-
-
-async def _enrich_chunks(job: IngestJob, chunks: Sequence[Chunk]) -> list[dict[str, Any]]:
-    semaphore = asyncio.Semaphore(4)
-
-    def retried() -> None:
-        job.enrichment_retries += 1
-        job.touch()
-
-    async def enrich(chunk: Chunk) -> dict[str, Any]:
-        try:
-            result = await atomize_and_tag(
-                chunk.text,
-                _chunk_context(chunk),
-                semaphore=semaphore,
-                on_retry=retried,
-            )
-        except EnrichmentError as exc:
-            raise EnrichmentError(f"chunk {chunk.ordinal}: {exc}") from exc
-        job.chunks_done += 1
-        job.touch()
-        return result
-
-    return list(await asyncio.gather(*(enrich(chunk) for chunk in chunks)))
 
 
 async def _embed_rows(rows: Sequence[dict[str, Any]]) -> None:
@@ -310,12 +283,11 @@ async def _markdown_rows(
         raise DocumentError("document produced zero accepted chunks")
     if len(chunks) > MAX_ACCEPTED_CHUNKS:
         raise DocumentError("document exceeds 2000 accepted chunks")
-    job.touch(stage="enriching")
+    job.chunks_done = len(chunks)
     await job_store.update_document_progress(job)
-    enrichments = await _enrich_chunks(job, chunks)
     return map_document_rows(
         chunks,
-        enrichments,
+        tags=job.tags,
         filename=filename,
         document_id=job.document_id,
         content_hash=content_hash,
@@ -442,6 +414,12 @@ async def ingest_document_route(request: Request) -> JSONResponse:
         await upload.close()
         return _error("origin must be a string", 400)
 
+    raw_tags = form.getlist("tags")
+    if any(not isinstance(tag, str) or not tag.strip() for tag in raw_tags):
+        await upload.close()
+        return _error("tags must be non-empty strings", 400)
+    tags = normalize_tags(list(raw_tags))
+
     namespace_value = form.get("namespace")
     if namespace_value is None or namespace_value == "":
         namespace = key.home
@@ -475,6 +453,7 @@ async def ingest_document_route(request: Request) -> JSONResponse:
             mode=str(mode),
             filename=filename,
             spool_path=str(upload_path),
+            tags=tags,
         )
     except job_store.BacklogFullError as exc:
         upload_path.unlink(missing_ok=True)

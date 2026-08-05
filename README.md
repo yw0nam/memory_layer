@@ -1,11 +1,11 @@
 # memory-base
 
-A selective memory layer for coding agents: distilled notes, enriched documents, and
+A selective memory layer for coding agents: distilled notes, chunked documents, and
 indexed code in one pgvector store, served through a single REST API and an MCP server.
 
 Only high-signal content is stored. Agent notes arrive already distilled, documents pass
-through chunking and LLM enrichment before embedding, and code is chunked by tree-sitter.
-Raw transcripts and raw files are never embedded.
+through deterministic chunking and a junk gate before embedding, and code is chunked by
+tree-sitter. Raw transcripts and raw files are never embedded.
 
 ## Architecture
 
@@ -55,10 +55,10 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
  └ same content         junk gate ✂                  + size watchdog (2 GiB)
    → idempotent no-op      │                             │
    │                       ▼                             ▼
-   ▼                    LLM enrich ──┐               cocoindex update
- embed (vLLM)           atom Q + tags│               tree-sitter 1000 / 300
+   ▼                    doc rows ────┐               cocoindex update
+ embed (vLLM)           caller tags  │               tree-sitter 1000 / 300
    │                       ▼         │                  │  mtime = commit time
-   ▼                    doc row + atom rows              ▼
+   ▼                    heading-path embedding text     ▼
  INSERT                    │  embed  │               incremental per file
  ON CONFLICT               ▼         │               (ledger: COCOINDEX_DB)
  DO NOTHING             one transaction per document     │
@@ -83,11 +83,13 @@ Document uploads enter a durable Postgres backlog capped by `INGEST_BACKLOG_PER_
 jobs for the same document. Jobs and their spooled uploads survive API restarts; startup
 requeues interrupted work and fails a job clearly when its spool file is missing. Jobs are
 observable at `GET /ingest/jobs/{job_id}` and listable at `GET /ingest/jobs`, with optional
-`origin` and `status` filters. Their stages are `queued → converting → chunking → enriching →
+`origin` and `status` filters. Their stages are `queued → converting → chunking →
 embedding → writing → done`, with `chunks_total`, `chunks_done`, `chunks_dropped`,
 `rows_written`, and `enrichment_retries`. Re-uploading identical bytes in `upsert` mode
-short-circuits to `no_op`. CSV takes a sampling branch instead: header plus the first 20 rows
-become one knowledge card.
+short-circuits to `no_op`. Markdown ingest calls no LLM: chunks are stored as written, and
+the optional repeated `tags` upload field lands on every chunk of the document. CSV takes a
+sampling branch instead: header plus the first 20 rows become one LLM-summarized knowledge
+card through an extra `enriching` stage.
 
 Repo jobs use the same durable jobs table and dispatch one at a time, so interrupted clone,
 pull, remove, and index work is retried after an API restart.
@@ -204,7 +206,7 @@ previews by default and acts only with `{"confirm": true}`.
 ## Retrieval quality
 
 Doc-level scores on two corpora — ZX Bank (RAG-Multi-Corpus, 71 docs / 100 queries,
-full ingest pipeline) and BEIR SciFact (5,183 docs / 300 queries):
+document ingest pipeline) and BEIR SciFact (5,183 docs / 300 queries):
 
 | corpus | mode | hit@5 | hit@10 | MRR@10 |
 |---|---|---|---|---|
@@ -250,7 +252,7 @@ source means adding an adapter, not touching retrieval or serving.
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `repo`, `include_atoms`, `include_archived` |
 | `POST` | `/search/deep` | multi-hop memory search — `query`, `max_hops`, `kind`, `tags`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, `kind`, `tags`, and the optional id of a prior note to archive |
-| `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin` |
+| `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, repeated `tags` |
 | `GET` | `/ingest/jobs` | newest document jobs, optionally filtered by exact `origin` and `status` |
 | `GET` | `/ingest/jobs/{job_id}` | document job state |
 | `POST` | `/repos` | add or re-sync a git repo — `url`, `branch`, `name` |
@@ -322,7 +324,7 @@ by the indexer.
 | `REST_URL` | backend the MCP server proxies to |
 | `LOG_DIR` | file-sink directory (default `logs/`) |
 
-Tuning knobs, all optional: `ATOM_RETRIEVE_K`, `ATOMS_RETRIEVE`, `ATOMS_GENERATE`,
+Tuning knobs, all optional: `ATOM_RETRIEVE_K`, `ATOMS_RETRIEVE`,
 `NOTE_SIMILAR_THRESHOLD`, `DEEP_MAX_HOPS`, `DEEP_TIMEOUT_SECONDS`, `INGEST_MAX_BYTES`,
 `INGEST_BACKLOG_PER_KEY`, `INGEST_BACKLOG_MAX`, `INGEST_MAX_CONCURRENT_JOBS`,
 `REPO_MAX_QUEUED`, `REPO_MAX_BYTES`, `REPO_DISK_HEADROOM_BYTES`, `JOB_RETENTION_SECONDS`,
