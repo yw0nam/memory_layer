@@ -91,6 +91,7 @@ def test_worker_loop_retries_after_a_claim_error(monkeypatch):
 
 def test_recovered_remove_tolerates_a_missing_checkout(monkeypatch, tmp_path):
     indexed = []
+    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
 
     async def fake_index():
         indexed.append(True)
@@ -101,6 +102,7 @@ def test_recovered_remove_tolerates_a_missing_checkout(monkeypatch, tmp_path):
 
 
 def test_recovered_ingest_reclones_a_partial_checkout(monkeypatch, tmp_path):
+    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
     destination = tmp_path / "partial"
     destination.mkdir()
     (destination / "incomplete").write_text("partial")
@@ -118,7 +120,7 @@ def test_recovered_ingest_reclones_a_partial_checkout(monkeypatch, tmp_path):
     monkeypatch.setattr(repos, "clone", fake_clone)
     monkeypatch.setattr(repos, "pull", forbidden_pull)
     monkeypatch.setattr(repos, "run_index", fake_index)
-    asyncio.run(repos._run_ingest_job("https://example.com/repo.git", destination, "main"))
+    asyncio.run(repos._run_ingest_job("https://example.com/repo.git", destination, "main", "label"))
     assert calls == [
         ("clone", "https://example.com/repo.git", destination, "main"),
         ("index",),
