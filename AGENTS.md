@@ -44,4 +44,6 @@ The five canonical triage labels are used as-is: `needs-triage`, `needs-info`, `
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+`CONTEXT.md` and `docs/adr/` at the repo root hold domain vocabulary and decisions,
+created lazily as terms or decisions get resolved rather than scaffolded upfront.
+See `docs/agents/domain.md`.

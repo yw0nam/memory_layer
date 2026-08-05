@@ -9,6 +9,6 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY src/ src/
 RUN uv sync --frozen --no-dev
-ENV MCP_TRANSPORT=sse
+ENV MCP_TRANSPORT=streamable-http
 EXPOSE 8010 8765
 CMD ["uv", "run", "--no-sync", "python", "-m", "memory_base.serve.mcp_server"]
