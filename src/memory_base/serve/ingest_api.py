@@ -10,9 +10,9 @@ import tempfile
 import time
 import uuid
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path, PurePath
-from typing import Any
+from typing import Any, ClassVar
 
 from starlette.datastructures import UploadFile
 from starlette.requests import Request
@@ -39,7 +39,7 @@ from memory_base.retrieval.search import normalize_tags
 from memory_base.serve import job_store
 from memory_base.serve import namespaces
 from memory_base.serve.http import error
-from memory_base.serve.job_store import iso_time
+from memory_base.serve.job_store import JobBase
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))
 INGEST_SPOOL = job_store.INGEST_SPOOL
@@ -48,8 +48,7 @@ MAX_TOTAL_ROWS = 5_000
 
 
 @dataclass
-class IngestJob:
-    job_id: str
+class IngestJob(JobBase):
     document_id: str
     namespace: str = "default"
     origin: str | None = None
@@ -59,7 +58,6 @@ class IngestJob:
     key_id: str = ""
     key_label: str = ""
     tags: list[str] = field(default_factory=list)
-    status: str = "queued"
     stage: str = "queued"
     chunks_total: int = 0
     chunks_done: int = 0
@@ -67,9 +65,10 @@ class IngestJob:
     rows_written: int = 0
     enrichment_retries: int = 0
     content_hash: str | None = None
-    error: str | None = None
-    created_at: float = 0.0
-    updated_at: float = 0.0
+
+    RESPONSE_EXCLUDE: ClassVar[frozenset[str]] = frozenset(
+        {"namespace", "origin", "mode", "filename", "spool_path", "key_id", "key_label", "tags"}
+    )
 
     def touch(self, *, status: str | None = None, stage: str | None = None) -> None:
         if status is not None:
@@ -81,59 +80,6 @@ class IngestJob:
     @property
     def kind(self) -> str:
         return "document"
-
-    @classmethod
-    def for_document(cls, **values):
-        now = time.time()
-        values.setdefault("created_at", now)
-        values.setdefault("updated_at", now)
-        return cls(**values)
-
-    @classmethod
-    def from_row(cls, row: dict[str, Any]):
-        return cls(
-            job_id=row["job_id"],
-            document_id=row["document_id"],
-            namespace=row["namespace"],
-            origin=row["origin"],
-            mode=row["mode"],
-            filename=row["filename"],
-            spool_path=row["spool_path"],
-            key_id=row["key_id"],
-            key_label=row["key_label"],
-            tags=list(row["tags"]),
-            status=row["status"],
-            stage=row["stage"],
-            chunks_total=row["chunks_total"],
-            chunks_done=row["chunks_done"],
-            chunks_dropped=row["chunks_dropped"],
-            rows_written=row["rows_written"],
-            enrichment_retries=row["enrichment_retries"],
-            content_hash=row["content_hash"],
-            error=row["error"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
-
-    def response(self) -> dict[str, Any]:
-        payload = {
-            key: value
-            for key, value in asdict(self).items()
-            if key
-            not in {
-                "namespace",
-                "origin",
-                "mode",
-                "filename",
-                "spool_path",
-                "key_id",
-                "key_label",
-                "tags",
-            }
-        }
-        payload["created_at"] = iso_time(self.created_at)
-        payload["updated_at"] = iso_time(self.updated_at)
-        return payload
 
 
 async def _existing_content_hash(

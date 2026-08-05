@@ -179,7 +179,7 @@ def test_rest_ingest_registered_namespace_is_persisted(monkeypatch):
 
 def test_job_response_has_exact_status_schema():
     now = time.time()
-    job = ingest_api.IngestJob.for_document(
+    job = ingest_api.IngestJob(
         job_id="id",
         document_id="doc.md",
         namespace="default",

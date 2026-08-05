@@ -136,7 +136,7 @@ def test_document_runner_revalidates_namespace(monkeypatch, tmp_path):
         return False
 
     monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", missing)
-    job = ingest_api.IngestJob.for_document(
+    job = ingest_api.IngestJob(
         job_id="job-1",
         document_id="guide.md",
         namespace="deleted",

@@ -11,11 +11,10 @@ import os
 import re
 import shutil
 import signal
-import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 import asyncpg
@@ -26,7 +25,7 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.serve import job_store
 from memory_base.serve.http import error, json_body
-from memory_base.serve.job_store import iso_time
+from memory_base.serve.job_store import JobBase
 
 REPO_MAX_BYTES = int(os.getenv("REPO_MAX_BYTES", str(2 * 1024**3)))
 DISK_HEADROOM_BYTES = int(os.getenv("REPO_DISK_HEADROOM_BYTES", str(1024**3)))
@@ -300,55 +299,19 @@ async def run_index() -> None:
 
 
 @dataclass
-class RepoJob:
-    job_id: str
+class RepoJob(JobBase):
     name: str
     action: str
     url: str | None = None
     branch: str | None = None
     key_id: str = ""
     key_label: str = ""
-    status: str = "queued"
-    error: str | None = None
-    created_at: float = 0.0
-    updated_at: float = 0.0
+
+    RESPONSE_EXCLUDE: ClassVar[frozenset[str]] = frozenset({"url", "branch", "key_id", "key_label"})
 
     @property
     def kind(self) -> str:
         return "repo"
-
-    @classmethod
-    def for_repo(cls, **values):
-        now = time.time()
-        values.setdefault("created_at", now)
-        values.setdefault("updated_at", now)
-        return cls(**values)
-
-    @classmethod
-    def from_row(cls, row: dict[str, Any]):
-        return cls(
-            job_id=row["job_id"],
-            name=row["name"],
-            action=row["action"],
-            url=row["url"],
-            branch=row["branch"],
-            key_id=row["key_id"],
-            key_label=row["key_label"],
-            status=row["status"],
-            error=row["error"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
-
-    def response(self) -> dict[str, Any]:
-        payload = {
-            key: value
-            for key, value in asdict(self).items()
-            if key not in {"url", "branch", "key_id", "key_label"}
-        }
-        payload["created_at"] = iso_time(self.created_at)
-        payload["updated_at"] = iso_time(self.updated_at)
-        return payload
 
 
 # ---- job runners ----------------------------------------------------------
