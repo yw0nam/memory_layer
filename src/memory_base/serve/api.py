@@ -19,7 +19,6 @@ from starlette.routing import Route
 from memory_base.core import db
 from memory_base.core.config import require_env
 from memory_base.core.logger import setup_logging
-from memory_base.retrieval.decompose import DeepResult, deep_search
 from memory_base.retrieval.search import Hit
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
@@ -198,94 +197,6 @@ async def search_route(request: Request) -> JSONResponse:
         return _error(str(exc))
     access_log.record_retrieval(query, source, hits)
     return JSONResponse([hit_to_dict(hit) for hit in hits])
-
-
-def _serialize_deep_result(result: DeepResult) -> dict[str, Any]:
-    evidence = []
-    for entry in result.evidence:
-        item = {
-            "ref": entry.ref,
-            "text": entry.text[:TEXT_LIMIT],
-            "kind": entry.kind,
-            "tags": entry.tags,
-            "date": datetime.fromtimestamp(entry.date, tz=timezone.utc).strftime("%Y-%m-%d"),
-            "hop": entry.hop,
-            "atom_question": entry.atom_question,
-            "id": entry.id,
-        }
-        if entry.archived:
-            item["archived"] = True
-        evidence.append(item)
-    trace = []
-    for entry in result.trace:
-        trace.append(
-            {
-                "hop": entry.hop,
-                "sub_questions": entry.sub_questions,
-                "selected_ref": entry.selected_ref,
-            }
-        )
-    return {
-        "evidence": evidence,
-        "trace": trace,
-        "hops_used": result.hops_used,
-        "stopped_reason": result.stopped_reason,
-    }
-
-
-async def deep_search_route(request: Request) -> JSONResponse:
-    """Validate and execute a deep search request, scoped to the caller's allowed namespaces."""
-    key = request.state.key
-    try:
-        body = await _json_body(request)
-    except Exception as exc:
-        return _error(f"invalid JSON body: {exc}")
-
-    query = body.get("query")
-    if not isinstance(query, str) or not query.strip():
-        return _error("query must be a non-empty string")
-
-    include_archived = body.get("include_archived", False)
-    if not isinstance(include_archived, bool):
-        return _error("include_archived must be a boolean")
-
-    if "tags" in body and body["tags"] is None:
-        return _error("tags must be a non-empty list of strings")
-
-    try:
-        requested_namespaces = normalize_namespaces(body.get("namespaces"))
-    except ValueError as exc:
-        return _error(str(exc))
-    if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
-        return _forbidden("requested namespaces are outside the caller's allowed set")
-    if requested_namespaces is None and not key.is_admin:
-        requested_namespaces = sorted(key.allowed)
-
-    try:
-        result = await deep_search(
-            query,
-            max_hops=body.get("max_hops"),
-            kind=body.get("kind"),
-            tags=body.get("tags"),
-            include_archived=include_archived,
-            namespaces=requested_namespaces,
-        )
-    except ValueError as exc:
-        return _error(str(exc))
-
-    evidence_hits = [
-        Hit(
-            source="memory",
-            ref=entry.ref,
-            text=entry.text,
-            ts=entry.date,
-            meta={"id": entry.id},
-        )
-        for entry in result.evidence
-    ]
-    access_log.record_retrieval(query, "memory", evidence_hits)
-
-    return JSONResponse(_serialize_deep_result(result))
 
 
 async def save_memory_route(request: Request) -> JSONResponse:
@@ -476,7 +387,6 @@ app = Starlette(
         Route("/health", health, methods=["GET"]),
         Route("/health/services", health_services, methods=["GET"]),
         Route("/search", search_route, methods=["POST"]),
-        Route("/search/deep", deep_search_route, methods=["POST"]),
         Route("/save_memory", save_memory_route, methods=["POST"]),
         Route("/ingest/document", ingest_api.ingest_document_route, methods=["POST"]),
         Route("/ingest/jobs", ingest_api.ingest_jobs_route, methods=["GET"]),

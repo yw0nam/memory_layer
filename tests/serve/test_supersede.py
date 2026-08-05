@@ -14,7 +14,7 @@ optional ``supersedes: <note id>`` argument (MCP tool, REST body, and
   a 400 with ``{"error": "unknown supersedes id: <id>"}``.
 - The MCP ``save_memory`` tool posts ``supersedes`` in the JSON body
   (``None`` when not given); the tool list is unaffected (still exactly
-  {search, search_code, search_memory, save_memory, ingest_document, deep_search}).
+  {search, search_code, search_memory, save_memory, ingest_document}).
 
 Pure/unit sections use no DB/network (REST route delegates to a monkeypatched
 ``api.save_note``; MCP proxy uses ``httpx.MockTransport`` as in
@@ -213,7 +213,6 @@ def test_mcp_tool_list_unaffected_by_supersede():
         "search_memory",
         "save_memory",
         "ingest_document",
-        "deep_search",
         "ingest_repo",
         "remove_repo",
         "list_repos",

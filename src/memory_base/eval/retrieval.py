@@ -21,13 +21,8 @@ import asyncpg
 from memory_base.core import config, schema as schema_module
 from memory_base.core.config import db_url, emb_model, rerank_model
 from memory_base.core.logger import setup_logging
-from memory_base.retrieval import decompose as decompose_module
 from memory_base.retrieval import search as search_module
-from memory_base.retrieval.decompose import deep_search
 from memory_base.serve import ingest_api
-
-MULTI_HOP_CLASS = "multi_hop"
-SINGLE_HOP_CLASSES = frozenset({"agent_work_history", "companion_fragment", "personal_kb"})
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "eval_docs"
@@ -150,7 +145,7 @@ def load_labels(path: Path = LABELS_PATH) -> list[EvalLabel]:
 
 
 def _set_schema(schema_name: str) -> dict[Any, str]:
-    modules = (config, schema_module, ingest_api, search_module, decompose_module)
+    modules = (config, schema_module, ingest_api, search_module)
     previous = {module: module.PG_SCHEMA for module in modules}
     for module in modules:
         module.PG_SCHEMA = schema_name
@@ -217,45 +212,6 @@ async def _evaluate_mode(
     return results
 
 
-BASELINE_SEARCH_KWARGS: dict[str, Any] = {
-    "source": "memory",
-    "include_atoms": True,
-    "rerank": True,
-    "include_archived": False,
-}
-
-
-async def _evaluate_baseline(
-    labels: Sequence[EvalLabel],
-    corpus_ids: Collection[str],
-) -> list[QueryMetrics]:
-    results: list[QueryMetrics] = []
-    for index, label in enumerate(labels, start=1):
-        hits = await search_module.search(label.query, **BASELINE_SEARCH_KWARGS)
-        retrieved_ids = [row_id for hit in hits if isinstance((row_id := hit.meta.get("id")), str)]
-        results.append(score_query(label, retrieved_ids, corpus_ids))
-        print(f"[baseline] {index:02d}/{len(labels):02d} {label.query_class}")
-    return results
-
-
-async def _evaluate_deep(
-    labels: Sequence[EvalLabel],
-    corpus_ids: Collection[str],
-) -> tuple[list[QueryMetrics], list[list[str]]]:
-    results: list[QueryMetrics] = []
-    evidence_lists: list[list[str]] = []
-    for index, label in enumerate(labels, start=1):
-        result = await deep_search(label.query)
-        evidence_ids = [entry.id for entry in result.evidence]
-        evidence_lists.append(evidence_ids)
-        results.append(score_query(label, evidence_ids, corpus_ids))
-        print(
-            f"[deep] {index:02d}/{len(labels):02d} {label.query_class} "
-            f"hops={result.hops_used} stopped={result.stopped_reason}"
-        )
-    return results, evidence_lists
-
-
 def _print_report(
     off_results: Sequence[QueryMetrics],
     on_results: Sequence[QueryMetrics],
@@ -284,33 +240,6 @@ def _print_report(
     )
 
 
-def _print_deep_report(
-    baseline_results: Sequence[QueryMetrics],
-    deep_results: Sequence[QueryMetrics],
-    labels: Sequence[EvalLabel],
-    evidence_lists: Sequence[Sequence[str]],
-) -> None:
-    baseline_agg = aggregate_metrics(baseline_results)
-    deep_agg = aggregate_metrics(deep_results)
-    baseline_summary = baseline_agg.get("overall", MetricSummary(0, 0.0, 0.0))
-    deep_summary = deep_agg.get("overall", MetricSummary(0, 0.0, 0.0))
-    completion = path_completion(labels, evidence_lists)
-    print(
-        f"deep multi_hop (n={deep_summary.count}): "
-        f"baseline Recall@5={baseline_summary.recall_at_5:.3f} "
-        f"MRR@10={baseline_summary.mrr_at_10:.3f}; "
-        f"deep Recall@5={deep_summary.recall_at_5:.3f} "
-        f"MRR@10={deep_summary.mrr_at_10:.3f}; "
-        f"path_completion={completion:.3f}"
-    )
-    verdict = "PASS" if deep_gate_passes(baseline_summary, deep_summary, completion) else "FAIL"
-    print(
-        f"Deep gate verdict: {verdict} "
-        "(deep Recall@5 >= baseline Recall@5 on multi_hop; "
-        "path_completion >= 0.4)"
-    )
-
-
 def gate_passes(
     atoms_off: dict[str, MetricSummary],
     atoms_on: dict[str, MetricSummary],
@@ -324,36 +253,6 @@ def gate_passes(
     return per_class_pass and overall_pass
 
 
-def _document_of(row_id: str) -> str:
-    parts = row_id.split(":")
-    return parts[1] if len(parts) >= 2 else row_id
-
-
-def path_completion(
-    labels: Sequence[EvalLabel],
-    evidence_lists: Sequence[Sequence[str]],
-) -> float:
-    """Fraction of multi_hop queries whose evidence covers every labeled document."""
-    if not labels:
-        return 0.0
-    completed = 0
-    for label, evidence_ids in zip(labels, evidence_lists, strict=True):
-        required_docs = {_document_of(rid) for rid in label.relevant_ids}
-        covered_docs = {_document_of(eid) for eid in evidence_ids} & required_docs
-        if required_docs and covered_docs >= required_docs:
-            completed += 1
-    return completed / len(labels)
-
-
-def deep_gate_passes(
-    baseline_summary: MetricSummary,
-    deep_summary: MetricSummary,
-    completion: float,
-) -> bool:
-    """Deep Recall@5 >= baseline Recall@5 on multi_hop AND path completion >= 0.4."""
-    return deep_summary.recall_at_5 >= baseline_summary.recall_at_5 and completion >= 0.4
-
-
 async def run_evaluation() -> None:
     """Ingest checked-in fixtures into a scratch schema and print the A/B report."""
     print(f"Models: embedding={emb_model()} rerank={rerank_model()}")
@@ -362,8 +261,6 @@ async def run_evaluation() -> None:
         raise RuntimeError("missing required service configuration: " + ", ".join(missing_env))
 
     labels = load_labels()
-    single_hop_labels = [label for label in labels if label.query_class != MULTI_HOP_CLASS]
-    multi_hop_labels = [label for label in labels if label.query_class == MULTI_HOP_CLASS]
     schema_name = f"memory_eval_{os.getpid()}_{uuid.uuid4().hex[:12]}"
     previous_schema = _set_schema(schema_name)
     schema_created = False
@@ -391,14 +288,9 @@ async def run_evaluation() -> None:
             f"Corpus: fixtures={len(list(FIXTURE_DIR.iterdir()))} "
             f"parents={parent_count} rows={len(rows)} schema={schema_name}"
         )
-        off_results = await _evaluate_mode(single_hop_labels, corpus_ids, include_atoms=False)
-        on_results = await _evaluate_mode(single_hop_labels, corpus_ids, include_atoms=True)
+        off_results = await _evaluate_mode(labels, corpus_ids, include_atoms=False)
+        on_results = await _evaluate_mode(labels, corpus_ids, include_atoms=True)
         _print_report(off_results, on_results)
-        if multi_hop_labels:
-            print()
-            baseline_results = await _evaluate_baseline(multi_hop_labels, corpus_ids)
-            deep_results, evidence_lists = await _evaluate_deep(multi_hop_labels, corpus_ids)
-            _print_deep_report(baseline_results, deep_results, multi_hop_labels, evidence_lists)
     finally:
         try:
             if schema_created:

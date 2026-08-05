@@ -145,101 +145,12 @@ def test_main_reports_unavailable_prerequisites_without_raising(monkeypatch, cap
     assert "Gate verdict: NOT RUN" in output
 
 
-def test_path_completion_all_covered():
-    labels = [
-        retrieval.EvalLabel("q1", "multi_hop", ("doc:a.md:0", "doc:b.md:1")),
-        retrieval.EvalLabel("q2", "multi_hop", ("doc:c.md:0", "doc:d.md:2")),
-    ]
-    evidence = [
-        ["doc:a.md:0", "doc:b.md:1"],
-        ["doc:c.md:0", "doc:d.md:2"],
-    ]
-    assert retrieval.path_completion(labels, evidence) == 1.0
-
-
-def test_path_completion_partial():
-    labels = [
-        retrieval.EvalLabel("q1", "multi_hop", ("doc:a.md:0", "doc:b.md:1")),
-        retrieval.EvalLabel("q2", "multi_hop", ("doc:c.md:0", "doc:d.md:2")),
-    ]
-    evidence = [
-        ["doc:a.md:0", "doc:b.md:1"],
-        ["doc:c.md:0"],
-    ]
-    assert retrieval.path_completion(labels, evidence) == 0.5
-
-
-def test_path_completion_empty_evidence():
-    labels = [
-        retrieval.EvalLabel("q1", "multi_hop", ("doc:a.md:0", "doc:b.md:1")),
-    ]
-    evidence = [[]]
-    assert retrieval.path_completion(labels, evidence) == 0.0
-
-
-def test_path_completion_empty_labels():
-    assert retrieval.path_completion([], []) == 0.0
-
-
-def test_deep_gate_passes_with_sufficient_recall_and_completion():
-    baseline = retrieval.MetricSummary(6, 0.5, 0.4)
-    deep = retrieval.MetricSummary(6, 0.6, 0.5)
-    assert retrieval.deep_gate_passes(baseline, deep, 0.5)
-
-
-def test_deep_gate_fails_on_low_completion():
-    baseline = retrieval.MetricSummary(6, 0.5, 0.4)
-    deep = retrieval.MetricSummary(6, 0.6, 0.5)
-    assert not retrieval.deep_gate_passes(baseline, deep, 0.3)
-
-
-def test_deep_gate_fails_on_lower_recall():
-    baseline = retrieval.MetricSummary(6, 0.5, 0.4)
-    deep = retrieval.MetricSummary(6, 0.4, 0.3)
-    assert not retrieval.deep_gate_passes(baseline, deep, 0.5)
-
-
-def test_deep_gate_recall_tie_passes_only_with_completion():
-    baseline = retrieval.MetricSummary(6, 0.5, 0.4)
-    deep = retrieval.MetricSummary(6, 0.5, 0.4)
-    assert retrieval.deep_gate_passes(baseline, deep, 0.4)
-    assert not retrieval.deep_gate_passes(baseline, deep, 0.39)
-
-
-def test_multi_hop_fixture_integrity():
-    labels = retrieval.load_labels(FIXTURES / "retrieval_eval.jsonl")
-    multi_hop = [label for label in labels if label.query_class == "multi_hop"]
-    assert len(multi_hop) >= 5
-    for label in multi_hop:
-        docs = {retrieval._document_of(rid) for rid in label.relevant_ids}
-        assert len(docs) >= 2
-        assert all(retrieval.RELEVANT_ID_RE.fullmatch(rid) for rid in label.relevant_ids)
-
-
-def test_single_hop_gate_excludes_multi_hop():
-    labels = retrieval.load_labels(FIXTURES / "retrieval_eval.jsonl")
-    single_hop = [label for label in labels if label.query_class != retrieval.MULTI_HOP_CLASS]
-    single_classes = {label.query_class for label in single_hop}
-    assert retrieval.MULTI_HOP_CLASS not in single_classes
-    assert single_classes == retrieval.SINGLE_HOP_CLASSES
-
-
-def test_baseline_search_kwargs_are_pinned():
-    assert retrieval.BASELINE_SEARCH_KWARGS == {
-        "source": "memory",
-        "include_atoms": True,
-        "rerank": True,
-        "include_archived": False,
-    }
-
-
 def test_set_schema_covers_every_query_module():
     from memory_base.eval import retrieval as eval_module
 
     previous = eval_module._set_schema("scratch_test_schema")
     try:
-        assert eval_module.decompose_module.PG_SCHEMA == "scratch_test_schema"
         assert eval_module.search_module.PG_SCHEMA == "scratch_test_schema"
     finally:
         eval_module._restore_schema(previous)
-    assert eval_module.decompose_module.PG_SCHEMA != "scratch_test_schema"
+    assert eval_module.search_module.PG_SCHEMA != "scratch_test_schema"
