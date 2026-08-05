@@ -7,7 +7,7 @@ services:
     command: postgres -c shared_preload_libraries=pg_textsearch
     environment:
       POSTGRES_USER: memory
-      POSTGRES_PASSWORD: memory
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: memory_base
     ports:
       - "5439:5432"
@@ -21,7 +21,7 @@ services:
     ports:
       - "8010:8010"
     environment:
-      DB_URL: postgres://memory:memory@db:5432/memory_base
+      DB_URL: postgres://memory:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/memory_base
       COCOINDEX_DB: /data/cocoindex_state
       EMB_URL: ${EMB_URL}
       RERANK_URL: ${RERANK_URL}
