@@ -63,16 +63,39 @@ async def cleanup(connection, marker):
     )
 
 
+def test_reserved_prefixed_rows_are_invisible_to_unscoped_claims():
+    async def scenario():
+        marker = uuid.uuid4().hex
+        prefix = f"it-{marker}"
+        async with connections(1) as (connection,):
+            try:
+                job_id = await insert_document(connection, marker, prefix, 1)
+                foreign_claim = await job_store.claim_job("document", connection=connection)
+                assert foreign_claim is None
+
+                scoped_claim = await job_store.claim_job(
+                    "document", connection=connection, only_key_prefix=prefix
+                )
+                assert scoped_claim.job_id == job_id
+            finally:
+                await cleanup(connection, marker)
+
+    asyncio.run(scenario())
+
+
 def test_fair_claim_prefers_the_key_with_fewer_active_jobs_and_then_oldest_key():
     async def scenario():
         marker = uuid.uuid4().hex
+        prefix = f"it-{marker}"
         async with connections() as (first, second):
             try:
-                await insert_document(first, marker, "key-a", 1, status="running")
-                await insert_document(first, marker, "key-a", 2, status="running")
-                await insert_document(first, marker, "key-a", 3)
-                key_b = await insert_document(first, marker, "key-b", 4)
-                claimed = await job_store.claim_job("document", connection=second)
+                await insert_document(first, marker, f"{prefix}-key-a", 1, status="running")
+                await insert_document(first, marker, f"{prefix}-key-a", 2, status="running")
+                await insert_document(first, marker, f"{prefix}-key-a", 3)
+                key_b = await insert_document(first, marker, f"{prefix}-key-b", 4)
+                claimed = await job_store.claim_job(
+                    "document", connection=second, only_key_prefix=prefix
+                )
                 assert claimed.job_id == key_b
 
                 await first.execute(
@@ -80,9 +103,11 @@ def test_fair_claim_prefers_the_key_with_fewer_active_jobs_and_then_oldest_key()
                     WHERE job_id LIKE $1''',
                     f"it-{marker}-%",
                 )
-                oldest = await insert_document(first, marker, "key-c", 10)
-                await insert_document(first, marker, "key-d", 11)
-                claimed = await job_store.claim_job("document", connection=second)
+                oldest = await insert_document(first, marker, f"{prefix}-key-c", 10)
+                await insert_document(first, marker, f"{prefix}-key-d", 11)
+                claimed = await job_store.claim_job(
+                    "document", connection=second, only_key_prefix=prefix
+                )
                 assert claimed.job_id == oldest
             finally:
                 await cleanup(first, marker)
@@ -93,13 +118,18 @@ def test_fair_claim_prefers_the_key_with_fewer_active_jobs_and_then_oldest_key()
 def test_same_document_claims_on_independent_connections_never_overlap():
     async def scenario():
         marker = uuid.uuid4().hex
+        prefix = f"it-{marker}"
         async with connections() as (first, second):
             try:
-                await insert_document(first, marker, "key-a", 1, document_id="same-document")
-                await insert_document(first, marker, "key-b", 2, document_id="same-document")
+                await insert_document(
+                    first, marker, f"{prefix}-key-a", 1, document_id="same-document"
+                )
+                await insert_document(
+                    first, marker, f"{prefix}-key-b", 2, document_id="same-document"
+                )
                 claims = await asyncio.gather(
-                    job_store.claim_job("document", connection=first),
-                    job_store.claim_job("document", connection=second),
+                    job_store.claim_job("document", connection=first, only_key_prefix=prefix),
+                    job_store.claim_job("document", connection=second, only_key_prefix=prefix),
                 )
                 assert sum(claim is not None for claim in claims) == 1
             finally:
@@ -111,6 +141,7 @@ def test_same_document_claims_on_independent_connections_never_overlap():
 def test_repo_claim_stays_serial_even_with_two_independent_claimers():
     async def scenario():
         marker = uuid.uuid4().hex
+        prefix = f"it-{marker}"
         async with connections() as (first, second):
             try:
                 for created in (1, 2):
@@ -118,18 +149,22 @@ def test_repo_claim_stays_serial_even_with_two_independent_claimers():
                         f'''INSERT INTO "{PG_SCHEMA}".jobs
                         (job_id, kind, status, key_id, key_label, created_at, updated_at,
                          name, action)
-                        VALUES ($1, 'repo', 'queued', 'key', 'label', to_timestamp($2),
-                                to_timestamp($2), $3, 'remove')''',
+                        VALUES ($1, 'repo', 'queued', $2, 'label', to_timestamp($3),
+                                to_timestamp($3), $4, 'remove')''',
                         f"it-{marker}-{created}",
+                        prefix,
                         created,
                         f"repo-{created}",
                     )
                 claims = await asyncio.gather(
-                    job_store.claim_job("repo", connection=first),
-                    job_store.claim_job("repo", connection=second),
+                    job_store.claim_job("repo", connection=first, only_key_prefix=prefix),
+                    job_store.claim_job("repo", connection=second, only_key_prefix=prefix),
                 )
                 assert sum(claim is not None for claim in claims) == 1
-                assert await job_store.claim_job("repo", connection=second) is None
+                assert (
+                    await job_store.claim_job("repo", connection=second, only_key_prefix=prefix)
+                    is None
+                )
             finally:
                 await cleanup(first, marker)
 
@@ -139,11 +174,12 @@ def test_repo_claim_stays_serial_even_with_two_independent_claimers():
 def test_concurrent_document_admission_stops_exactly_at_the_cap(tmp_path, monkeypatch):
     async def scenario():
         marker = uuid.uuid4().hex
+        key_id = f"it-{marker}"
         monkeypatch.setattr(job_store, "INGEST_BACKLOG_PER_KEY", 3)
         monkeypatch.setattr(job_store, "INGEST_BACKLOG_MAX", 100)
         async with connections() as (first, second):
             try:
-                await insert_document(first, marker, marker, 1)
+                await insert_document(first, marker, key_id, 1)
                 paths = [tmp_path / f"{index}.md" for index in range(2)]
                 for path in paths:
                     path.write_text("content")
@@ -152,7 +188,7 @@ def test_concurrent_document_admission_stops_exactly_at_the_cap(tmp_path, monkey
                     return await job_store.admit_document(
                         connection=connection,
                         job_id=f"it-{marker}-admit-{index}",
-                        key_id=marker,
+                        key_id=key_id,
                         key_label="same-label",
                         namespace="default",
                         document_id=f"doc-{index}",
@@ -173,7 +209,7 @@ def test_concurrent_document_admission_stops_exactly_at_the_cap(tmp_path, monkey
                     await job_store.admit_document(
                         connection=first,
                         job_id=f"it-{marker}-extra",
-                        key_id=marker,
+                        key_id=key_id,
                         key_label="same-label",
                         namespace="default",
                         document_id="extra",
@@ -191,6 +227,7 @@ def test_concurrent_document_admission_stops_exactly_at_the_cap(tmp_path, monkey
 def test_repo_cap_counts_one_running_plus_nine_queued(monkeypatch):
     async def scenario():
         marker = uuid.uuid4().hex
+        key_id = f"it-{marker}"
         monkeypatch.setattr(job_store, "REPO_MAX_QUEUED", 10)
         async with connections(1) as (connection,):
             try:
@@ -202,14 +239,14 @@ def test_repo_cap_counts_one_running_plus_nine_queued(monkeypatch):
                         VALUES ($1, 'repo', $2, $3, 'label', now(), now(), $4, 'remove')''',
                         f"it-{marker}-{index}",
                         "running" if index == 0 else "queued",
-                        marker,
+                        key_id,
                         f"repo-{index}",
                     )
                 with pytest.raises(job_store.BacklogFullError, match="repo job queue is full"):
                     await job_store.admit_repo(
                         connection=connection,
                         job_id=f"it-{marker}-extra",
-                        key_id=marker,
+                        key_id=key_id,
                         key_label="label",
                         name="extra",
                         action="remove",
@@ -225,19 +262,20 @@ def test_repo_cap_counts_one_running_plus_nine_queued(monkeypatch):
 def test_global_document_cap_has_a_distinct_error(monkeypatch, tmp_path):
     async def scenario():
         marker = uuid.uuid4().hex
+        prefix = f"it-{marker}"
         monkeypatch.setattr(job_store, "INGEST_BACKLOG_PER_KEY", 100)
         monkeypatch.setattr(job_store, "INGEST_BACKLOG_MAX", 2)
         async with connections(1) as (connection,):
             try:
-                await insert_document(connection, marker, f"{marker}-a", 1)
-                await insert_document(connection, marker, f"{marker}-b", 2)
+                await insert_document(connection, marker, f"{prefix}-a", 1)
+                await insert_document(connection, marker, f"{prefix}-b", 2)
                 spool = tmp_path / "global.md"
                 spool.write_text("content")
                 with pytest.raises(job_store.BacklogFullError, match="global"):
                     await job_store.admit_document(
                         connection=connection,
                         job_id=f"it-{marker}-global",
-                        key_id=f"{marker}-c",
+                        key_id=f"{prefix}-c",
                         key_label="label",
                         namespace="default",
                         document_id="global",
@@ -255,6 +293,7 @@ def test_global_document_cap_has_a_distinct_error(monkeypatch, tmp_path):
 def test_concurrent_repo_admission_at_the_boundary_admits_only_one(monkeypatch):
     async def scenario():
         marker = uuid.uuid4().hex
+        key_id = f"it-{marker}"
         monkeypatch.setattr(job_store, "REPO_MAX_QUEUED", 10)
         async with connections() as (first, second):
             try:
@@ -265,7 +304,7 @@ def test_concurrent_repo_admission_at_the_boundary_admits_only_one(monkeypatch):
                          name, action)
                         VALUES ($1, 'repo', 'queued', $2, 'label', now(), now(), $3, 'remove')''',
                         f"it-{marker}-{index}",
-                        marker,
+                        key_id,
                         f"repo-{index}",
                     )
 
@@ -273,7 +312,7 @@ def test_concurrent_repo_admission_at_the_boundary_admits_only_one(monkeypatch):
                     return await job_store.admit_repo(
                         connection=connection,
                         job_id=f"it-{marker}-{suffix}",
-                        key_id=marker,
+                        key_id=key_id,
                         key_label="label",
                         name=f"repo-{suffix}",
                         action="remove",
@@ -330,10 +369,15 @@ def test_fifty_sequential_uploads_are_durably_accepted_and_reach_terminal(monkey
                 assert response.status_code == 202
                 job_ids.append(response.json()["job_id"])
 
+        # key_id carries the reserved "it-" prefix, so this job's rows stay
+        # invisible to the deployed API's unscoped workers; only_key_prefix is
+        # what lets this test claim its own rows back.
         connection = await asyncpg.connect(db_url())
         try:
             for _ in range(50):
-                claimed = await job_store.claim_job("document", connection=connection)
+                claimed = await job_store.claim_job(
+                    "document", connection=connection, only_key_prefix=key_id
+                )
                 assert claimed is not None
                 await connection.execute(
                     f'''UPDATE "{PG_SCHEMA}".jobs
@@ -351,10 +395,12 @@ def test_fifty_sequential_uploads_are_durably_accepted_and_reach_terminal(monkey
             assert {row["filename"] for row in rows} == {
                 f"original-{index}.md" for index in range(50)
             }
+        finally:
+            # Runs even if an assertion above fails, so a stolen or unclaimed
+            # job never leaks a row into the shared table.
             await connection.execute(
                 f'DELETE FROM "{PG_SCHEMA}".jobs WHERE job_id = ANY($1::text[])', job_ids
             )
-        finally:
             await connection.close()
             await db.close_pool()
 
@@ -364,6 +410,7 @@ def test_fifty_sequential_uploads_are_durably_accepted_and_reach_terminal(monkey
 def test_startup_recovery_requeues_valid_spool_and_fails_missing_spool(tmp_path):
     async def scenario():
         marker = uuid.uuid4().hex
+        key_id = f"it-{marker}"
         spool = tmp_path / "spool"
         spool.mkdir()
         valid_path = spool / "valid.md"
@@ -372,10 +419,10 @@ def test_startup_recovery_requeues_valid_spool_and_fails_missing_spool(tmp_path)
         async with connections() as (connection, second):
             try:
                 valid = await insert_document(
-                    connection, marker, marker, 1, status="running", document_id="valid"
+                    connection, marker, key_id, 1, status="running", document_id="valid"
                 )
                 missing = await insert_document(
-                    connection, marker, marker, 2, status="running", document_id="missing"
+                    connection, marker, key_id, 2, status="running", document_id="missing"
                 )
                 await connection.execute(
                     f'''UPDATE "{PG_SCHEMA}".jobs
@@ -405,7 +452,9 @@ def test_startup_recovery_requeues_valid_spool_and_fails_missing_spool(tmp_path)
                 }
                 assert failed["status"] == "failed"
                 assert "spool file is missing" in failed["error"]
-                claimed = await job_store.claim_job("document", connection=second)
+                claimed = await job_store.claim_job(
+                    "document", connection=second, only_key_prefix=key_id
+                )
                 assert claimed.job_id == valid
                 assert claimed.filename == "Original.MD"
                 assert claimed.chunks_done == 0
