@@ -3,11 +3,14 @@
 import logging
 import os
 import sys
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from loguru import logger
 
 _configured = False
+_MAX_BRIDGE_FRAME_WALK = 12
+_ROTATION_MAX_BYTES = 100 * 1024 * 1024
 
 
 class InterceptHandler(logging.Handler):
@@ -19,12 +22,42 @@ class InterceptHandler(logging.Handler):
         except ValueError:
             level = record.levelno
 
-        frame, depth = sys._getframe(6), 6
-        while frame and frame.f_code.co_filename == logging.__file__:
+        # Walk past the stdlib logging call chain (Handler.handle, Logger.callHandlers,
+        # Logger.handle, Logger._log, Logger.<level>) to the frame that actually logged.
+        frame, depth = sys._getframe(1), 1
+        while (
+            frame is not None
+            and depth < _MAX_BRIDGE_FRAME_WALK
+            and frame.f_code.co_filename == logging.__file__
+        ):
             frame = frame.f_back
             depth += 1
 
         logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+
+
+class _SizeOrTimeRotation:
+    """Rotate a log file once it exceeds a byte cap or crosses a daily time boundary."""
+
+    def __init__(self, *, max_bytes: int, at: time) -> None:
+        now = datetime.now()
+        self._max_bytes = max_bytes
+        self._next_rotation = now.replace(
+            hour=at.hour, minute=at.minute, second=at.second, microsecond=0
+        )
+        if self._next_rotation <= now:
+            self._next_rotation += timedelta(days=1)
+
+    def __call__(self, message, file) -> bool:
+        file.seek(0, 2)
+        if file.tell() + len(message) > self._max_bytes:
+            return True
+        record_time = message.record["time"].replace(tzinfo=None)
+        if record_time >= self._next_rotation:
+            while self._next_rotation <= record_time:
+                self._next_rotation += timedelta(days=1)
+            return True
+        return False
 
 
 def setup_logging(
@@ -32,14 +65,15 @@ def setup_logging(
     rotation: str = "00:00",
     retention: str = "30 days",
 ) -> None:
-    """Configure unified logging with Request ID support and daily rotation.
+    """Configure unified logging with Request ID support and daily-or-100MB rotation.
 
     Idempotent: repeat calls are no-ops so importing modules under test
     doesn't stack sinks or double-install the stdlib bridge.
 
     Args:
         level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        rotation: When to rotate logs (default: "00:00" for daily at midnight)
+        rotation: Daily time to rotate logs at (default: "00:00" for midnight);
+            the file also rotates early once it exceeds 100 MB
         retention: How long to keep logs (default: "30 days")
     """
     global _configured
@@ -75,12 +109,16 @@ def setup_logging(
         colorize=True,
     )
 
-    # File output (daily rotation)
+    # File output (daily rotation or 100 MB, whichever comes first)
+    rotation_trigger = _SizeOrTimeRotation(
+        max_bytes=_ROTATION_MAX_BYTES,
+        at=datetime.strptime(rotation, "%H:%M").time(),
+    )
     logger.add(
         log_dir / "app_{time:YYYY-MM-DD}.log",
         format=file_format,
         level=level,
-        rotation=rotation,
+        rotation=rotation_trigger,
         retention=retention,
         encoding="utf-8",
     )

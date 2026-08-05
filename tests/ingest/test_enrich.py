@@ -7,6 +7,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger as loguru_logger
 
 from memory_base.ingest import enrich
 
@@ -75,3 +76,24 @@ def test_summary_enrichment_persistent_failure_is_fail_closed(monkeypatch, respo
     monkeypatch.setattr(enrich, "llm_client", lambda: fake)
     with pytest.raises(enrich.EnrichmentError, match="failed after retry"):
         asyncio.run(enrich.summarize_and_tag("text", "context"))
+
+
+def test_each_failed_attempt_logs_debug_record_with_exception(monkeypatch):
+    fake, _ = _client([RuntimeError("down"), RuntimeError("still down")])
+    monkeypatch.setattr(enrich, "llm_client", lambda: fake)
+    records = []
+    sink_id = loguru_logger.add(records.append, level="DEBUG", format="{level}|{message}")
+    try:
+        with pytest.raises(enrich.EnrichmentError):
+            asyncio.run(enrich.summarize_and_tag("text", "context"))
+    finally:
+        loguru_logger.remove(sink_id)
+
+    debug_records = [
+        record
+        for record in records
+        if record.record["level"].name == "DEBUG" and "enrichment attempt" in record
+    ]
+    assert len(debug_records) == 2
+    assert all(record.record["exception"] is not None for record in debug_records)
+    assert all("RuntimeError" in str(record) for record in debug_records)

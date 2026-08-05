@@ -10,6 +10,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from loguru import logger
+
 from memory_base.core.config import SERVICE_TIMEOUT_SECONDS, llm_client, llm_model
 
 _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9 -]{1,40}$")
@@ -86,6 +88,9 @@ async def _json_call(
             last_error = "response failed validation"
         except Exception as exc:
             last_error = str(exc) or type(exc).__name__
+            logger.opt(exception=True).debug(
+                "enrichment attempt {} failed: {}", attempt + 1, last_error
+            )
     raise EnrichmentError(f"enrichment failed after retry: {last_error}")
 
 
