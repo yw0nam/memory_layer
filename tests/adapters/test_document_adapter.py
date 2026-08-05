@@ -156,7 +156,7 @@ def test_document_row_ids_metadata_and_search_refs():
     chunks = [Chunk("Body text " * 30, ("Root", "Child"), 0)]
     rows = document.map_document_rows(
         chunks,
-        [{"atom_questions": ["What does Project Atlas retain?"], "tags": ["project atlas"]}],
+        tags=["project atlas"],
         filename="guide.md",
         document_id="guide.md",
         content_hash="abc",
@@ -165,24 +165,43 @@ def test_document_row_ids_metadata_and_search_refs():
         origin="drive:item",
         timestamp=1.0,
     )
-    parent, atom = rows
-    assert parent["id"] == "doc:guide.md:0"
-    assert parent["metadata"]["search_ref"] == "guide.md#chunk-0"
-    assert parent["metadata"]["heading_path"] == ["Root", "Child"]
-    assert parent["metadata"]["ordinal"] == 0
-    assert parent["metadata"]["content_hash"] == "abc"
-    assert atom["id"] == "doc:guide.md:0:atom:0"
-    assert atom["metadata"]["parent_id"] == parent["id"]
-    assert atom["source_ref"] == "guide.md"
-    assert parent["namespace"] == "default"
-    assert atom["namespace"] == "default"
+    (row,) = rows
+    assert row["id"] == "doc:guide.md:0"
+    assert row["chunk_kind"] == "doc"
+    assert row["source_ref"] == "guide.md"
+    assert row["content_raw"] == chunks[0].text
+    assert row["embedding_text"] == f"Root > Child\n\n{chunks[0].text}"
+    assert row["metadata"]["search_ref"] == "guide.md#chunk-0"
+    assert row["metadata"]["heading_path"] == ["Root", "Child"]
+    assert row["metadata"]["ordinal"] == 0
+    assert row["metadata"]["content_hash"] == "abc"
+    assert row["metadata"]["tags"] == ["project atlas"]
+    assert row["namespace"] == "default"
+
+
+def test_document_rows_never_contain_atoms():
+    chunks = [Chunk("Body text " * 30, (), index) for index in range(3)]
+    rows = document.map_document_rows(
+        chunks,
+        tags=[],
+        filename="guide.md",
+        document_id="guide.md",
+        content_hash="abc",
+        format_name="md",
+        converter="markitdown:0.1.6",
+        origin=None,
+        timestamp=1.0,
+    )
+    assert len(rows) == len(chunks)
+    assert {row["chunk_kind"] for row in rows} == {"doc"}
+    assert all(row["metadata"]["tags"] == [] for row in rows)
 
 
 def test_document_rows_stamp_explicit_namespace():
     chunks = [Chunk("Body text " * 30, ("Root",), 0)]
-    parent, atom = document.map_document_rows(
+    (row,) = document.map_document_rows(
         chunks,
-        [{"atom_questions": ["question"], "tags": []}],
+        tags=[],
         filename="guide.md",
         document_id="guide.md",
         content_hash="abc",
@@ -192,19 +211,16 @@ def test_document_rows_stamp_explicit_namespace():
         timestamp=1.0,
         namespace="team-a",
     )
-    assert parent["namespace"] == "team-a"
-    assert atom["namespace"] == "team-a"
+    assert row["namespace"] == "team-a"
     # non-default namespace qualifies the id so it never collides with another
     # namespace's row for the same document_id (default keeps the legacy id).
-    assert parent["id"] == "doc:team-a:guide.md:0"
-    assert atom["id"] == "doc:team-a:guide.md:0:atom:0"
-    assert atom["metadata"]["parent_id"] == parent["id"]
+    assert row["id"] == "doc:team-a:guide.md:0"
 
 
 def test_document_rows_same_document_id_different_namespaces_have_disjoint_ids():
     chunks = [Chunk("Body text " * 30, ("Root",), 0)]
-    enrichments = [{"atom_questions": ["question"], "tags": []}]
     kwargs = dict(
+        tags=[],
         filename="guide.md",
         document_id="guide.md",
         content_hash="abc",
@@ -213,14 +229,13 @@ def test_document_rows_same_document_id_different_namespaces_have_disjoint_ids()
         origin=None,
         timestamp=1.0,
     )
-    default_rows = document.map_document_rows(chunks, enrichments, **kwargs, namespace="default")
-    team_a_rows = document.map_document_rows(chunks, enrichments, **kwargs, namespace="team-a")
-    team_b_rows = document.map_document_rows(chunks, enrichments, **kwargs, namespace="team-b")
+    default_rows = document.map_document_rows(chunks, **kwargs, namespace="default")
+    team_a_rows = document.map_document_rows(chunks, **kwargs, namespace="team-a")
+    team_b_rows = document.map_document_rows(chunks, **kwargs, namespace="team-b")
     all_ids = [row["id"] for rows in (default_rows, team_a_rows, team_b_rows) for row in rows]
     assert len(all_ids) == len(set(all_ids))
     # default keeps the pre-namespace id format exactly.
     assert default_rows[0]["id"] == "doc:guide.md:0"
-    assert default_rows[1]["id"] == "doc:guide.md:0:atom:0"
 
 
 def test_csv_sample_and_card_builder_use_header_first_twenty_rows(tmp_path):

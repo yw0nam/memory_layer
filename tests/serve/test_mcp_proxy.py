@@ -304,6 +304,38 @@ def test_ingest_document_posts_text_as_multipart_and_returns_job_reference(monke
     assert result == {"job_id": "job-1", "status_url": "/ingest/jobs/job-1"}
 
 
+def test_ingest_document_forwards_tags_as_repeated_form_fields(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.content
+        return httpx.Response(
+            202,
+            json={"job_id": "job-1", "status": "queued", "status_url": "/ingest/jobs/job-1"},
+        )
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.ingest_document("# Guide", "guide.md", tags=["zx bank", "policy"]))
+    assert captured["body"].count(b'name="tags"') == 2
+    assert b"zx bank" in captured["body"]
+    assert b"policy" in captured["body"]
+
+
+def test_ingest_document_omitted_tags_send_no_tags_field(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.content
+        return httpx.Response(
+            202,
+            json={"job_id": "job-1", "status": "queued", "status_url": "/ingest/jobs/job-1"},
+        )
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.ingest_document("# Guide", "guide.md"))
+    assert b'name="tags"' not in captured["body"]
+
+
 @pytest.mark.parametrize("filename", ["guide.pdf", "slides.pptx", "table.csv"])
 def test_ingest_document_mcp_rejects_binary_formats(filename):
     with pytest.raises(ValueError, match="text formats only"):
