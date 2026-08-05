@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from pathlib import Path
 
@@ -145,12 +146,63 @@ def test_main_reports_unavailable_prerequisites_without_raising(monkeypatch, cap
     assert "Gate verdict: NOT RUN" in output
 
 
-def test_set_schema_covers_every_query_module():
+def test_scratch_schema_scope_patches_and_restores_schema_module():
+    """ensure_schema[_once] read schema_module.PG_SCHEMA unparameterized, so the eval
+    still rebinds it for the run; search() and run_document_job() do not need this."""
     from memory_base.eval import retrieval as eval_module
 
-    previous = eval_module._set_schema("scratch_test_schema")
-    try:
-        assert eval_module.search_module.PG_SCHEMA == "scratch_test_schema"
-    finally:
-        eval_module._restore_schema(previous)
-    assert eval_module.search_module.PG_SCHEMA != "scratch_test_schema"
+    original = eval_module.schema_module.PG_SCHEMA
+    with eval_module._scratch_schema_scope("scratch_test_schema"):
+        assert eval_module.schema_module.PG_SCHEMA == "scratch_test_schema"
+    assert eval_module.schema_module.PG_SCHEMA == original
+
+
+def test_scratch_schema_scope_restores_on_exception():
+    from memory_base.eval import retrieval as eval_module
+
+    original = eval_module.schema_module.PG_SCHEMA
+    with pytest.raises(RuntimeError, match="boom"):
+        with eval_module._scratch_schema_scope("scratch_test_schema"):
+            raise RuntimeError("boom")
+    assert eval_module.schema_module.PG_SCHEMA == original
+
+
+def test_ingest_fixture_threads_schema_to_run_document_job(monkeypatch, tmp_path):
+    """ingest_api.PG_SCHEMA reads are contained in run_document_job's own call graph,
+    so the eval passes schema explicitly instead of rebinding ingest_api's global."""
+    from memory_base.eval import retrieval as eval_module
+
+    captured = {}
+
+    async def fake_run_document_job(job, upload_path, filename, mode, origin, schema=None):
+        captured["schema"] = schema
+        job.status = "succeeded"
+
+    monkeypatch.setattr(eval_module.ingest_api, "run_document_job", fake_run_document_job)
+    fixture = tmp_path / "note.md"
+    fixture.write_text("hello", encoding="utf-8")
+
+    asyncio.run(eval_module._ingest_fixture(fixture, "scratch_test_schema"))
+
+    assert captured["schema"] == "scratch_test_schema"
+
+
+def test_evaluate_mode_threads_schema_to_search(monkeypatch):
+    """search_module.PG_SCHEMA reads are contained in search()'s own call graph, so
+    the eval passes schema explicitly instead of rebinding search_module's global."""
+    from memory_base.eval import retrieval as eval_module
+
+    captured = {}
+
+    async def fake_search(query, **kwargs):
+        captured["schema"] = kwargs.get("schema")
+        return []
+
+    monkeypatch.setattr(eval_module.search_module, "search", fake_search)
+    label = eval_module.EvalLabel(query="q", query_class="work", relevant_ids=("doc:x:0",))
+
+    asyncio.run(
+        eval_module._evaluate_mode([label], set(), "scratch_test_schema", include_atoms=False)
+    )
+
+    assert captured["schema"] == "scratch_test_schema"
