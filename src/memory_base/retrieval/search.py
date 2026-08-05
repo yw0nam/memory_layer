@@ -100,13 +100,25 @@ def metadata_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _normalize_tags(tags: Any) -> list[str] | None:
+def normalize_tags(tags: Any, *, allow_empty: bool = False) -> list[str] | None:
+    """Validate and normalize a tags list: strip, lowercase, dedupe.
+
+    Search filters (allow_empty=False, the default) treat an absent value as "no
+    filter" (None) and reject an explicit empty or all-blank list as ambiguous with
+    that. Stored data (allow_empty=True, e.g. note/document tags) has no such
+    ambiguity: an absent or empty value both normalize to "no tags" ([]).
+    """
     if tags is None:
-        return None
+        return [] if allow_empty else None
     if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
-        raise ValueError("tags must be a non-empty list of strings")
+        msg = (
+            "tags must be a list of strings"
+            if allow_empty
+            else "tags must be a non-empty list of strings"
+        )
+        raise ValueError(msg)
     normalized = list(dict.fromkeys(tag.strip().lower() for tag in tags if tag.strip()))
-    if not normalized:
+    if not normalized and not allow_empty:
         raise ValueError("tags must be a non-empty list of strings")
     return normalized
 
@@ -142,7 +154,7 @@ def validate_search_options(
     """Validate source-specific filters and return normalized values."""
     if kind is not None and kind not in SEARCH_KINDS:
         raise ValueError(f"kind must be one of {SEARCH_KINDS}")
-    normalized_tags = _normalize_tags(tags)
+    normalized_tags = normalize_tags(tags)
     if (kind is not None or normalized_tags is not None) and source != "memory":
         raise ValueError('kind and tags filters require source="memory"')
     normalized_repo = _normalize_repo(repo)

@@ -186,7 +186,8 @@ def test_search_filter_validation_errors_are_400(body):
     assert set(response.json()) == {"error"}
 
 
-def test_search_forwards_normalized_filters_and_include_atoms(monkeypatch):
+def test_search_forwards_raw_kind_tags_and_include_atoms(monkeypatch):
+    """The route forwards raw body values as-is; search() does the normalizing."""
     captured = {}
 
     async def fake_search(query, **options):
@@ -206,11 +207,12 @@ def test_search_forwards_normalized_filters_and_include_atoms(monkeypatch):
     )
     assert response.status_code == 200
     assert captured["kind"] == "decision"
-    assert captured["tags"] == ["infra", "database"]
+    assert captured["tags"] == [" Infra ", "DATABASE", "infra"]
     assert captured["include_atoms"] is False
 
 
-def test_search_forwards_repo_filter(monkeypatch):
+def test_search_forwards_raw_repo_filter(monkeypatch):
+    """The route forwards the raw repo list as-is; search() does the normalizing."""
     captured = {}
 
     async def fake_search(query, source="all", **options):
@@ -222,7 +224,7 @@ def test_search_forwards_repo_filter(monkeypatch):
         "/search", json={"query": "marker", "source": "code", "repo": [" repo_a ", "repo_a"]}
     )
     assert response.status_code == 200
-    assert captured["repo"] == ["repo_a"]
+    assert captured["repo"] == [" repo_a ", "repo_a"]
 
 
 def test_search_rejects_repo_filter_outside_code_source():

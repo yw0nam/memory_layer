@@ -35,11 +35,11 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
 from memory_base.ingest.enrich import EnrichmentError, summarize_and_tag
+from memory_base.retrieval.search import normalize_tags
 from memory_base.serve import job_store
 from memory_base.serve import namespaces
 from memory_base.serve.http import error
 from memory_base.serve.job_store import iso_time
-from memory_base.serve.notes import normalize_tags
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))
 INGEST_SPOOL = job_store.INGEST_SPOOL
@@ -427,7 +427,7 @@ async def ingest_document_route(request: Request) -> JSONResponse:
     if any(not isinstance(tag, str) or not tag.strip() for tag in raw_tags):
         await upload.close()
         return error("tags must be non-empty strings", 400)
-    tags = normalize_tags(list(raw_tags))
+    tags = normalize_tags(list(raw_tags), allow_empty=True)
 
     namespace_value = form.get("namespace")
     if namespace_value is None or namespace_value == "":
