@@ -339,7 +339,9 @@ async def ingest_repo(
 async def remove_repo(name: str, ctx: Context | None = None) -> dict[str, Any]:
     """Remove a repository from the code index by its cache name.
 
-    Queues a re-index that tears down the removed repo's code chunks. Returns
+    Restricted to an admin key or the repo's owner (the key that first
+    ingested it); a non-owner, non-admin caller gets a 403. Queues a re-index
+    that tears down the removed repo's code chunks. Returns
     {job_id, status_url}; poll status_url for progress.
     """
     async with _client() as client:
@@ -356,7 +358,8 @@ async def list_repos(ctx: Context | None = None) -> list[dict[str, Any]]:
     """List indexed repositories.
 
     Returns one entry per cached repo with name, origin url, current branch,
-    short head commit, and the number of indexed code chunks.
+    short head commit, the number of indexed code chunks, and the owning
+    key's label (null when unrecorded).
     """
     async with _client() as client:
         response = await client.get("/repos", headers=_auth_headers(ctx))
