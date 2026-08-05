@@ -34,7 +34,7 @@ class BacklogFullError(RuntimeError):
     """A durable backlog admission cap is reached."""
 
 
-def _iso_time(value: float | datetime) -> str:
+def iso_time(value: float | datetime) -> str:
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc).isoformat()
     return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()

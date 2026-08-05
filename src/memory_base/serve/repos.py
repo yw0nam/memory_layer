@@ -25,7 +25,8 @@ from starlette.responses import JSONResponse
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.serve import job_store
-from memory_base.serve.job_store import _iso_time
+from memory_base.serve.http import error, json_body
+from memory_base.serve.job_store import iso_time
 
 REPO_MAX_BYTES = int(os.getenv("REPO_MAX_BYTES", str(2 * 1024**3)))
 DISK_HEADROOM_BYTES = int(os.getenv("REPO_DISK_HEADROOM_BYTES", str(1024**3)))
@@ -345,8 +346,8 @@ class RepoJob:
             for key, value in asdict(self).items()
             if key not in {"url", "branch", "key_id", "key_label"}
         }
-        payload["created_at"] = _iso_time(self.created_at)
-        payload["updated_at"] = _iso_time(self.updated_at)
+        payload["created_at"] = iso_time(self.created_at)
+        payload["updated_at"] = iso_time(self.updated_at)
         return payload
 
 
@@ -381,10 +382,6 @@ async def _run_remove_job(dest: Path) -> None:
 # ---- routes ---------------------------------------------------------------
 
 
-def _error(message: str, status_code: int) -> JSONResponse:
-    return JSONResponse({"error": message}, status_code=status_code)
-
-
 def _low_on_disk() -> bool:
     """True when the cache volume cannot hold a full-size checkout above the headroom floor.
 
@@ -404,13 +401,6 @@ def _low_on_disk() -> bool:
     return usage.free < DISK_HEADROOM_BYTES + REPO_MAX_BYTES
 
 
-async def _json_body(request: Request) -> dict[str, Any]:
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise ValueError("JSON body must be an object")
-    return body
-
-
 async def ingest_repo_route(request: Request) -> JSONResponse:
     """Clone or re-sync a git repo and queue a code re-index.
 
@@ -418,18 +408,18 @@ async def ingest_repo_route(request: Request) -> JSONResponse:
     fast-forwarded on its current branch. Remove and re-add to switch branch.
     """
     try:
-        body = await _json_body(request)
+        body = await json_body(request)
     except Exception as exc:
-        return _error(f"invalid JSON body: {exc}", 400)
+        return error(f"invalid JSON body: {exc}", 400)
     try:
         url = validate_repo_url(body.get("url"))
         name = derive_repo_name(url, body.get("name"))
         branch = _check_branch(body.get("branch"))
     except ValueError as exc:
-        return _error(str(exc), 400)
+        return error(str(exc), 400)
 
     if _low_on_disk():
-        return _error(
+        return error(
             f"free disk space below the {DISK_HEADROOM_BYTES} byte headroom "
             f"plus the {REPO_MAX_BYTES} byte checkout cap",
             507,
@@ -446,7 +436,7 @@ async def ingest_repo_route(request: Request) -> JSONResponse:
             branch=branch,
         )
     except job_store.BacklogFullError as exc:
-        return _error(str(exc), 429)
+        return error(str(exc), 429)
     return JSONResponse(
         {
             "job_id": job.job_id,
@@ -467,13 +457,13 @@ async def remove_repo_route(request: Request) -> JSONResponse:
     try:
         name = _check_name(request.path_params["name"])
     except ValueError as exc:
-        return _error(str(exc), 400)
+        return error(str(exc), 400)
     dest = CACHE_ROOT / name
     if not dest.is_dir():
-        return _error("repo not found", 404)
+        return error("repo not found", 404)
     key = request.state.key
     if not key.is_admin and _read_owner(name) != key.label:
-        return _error("only the repo owner or an admin can remove this repo", 403)
+        return error("only the repo owner or an admin can remove this repo", 403)
     try:
         job = await job_store.admit_repo(
             job_id=uuid.uuid4().hex,
@@ -485,7 +475,7 @@ async def remove_repo_route(request: Request) -> JSONResponse:
             branch=None,
         )
     except job_store.BacklogFullError as exc:
-        return _error(str(exc), 429)
+        return error(str(exc), 429)
     return JSONResponse(
         {
             "job_id": job.job_id,
@@ -507,5 +497,5 @@ async def repo_job_route(request: Request) -> JSONResponse:
     """Return durable repo job state."""
     job = await job_store.get_job(request.path_params["job_id"], kind="repo")
     if job is None:
-        return _error("repo job not found", 404)
+        return error("repo job not found", 404)
     return JSONResponse(job.response())
