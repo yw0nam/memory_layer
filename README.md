@@ -234,6 +234,9 @@ source means adding an adapter, not touching retrieval or serving.
 | `GET` | `/repos` | cached repos with url, branch, head, chunk count, owner |
 | `DELETE` | `/repos/{name}` | remove a repo and re-index — the repo's owner or an admin key only |
 | `GET` | `/repos/jobs/{job_id}` | repo job state |
+| `POST` | `/namespaces` | register a namespace — `name` (`^[a-z0-9_-]{1,64}$`), `visibility` (`public`\|`private`, default `public`); a private namespace records the caller's key label as owner |
+| `GET` | `/namespaces` | list namespaces the caller can access (every namespace for an admin key) |
+| `DELETE` | `/namespaces/{name}` | unregister an empty namespace — the namespace's owner or an admin key only; the reserved `default` namespace cannot be deleted |
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
 | `POST` | `/admin/notes/delete` | preview, or delete with `confirm` |
 | `GET` | `/admin/duplicates` | near-duplicate pairs above `threshold` |
@@ -267,7 +270,8 @@ uv sync
 docker compose up -d --build db          # pgvector + pg_textsearch on :5439
 docker compose up -d --build api         # REST backend on :8010
 docker compose up -d --build mcp         # MCP server, streamable HTTP on :8765
-claude mcp add --transport http memory-base http://localhost:8765/mcp
+claude mcp add --transport http memory-base http://localhost:8765/mcp \
+  --header "X-API-Key: <key>"            # mint one — see Authentication
 ```
 
 Index cached repos manually (the repo routes do this for you). The indexer runs inside the
@@ -285,6 +289,35 @@ uv run python -m memory_base.retrieval.search "your query" --source code
 The memory schema is created on first write (`ensure_schema`); the code table is created
 by the indexer.
 
+## Authentication
+
+Every route except `/health` and `/health/services` requires an `X-API-Key` header
+(`ApiKeyAuthMiddleware` in `serve/auth.py`); a missing, unknown, or revoked key gets a
+fail-closed `401`.
+
+Keys are provisioned with an operator CLI, not through the API:
+
+```bash
+uv run python -m memory_base.serve.keys new <label> [--home <namespace>] [--admin]
+uv run python -m memory_base.serve.keys list
+uv run python -m memory_base.serve.keys revoke <key-hash-prefix>
+```
+
+`new` prints the plaintext key once — only its sha256 hash is stored. `--home` sets the
+namespace `save_memory` and document ingest default into (`default` when omitted);
+minting fails if that namespace does not exist or is not accessible to the label.
+`revoke` takes an 8+ character prefix of the stored hash, as shown by `list`, and
+revokes every active key matching it.
+
+An admin key (`--admin`) can read and act in every namespace. A member key's allowed
+set is every public namespace plus any private namespace it owns — ownership is set to
+the minting key's label when the namespace is created with `visibility: private`.
+Requests naming a namespace outside that set get `403`.
+
+The MCP server needs the same header: over streamable HTTP it forwards the caller's own
+`X-API-Key`, and over stdio (no inbound HTTP request to read one from) it reads the
+`MEMORY_API_KEY` environment variable instead.
+
 ## Configuration
 
 `.env` (gitignored) holds endpoints and credentials — never hardcode them.
@@ -294,10 +327,14 @@ by the indexer.
 | `LLM_URL`, `EMB_URL`, `RERANK_URL` | vLLM OpenAI-compatible endpoints |
 | `LLM_MODEL`, `EMB_MODEL`, `RERANK_MODEL` | model names |
 | `DB_URL` | Postgres connection string |
+| `DB_POOL_MIN`, `DB_POOL_MAX` | asyncpg pool size bounds (default `1` / `10`) |
+| `DB_POOL_ACQUIRE_TIMEOUT` | seconds to wait for a pooled connection before failing (default `30`) |
 | `POSTGRES_PASSWORD` | required; consumed by docker-compose for the db service and the api `DB_URL` |
+| `DATA_ROOT` | required; host directory docker-compose mounts persisted state under (`pgdata`, `repos_cache`, `cocoindex_state`, `ingest-spool`) |
 | `REPO_CACHE` | git checkout root |
 | `INGEST_SPOOL` | durable uploaded-document spool root |
 | `REST_URL` | backend the MCP server proxies to |
+| `MEMORY_API_KEY` | the MCP server's `X-API-Key` over stdio transport; streamable HTTP forwards the caller's own header instead |
 | `LOG_DIR` | file-sink directory (default `logs/`) |
 
 Tuning knobs, all optional: `ATOM_RETRIEVE_K`, `ATOMS_RETRIEVE`,
