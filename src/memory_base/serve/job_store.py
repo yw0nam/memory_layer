@@ -6,9 +6,10 @@ import asyncio
 import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from loguru import logger
 
@@ -38,6 +39,31 @@ def iso_time(value: float | datetime) -> str:
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc).isoformat()
     return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+
+
+@dataclass
+class JobBase:
+    """Shared lifecycle fields, row loading, and REST payload shaping for a job kind."""
+
+    job_id: str
+    status: str = field(default="queued", kw_only=True)
+    error: str | None = field(default=None, kw_only=True)
+    created_at: float = field(default=0.0, kw_only=True)
+    updated_at: float = field(default=0.0, kw_only=True)
+
+    RESPONSE_EXCLUDE: ClassVar[frozenset[str]] = frozenset()
+
+    @classmethod
+    def from_row(cls, row: Any):
+        return cls(**{f.name: row[f.name] for f in fields(cls)})
+
+    def response(self) -> dict[str, Any]:
+        payload = {
+            key: value for key, value in asdict(self).items() if key not in self.RESPONSE_EXCLUDE
+        }
+        payload["created_at"] = iso_time(self.created_at)
+        payload["updated_at"] = iso_time(self.updated_at)
+        return payload
 
 
 @asynccontextmanager

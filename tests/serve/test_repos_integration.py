@@ -150,7 +150,7 @@ class _CapturingBacklog:
         self.job = None
 
     async def admit(self, **kwargs):
-        self.job = repos.RepoJob.for_repo(**kwargs)
+        self.job = repos.RepoJob(**kwargs)
         return self.job
 
     async def get(self, job_id, *, kind):

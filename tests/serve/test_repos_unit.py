@@ -178,7 +178,7 @@ def test_index_command_skips_dependency_sync():
 
 def test_repo_job_response_shape():
     now = time.time()
-    job = repos.RepoJob.for_repo(
+    job = repos.RepoJob(
         job_id="id",
         name="repo",
         action="ingest",
@@ -209,7 +209,7 @@ class AcceptingBacklog:
 
     async def admit(self, **kwargs):
         now = time.time()
-        self.job = repos.RepoJob.for_repo(
+        self.job = repos.RepoJob(
             job_id="job-1",
             name=kwargs["name"],
             action=kwargs["action"],

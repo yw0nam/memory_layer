@@ -77,7 +77,7 @@ def test_ingest_document_omitted_namespace_lands_in_key_home(monkeypatch):
 
     async def admit(**kwargs):
         captured.update(kwargs)
-        return ingest_api.IngestJob.for_document(**kwargs)
+        return ingest_api.IngestJob(**kwargs)
 
     monkeypatch.setattr(ingest_api.job_store, "admit_document", admit)
 

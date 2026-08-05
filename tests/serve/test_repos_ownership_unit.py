@@ -46,7 +46,7 @@ class _CapturingAdmit:
     async def admit(self, **kwargs):
         self.called = True
         now = time.time()
-        return repos.RepoJob.for_repo(
+        return repos.RepoJob(
             job_id="job-1",
             name=kwargs["name"],
             action=kwargs["action"],
