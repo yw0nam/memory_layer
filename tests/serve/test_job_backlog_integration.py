@@ -196,6 +196,7 @@ def test_concurrent_document_admission_stops_exactly_at_the_cap(tmp_path, monkey
                         mode="force",
                         filename=f"{index}.md",
                         spool_path=str(paths[index]),
+                        tags=[],
                     )
 
                 results = await asyncio.gather(
@@ -217,6 +218,7 @@ def test_concurrent_document_admission_stops_exactly_at_the_cap(tmp_path, monkey
                         mode="force",
                         filename="extra.md",
                         spool_path=str(extra),
+                        tags=[],
                     )
             finally:
                 await cleanup(first, marker)
@@ -283,6 +285,7 @@ def test_global_document_cap_has_a_distinct_error(monkeypatch, tmp_path):
                         mode="force",
                         filename="global.md",
                         spool_path=str(spool),
+                        tags=[],
                     )
             finally:
                 await cleanup(connection, marker)
