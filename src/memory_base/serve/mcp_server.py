@@ -53,6 +53,26 @@ def _raise_backend_error(response: httpx.Response) -> None:
     raise ValueError(message)
 
 
+async def _call(
+    method: str,
+    path: str,
+    *,
+    expect_errors: frozenset[int] = frozenset({401, 403}),
+    **kwargs: Any,
+) -> Any:
+    """Issue a REST call and return the decoded JSON body.
+
+    Statuses in `expect_errors` raise via `_raise_backend_error` (backend
+    error payload); any other non-2xx raises through `raise_for_status`.
+    """
+    async with _client() as client:
+        response = await client.request(method, path, **kwargs)
+        if response.status_code in expect_errors:
+            _raise_backend_error(response)
+        response.raise_for_status()
+        return response.json()
+
+
 def _api_key(ctx: "Context | None") -> str | None:
     """The caller's API key: the request's X-API-Key header, or MEMORY_API_KEY for stdio."""
     request = None
@@ -98,12 +118,13 @@ async def _search(
         body["include_archived"] = True
     if namespace is not None:
         body["namespaces"] = [namespace]
-    async with _client() as client:
-        response = await client.post("/search", json=body, headers=_auth_headers(ctx))
-        if response.status_code in {400, 401, 403}:
-            _raise_backend_error(response)
-        response.raise_for_status()
-        return response.json()
+    return await _call(
+        "POST",
+        "/search",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403}),
+    )
 
 
 @mcp.tool(name="search")
@@ -244,12 +265,13 @@ async def save_memory(
     }
     if namespace is not None:
         body["namespace"] = namespace
-    async with _client() as client:
-        response = await client.post("/save_memory", json=body, headers=_auth_headers(ctx))
-        if response.status_code in {400, 401, 403}:
-            _raise_backend_error(response)
-        response.raise_for_status()
-        return response.json()
+    return await _call(
+        "POST",
+        "/save_memory",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403}),
+    )
 
 
 @mcp.tool()
@@ -290,18 +312,15 @@ async def ingest_document(
         data["document_id"] = document_id
     if origin is not None:
         data["origin"] = origin
-    async with _client() as client:
-        response = await client.post(
-            "/ingest/document",
-            data=data,
-            files={"file": (filename, content.encode("utf-8"))},
-            headers=_auth_headers(ctx),
-        )
-        if response.status_code in {400, 401, 403, 413, 415, 429}:
-            _raise_backend_error(response)
-        response.raise_for_status()
-        payload = response.json()
-        return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
+    payload = await _call(
+        "POST",
+        "/ingest/document",
+        data=data,
+        files={"file": (filename, content.encode("utf-8"))},
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403, 413, 415, 429}),
+    )
+    return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
 
 @mcp.tool()
@@ -325,13 +344,14 @@ async def ingest_repo(
         body["branch"] = branch
     if name is not None:
         body["name"] = name
-    async with _client() as client:
-        response = await client.post("/repos", json=body, headers=_auth_headers(ctx))
-        if response.status_code in {400, 401, 403, 429}:
-            _raise_backend_error(response)
-        response.raise_for_status()
-        payload = response.json()
-        return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
+    payload = await _call(
+        "POST",
+        "/repos",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403, 429}),
+    )
+    return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
 
 @mcp.tool()
@@ -343,13 +363,13 @@ async def remove_repo(name: str, ctx: Context | None = None) -> dict[str, Any]:
     that tears down the removed repo's code chunks. Returns
     {job_id, status_url}; poll status_url for progress.
     """
-    async with _client() as client:
-        response = await client.delete(f"/repos/{name}", headers=_auth_headers(ctx))
-        if response.status_code in {400, 401, 403, 404, 429}:
-            _raise_backend_error(response)
-        response.raise_for_status()
-        payload = response.json()
-        return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
+    payload = await _call(
+        "DELETE",
+        f"/repos/{name}",
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403, 404, 429}),
+    )
+    return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
 
 @mcp.tool()
@@ -360,12 +380,7 @@ async def list_repos(ctx: Context | None = None) -> list[dict[str, Any]]:
     short head commit, the number of indexed code chunks, and the owning
     key's label (null when unrecorded).
     """
-    async with _client() as client:
-        response = await client.get("/repos", headers=_auth_headers(ctx))
-        if response.status_code in {401, 403}:
-            _raise_backend_error(response)
-        response.raise_for_status()
-        return response.json()
+    return await _call("GET", "/repos", headers=_auth_headers(ctx))
 
 
 def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:
