@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import traceback
 from pathlib import Path
 
 from memory_base.adapters.document import CONVERSION_LIMIT_EXIT_CODE, CONVERSION_MAX_BYTES
@@ -61,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return convert(Path(arguments[0]), Path(arguments[1]))
     except Exception:
+        traceback.print_exc()
         return 1
 
 

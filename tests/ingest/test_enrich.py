@@ -89,7 +89,11 @@ def test_each_failed_attempt_logs_debug_record_with_exception(monkeypatch):
     finally:
         loguru_logger.remove(sink_id)
 
-    debug_records = [record for record in records if record.record["level"].name == "DEBUG"]
+    debug_records = [
+        record
+        for record in records
+        if record.record["level"].name == "DEBUG" and "enrichment attempt" in record
+    ]
     assert len(debug_records) == 2
     assert all(record.record["exception"] is not None for record in debug_records)
     assert all("RuntimeError" in str(record) for record in debug_records)
