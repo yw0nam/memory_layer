@@ -49,13 +49,6 @@ def test_search_omitted_namespaces_uses_full_allowed_set(monkeypatch):
     assert captured["namespaces"] == sorted(ALLOWED)
 
 
-def test_deep_search_rejects_namespace_outside_allowed_set(monkeypatch):
-    client = _non_admin_client(monkeypatch)
-    response = client.post("/search/deep", json={"query": "hello", "namespaces": ["team-b"]})
-    assert response.status_code == 403
-    assert "error" in response.json()
-
-
 def test_save_memory_omitted_namespace_lands_in_key_home(monkeypatch):
     captured = {}
 

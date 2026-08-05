@@ -9,7 +9,7 @@ import pytest
 
 from memory_base.core import db
 from memory_base.core.config import EMB_DIM, PG_SCHEMA, vector_literal
-from memory_base.retrieval import decompose, search
+from memory_base.retrieval import search
 
 pytestmark = pytest.mark.integration
 
@@ -108,7 +108,5 @@ def test_short_chunk_ranks_above_longer_matching_chunk(seeded_namespace):
 def test_all_fts_legs_use_shared_bm25_indexes():
     assert "MEMORY_BM25_INDEX" in inspect.getsource(search._search_memory)
     assert "CODE_BM25_INDEX" in inspect.getsource(search._search_code)
-    assert decompose.MEMORY_BM25_INDEX is search.MEMORY_BM25_INDEX
-    assert "MEMORY_BM25_INDEX" in inspect.getsource(decompose._memory_backup)
     assert not hasattr(search, "FTS_TSQUERY_SQL")
     assert not hasattr(search, "fts_query_text")

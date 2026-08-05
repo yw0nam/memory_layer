@@ -32,7 +32,6 @@ from mcp.server.fastmcp import Context, FastMCP
 from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
 from memory_base.adapters.document import extension_for
 from memory_base.core.logger import setup_logging
-from memory_base.retrieval.decompose import DEEP_TIMEOUT_SECONDS
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
@@ -364,54 +363,6 @@ async def list_repos(ctx: Context | None = None) -> list[dict[str, Any]]:
     async with _client() as client:
         response = await client.get("/repos", headers=_auth_headers(ctx))
         if response.status_code in {401, 403}:
-            _raise_backend_error(response)
-        response.raise_for_status()
-        return response.json()
-
-
-@mcp.tool()
-async def deep_search(
-    query: str,
-    max_hops: int | None = None,
-    kind: str | None = None,
-    tags: list[str] | None = None,
-    include_archived: bool = False,
-    namespace: str | None = None,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Multi-hop decomposition over stored memory for complex questions.
-
-    Use when a single search is unlikely to answer a multi-part or
-    multi-hop question (e.g. "which service owned the incident that
-    caused the checkout latency fix?"). Operates on memory only.
-    Returns evidence entries with ref, text, kind, tags, date, hop,
-    atom_question, and id; a trace of sub-questions per hop; and
-    hops_used and stopped_reason. Archived evidence carries "archived": true.
-
-    `include_archived` carries the same caveats as in `search_memory`.
-
-    `namespace` narrows retrieval to one namespace the caller's API key can
-    access; omitted, it covers every namespace the key can access. A
-    namespace the key cannot access is rejected by the server.
-    """
-    body: dict[str, Any] = {"query": query}
-    if namespace is not None:
-        body["namespaces"] = [namespace]
-    if max_hops is not None:
-        body["max_hops"] = max_hops
-    if kind is not None:
-        body["kind"] = kind
-    if tags is not None:
-        body["tags"] = tags
-    if include_archived:
-        body["include_archived"] = True
-    # +30s covers HTTP/round-trip slack beyond the server-side deep-search deadline.
-    timeout = DEEP_TIMEOUT_SECONDS + 30
-    async with _client() as client:
-        response = await client.post(
-            "/search/deep", json=body, timeout=timeout, headers=_auth_headers(ctx)
-        )
-        if response.status_code in {400, 401, 403}:
             _raise_backend_error(response)
         response.raise_for_status()
         return response.json()

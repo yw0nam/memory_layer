@@ -137,21 +137,6 @@ def test_save_memory_forwards_api_key_header(monkeypatch):
     assert captured["header"] == "secret"
 
 
-def test_deep_search_forwards_api_key_header(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["header"] = request.headers.get("x-api-key")
-        return httpx.Response(
-            200, json={"evidence": [], "trace": [], "hops_used": 0, "stopped_reason": "done"}
-        )
-
-    _patch_client(monkeypatch, handler)
-    ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(mcp_server.deep_search(query="q", ctx=ctx))
-    assert captured["header"] == "secret"
-
-
 def test_ingest_document_forwards_api_key_header(monkeypatch):
     captured = {}
 
@@ -291,20 +276,6 @@ def test_save_memory_explicit_namespace_forwarded(monkeypatch):
     assert captured["json"]["namespace"] == "team-a"
 
 
-def test_deep_search_omitted_namespace_sends_no_namespaces_key(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["json"] = json.loads(request.content)
-        return httpx.Response(
-            200, json={"evidence": [], "trace": [], "hops_used": 0, "stopped_reason": "done"}
-        )
-
-    _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.deep_search(query="q"))
-    assert "namespaces" not in captured["json"]
-
-
 def test_ingest_document_omitted_namespace_sends_no_namespace_field(monkeypatch):
     captured = {}
 
@@ -342,7 +313,6 @@ def test_ingest_document_explicit_namespace_forwarded(monkeypatch):
         pytest.param(
             lambda: mcp_server.ingest_document("content", "guide.md"), id="ingest-document"
         ),
-        pytest.param(lambda: mcp_server.deep_search(query="q"), id="deep-search"),
         pytest.param(
             lambda: mcp_server.ingest_repo("https://github.com/o/repo.git"), id="ingest-repo"
         ),

@@ -16,7 +16,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.core import db
-from memory_base.retrieval.decompose import DeepResult, EvidenceEntry
 from memory_base.retrieval.search import Hit
 from memory_base.serve import access_log, api
 
@@ -104,30 +103,6 @@ def test_search_request_performs_no_db_writes(monkeypatch, connection):
         "chunk-b": 1,
     }
     assert len(access_log._pending_logs) == 1
-
-
-def test_deep_search_request_performs_no_db_writes(monkeypatch, connection):
-    entry = EvidenceEntry(
-        id="chunk-deep",
-        ref="ref/chunk-deep",
-        text="body",
-        kind="note",
-        tags=[],
-        date=1_700_000_000.0,
-        hop=1,
-        atom_question=None,
-    )
-
-    async def fake_deep_search(question, **options):
-        return DeepResult(evidence=[entry], trace=[], hops_used=1, stopped_reason="done")
-
-    monkeypatch.setattr(api, "deep_search", fake_deep_search)
-
-    response = client.post("/search/deep", json={"query": "q"})
-
-    assert response.status_code == 200
-    assert connection.writes() == []
-    assert set(access_log._pending_hits) == {"chunk-deep"}
 
 
 # ---- the flusher writes batched, deduplicated statements --------------------

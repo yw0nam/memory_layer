@@ -15,9 +15,9 @@ tree-sitter. Raw transcripts and raw files are never embedded.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | SSE :8765)
         ▼
-   ┌─────────────┐  9 tools: search / search_code / search_memory / deep_search
-   │ mcp_server  │           save_memory / ingest_document / ingest_repo
-   └──────┬──────┘           remove_repo / list_repos      (thin proxy, no logic)
+   ┌─────────────┐  8 tools: search / search_code / search_memory / save_memory
+   │ mcp_server  │           ingest_document / ingest_repo / remove_repo
+   └──────┬──────┘           list_repos                    (thin proxy, no logic)
           │ HTTP
           ▼
    ╔═══════════════════════════════════════════════════════════╗
@@ -25,7 +25,7 @@ tree-sitter. Raw transcripts and raw files are never embedded.
    ╚═╤═══════════════╤═══════════════╤═══════════════╤═════════╝
      │ WRITE         │ WRITE         │ WRITE         │ READ + LIFECYCLE
      ▼               ▼               ▼               ▼
-  notes.py     ingest_api.py     repos.py      search.py · decompose.py · admin.py
+  notes.py     ingest_api.py     repos.py      search.py · admin.py
      │               │               │               │
      └───────────────┴───────┬───────┴───────────────┘
                              ▼
@@ -110,7 +110,7 @@ admin key; a repo with no owner record (ingested before ownership tracking, or n
 successfully ingested) is admin-only to remove. `GET /repos` reports each repo's owner,
 `null` when unrecorded.
 
-### Read path 1 — hybrid search (`POST /search`)
+### Read path — hybrid search (`POST /search`)
 
 ```
       "query"
@@ -143,48 +143,17 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
 
 Response text is truncated to 2000 chars. `score` is the rerank score, falling back to the
 fused RRF score. `include_archived` surfaces archived rows and turns recency decay off for
-memory so they are not buried; code hits have no archived state and keep decaying. Both read
-paths mark archived rows `"archived": true` — on `/search` hits
-and on `/search/deep` evidence entries — since an archived note may have been superseded by
+memory so they are not buried; code hits have no archived state and keep decaying. `/search`
+hits mark archived rows `"archived": true` since an archived note may have been superseded by
 a newer one.
 
-Both read paths write nothing to the database. Returned hit ids and per-chunk counters land
+The read path writes nothing to the database. Returned hit ids and per-chunk counters land
 in an in-process buffer that a background task flushes every `HIT_FLUSH_INTERVAL_SECONDS`
 (default 30) and on shutdown: one batched `retrieval_log` insert plus one deduplicated
 `hit_count` update, so repeated hits on a popular row collapse into a single `+ n`. The same
 cycle prunes `retrieval_log` rows older than `RETRIEVAL_LOG_RETENTION_DAYS` at startup and
 then at most hourly. An unclean stop loses at most one interval of counters, which only feed
 lifecycle decisions.
-
-### Read path 2 — deep search (`POST /search/deep`)
-
-Multi-hop decomposition over memory only, bounded by `DEEP_TIMEOUT_SECONDS` and
-`DEEP_MAX_HOPS`.
-
-```
- question
-    │
-    ▼
- ┌───────────────────────── hop loop ───────────────────────────┐
- │  🤖 propose    {continue, sub_questions ≤3}                   │
- │       │ continue = false ──────────────► stop "done"          │
- │       ▼                                                       │
- │  🔍 retrieve   sub-question embeddings → nearest atoms         │
- │       │        → best atom per parent → 8 candidates           │
- │       │        (parents already chosen are excluded)           │
- │       │        fallback: atoms for the original query,         │
- │       │                  then plain hybrid memory search       │
- │       ▼                                                       │
- │  🤖 select     one candidate, or null ──► stop "no_selection"  │
- │       ▼                                                       │
- │   evidence += chosen parent ──┐                               │
- └───────────────────────────────┴────────────► next hop ────────┘
-                 │
-                 ▼
-   {evidence[hop, atom_question], trace[], hops_used, stopped_reason}
-   stopped_reason ∈ done · max_hops · no_candidates · no_selection
-                    · timeout · llm_error
-```
 
 ### Lifecycle loop
 
@@ -257,7 +226,6 @@ source means adding an adapter, not touching retrieval or serving.
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `repo`, `include_atoms`, `include_archived` |
-| `POST` | `/search/deep` | multi-hop memory search — `query`, `max_hops`, `kind`, `tags`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, `kind`, `tags`, and the optional id of a prior note to archive |
 | `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, repeated `tags` |
 | `GET` | `/ingest/jobs` | newest document jobs, optionally filtered by exact `origin` and `status` |
@@ -283,11 +251,11 @@ matches nothing. Code hits carry their `repo` whether or not the filter is set.
 stdio by default; `MCP_TRANSPORT=sse|streamable-http` with `MCP_HOST`/`MCP_PORT` serves
 over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
-`search` · `search_code` · `search_memory` · `deep_search` · `save_memory` ·
+`search` · `search_code` · `search_memory` · `save_memory` ·
 `ingest_document` (text formats only) · `ingest_repo` · `remove_repo` · `list_repos`
 
-Each tool takes the REST options its source supports: `include_archived` on `search`,
-`search_memory`, and `deep_search`; `kind` and `tags` only where `source="memory"` holds,
+Each tool takes the REST options its source supports: `include_archived` on `search` and
+`search_memory`; `kind` and `tags` only where `source="memory"` holds,
 so `search` and `search_code` do not offer them; `repo` on `search_code` alone. Lifecycle
 routes (`/admin/*`) have no MCP tool — archiving and restoring stay operator actions, while
 reading archived rows does not.
@@ -333,7 +301,7 @@ by the indexer.
 | `LOG_DIR` | file-sink directory (default `logs/`) |
 
 Tuning knobs, all optional: `ATOM_RETRIEVE_K`, `ATOMS_RETRIEVE`,
-`NOTE_SIMILAR_THRESHOLD`, `DEEP_MAX_HOPS`, `DEEP_TIMEOUT_SECONDS`, `INGEST_MAX_BYTES`,
+`NOTE_SIMILAR_THRESHOLD`, `INGEST_MAX_BYTES`,
 `INGEST_BACKLOG_PER_KEY`, `INGEST_BACKLOG_MAX`, `INGEST_MAX_CONCURRENT_JOBS`,
 `REPO_MAX_QUEUED`, `REPO_MAX_BYTES`, `REPO_DISK_HEADROOM_BYTES`, `JOB_RETENTION_SECONDS`,
 `COLD_AGE_DAYS`, `COLD_UNHIT_DAYS`, `HIT_FLUSH_INTERVAL_SECONDS`,
