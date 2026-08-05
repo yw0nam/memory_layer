@@ -99,6 +99,8 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           CHECK (kind <> 'repo' OR (name IS NOT NULL AND action IS NOT NULL)),
           CHECK (kind <> 'repo' OR action <> 'ingest' OR url IS NOT NULL)
         );
+        ALTER TABLE {schema}.jobs
+          ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{{}}'::text[];
         CREATE INDEX IF NOT EXISTS jobs__claim
           ON {schema}.jobs (kind, status, key_id, created_at);
         CREATE INDEX IF NOT EXISTS jobs__document_active

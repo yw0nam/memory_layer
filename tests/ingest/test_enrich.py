@@ -75,5 +75,3 @@ def test_summary_enrichment_persistent_failure_is_fail_closed(monkeypatch, respo
     monkeypatch.setattr(enrich, "llm_client", lambda: fake)
     with pytest.raises(enrich.EnrichmentError, match="failed after retry"):
         asyncio.run(enrich.summarize_and_tag("text", "context"))
-
-

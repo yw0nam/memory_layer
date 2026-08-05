@@ -261,9 +261,10 @@ async def ingest_document(
     origin: str | None = None,
     mode: str = "upsert",
     namespace: str | None = None,
+    tags: list[str] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Queue a text document for conversion, enrichment, and atomic storage.
+    """Queue a text document for conversion, chunking, and atomic storage.
 
     The filename must use a supported text extension: .md, .markdown, .txt,
     .rst, .html, or .htm. Binary documents upload through REST directly.
@@ -271,6 +272,9 @@ async def ingest_document(
     `namespace` picks one namespace the caller's API key can access; omitted,
     the document lands in the key's home namespace. A namespace the key
     cannot access is rejected by the server.
+
+    `tags` are lowercased topical labels stamped on every chunk of the
+    document and usable as the `tags` search filter.
     """
     try:
         extension = extension_for(filename)
@@ -278,9 +282,11 @@ async def ingest_document(
         raise ValueError(str(exc)) from exc
     if extension not in MCP_TEXT_EXTENSIONS:
         raise ValueError("MCP document ingestion supports text formats only")
-    data = {"filename": filename, "mode": mode}
+    data: dict[str, Any] = {"filename": filename, "mode": mode}
     if namespace is not None:
         data["namespace"] = namespace
+    if tags:
+        data["tags"] = tags
     if document_id is not None:
         data["document_id"] = document_id
     if origin is not None:

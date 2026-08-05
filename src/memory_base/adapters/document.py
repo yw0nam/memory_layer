@@ -413,8 +413,8 @@ def _base_row(
 
 def map_document_rows(
     chunks: Sequence[Chunk],
-    enrichments: Sequence[dict[str, Any]],
     *,
+    tags: Sequence[str],
     filename: str,
     document_id: str,
     content_hash: str,
@@ -424,15 +424,12 @@ def map_document_rows(
     timestamp: float,
     namespace: str = "default",
 ) -> list[dict[str, Any]]:
-    """Map enriched document chunks and atoms to memory_chunks row dictionaries."""
-    if len(chunks) != len(enrichments):
-        raise ValueError("every chunk requires one enrichment result")
+    """Map document chunks to memory_chunks row dictionaries."""
     rows: list[dict[str, Any]] = []
     qualified_document_id = _qualify_document_id(namespace, document_id)
-    for chunk, enrichment in zip(chunks, enrichments, strict=True):
+    for chunk in chunks:
         if chunk.ordinal is None:
             raise ValueError("chunk ordinals must be assigned before row mapping")
-        parent_id = f"doc:{qualified_document_id}:{chunk.ordinal}"
         heading = " > ".join(chunk.heading_path)
         metadata = {
             "filename": filename,
@@ -443,13 +440,13 @@ def map_document_rows(
             "format": format_name,
             "converter": converter,
             "origin": origin,
-            "tags": enrichment["tags"],
+            "tags": list(tags),
             "search_ref": f"{document_id}#chunk-{chunk.ordinal}",
         }
         embedding_text = f"{heading}\n\n{chunk.text}" if heading else chunk.text
         rows.append(
             _base_row(
-                row_id=parent_id,
+                row_id=f"doc:{qualified_document_id}:{chunk.ordinal}",
                 document_id=document_id,
                 kind="doc",
                 raw=chunk.text,
@@ -460,25 +457,6 @@ def map_document_rows(
                 namespace=namespace,
             )
         )
-        for atom_index, question in enumerate(enrichment["atom_questions"]):
-            rows.append(
-                _base_row(
-                    row_id=f"{parent_id}:atom:{atom_index}",
-                    document_id=document_id,
-                    kind="atom",
-                    raw=question,
-                    distilled=question,
-                    embedding_text=question,
-                    timestamp=timestamp,
-                    metadata={
-                        "parent_id": parent_id,
-                        "parent_kind": "doc",
-                        "document_id": document_id,
-                        "content_hash": content_hash,
-                    },
-                    namespace=namespace,
-                )
-            )
     return rows
 
 
