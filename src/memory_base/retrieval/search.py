@@ -194,6 +194,7 @@ async def _search_code(
 ) -> list[Hit]:
     schema = PG_SCHEMA if schema is None else schema
     tbl = f'"{schema}"."code_chunks"'
+    bm25_index = f"{schema}.{CODE_BM25_INDEX}"
     columns = "id, repo, filename, code, start_line, end_line, mtime"
     # ponytail: the planner picks a seq scan at this corpus size, so the filter runs
     # before the distance sort. Once it switches to the HNSW index, set
@@ -209,8 +210,8 @@ async def _search_code(
     )
     fts_rows = await conn.fetch(
         f"SELECT {columns} FROM {tbl} "
-        f"WHERE (code <@> to_bm25query($1, '{CODE_BM25_INDEX}')) < 0{repo_clause} "
-        f"ORDER BY code <@> to_bm25query($1, '{CODE_BM25_INDEX}') "
+        f"WHERE (code <@> to_bm25query($1, '{bm25_index}')) < 0{repo_clause} "
+        f"ORDER BY code <@> to_bm25query($1, '{bm25_index}') "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
         query,
         *repo_args,
@@ -255,6 +256,7 @@ async def _search_memory(
 ) -> list[Hit]:
     schema = PG_SCHEMA if schema is None else schema
     tbl = f'"{schema}"."memory_chunks"'
+    bm25_index = f"{schema}.{MEMORY_BM25_INDEX}"
     exists = await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{schema}.memory_chunks")
     if not exists:
         return []
@@ -276,8 +278,8 @@ async def _search_memory(
     )
     fts_rows = await conn.fetch(
         f"SELECT {columns} FROM {tbl} WHERE {predicates} AND "
-        f"(content_raw <@> to_bm25query($1, '{MEMORY_BM25_INDEX}')) < 0 "
-        f"ORDER BY content_raw <@> to_bm25query($1, '{MEMORY_BM25_INDEX}') "
+        f"(content_raw <@> to_bm25query($1, '{bm25_index}')) < 0 "
+        f"ORDER BY content_raw <@> to_bm25query($1, '{bm25_index}') "
         f"LIMIT {CANDIDATES_PER_SIGNAL}",
         query,
         *filter_args,
