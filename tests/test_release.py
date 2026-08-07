@@ -13,6 +13,7 @@ from release import (
     bump_version,
     bump_version_line,
     group_commits,
+    is_release_commit,
     parse_commit_subject,
     render_version_section,
 )
@@ -189,3 +190,19 @@ def test_bump_version_line_replaces_only_the_project_version():
 def test_bump_version_line_raises_when_no_version_line_exists():
     with pytest.raises(RuntimeError, match="version"):
         bump_version_line('[project]\nname = "memory-base"\n', "0.2.0")
+
+
+# ---- is_release_commit --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("subject", "expected"),
+    [
+        ("chore: release v0.1.0", True),
+        ("chore: release v1.10.2", True),
+        ("chore: releases are now automated", False),
+        ("feat: release gating", False),
+    ],
+)
+def test_is_release_commit(subject, expected):
+    assert is_release_commit(subject) is expected
