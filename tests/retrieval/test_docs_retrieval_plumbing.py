@@ -1,22 +1,23 @@
-"""Unit contracts for retrieval filters and atom-parent resolution."""
+"""Unit contracts for retrieval filters."""
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 
 import pytest
 
+from memory_base.retrieval import search as search_module
 from memory_base.retrieval.search import (
     PER_FILE_CAP,
     Hit,
     _dedup_cap,
-    _merge_atom_hits,
-    _search_atoms,
     _search_code,
     _search_memory,
     history_predicates,
     normalize_namespaces,
+    search,
     validate_search_options,
 )
 
@@ -40,7 +41,7 @@ def test_memory_kind_filters_are_valid(kind):
     assert validate_search_options("memory", kind, None) == (kind, None, None)
 
 
-@pytest.mark.parametrize("kind", ["atom", "code", "", 1])
+@pytest.mark.parametrize("kind", ["code", "", 1])
 def test_unknown_kind_filter_is_rejected(kind):
     with pytest.raises(ValueError, match="kind must be one of"):
         validate_search_options("memory", kind, None)
@@ -141,6 +142,7 @@ def test_normalize_namespaces_rejects_non_list_of_str(namespaces):
 def test_history_predicates_omits_namespace_clause_by_default():
     predicates, args = history_predicates(include_archived=False, kind=None, tags=None)
     assert "namespace" not in predicates
+    assert "atom" not in predicates
     assert args == []
 
 
@@ -170,14 +172,6 @@ def test_search_memory_filters_by_namespace():
     assert fts_args == ("query", ["team-a"])
 
 
-def test_search_atoms_filters_by_parent_namespace():
-    conn = FakeSearchConnection([[]])
-    asyncio.run(_search_atoms(conn, "[1]", namespaces=["team-a"]))
-    sql, args = conn.queries[0]
-    assert "parent.namespace = ANY(" in sql
-    assert args == ("[1]", ["team-a"])
-
-
 def test_memory_filters_are_inside_both_candidate_queries():
     conn = FakeSearchConnection([[], []])
     asyncio.run(
@@ -193,7 +187,6 @@ def test_memory_filters_are_inside_both_candidate_queries():
     vector_sql, vector_args = conn.queries[1]
     fts_sql, fts_args = conn.queries[2]
     for sql in (vector_sql, fts_sql):
-        assert "chunk_kind <> 'atom'" in sql
         assert "chunk_kind =" in sql
         assert "metadata->'tags' ?|" in sql
         assert sql.index("chunk_kind =") < sql.index("LIMIT")
@@ -276,131 +269,9 @@ def test_document_chunks_remain_subject_to_per_file_cap():
     assert len(_dedup_cap(hits)) == PER_FILE_CAP
 
 
-def test_atom_lane_collapses_parents_at_highest_cosine_and_skips_dangling_rows():
-    rows = [
-        {
-            "atom_id": "parent:1:atom:0",
-            "matched_question": "lower match",
-            "atom_cosine": 0.72,
-            "id": "parent:1",
-            "source_ref": "guide.md",
-            "chunk_kind": "doc",
-            "content_raw": "parent text",
-            "distilled": None,
-            "ts_last_active": 100.0,
-            "metadata": {"search_ref": "guide.md#chunk-1", "tags": ["infra"]},
-            "archived_at": None,
-        },
-        {
-            "atom_id": "parent:1:atom:1",
-            "matched_question": "higher match",
-            "atom_cosine": 0.91,
-            "id": "parent:1",
-            "source_ref": "guide.md",
-            "chunk_kind": "doc",
-            "content_raw": "parent text",
-            "distilled": None,
-            "ts_last_active": 100.0,
-            "metadata": {"search_ref": "guide.md#chunk-1", "tags": ["infra"]},
-            "archived_at": None,
-        },
-        {
-            "atom_id": "parent:2:atom:0",
-            "matched_question": "other parent",
-            "atom_cosine": 0.80,
-            "id": "parent:2",
-            "source_ref": "other.md",
-            "chunk_kind": "doc",
-            "content_raw": "other text",
-            "distilled": None,
-            "ts_last_active": 90.0,
-            "metadata": {"search_ref": "other.md#chunk-0", "tags": []},
-            "archived_at": None,
-        },
-    ]
-    conn = FakeSearchConnection([rows])
-    hits = asyncio.run(_search_atoms(conn, "[1]"))
-
-    assert [hit.meta["id"] for hit in hits] == ["parent:1", "parent:2"]
-    assert hits[0].meta["atom_id"] == "parent:1:atom:1"
-    assert hits[0].meta["atom_question"] == "higher match"
-    assert hits[0].rrf == 0.0
-    sql = conn.queries[0][0]
-    assert "JOIN" in sql
-    assert "parent.id = atom.metadata->>'parent_id'" in sql
-    assert "parent.chunk_kind <> 'atom'" in sql
-    assert "LIMIT" in sql
+def test_search_does_not_accept_include_atoms():
+    assert "include_atoms" not in inspect.signature(search).parameters
 
 
-def test_atom_parent_filters_are_applied_before_the_candidate_limit():
-    conn = FakeSearchConnection([[]])
-    asyncio.run(
-        _search_atoms(
-            conn,
-            "[1]",
-            kind="decision",
-            tags=["infra"],
-        )
-    )
-    sql, args = conn.queries[0]
-    assert sql.index("parent.chunk_kind =") < sql.index("ORDER BY")
-    assert sql.index("parent.metadata->'tags' ?|") < sql.index("ORDER BY")
-    assert "parent.archived_at IS NULL" in sql
-    assert args == ("[1]", "decision", ["infra"])
-
-
-def test_atom_evidence_annotates_baseline_parent_without_duplication():
-    baseline = [
-        Hit(
-            source="memory",
-            ref="guide.md#chunk-0",
-            text="parent",
-            ts=100.0,
-            rrf=0.5,
-            meta={"id": "parent:1", "source_ref": "guide.md"},
-        )
-    ]
-    atom = Hit(
-        source="memory",
-        ref="guide.md#chunk-0",
-        text="parent",
-        ts=100.0,
-        meta={
-            "id": "parent:1",
-            "atom_id": "parent:1:atom:0",
-            "atom_question": "matched question",
-            "atom_cosine": 0.9,
-        },
-    )
-    merged = _merge_atom_hits(baseline, [atom])
-    assert merged == baseline
-    assert merged[0].meta["atom_id"] == "parent:1:atom:0"
-
-
-def test_atom_union_has_no_shared_fused_top_truncation():
-    baseline = [
-        Hit(
-            source="memory",
-            ref=f"base:{index}",
-            text="",
-            ts=0.0,
-            meta={"id": f"base:{index}"},
-        )
-        for index in range(20)
-    ]
-    atoms = [
-        Hit(
-            source="memory",
-            ref=f"atom-parent:{index}",
-            text="",
-            ts=0.0,
-            meta={
-                "id": f"atom-parent:{index}",
-                "atom_id": f"atom:{index}",
-                "atom_question": "question",
-                "atom_cosine": 1.0 - index / 100,
-            },
-        )
-        for index in range(8)
-    ]
-    assert len(_merge_atom_hits(baseline, atoms)) == 28
+def test_atom_retrieve_k_constant_is_gone():
+    assert not hasattr(search_module, "ATOM_RETRIEVE_K")

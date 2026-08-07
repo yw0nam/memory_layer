@@ -173,11 +173,9 @@ def test_search_invalid_source_400():
     [
         {"query": "hello", "source": "all", "kind": "note"},
         {"query": "hello", "source": "code", "tags": ["infra"]},
-        {"query": "hello", "source": "memory", "kind": "atom"},
         {"query": "hello", "source": "memory", "tags": []},
         {"query": "hello", "source": "memory", "tags": None},
         {"query": "hello", "source": "memory", "tags": "infra"},
-        {"query": "hello", "include_atoms": "yes"},
     ],
 )
 def test_search_filter_validation_errors_are_400(body):
@@ -186,7 +184,7 @@ def test_search_filter_validation_errors_are_400(body):
     assert set(response.json()) == {"error"}
 
 
-def test_search_forwards_raw_kind_tags_and_include_atoms(monkeypatch):
+def test_search_forwards_raw_kind_and_tags(monkeypatch):
     """The route forwards raw body values as-is; search() does the normalizing."""
     captured = {}
 
@@ -202,13 +200,28 @@ def test_search_forwards_raw_kind_tags_and_include_atoms(monkeypatch):
             "source": "memory",
             "kind": "decision",
             "tags": [" Infra ", "DATABASE", "infra"],
-            "include_atoms": False,
         },
     )
     assert response.status_code == 200
     assert captured["kind"] == "decision"
     assert captured["tags"] == [" Infra ", "DATABASE", "infra"]
-    assert captured["include_atoms"] is False
+
+
+def test_search_silently_ignores_include_atoms(monkeypatch):
+    """No compat shim: a caller still sending include_atoms is accepted and ignored."""
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post(
+        "/search",
+        json={"query": "hello", "source": "memory", "include_atoms": False},
+    )
+    assert response.status_code == 200
+    assert "include_atoms" not in captured
 
 
 def test_search_forwards_raw_repo_filter(monkeypatch):

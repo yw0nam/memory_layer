@@ -38,6 +38,10 @@ def test_missing_env_var_raises_with_name(monkeypatch, name, action):
         action()
 
 
+def test_oversample_factor_is_gone():
+    assert not hasattr(config, "OVERSAMPLE_FACTOR")
+
+
 def test_rerank_uses_service_timeout(monkeypatch):
     monkeypatch.setenv("RERANK_URL", "http://fake")
     captured = {}

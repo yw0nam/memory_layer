@@ -97,7 +97,7 @@ def test_search_memory_posts_with_source_memory(monkeypatch):
     }
 
 
-def test_search_memory_forwards_filters_and_atom_option(monkeypatch):
+def test_search_memory_forwards_kind_and_tags(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -111,7 +111,6 @@ def test_search_memory_forwards_filters_and_atom_option(monkeypatch):
             top_k=4,
             kind="decision",
             tags=["infra"],
-            include_atoms=False,
         )
     )
     assert captured["json"] == {
@@ -120,7 +119,6 @@ def test_search_memory_forwards_filters_and_atom_option(monkeypatch):
         "top_k": 4,
         "kind": "decision",
         "tags": ["infra"],
-        "include_atoms": False,
     }
 
 
@@ -144,6 +142,11 @@ def test_search_all_does_not_expose_memory_only_filters():
     params = inspect.signature(mcp_server.search_all).parameters
     assert "kind" not in params
     assert "tags" not in params
+
+
+def test_search_tools_do_not_expose_include_atoms():
+    assert "include_atoms" not in inspect.signature(mcp_server.search_all).parameters
+    assert "include_atoms" not in inspect.signature(mcp_server.search_memory).parameters
 
 
 def test_search_all_forwards_include_archived(monkeypatch):
