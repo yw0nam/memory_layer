@@ -51,6 +51,7 @@ SECTION_ORDER = (
 COMMIT_RE = re.compile(r"^(?P<type>[a-z]+)(\((?P<scope>[^)]+)\))?!?:\s+(?P<description>\S.*)$")
 PR_NUMBER_RE = re.compile(r"^(?P<description>.*)\s\(#(?P<pr_number>\d+)\)$")
 VERSION_LINE_RE = re.compile(r'^version = "[^"]*"$', re.MULTILINE)
+RELEASE_COMMIT_RE = re.compile(r"^chore: release v\d+\.\d+\.\d+$")
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,16 @@ def _split_pr_number(description: str) -> tuple[str, int | None]:
     if match is None:
         return description, None
     return match.group("description"), int(match.group("pr_number"))
+
+
+def is_release_commit(subject: str) -> bool:
+    """A release commit's own tag places it inside its own regenerated range.
+
+    Anchored to the exact `chore: release v<semver>` shape release.py writes,
+    so it excludes only that and never an unrelated chore/feat commit that
+    happens to mention "release".
+    """
+    return RELEASE_COMMIT_RE.match(subject) is not None
 
 
 def group_commits(commits: list[ParsedCommit]) -> dict[str, list[ParsedCommit]]:
@@ -176,6 +187,21 @@ def read_version() -> str:
         return tomllib.load(f)["project"]["version"]
 
 
+def _parsed_commits(rev_range: str) -> list[ParsedCommit]:
+    """Commit subjects in a range, parsed and stripped of the range's own release commit.
+
+    A release tag points at the commit that records that release, which puts
+    the release commit inside its own tag's range on every later
+    regeneration; excluding it keeps each version's section to its real
+    changes only.
+    """
+    return [
+        parse_commit_subject(subject)
+        for subject in commit_subjects(rev_range)
+        if not is_release_commit(subject)
+    ]
+
+
 def build_changelog(new_version: str) -> str:
     """Regenerate the full changelog from every existing tag plus history since."""
     tags = list_tags()
@@ -183,13 +209,11 @@ def build_changelog(new_version: str) -> str:
     previous_tag = None
     for tag in tags:
         rev_range = f"{previous_tag}..{tag}" if previous_tag else tag
-        commits = [parse_commit_subject(s) for s in commit_subjects(rev_range)]
-        sections.append((tag[1:], tag_date(tag), commits))
+        sections.append((tag[1:], tag_date(tag), _parsed_commits(rev_range)))
         previous_tag = tag
 
     new_rev_range = f"{previous_tag}..HEAD" if previous_tag else "HEAD"
-    new_commits = [parse_commit_subject(s) for s in commit_subjects(new_rev_range)]
-    sections.append((new_version, date.today().isoformat(), new_commits))
+    sections.append((new_version, date.today().isoformat(), _parsed_commits(new_rev_range)))
 
     rendered = [render_version_section(*section) for section in reversed(sections)]
     return "# Changelog\n\n" + "\n\n".join(rendered) + "\n"
