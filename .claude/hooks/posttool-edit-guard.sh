@@ -9,7 +9,7 @@ fp=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null) 
 [ -z "$fp" ] && exit 0
 text=$(printf '%s' "$input" | jq -r '.tool_input.content // .tool_input.new_string // empty' 2>/dev/null)
 
-case "$fp" in */node_modules/*|*/.github/*|*/.claude/*) exit 0 ;; esac
+case "$fp" in */node_modules/*|*/.github/*|*/.claude/*|*/CHANGELOG.md) exit 0 ;; esac
 
 # Lines quoting the vocabulary list itself (e.g. the AGENTS.md rule) are skipped.
 project_dir=${CLAUDE_PROJECT_DIR:-}

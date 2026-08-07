@@ -53,7 +53,9 @@ def test_trailing_parenthetical_that_is_not_a_pr_number_stays_in_the_description
     parsed = parse_commit_subject(subject)
     assert parsed.type == "docs"
     assert parsed.pr_number is None
-    assert parsed.description == "add agent skills config (issue tracker, triage labels, domain docs)"
+    assert (
+        parsed.description == "add agent skills config (issue tracker, triage labels, domain docs)"
+    )
 
 
 def test_unparseable_subject_keeps_full_text_and_has_no_type():
@@ -186,4 +188,4 @@ def test_bump_version_line_replaces_only_the_project_version():
 
 def test_bump_version_line_raises_when_no_version_line_exists():
     with pytest.raises(RuntimeError, match="version"):
-        bump_version_line("[project]\nname = \"memory-base\"\n", "0.2.0")
+        bump_version_line('[project]\nname = "memory-base"\n', "0.2.0")
