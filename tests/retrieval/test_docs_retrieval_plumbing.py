@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+from memory_base.core.config import PG_SCHEMA
 from memory_base.retrieval import search as search_module
 from memory_base.retrieval.search import (
     PER_FILE_CAP,
@@ -118,6 +119,21 @@ def test_code_hit_carries_repo():
     assert all("repo = ANY" not in q for q, _ in conn.queries)
 
 
+def test_search_code_fts_leg_qualifies_bm25_index_with_default_schema():
+    conn = FakeSearchConnection([[], []])
+    asyncio.run(_search_code(conn, "query", "[1]"))
+    fts_sql, _ = conn.queries[1]
+    assert fts_sql.count(f"to_bm25query($1, '{PG_SCHEMA}.code_chunks_bm25')") == 2
+
+
+def test_search_code_fts_leg_qualifies_bm25_index_with_explicit_schema():
+    conn = FakeSearchConnection([[], []])
+    asyncio.run(_search_code(conn, "query", "[1]", schema="memory_eval_scratch"))
+    fts_sql, _ = conn.queries[1]
+    assert fts_sql.count("to_bm25query($1, 'memory_eval_scratch.code_chunks_bm25')") == 2
+    assert f"'{PG_SCHEMA}.code_chunks_bm25'" not in fts_sql
+
+
 # ---- namespaces filter -----------------------------------------------------
 
 
@@ -170,6 +186,21 @@ def test_search_memory_filters_by_namespace():
         assert "namespace = ANY($" in sql
     assert vector_args == ("[1]", ["team-a"])
     assert fts_args == ("query", ["team-a"])
+
+
+def test_search_memory_fts_leg_qualifies_bm25_index_with_default_schema():
+    conn = FakeSearchConnection([[], []])
+    asyncio.run(_search_memory(conn, "query", "[1]"))
+    fts_sql, _ = conn.queries[2]
+    assert fts_sql.count(f"to_bm25query($1, '{PG_SCHEMA}.memory_chunks_bm25')") == 2
+
+
+def test_search_memory_fts_leg_qualifies_bm25_index_with_explicit_schema():
+    conn = FakeSearchConnection([[], []])
+    asyncio.run(_search_memory(conn, "query", "[1]", schema="memory_eval_scratch"))
+    fts_sql, _ = conn.queries[2]
+    assert fts_sql.count("to_bm25query($1, 'memory_eval_scratch.memory_chunks_bm25')") == 2
+    assert f"'{PG_SCHEMA}.memory_chunks_bm25'" not in fts_sql
 
 
 def test_memory_filters_are_inside_both_candidate_queries():
