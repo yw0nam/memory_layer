@@ -3,7 +3,7 @@
 ## [0.1.0] - 2026-08-07
 
 ### Added
-- add scripts/release.py to generate CHANGELOG.md and cut releases
+- generated changelog and a manual release script (#136)
 - log silently swallowed failures in retrieval and ingest paths (#124)
 - remove deep_search and the query decomposition pipeline (#121)
 - restrict repo removal to the ingesting owner or an admin (#109)
@@ -42,7 +42,7 @@
 - Phase 2 MCP thin tools + answer pipeline tests (#3)
 
 ### Fixed
-- exclude release commits from changelog regeneration
+- scope the git guard to this repository (#138)
 - route access-log test DB calls through the client's portal loop (#134)
 - schema-qualify the bm25 index name in FTS queries (#133)
 - keep backlog integration test rows unclaimable by production workers (#102)
@@ -75,7 +75,6 @@
 - source adapter architecture (ABC contract) (#23)
 
 ### Documentation
-- add initial CHANGELOG.md
 - align README, AGENTS.md, and image defaults with the current system (#123)
 - correct BM25 candidate-scan note with measured streaming behavior (#98)
 - correct Bitbucket git-over-https username to x-bitbucket-api-token-auth (#86)
@@ -87,8 +86,6 @@
 - implementation spec for document ingestion and PIKE-RAG enrichment
 
 ### Tests
-- pin the release-commit exclusion filter
-- pin conventional-commit parsing, grouping, rendering, and semver bumping
 - pass required tags to admit_document in backlog integration tests (#105)
 - scope archive-flow assertions to the test's own rows (#100)
 - mirror the src package layout in tests/ (#70)
