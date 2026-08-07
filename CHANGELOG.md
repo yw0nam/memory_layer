@@ -42,6 +42,7 @@
 - Phase 2 MCP thin tools + answer pipeline tests (#3)
 
 ### Fixed
+- exclude release commits from changelog regeneration
 - route access-log test DB calls through the client's portal loop (#134)
 - schema-qualify the bm25 index name in FTS queries (#133)
 - keep backlog integration test rows unclaimable by production workers (#102)
@@ -74,6 +75,7 @@
 - source adapter architecture (ABC contract) (#23)
 
 ### Documentation
+- add initial CHANGELOG.md
 - align README, AGENTS.md, and image defaults with the current system (#123)
 - correct BM25 candidate-scan note with measured streaming behavior (#98)
 - correct Bitbucket git-over-https username to x-bitbucket-api-token-auth (#86)
@@ -85,6 +87,7 @@
 - implementation spec for document ingestion and PIKE-RAG enrichment
 
 ### Tests
+- pin the release-commit exclusion filter
 - pin conventional-commit parsing, grouping, rendering, and semver bumping
 - pass required tags to admit_document in backlog integration tests (#105)
 - scope archive-flow assertions to the test's own rows (#100)
