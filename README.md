@@ -66,7 +66,7 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
    ▼                       ▼                             ▼
 ┌──────────────────────────────────────┐      ┌────────────────────────┐
 │ memory.memory_chunks                 │      │ memory.code_chunks     │
-│ note │ decision │ doc │ atom         │      │ repo · file · L1-L40   │
+│ note │ decision │ doc                │      │ repo · file · L1-L40   │
 │ halfvec(2048) + HNSW + BM25          │      │ halfvec + HNSW + BM25  │
 └──────────────────────────────────────┘      └────────────────────────┘
         ▲                                                ▲
@@ -118,7 +118,7 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
          ├─ embed (Qwen3 instruction prefix) ──┐
          │                                     │
  ┌───────┴────────────┐              ┌─────────┴──────────┐
- │    code_chunks     │              │   memory_chunks    │  atom + archived excluded
+ │    code_chunks     │              │   memory_chunks    │  archived excluded
  │ vec50 · fts50 · rec│              │vec50·fts50·rec·idf │  optional kind / tags
  │  optional repo     │              │                    │
  └───────┬────────────┘              └─────────┬──────────┘
@@ -129,9 +129,6 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
                 ⏳ time decay (90-day half-life)
                         ▼
                 per-file / per-session cap 3  → top 20
-                        ▼
-                + atom lane merged in
-                  (question embeddings pull their parent rows up)
                         ▼
                 🎯 rerank (vLLM) → top 10
                         ▼
@@ -203,14 +200,14 @@ known trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 
 | column | meaning |
 |---|---|
-| `id` | `note:<hash>` · `doc:<document_id>:<ordinal>` · `…:atom:<n>` |
+| `id` | `note:<hash>` · `doc:<document_id>:<ordinal>` |
 | `source_type` | `agent_note` · `document` |
 | `source_ref` | `save_memory` or the document id |
-| `chunk_kind` | `note` · `decision` · `doc` · `atom` |
+| `chunk_kind` | `note` · `decision` · `doc` |
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active`, `idf_score` | ranking signals |
-| `metadata` | jsonb: `tags`, `parent_id`, `heading_path`, `content_hash`, `search_ref`, … |
+| `metadata` | jsonb: `tags`, `heading_path`, `content_hash`, `search_ref`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 
 `memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,
@@ -225,7 +222,7 @@ source means adding an adapter, not touching retrieval or serving.
 |---|---|---|
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
-| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `repo`, `include_atoms`, `include_archived` |
+| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `repo`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, `kind`, `tags`, and the optional id of a prior note to archive |
 | `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, repeated `tags` |
 | `GET` | `/ingest/jobs` | newest document jobs, optionally filtered by exact `origin` and `status` |
@@ -337,8 +334,7 @@ The MCP server needs the same header: over streamable HTTP it forwards the calle
 | `MEMORY_API_KEY` | the MCP server's `X-API-Key` over stdio transport; streamable HTTP forwards the caller's own header instead |
 | `LOG_DIR` | file-sink directory (default `logs/`) |
 
-Tuning knobs, all optional: `ATOM_RETRIEVE_K`, `ATOMS_RETRIEVE`,
-`NOTE_SIMILAR_THRESHOLD`, `INGEST_MAX_BYTES`,
+Tuning knobs, all optional: `NOTE_SIMILAR_THRESHOLD`, `INGEST_MAX_BYTES`,
 `INGEST_BACKLOG_PER_KEY`, `INGEST_BACKLOG_MAX`, `INGEST_MAX_CONCURRENT_JOBS`,
 `REPO_MAX_QUEUED`, `REPO_MAX_BYTES`, `REPO_DISK_HEADROOM_BYTES`, `JOB_RETENTION_SECONDS`,
 `COLD_AGE_DAYS`, `COLD_UNHIT_DAYS`, `HIT_FLUSH_INTERVAL_SECONDS`,
@@ -381,7 +377,7 @@ re-added.
 uv run pytest                                        # integration tests skip without DB/vLLM
 uv run pytest -m "not integration"                   # what CI runs
 uv run ruff format --check . && uv run ruff check .
-uv run python -m memory_base.eval.retrieval          # retrieval eval with atom-lane A/B
+uv run python -m memory_base.eval.retrieval          # retrieval eval report
 ```
 
 Work happens in a git worktree and lands via PR; `main` requires a PR and green CI (lint,

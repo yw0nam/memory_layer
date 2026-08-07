@@ -1,4 +1,4 @@
-"""Reproducible document retrieval evaluation with an atom-lane A/B report."""
+"""Reproducible document retrieval evaluation."""
 
 from __future__ import annotations
 
@@ -27,9 +27,7 @@ from memory_base.serve import ingest_api
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "eval_docs"
 LABELS_PATH = REPO_ROOT / "tests" / "fixtures" / "retrieval_eval.jsonl"
-RELEVANT_ID_RE = re.compile(
-    r"^doc:[a-z0-9][a-z0-9._-]{0,120}:(?:[0-9]+(?::atom:[0-9]+)?|card:[0-9]+)$"
-)
+RELEVANT_ID_RE = re.compile(r"^doc:[a-z0-9][a-z0-9._-]{0,120}:(?:[0-9]+|card:[0-9]+)$")
 REQUIRED_SERVICE_ENV = ("LLM_URL", "EMB_URL", "RERANK_URL")
 
 
@@ -204,8 +202,6 @@ async def _evaluate_mode(
     labels: Sequence[EvalLabel],
     corpus_ids: Collection[str],
     schema: str,
-    *,
-    include_atoms: bool,
 ) -> list[QueryMetrics]:
     results: list[QueryMetrics] = []
     for index, label in enumerate(labels, start=1):
@@ -213,61 +209,30 @@ async def _evaluate_mode(
             label.query,
             source="memory",
             rerank=True,
-            include_atoms=include_atoms,
             schema=schema,
         )
         retrieved_ids = [row_id for hit in hits if isinstance((row_id := hit.meta.get("id")), str)]
         results.append(score_query(label, retrieved_ids, corpus_ids))
-        print(
-            f"[{'atoms-on' if include_atoms else 'atoms-off'}] "
-            f"{index:02d}/{len(labels):02d} {label.query_class}"
-        )
+        print(f"{index:02d}/{len(labels):02d} {label.query_class}")
     return results
 
 
-def _print_report(
-    off_results: Sequence[QueryMetrics],
-    on_results: Sequence[QueryMetrics],
-) -> None:
-    off = aggregate_metrics(off_results)
-    on = aggregate_metrics(on_results)
-    classes = sorted(name for name in off if name != "overall")
+def _print_report(results: Sequence[QueryMetrics]) -> None:
+    summary = aggregate_metrics(results)
+    classes = sorted(name for name in summary if name != "overall")
     for query_class in [*classes, "overall"]:
-        off_summary = off[query_class]
-        on_summary = on[query_class]
+        class_summary = summary[query_class]
         print(
-            f"{query_class} (n={off_summary.count}): "
-            f"atoms-off Recall@5={off_summary.recall_at_5:.3f} "
-            f"MRR@10={off_summary.mrr_at_10:.3f}; "
-            f"atoms-on Recall@5={on_summary.recall_at_5:.3f} "
-            f"MRR@10={on_summary.mrr_at_10:.3f}"
+            f"{query_class} (n={class_summary.count}): "
+            f"Recall@5={class_summary.recall_at_5:.3f} "
+            f"MRR@10={class_summary.mrr_at_10:.3f}"
         )
-    missing_off = sum(len(result.missing_relevant_ids) for result in off_results)
-    missing_on = sum(len(result.missing_relevant_ids) for result in on_results)
-    print(f"Missing relevant IDs: atoms-off={missing_off} atoms-on={missing_on}")
-    verdict = "PASS" if gate_passes(off, on) else "FAIL"
-    print(
-        f"Gate verdict: {verdict} "
-        "(per-class atoms-on Recall@5 >= atoms-off - 0.05; "
-        "overall atoms-on Recall@5 >= atoms-off)"
-    )
-
-
-def gate_passes(
-    atoms_off: dict[str, MetricSummary],
-    atoms_on: dict[str, MetricSummary],
-) -> bool:
-    """Apply the per-class tolerance and zero-drop overall Recall@5 gate."""
-    classes = sorted(name for name in atoms_off if name != "overall")
-    per_class_pass = all(
-        atoms_on[name].recall_at_5 >= atoms_off[name].recall_at_5 - 0.05 for name in classes
-    )
-    overall_pass = atoms_on["overall"].recall_at_5 >= atoms_off["overall"].recall_at_5
-    return per_class_pass and overall_pass
+    missing = sum(len(result.missing_relevant_ids) for result in results)
+    print(f"Missing relevant IDs: {missing}")
 
 
 async def run_evaluation() -> None:
-    """Ingest checked-in fixtures into a scratch schema and print the A/B report."""
+    """Ingest checked-in fixtures into a scratch schema and print the report."""
     print(f"Models: embedding={emb_model()} rerank={rerank_model()}")
     missing_env = [name for name in REQUIRED_SERVICE_ENV if not os.getenv(name)]
     if missing_env:
@@ -290,20 +255,16 @@ async def run_evaluation() -> None:
                     await _ingest_fixture(path, schema_name)
             report_conn = await asyncpg.connect(db_url(), timeout=5)
             try:
-                rows = await report_conn.fetch(
-                    f'SELECT id, chunk_kind FROM "{schema_name}".memory_chunks'
-                )
+                rows = await report_conn.fetch(f'SELECT id FROM "{schema_name}".memory_chunks')
             finally:
                 await report_conn.close()
             corpus_ids = {row["id"] for row in rows}
-            parent_count = sum(row["chunk_kind"] != "atom" for row in rows)
             print(
                 f"Corpus: fixtures={len(list(FIXTURE_DIR.iterdir()))} "
-                f"parents={parent_count} rows={len(rows)} schema={schema_name}"
+                f"rows={len(rows)} schema={schema_name}"
             )
-            off_results = await _evaluate_mode(labels, corpus_ids, schema_name, include_atoms=False)
-            on_results = await _evaluate_mode(labels, corpus_ids, schema_name, include_atoms=True)
-            _print_report(off_results, on_results)
+            results = await _evaluate_mode(labels, corpus_ids, schema_name)
+            _print_report(results)
         finally:
             if schema_created:
                 cleanup_conn = await asyncpg.connect(db_url(), timeout=5)

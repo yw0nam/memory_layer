@@ -99,7 +99,6 @@ async def _search(
     top_k: int,
     kind: str | None = None,
     tags: list[str] | None = None,
-    include_atoms: bool | None = None,
     include_archived: bool = False,
     repo: list[str] | None = None,
     namespace: str | None = None,
@@ -112,8 +111,6 @@ async def _search(
         body["kind"] = kind
     if tags is not None:
         body["tags"] = tags
-    if include_atoms is not None:
-        body["include_atoms"] = include_atoms
     if include_archived:
         body["include_archived"] = True
     if namespace is not None:
@@ -131,7 +128,6 @@ async def _search(
 async def search_all(
     query: str,
     top_k: int = 10,
-    include_atoms: bool | None = None,
     include_archived: bool = False,
     namespace: str | None = None,
     ctx: Context | None = None,
@@ -157,7 +153,6 @@ async def search_all(
         query,
         "all",
         top_k,
-        include_atoms=include_atoms,
         include_archived=include_archived,
         namespace=namespace,
         ctx=ctx,
@@ -195,7 +190,6 @@ async def search_memory(
     top_k: int = 10,
     kind: str | None = None,
     tags: list[str] | None = None,
-    include_atoms: bool | None = None,
     include_archived: bool = False,
     namespace: str | None = None,
     ctx: Context | None = None,
@@ -223,7 +217,6 @@ async def search_memory(
         top_k,
         kind,
         tags,
-        include_atoms,
         include_archived,
         namespace=namespace,
         ctx=ctx,

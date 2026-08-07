@@ -156,7 +156,6 @@ async def archive_candidates(now: float, namespaces: list[str] | None = None) ->
                    hit_count, last_hit_at
             FROM "{PG_SCHEMA}".memory_chunks
             WHERE archived_at IS NULL
-              AND chunk_kind <> 'atom'
               AND ts_last_active < $1 - $2::double precision * {DAY_SECONDS}
               AND coalesce(last_hit_at, ts_last_active)
                   < $1 - $3::double precision * {DAY_SECONDS}
@@ -179,7 +178,6 @@ async def archive_rows(ids: list[str], now: float, namespaces: list[str] | None 
             UPDATE "{PG_SCHEMA}".memory_chunks
             SET archived_at = $2
             WHERE id = ANY($1::text[]) AND archived_at IS NULL
-              AND chunk_kind <> 'atom'
               AND ($3::text[] IS NULL OR namespace = ANY($3::text[]))
             """,
             ids,
@@ -197,7 +195,6 @@ async def restore_rows(ids: list[str], namespaces: list[str] | None = None) -> i
             UPDATE "{PG_SCHEMA}".memory_chunks
             SET archived_at = NULL
             WHERE id = ANY($1::text[])
-              AND chunk_kind <> 'atom'
               AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             """,
             ids,

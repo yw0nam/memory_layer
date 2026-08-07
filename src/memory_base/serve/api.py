@@ -168,8 +168,6 @@ async def search_route(request: Request) -> JSONResponse:
             options["tags"] = body["tags"]
         if "repo" in body:
             options["repo"] = body["repo"]
-        if "include_atoms" in body:
-            options["include_atoms"] = body["include_atoms"]
         if requested_namespaces is not None:
             options["namespaces"] = requested_namespaces
         elif not key.is_admin:
