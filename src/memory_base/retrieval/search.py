@@ -9,7 +9,6 @@ import argparse
 import asyncio
 import json
 import math
-import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -18,7 +17,6 @@ import asyncpg
 
 from memory_base.core import db
 from memory_base.core.config import (
-    OVERSAMPLE_FACTOR,
     PG_SCHEMA,
     SERVICE_TIMEOUT_SECONDS,
     VllmEmbedder,
@@ -33,7 +31,6 @@ PER_FILE_CAP = 3
 FUSED_TOP = 20
 RERANK_TOP = 10
 TIME_DECAY_HALF_LIFE_DAYS = 90.0
-ATOM_RETRIEVE_K = int(os.getenv("ATOM_RETRIEVE_K", "8"))
 SEARCH_KINDS = ("doc", "note", "decision")
 # Reranker input budget; the API's TEXT_LIMIT is separate and bounds only the response.
 RERANK_TEXT_LIMIT = 4000
@@ -172,7 +169,7 @@ def history_predicates(
     namespaces: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
     prefix = f"{alias}." if alias else ""
-    clauses = [f"{prefix}chunk_kind <> 'atom'"]
+    clauses = ["true"]
     args: list[Any] = []
     if not include_archived:
         clauses.append(f"{prefix}archived_at IS NULL")
@@ -317,88 +314,6 @@ async def _search_memory(
     return hits
 
 
-async def _search_atoms(
-    conn: asyncpg.Connection,
-    qvec_lit: str,
-    include_archived: bool = False,
-    kind: str | None = None,
-    tags: list[str] | None = None,
-    namespaces: list[str] | None = None,
-    schema: str | None = None,
-) -> list[Hit]:
-    schema = PG_SCHEMA if schema is None else schema
-    tbl = f'"{schema}"."memory_chunks"'
-    predicates, filter_args = history_predicates(
-        include_archived=include_archived,
-        kind=kind,
-        tags=tags,
-        alias="parent",
-        namespaces=namespaces,
-    )
-    rows = await conn.fetch(
-        f"""
-        SELECT atom.id AS atom_id,
-               coalesce(atom.distilled, atom.content_raw) AS matched_question,
-               1 - (atom.embedding <=> $1::halfvec) AS atom_cosine,
-               parent.id, parent.source_ref, parent.chunk_kind, parent.content_raw,
-               parent.distilled, parent.ts_last_active, parent.metadata, parent.archived_at
-        FROM {tbl} AS atom
-        JOIN {tbl} AS parent ON parent.id = atom.metadata->>'parent_id'
-        WHERE atom.chunk_kind = 'atom' AND {predicates}
-        ORDER BY atom.embedding <=> $1::halfvec
-        LIMIT {OVERSAMPLE_FACTOR * ATOM_RETRIEVE_K}
-        """,
-        qvec_lit,
-        *filter_args,
-    )
-    best_by_parent: dict[str, Any] = {}
-    for row in rows:
-        current = best_by_parent.get(row["id"])
-        if current is None or row["atom_cosine"] > current["atom_cosine"]:
-            best_by_parent[row["id"]] = row
-    collapsed = sorted(
-        best_by_parent.values(),
-        key=lambda row: row["atom_cosine"],
-        reverse=True,
-    )[:ATOM_RETRIEVE_K]
-    hits = []
-    for row in collapsed:
-        metadata = metadata_dict(row["metadata"])
-        hits.append(
-            Hit(
-                source="memory",
-                ref=metadata.get("search_ref") or row["source_ref"],
-                text=row["distilled"] or row["content_raw"],
-                ts=row["ts_last_active"],
-                meta={
-                    "id": row["id"],
-                    "raw": row["content_raw"],
-                    "kind": row["chunk_kind"],
-                    "tags": metadata.get("tags", []),
-                    "source_ref": row["source_ref"],
-                    "archived": row["archived_at"] is not None,
-                    "atom_id": row["atom_id"],
-                    "atom_question": row["matched_question"],
-                    "atom_cosine": row["atom_cosine"],
-                },
-            )
-        )
-    return hits
-
-
-def _merge_atom_hits(baseline: list[Hit], atom_hits: list[Hit]) -> list[Hit]:
-    baseline_by_id = {hit.meta.get("id"): hit for hit in baseline if hit.meta.get("id")}
-    new_hits = []
-    for atom_hit in atom_hits:
-        existing = baseline_by_id.get(atom_hit.meta["id"])
-        if existing is None:
-            new_hits.append(atom_hit)
-            continue
-        for key in ("atom_id", "atom_question", "atom_cosine"):
-            existing.meta[key] = atom_hit.meta[key]
-    return [*baseline, *new_hits]
-
-
 def _apply_time_decay(hits: list[Hit]) -> None:
     """Multiply RRF score by exp decay on age — old answers lose to fresh ones."""
     now = time.time()
@@ -495,7 +410,6 @@ async def search(
     include_archived: bool = False,
     kind: str | None = None,
     tags: list[str] | None = None,
-    include_atoms: bool | None = None,
     repo: list[str] | None = None,
     namespaces: list[str] | None = None,
     schema: str | None = None,
@@ -503,10 +417,6 @@ async def search(
     """schema overrides PG_SCHEMA for this call; only the eval harness passes it."""
     kind, tags, repo = validate_search_options(source, kind, tags, repo)
     namespaces = normalize_namespaces(namespaces)
-    if include_atoms is not None and not isinstance(include_atoms, bool):
-        raise ValueError("include_atoms must be a boolean")
-    if include_atoms is None:
-        include_atoms = os.getenv("ATOMS_RETRIEVE", "true").lower() in ("1", "true", "yes", "on")
 
     embedder = VllmEmbedder()
     qvec = await embedder.embed(query, query=True)
@@ -529,17 +439,6 @@ async def search(
             )
         _apply_time_decay(_decay_targets(hits, include_archived))
         hits = _dedup_cap(hits)
-        if include_atoms and source in ("memory", "all"):
-            atom_hits = await _search_atoms(
-                conn,
-                qvec_lit,
-                include_archived=include_archived,
-                kind=kind,
-                tags=tags,
-                namespaces=namespaces,
-                schema=schema,
-            )
-            hits = _merge_atom_hits(hits, atom_hits)
     if rerank:
         hits = await _rerank(query, hits)
     async with db.acquire() as conn:

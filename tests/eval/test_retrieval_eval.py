@@ -62,24 +62,6 @@ def test_missing_relevant_ids_remain_recall_misses():
     assert result.missing_relevant_ids == ("doc:guide.md:1",)
 
 
-def test_gate_applies_class_tolerance_and_requires_no_overall_drop():
-    atoms_off = {
-        "work": retrieval.MetricSummary(5, 0.8, 0.7),
-        "kb": retrieval.MetricSummary(5, 0.6, 0.5),
-        "overall": retrieval.MetricSummary(10, 0.7, 0.6),
-    }
-    passing = {
-        "work": retrieval.MetricSummary(5, 0.75, 0.7),
-        "kb": retrieval.MetricSummary(5, 0.65, 0.5),
-        "overall": retrieval.MetricSummary(10, 0.7, 0.6),
-    }
-    overall_drop = dict(passing, overall=retrieval.MetricSummary(10, 0.69, 0.6))
-    class_drop = dict(passing, work=retrieval.MetricSummary(5, 0.74, 0.7))
-    assert retrieval.gate_passes(atoms_off, passing)
-    assert not retrieval.gate_passes(atoms_off, overall_drop)
-    assert not retrieval.gate_passes(atoms_off, class_drop)
-
-
 def test_eval_file_integrity_and_class_coverage():
     labels = retrieval.load_labels(FIXTURES / "retrieval_eval.jsonl")
     counts = Counter(label.query_class for label in labels)
@@ -143,7 +125,7 @@ def test_main_reports_unavailable_prerequisites_without_raising(monkeypatch, cap
     retrieval.main()
     output = capsys.readouterr().out
     assert "Evaluation unavailable: service offline" in output
-    assert "Gate verdict: NOT RUN" in output
+    assert "Report NOT RUN" in output
 
 
 def test_scratch_schema_scope_patches_and_restores_schema_module():
@@ -201,8 +183,6 @@ def test_evaluate_mode_threads_schema_to_search(monkeypatch):
     monkeypatch.setattr(eval_module.search_module, "search", fake_search)
     label = eval_module.EvalLabel(query="q", query_class="work", relevant_ids=("doc:x:0",))
 
-    asyncio.run(
-        eval_module._evaluate_mode([label], set(), "scratch_test_schema", include_atoms=False)
-    )
+    asyncio.run(eval_module._evaluate_mode([label], set(), "scratch_test_schema"))
 
     assert captured["schema"] == "scratch_test_schema"

@@ -179,24 +179,6 @@ def test_document_row_ids_metadata_and_search_refs():
     assert row["namespace"] == "default"
 
 
-def test_document_rows_never_contain_atoms():
-    chunks = [Chunk("Body text " * 30, (), index) for index in range(3)]
-    rows = document.map_document_rows(
-        chunks,
-        tags=[],
-        filename="guide.md",
-        document_id="guide.md",
-        content_hash="abc",
-        format_name="md",
-        converter="markitdown:0.1.6",
-        origin=None,
-        timestamp=1.0,
-    )
-    assert len(rows) == len(chunks)
-    assert {row["chunk_kind"] for row in rows} == {"doc"}
-    assert all(row["metadata"]["tags"] == [] for row in rows)
-
-
 def test_document_rows_stamp_explicit_namespace():
     chunks = [Chunk("Body text " * 30, ("Root",), 0)]
     (row,) = document.map_document_rows(

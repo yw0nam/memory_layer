@@ -16,7 +16,6 @@ EMB_DIM = 2048  # Qwen3-VL-Embedding-2B, no matryoshka -> halfvec(2048) in pgvec
 
 PG_SCHEMA = "memory"
 SERVICE_TIMEOUT_SECONDS = 120
-OVERSAMPLE_FACTOR = 3  # atom candidate pool size relative to the final retrieve count
 
 # Qwen3 embedding convention: instruction-prefixed query, raw document.
 _QUERY_PREFIX = (
