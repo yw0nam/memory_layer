@@ -168,10 +168,10 @@ def test_search_logs_retrieval_and_bumps_hit_columns_after_flush(client):
     """
     content = "access-log integration pin: zzzaccesslogpin unique retrieval marker"
     note_id = build_note_row(content, "note", None, NOW)["id"]
-    asyncio.run(_delete_note(note_id))
-    asyncio.run(_delete_retrieval_log(content))
+    client.portal.call(_delete_note, note_id)
+    client.portal.call(_delete_retrieval_log, content)
     try:
-        asyncio.run(save_note(content))
+        client.portal.call(save_note, content)
         t0 = time.time()
 
         response = client.post("/search", json={"query": content, "source": "memory", "top_k": 5})
@@ -180,21 +180,21 @@ def test_search_logs_retrieval_and_bumps_hit_columns_after_flush(client):
 
         _force_flush(client)
 
-        log_row = asyncio.run(_fetch_latest_retrieval_log(content, "memory"))
+        log_row = client.portal.call(_fetch_latest_retrieval_log, content, "memory")
         assert log_row is not None
         assert log_row["query"] == content
         assert log_row["source"] == "memory"
         assert log_row["hit_ids"]
         assert log_row["ts"] >= t0
 
-        bumped = asyncio.run(_fetch_chunks_by_ids(list(log_row["hit_ids"])))
+        bumped = client.portal.call(_fetch_chunks_by_ids, list(log_row["hit_ids"]))
         assert bumped  # history hits must resolve to memory_chunks rows
         for row in bumped:
             assert row["hit_count"] >= 1
             assert row["last_hit_at"] is not None and row["last_hit_at"] >= t0
     finally:
-        asyncio.run(_delete_note(note_id))
-        asyncio.run(_delete_retrieval_log(content))
+        client.portal.call(_delete_note, note_id)
+        client.portal.call(_delete_retrieval_log, content)
 
 
 async def _fetch_logged_hit_counts(query_text: str, note_id: str) -> int:
@@ -215,11 +215,11 @@ def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
     """Two searches collapse into one batched bump that /admin/notes reports."""
     content = "access-log integration pin: zzzflushpin buffered counter advance marker"
     note_id = build_note_row(content, "note", None, NOW)["id"]
-    asyncio.run(_delete_note(note_id))
-    asyncio.run(_delete_retrieval_log(content))
+    client.portal.call(_delete_note, note_id)
+    client.portal.call(_delete_retrieval_log, content)
     try:
-        asyncio.run(save_note(content))
-        baseline = asyncio.run(_fetch_chunk(note_id))["hit_count"]
+        client.portal.call(save_note, content)
+        baseline = client.portal.call(_fetch_chunk, note_id)["hit_count"]
 
         for _ in range(2):
             response = client.post(
@@ -229,17 +229,17 @@ def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
 
         _force_flush(client)
 
-        logged = asyncio.run(_fetch_logged_hit_counts(content, note_id))
+        logged = client.portal.call(_fetch_logged_hit_counts, content, note_id)
         assert logged >= 1
-        assert asyncio.run(_fetch_chunk(note_id))["hit_count"] == baseline + logged
+        assert client.portal.call(_fetch_chunk, note_id)["hit_count"] == baseline + logged
 
         listed = client.get("/admin/notes", params={"older_than_days": 0}).json()
         note = next(row for row in listed if row["id"] == note_id)
         assert note["hit_count"] == baseline + logged
         assert note["last_hit_at"] is not None
     finally:
-        asyncio.run(_delete_note(note_id))
-        asyncio.run(_delete_retrieval_log(content))
+        client.portal.call(_delete_note, note_id)
+        client.portal.call(_delete_retrieval_log, content)
 
 
 # ---- POST /save_memory roundtrip -------------------------------------------
@@ -250,7 +250,7 @@ def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
 def test_save_memory_endpoint_roundtrip_and_dedup(client):
     content = "access-log integration pin: save_memory REST endpoint roundtrip dedup check"
     note_id = build_note_row(content, "note", None, NOW)["id"]
-    asyncio.run(_delete_note(note_id))
+    client.portal.call(_delete_note, note_id)
     try:
         first = client.post("/save_memory", json={"content": content})
         assert first.status_code == 200
@@ -269,11 +269,11 @@ def test_save_memory_endpoint_roundtrip_and_dedup(client):
         assert second.json()["superseded"] is None
         assert second.json()["similar"] == []
 
-        row = asyncio.run(_fetch_chunk(note_id))
+        row = client.portal.call(_fetch_chunk, note_id)
         assert row is not None
         assert row["id"] == note_id
     finally:
-        asyncio.run(_delete_note(note_id))
+        client.portal.call(_delete_note, note_id)
 
 
 # ---- schema idempotency -----------------------------------------------------
