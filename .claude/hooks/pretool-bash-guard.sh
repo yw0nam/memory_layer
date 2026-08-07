@@ -19,7 +19,11 @@ if printf '%s' "$cmd" | grep -qE '(^|[;&|[:space:]])(cat|less|more|head|tail|bat
   deny ".env holds internal endpoints and DB credentials — reading it into the transcript is blocked. Check existence with ls; copy it into a worktree with cp without exposing contents."
 fi
 
-git_cmd=$(printf '%s' "$cmd" | sed "s/'[^']*'//g; s/\"[^\"]*\"//g") || git_cmd=""
+# Double-quoted spans are stripped across the whole command (-z), because a
+# heredoc issue or PR body opens its quote on one line and closes it on
+# another, and prose documenting a git command is not a command. Apostrophes
+# stay line-scoped: a pair of them straddling a real command must not hide it.
+git_cmd=$(printf '%s' "$cmd" | sed "s/'[^']*'//g" | sed -z 's/"[^"]*"//g') || git_cmd=""
 if printf '%s' "$git_cmd" | grep -qE '(^|[;&|[:space:]])git(([[:space:]]+-[^[:space:];&|]+)*[[:space:]]+|[[:space:]]+-C[[:space:]]+([^[:space:];&|]+[[:space:]]+)?)(commit|push)([[:space:]]|$)'; then
   git_dir="${cwd:-.}"
   target=$(printf '%s' "$cmd" \
