@@ -42,6 +42,18 @@ if printf '%s' "$git_cmd" | grep -qE '(^|[;&|[:space:]])git(([[:space:]]+-[^[:sp
       *) git_dir="${cwd:-.}/$target" ;;
     esac
   fi
+  # The worktree->PR rule covers this repository only; an unrelated repository
+  # on a branch named main is not its business. The common git dir is shared by
+  # every worktree, so this repository's worktrees stay covered. An
+  # unidentifiable project keeps the strict behavior rather than opening up.
+  common_of() { [ -n "$1" ] && git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null; }
+  project_common=$(common_of "${CLAUDE_PROJECT_DIR:-}") || project_common=""
+  target_common=$(common_of "$git_dir") || target_common=""
+  if [ -n "$project_common" ] && [ -n "$target_common" ] &&
+     [ "$project_common" != "$target_common" ]; then
+    exit 0
+  fi
+
   branch=$(git -C "$git_dir" branch --show-current 2>/dev/null) || branch=""
   if [ "$branch" = "main" ]; then
     deny "Current branch is main — work happens in a worktree and lands via PR (AGENTS.md). The agent cannot commit/push to main; request the user to run it directly."
