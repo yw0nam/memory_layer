@@ -258,7 +258,8 @@ def main(argv: list[str] | None = None) -> int:
 
     _run("git", "add", str(PYPROJECT.relative_to(REPO_ROOT)), str(CHANGELOG.relative_to(REPO_ROOT)))
     _run("git", "commit", "-m", f"chore: release v{target_version}")
-    _run("git", "tag", f"v{target_version}")
+    # Annotated: the printed push carries annotated tags only.
+    _run("git", "tag", "-a", f"v{target_version}", "-m", f"v{target_version}")
 
     print(f"Released v{target_version}.")
     print("Run: git push --follow-tags")
