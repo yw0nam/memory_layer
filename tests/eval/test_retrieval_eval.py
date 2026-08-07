@@ -125,7 +125,7 @@ def test_main_reports_unavailable_prerequisites_without_raising(monkeypatch, cap
     retrieval.main()
     output = capsys.readouterr().out
     assert "Evaluation unavailable: service offline" in output
-    assert "Gate verdict: NOT RUN" in output
+    assert "Report NOT RUN" in output
 
 
 def test_scratch_schema_scope_patches_and_restores_schema_module():

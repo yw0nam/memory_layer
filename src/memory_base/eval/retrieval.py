@@ -281,7 +281,7 @@ def main() -> None:
         asyncio.run(run_evaluation())
     except Exception as exc:
         print(f"Evaluation unavailable: {exc}")
-        print("Gate verdict: NOT RUN (DB and configured vLLM services are required)")
+        print("Report NOT RUN (DB and configured vLLM services are required)")
 
 
 if __name__ == "__main__":
