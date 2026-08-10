@@ -28,6 +28,7 @@ from typing import Any, Mapping
 
 import httpx
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
 from memory_base.adapters.document import extension_for
@@ -38,7 +39,20 @@ DEFAULT_PORT = 8765
 REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
 API_KEY_HEADER = "x-api-key"
 
-mcp = FastMCP("memory-base")
+
+def resolve_transport_security(
+    env: Mapping[str, str],
+) -> TransportSecuritySettings | None:
+    """Return configured transport security or defer to FastMCP defaults."""
+    allowed_hosts = [
+        host.strip() for host in env.get("MCP_ALLOWED_HOSTS", "").split(",") if host.strip()
+    ]
+    if not allowed_hosts:
+        return None
+    return TransportSecuritySettings(allowed_hosts=allowed_hosts)
+
+
+mcp = FastMCP("memory-base", transport_security=resolve_transport_security(os.environ))
 
 
 def _client() -> httpx.AsyncClient:
