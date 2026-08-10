@@ -105,6 +105,29 @@ def test_search_request_performs_no_db_writes(monkeypatch, connection):
     assert len(access_log._pending_logs) == 1
 
 
+def test_code_hits_do_not_feed_memory_chunk_counters():
+    hits = [
+        Hit(
+            source="code",
+            ref="src/example.py:1",
+            text="code body",
+            ts=NOW,
+            meta={"id": 42},
+        ),
+        Hit(
+            source="memory",
+            ref="ref/chunk-a",
+            text="memory body",
+            ts=NOW,
+            meta={"id": "chunk-a"},
+        ),
+    ]
+
+    access_log.record_retrieval("q", "all", hits, now=NOW)
+
+    assert set(access_log._pending_hits) == {"chunk-a"}
+
+
 # ---- the flusher writes batched, deduplicated statements --------------------
 
 
