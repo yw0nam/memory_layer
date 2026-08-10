@@ -10,8 +10,9 @@ import pathlib
 
 import pytest
 import yaml
+from mcp.server.transport_security import TransportSecuritySettings
 
-from memory_base.serve.mcp_server import resolve_transport
+from memory_base.serve.mcp_server import resolve_transport, resolve_transport_security
 
 
 def test_resolve_transport_defaults_to_stdio():
@@ -48,6 +49,23 @@ def test_resolve_transport_invalid_transport_raises_value_error():
 def test_resolve_transport_non_numeric_port_raises_value_error():
     with pytest.raises(ValueError):
         resolve_transport({"MCP_PORT": "not-a-number"})
+
+
+@pytest.mark.parametrize("env", [{}, {"MCP_ALLOWED_HOSTS": ""}])
+def test_resolve_transport_security_defers_to_fastmcp_defaults(env):
+    assert resolve_transport_security(env) is None
+
+
+def test_resolve_transport_security_parses_allowed_hosts():
+    settings = resolve_transport_security({"MCP_ALLOWED_HOSTS": "mcp:8765,localhost:8765"})
+
+    assert settings == TransportSecuritySettings(allowed_hosts=["mcp:8765", "localhost:8765"])
+
+
+def test_resolve_transport_security_ignores_whitespace_and_empty_entries():
+    settings = resolve_transport_security({"MCP_ALLOWED_HOSTS": " mcp:8765, , localhost:8765 ,, "})
+
+    assert settings.allowed_hosts == ["mcp:8765", "localhost:8765"]
 
 
 def test_compose_mcp_service_serves_streamable_http():
