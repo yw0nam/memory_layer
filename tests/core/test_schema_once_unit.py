@@ -87,6 +87,24 @@ def test_ensure_schema_itself_runs_every_time_called_directly():
     assert conn.calls == 2
 
 
+def test_ensure_schema_bootstraps_schema_and_vector_before_memory_table():
+    queries = []
+
+    class RecordingConnection(FakeConnection):
+        async def execute(self, query, *args):
+            queries.append(query)
+            await super().execute(query, *args)
+
+    asyncio.run(schema.ensure_schema(RecordingConnection()))
+
+    statements = [
+        statement.strip() for statement in "\n".join(queries).split(";") if statement.strip()
+    ]
+    assert statements[0] == 'CREATE SCHEMA IF NOT EXISTS "test_schema"'
+    assert statements[1] == "CREATE EXTENSION IF NOT EXISTS vector"
+    assert statements[2].startswith('CREATE TABLE IF NOT EXISTS "test_schema".memory_chunks')
+
+
 def test_ensure_schema_adds_namespace_column_index_and_registry(monkeypatch):
     monkeypatch.setattr(schema, "PG_SCHEMA", "test_schema")
     captured = {}

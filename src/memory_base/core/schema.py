@@ -14,6 +14,8 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
     schema = f'"{PG_SCHEMA}"'
     await conn.execute(
         f"""
+        CREATE SCHEMA IF NOT EXISTS {schema};
+        CREATE EXTENSION IF NOT EXISTS vector;
         CREATE TABLE IF NOT EXISTS {schema}.memory_chunks (
           id text PRIMARY KEY, source_type text NOT NULL, source_ref text NOT NULL,
           chunk_kind text NOT NULL, session_id text NOT NULL, content_raw text NOT NULL,
