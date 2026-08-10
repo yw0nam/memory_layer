@@ -2,6 +2,8 @@
 name = "memory-base"
 version = "0.1.1"
 description = "Selective memory layer: distilled agent-history and code retrieval over pgvector"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "asyncpg>=0.31.0",
