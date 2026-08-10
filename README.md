@@ -332,6 +332,7 @@ The MCP server needs the same header: over streamable HTTP it forwards the calle
 | `INGEST_SPOOL` | durable uploaded-document spool root |
 | `REST_URL` | backend the MCP server proxies to |
 | `MEMORY_API_KEY` | the MCP server's `X-API-Key` over stdio transport; streamable HTTP forwards the caller's own header instead |
+| `MCP_ALLOWED_HOSTS` | comma-separated `Host` header values accepted by MCP HTTP transports; empty keeps the loopback-only SDK default |
 | `LOG_DIR` | file-sink directory (default `logs/`) |
 
 Tuning knobs, all optional: `NOTE_SIMILAR_THRESHOLD`, `INGEST_MAX_BYTES`,
