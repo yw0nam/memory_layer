@@ -42,10 +42,7 @@ if printf '%s' "$git_cmd" | grep -qE '(^|[;&|[:space:]])git(([[:space:]]+-[^[:sp
       *) git_dir="${cwd:-.}/$target" ;;
     esac
   fi
-  # The worktree->PR rule covers this repository only; an unrelated repository
-  # on a branch named main is not its business. The common git dir is shared by
-  # every worktree, so this repository's worktrees stay covered. An
-  # unidentifiable project keeps the strict behavior rather than opening up.
+  # Repository scoping covers every worktree and defaults to strict when unidentified.
   common_of() { [ -n "$1" ] && git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null; }
   project_common=$(common_of "${CLAUDE_PROJECT_DIR:-}") || project_common=""
   target_common=$(common_of "$git_dir") || target_common=""

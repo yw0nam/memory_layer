@@ -24,18 +24,9 @@ from release import (
 
 def test_parses_type_and_pr_number():
     assert parse_commit_subject("feat: add search filters (#42)") == ParsedCommit(
-        type="feat", scope=None, description="add search filters", pr_number=42
-    )
-
-
-def test_parses_scope():
-    assert parse_commit_subject(
-        "docs(chore): update agent instruction use docker exec not uv run"
-    ) == ParsedCommit(
-        type="docs",
-        scope="chore",
-        description="update agent instruction use docker exec not uv run",
-        pr_number=None,
+        type="feat",
+        description="add search filters",
+        pr_number=42,
     )
 
 
@@ -43,7 +34,6 @@ def test_parses_subject_with_no_pr_number():
     assert parse_commit_subject("feat: deep-search surface and memory source rename") == (
         ParsedCommit(
             type="feat",
-            scope=None,
             description="deep-search surface and memory source rename",
             pr_number=None,
         )
@@ -62,7 +52,7 @@ def test_trailing_parenthetical_that_is_not_a_pr_number_stays_in_the_description
 
 def test_unparseable_subject_keeps_full_text_and_has_no_type():
     assert parse_commit_subject("first commit") == ParsedCommit(
-        type=None, scope=None, description="first commit", pr_number=None
+        type=None, description="first commit", pr_number=None
     )
 
 
@@ -70,7 +60,7 @@ def test_unparseable_subject_keeps_full_text_and_has_no_type():
 
 
 def _commit(commit_type, description="x"):
-    return ParsedCommit(type=commit_type, scope=None, description=description, pr_number=None)
+    return ParsedCommit(type=commit_type, description=description, pr_number=None)
 
 
 def test_groups_known_types_into_their_named_sections():
@@ -124,20 +114,20 @@ def test_render_includes_version_header_and_date():
 
 
 def test_render_appends_pr_number_when_present():
-    commits = [ParsedCommit("feat", None, "add search filters", 42)]
+    commits = [ParsedCommit("feat", "add search filters", 42)]
     rendered = render_version_section("0.1.0", "2026-08-07", commits)
     assert "- add search filters (#42)" in rendered
 
 
 def test_render_omits_pr_suffix_when_absent():
-    commits = [ParsedCommit("feat", None, "add search filters", None)]
+    commits = [ParsedCommit("feat", "add search filters", None)]
     rendered = render_version_section("0.1.0", "2026-08-07", commits)
     assert "- add search filters" in rendered
     assert "(#" not in rendered
 
 
 def test_render_only_includes_non_empty_section_headings():
-    commits = [ParsedCommit("feat", None, "a", None), ParsedCommit("fix", None, "b", None)]
+    commits = [ParsedCommit("feat", "a", None), ParsedCommit("fix", "b", None)]
     rendered = render_version_section("0.1.0", "2026-08-07", commits)
     assert "### Added" in rendered
     assert "### Fixed" in rendered
@@ -147,9 +137,9 @@ def test_render_only_includes_non_empty_section_headings():
 
 def test_render_puts_sections_in_fixed_order():
     commits = [
-        ParsedCommit("test", None, "t", None),
-        ParsedCommit("feat", None, "f", None),
-        ParsedCommit(None, None, "unparseable", None),
+        ParsedCommit("test", "t", None),
+        ParsedCommit("feat", "f", None),
+        ParsedCommit(None, "unparseable", None),
     ]
     rendered = render_version_section("0.1.0", "2026-08-07", commits)
     assert rendered.index("### Added") < rendered.index("### Tests") < rendered.index("### Other")

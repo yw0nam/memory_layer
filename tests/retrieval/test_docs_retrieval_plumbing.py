@@ -162,6 +162,17 @@ def test_history_predicates_omits_namespace_clause_by_default():
     assert args == []
 
 
+def test_history_predicates_without_filters_returns_true():
+    predicates, args = history_predicates(include_archived=True, kind=None, tags=None)
+    assert predicates == "true"
+    assert args == []
+
+
+def test_history_predicates_with_filters_does_not_seed_true():
+    predicates, _ = history_predicates(include_archived=False, kind=None, tags=None)
+    assert "true AND" not in predicates
+
+
 def test_history_predicates_adds_namespace_any_clause():
     predicates, args = history_predicates(
         include_archived=False, kind=None, tags=None, namespaces=["team-a", "team-b"]

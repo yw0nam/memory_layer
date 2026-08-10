@@ -169,7 +169,7 @@ def history_predicates(
     namespaces: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
     prefix = f"{alias}." if alias else ""
-    clauses = ["true"]
+    clauses: list[str] = []
     args: list[Any] = []
     if not include_archived:
         clauses.append(f"{prefix}archived_at IS NULL")
@@ -182,7 +182,7 @@ def history_predicates(
     if namespaces:
         args.append(namespaces)
         clauses.append(f"{prefix}namespace = ANY(${len(args) + 1}::text[])")
-    return " AND ".join(clauses), args
+    return " AND ".join(clauses) or "true", args
 
 
 async def _search_code(

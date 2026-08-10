@@ -49,7 +49,7 @@ SECTION_ORDER = (
     "Other",
 )
 
-COMMIT_RE = re.compile(r"^(?P<type>[a-z]+)(\((?P<scope>[^)]+)\))?!?:\s+(?P<description>\S.*)$")
+COMMIT_RE = re.compile(r"^(?P<type>[a-z]+)(?:\([^)]+\))?!?:\s+(?P<description>\S.*)$")
 PR_NUMBER_RE = re.compile(r"^(?P<description>.*)\s\(#(?P<pr_number>\d+)\)$")
 VERSION_LINE_RE = re.compile(r'^version = "[^"]*"$', re.MULTILINE)
 RELEASE_COMMIT_RE = re.compile(r"^chore: release v\d+\.\d+\.\d+$")
@@ -58,7 +58,6 @@ RELEASE_COMMIT_RE = re.compile(r"^chore: release v\d+\.\d+\.\d+$")
 @dataclass(frozen=True)
 class ParsedCommit:
     type: str | None
-    scope: str | None
     description: str
     pr_number: int | None
 
@@ -73,11 +72,10 @@ def parse_commit_subject(subject: str) -> ParsedCommit:
     match = COMMIT_RE.match(subject)
     if match is None:
         description, pr_number = _split_pr_number(subject)
-        return ParsedCommit(type=None, scope=None, description=description, pr_number=pr_number)
+        return ParsedCommit(type=None, description=description, pr_number=pr_number)
     description, pr_number = _split_pr_number(match.group("description"))
     return ParsedCommit(
         type=match.group("type"),
-        scope=match.group("scope"),
         description=description,
         pr_number=pr_number,
     )
@@ -91,12 +89,7 @@ def _split_pr_number(description: str) -> tuple[str, int | None]:
 
 
 def is_release_commit(subject: str) -> bool:
-    """A release commit's own tag places it inside its own regenerated range.
-
-    Anchored to the exact `chore: release v<semver>` shape release.py writes,
-    so it excludes only that and never an unrelated chore/feat commit that
-    happens to mention "release".
-    """
+    """Return whether a subject is an exact release commit."""
     return RELEASE_COMMIT_RE.match(subject) is not None
 
 
@@ -134,11 +127,7 @@ def bump_version(version: str, level: str) -> str:
 
 
 def bump_version_line(pyproject_text: str, new_version: str) -> str:
-    """Replace the `version = "..."` line in-place, leaving the rest of the file untouched.
-
-    tomllib can only read TOML, not write it, and reserialising the file would
-    reformat it wholesale; a targeted substitution avoids that.
-    """
+    """Replace the project version line without changing other text."""
     new_text, count = VERSION_LINE_RE.subn(f'version = "{new_version}"', pyproject_text, count=1)
     if count != 1:
         raise RuntimeError("pyproject.toml has no top-level version line")
@@ -189,13 +178,7 @@ def read_version() -> str:
 
 
 def _parsed_commits(rev_range: str) -> list[ParsedCommit]:
-    """Commit subjects in a range, parsed and stripped of the range's own release commit.
-
-    A release tag points at the commit that records that release, which puts
-    the release commit inside its own tag's range on every later
-    regeneration; excluding it keeps each version's section to its real
-    changes only.
-    """
+    """Parse commits in a range while excluding release commits."""
     return [
         parse_commit_subject(subject)
         for subject in commit_subjects(rev_range)
