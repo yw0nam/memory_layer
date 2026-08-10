@@ -14,6 +14,7 @@ from release import (
     bump_version_line,
     group_commits,
     is_release_commit,
+    main,
     parse_commit_subject,
     render_version_section,
 )
@@ -206,3 +207,18 @@ def test_bump_version_line_raises_when_no_version_line_exists():
 )
 def test_is_release_commit(subject, expected):
     assert is_release_commit(subject) is expected
+
+
+# ---- agent refusal ------------------------------------------------------------
+
+
+def test_refuses_to_run_under_an_agent(monkeypatch, capsys):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert main([]) == 1
+    assert "worktree" in capsys.readouterr().err
+
+
+def test_agent_refusal_precedes_every_git_call(monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setattr("release._run", lambda *args: pytest.fail(f"ran git: {args}"))
+    assert main(["minor"]) == 1
