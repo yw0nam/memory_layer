@@ -305,16 +305,14 @@ def test_ensure_schema_idempotent_and_adds_access_log_objects():
 
 
 def test_client_tests_route_db_calls_through_the_portal():
-    """asyncio.run() opens a throwaway loop on every call; mixing that with the
-    client fixture's live portal loop races the process-wide pool in core/db.py
-    (get_pool terminates and rebuilds the pool on every loop switch). Tests that
-    take the client fixture must do all their DB work through client.portal.call,
-    exactly like _force_flush already does.
-    """
-    client_tests = (
-        test_search_logs_retrieval_and_bumps_hit_columns_after_flush,
-        test_admin_notes_sees_counters_advance_after_a_forced_flush,
-        test_save_memory_endpoint_roundtrip_and_dedup,
-    )
+    """Verify client tests route database calls through the portal."""
+    client_tests = [
+        test_fn
+        for name, test_fn in globals().items()
+        if name.startswith("test_")
+        and inspect.isfunction(test_fn)
+        and "client" in inspect.signature(test_fn).parameters
+    ]
+    assert client_tests, "no client tests discovered"
     for test_fn in client_tests:
         assert "asyncio.run(" not in inspect.getsource(test_fn), test_fn.__name__

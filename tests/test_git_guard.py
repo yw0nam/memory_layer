@@ -12,25 +12,21 @@ from pathlib import Path
 
 import pytest
 
+from gitcmd import git_output
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUARD = REPO_ROOT / ".claude" / "hooks" / "pretool-bash-guard.sh"
-
-
-def _git(*args: str, cwd: Path) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
-    ).stdout.strip()
 
 
 def primary_worktree() -> Path:
     """This project's primary checkout, shared by every worktree of it."""
     return Path(
-        _git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=REPO_ROOT)
+        git_output("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=REPO_ROOT)
     ).parent
 
 
 on_main = pytest.mark.skipif(
-    _git("branch", "--show-current", cwd=primary_worktree()) != "main",
+    git_output("branch", "--show-current", cwd=primary_worktree()) != "main",
     reason="the primary checkout is not on main",
 )
 
