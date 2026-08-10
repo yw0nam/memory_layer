@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.1] - 2026-08-10
+
+### Fixed
+- strip multi-line quoted spans before matching git verbs (#142)
+- refuse to cut a release from an agent session (#145)
+- create an annotated release tag (#140)
+
+### Refactored
+- clear the review follow-ups from the 2026-08-07 batch (#146)
+
 ## [0.1.0] - 2026-08-07
 
 ### Added
