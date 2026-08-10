@@ -112,3 +112,46 @@ def test_allows_commit_on_a_branch_other_than_main(tmp_path: Path):
 
 def test_still_blocks_reading_dotenv():
     assert denied(run_guard("cat .env", cwd=REPO_ROOT))
+
+
+# ---- prose in quoted arguments is not a command -----------------------------
+
+# Split so this module is not itself matched when a tool reads it back.
+VERB = "git " + "push"
+
+
+@on_main
+def test_allows_a_single_line_quoted_argument_documenting_a_git_verb():
+    assert not denied(
+        run_guard(f'gh issue create --body "run {VERB} to publish"', cwd=primary_worktree())
+    )
+
+
+@on_main
+def test_allows_a_heredoc_body_documenting_a_git_verb():
+    """Issue and PR bodies are written as heredocs, and they document git commands."""
+    command = f'gh issue create --body "$(cat <<EOF\nrun {VERB} to publish\nEOF\n)"'
+    assert not denied(run_guard(command, cwd=primary_worktree()))
+
+
+@on_main
+def test_allows_a_multi_line_quoted_argument_documenting_a_git_verb():
+    assert not denied(
+        run_guard(
+            f'gh pr create --body "first line\n{VERB} --follow-tags\n"', cwd=primary_worktree()
+        )
+    )
+
+
+@on_main
+def test_still_denies_a_real_command_following_a_heredoc():
+    """Stripping quoted prose must not hide a real command elsewhere in the line."""
+    command = f'gh issue create --body "$(cat <<EOF\ndocs\nEOF\n)" && {VERB}'
+    assert denied(run_guard(command, cwd=primary_worktree()))
+
+
+@on_main
+def test_still_denies_a_real_command_between_apostrophes_on_separate_lines():
+    """Apostrophe stripping stays line-scoped, so a pair of them cannot span a real command."""
+    command = f'echo "it\'s fine"\n{VERB}\necho "that\'s all"'
+    assert denied(run_guard(command, cwd=primary_worktree()))

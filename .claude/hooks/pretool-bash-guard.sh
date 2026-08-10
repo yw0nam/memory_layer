@@ -19,7 +19,8 @@ if printf '%s' "$cmd" | grep -qE '(^|[;&|[:space:]])(cat|less|more|head|tail|bat
   deny ".env holds internal endpoints and DB credentials — reading it into the transcript is blocked. Check existence with ls; copy it into a worktree with cp without exposing contents."
 fi
 
-git_cmd=$(printf '%s' "$cmd" | sed "s/'[^']*'//g; s/\"[^\"]*\"//g") || git_cmd=""
+# Double quotes are stripped across the whole command; apostrophes stay line-scoped.
+git_cmd=$(printf '%s' "$cmd" | sed "s/'[^']*'//g" | sed -z 's/"[^"]*"//g') || git_cmd=""
 if printf '%s' "$git_cmd" | grep -qE '(^|[;&|[:space:]])git(([[:space:]]+-[^[:space:];&|]+)*[[:space:]]+|[[:space:]]+-C[[:space:]]+([^[:space:];&|]+[[:space:]]+)?)(commit|push)([[:space:]]|$)'; then
   git_dir="${cwd:-.}"
   target=$(printf '%s' "$cmd" \
