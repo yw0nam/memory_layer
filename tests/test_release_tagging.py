@@ -24,6 +24,7 @@ def _git(*args: str, cwd: Path) -> str:
 @pytest.fixture()
 def scratch_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A throwaway repo on main with one commit, wired into release.py's paths."""
+    monkeypatch.delenv("CLAUDECODE", raising=False)
     repo = tmp_path / "scratch"
     (repo / "scripts").mkdir(parents=True)
     (repo / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "0.1.0"\n')

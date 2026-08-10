@@ -11,6 +11,7 @@ derived state and never hand-edited.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -225,6 +226,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"usage: release.py [{'|'.join(BUMP_LEVELS)}]", file=sys.stderr)
         return 2
     bump = argv[0] if argv else None
+
+    # The command-text guard cannot see git spawned from Python, so this path refuses itself.
+    if os.environ.get("CLAUDECODE"):
+        print(
+            "refusing to release: an agent works in a worktree and lands via PR (AGENTS.md); "
+            "a release is cut by the operator running this script directly",
+            file=sys.stderr,
+        )
+        return 1
 
     if is_working_tree_dirty():
         print("refusing to release: working tree is dirty", file=sys.stderr)
