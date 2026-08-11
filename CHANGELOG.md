@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0] - 2026-08-11
+
+### Added
+- load tabular documents into a SQL-queryable doc_rows lane (#161)
+- document ownership and deletion lifecycle (#160)
+- license the project under MIT (#148)
+
+### Fixed
+- keep code-chunk ids out of the memory-chunk hit counters (#155)
+- let a deployment declare the MCP transport's allowed hosts (#153)
+- create the schema and vector extension before the memory table (#152)
+
+### Documentation
+- split data-flow and configuration references out of the README (#164)
+- describe the SQL table lane and the document ownership lifecycle (#163)
+
+### Maintenance
+- add env.example
+
 ## [0.1.1] - 2026-08-10
 
 ### Fixed
