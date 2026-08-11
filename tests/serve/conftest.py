@@ -41,3 +41,18 @@ def _isolated_ingest_spool(monkeypatch, tmp_path):
     spool = tmp_path / "ingest-spool"
     monkeypatch.setattr(ingest_api, "INGEST_SPOOL", spool)
     monkeypatch.setattr(job_store, "INGEST_SPOOL", spool)
+
+
+@pytest.fixture(autouse=True)
+def _stub_existing_document_owner(request, monkeypatch):
+    """Unit tests never reach a real DB for the ownership gate; integration tests do.
+
+    Tests that care about ownership override this per-test with their own fake.
+    """
+    if request.node.get_closest_marker("integration") is not None:
+        return
+
+    async def fake_existing_document_owner(document_id, namespace="default", schema=None):
+        return False, None
+
+    monkeypatch.setattr(ingest_api, "_existing_document_owner", fake_existing_document_owner)

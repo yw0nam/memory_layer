@@ -14,6 +14,16 @@ import pytest
 from memory_base.serve import api, auth, ingest_api
 
 
+@pytest.fixture(autouse=True)
+def _default_namespace_registered(monkeypatch):
+    """POST /ingest/document and run_document_job check namespace registration."""
+
+    async def fake_namespace_exists(name):
+        return name in {"default", "team-a"}
+
+    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+
+
 def _identity(label, *, is_admin=False, allowed=frozenset({"default"})):
     return auth.KeyIdentity(
         key_id=f"{label}-hash", label=label, home="default", is_admin=is_admin, allowed=allowed
