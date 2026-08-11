@@ -231,7 +231,7 @@ class FakeConnection:
         self.calls.append(("executemany", query, args))
 
 
-def test_atomic_replacement_deletes_only_document_rows_then_inserts(monkeypatch):
+def test_atomic_replacement_publishes_card_and_table_rows_together(monkeypatch):
     connection = FakeConnection()
 
     @asynccontextmanager
@@ -252,14 +252,22 @@ def test_atomic_replacement_deletes_only_document_rows_then_inserts(monkeypatch)
         "idf_score": None,
         "metadata": {"content_hash": "hash"},
     }
-    asyncio.run(ingest_api.replace_document_rows("guide.md", [row], "default"))
-    delete = next(call for call in connection.calls if "DELETE FROM" in call[1])
-    insert = next(call for call in connection.calls if call[0] == "executemany")
-    assert "source_type = 'document' AND source_ref = $1 AND namespace = $2" in delete[1]
-    assert delete[2] == ("guide.md", "default")
-    assert insert[0] == "executemany"
-    assert insert[2][0][-2] == "default"
-    assert json.loads(insert[2][0][-1]) == {"content_hash": "hash"}
+    table_rows = [{"row_index": 0, "data": {"name": "one", "value": None}}]
+    asyncio.run(
+        ingest_api.replace_document_rows("guide.md", [row], "default", table_rows=table_rows)
+    )
+
+    deletes = [call for call in connection.calls if "DELETE FROM" in call[1]]
+    inserts = [call for call in connection.calls if call[0] == "executemany"]
+    assert len(deletes) == 2
+    assert "source_type = 'document' AND source_ref = $1 AND namespace = $2" in deletes[0][1]
+    assert deletes[0][2] == ("guide.md", "default")
+    assert 'DELETE FROM "memory".doc_rows' in deletes[1][1]
+    assert deletes[1][2] == ("default", "guide.md")
+    assert len(inserts) == 2
+    assert inserts[0][2][0][-2] == "default"
+    assert json.loads(inserts[0][2][0][-1]) == {"content_hash": "hash"}
+    assert inserts[1][2] == [("default", "guide.md", 0, '{"name": "one", "value": null}')]
 
 
 def _job(document_id="guide.md", tags=None):
@@ -274,19 +282,19 @@ def _job(document_id="guide.md", tags=None):
     )
 
 
-def test_identical_hash_is_no_op_without_conversion_or_write(monkeypatch, tmp_path):
+def test_identical_hash_markdown_is_no_op_without_conversion_or_write(monkeypatch, tmp_path):
     upload = tmp_path / "guide.md"
     upload.write_text("same content")
     expected_hash = ingest_api._file_hash(upload)
     called = []
 
     async def existing(document_id, namespace="default", schema=None):
-        return expected_hash
+        return expected_hash, False
 
     async def forbidden(*args, **kwargs):
         called.append(True)
 
-    monkeypatch.setattr(ingest_api, "_existing_content_hash", existing)
+    monkeypatch.setattr(ingest_api, "_existing_document_state", existing)
     monkeypatch.setattr(ingest_api, "convert_to_markdown", forbidden)
     monkeypatch.setattr(ingest_api, "replace_document_rows", forbidden)
     job = _job()
@@ -302,8 +310,8 @@ def test_force_mode_never_consults_existing_content_hash(monkeypatch, tmp_path):
     upload = tmp_path / "guide.md"
     upload.write_text("force mode content")
 
-    async def forbidden_existing_hash(*args, **kwargs):
-        raise AssertionError("force mode must not call _existing_content_hash")
+    async def forbidden_existing_state(*args, **kwargs):
+        raise AssertionError("force mode must not call _existing_document_state")
 
     async def fake_markdown_rows(*args):
         return [{"id": "row-1"}]
@@ -311,10 +319,10 @@ def test_force_mode_never_consults_existing_content_hash(monkeypatch, tmp_path):
     async def no_embed(rows):
         return None
 
-    async def no_write(document_id, rows, namespace="default", schema=None):
+    async def no_write(document_id, rows, namespace="default", schema=None, table_rows=()):
         return None
 
-    monkeypatch.setattr(ingest_api, "_existing_content_hash", forbidden_existing_hash)
+    monkeypatch.setattr(ingest_api, "_existing_document_state", forbidden_existing_state)
     monkeypatch.setattr(ingest_api, "_markdown_rows", fake_markdown_rows)
     monkeypatch.setattr(ingest_api, "_embed_rows", no_embed)
     monkeypatch.setattr(ingest_api, "replace_document_rows", no_write)
@@ -339,7 +347,7 @@ def test_csv_persistent_enrichment_failure_names_card_and_never_writes(monkeypat
     async def write(*args, **kwargs):
         writes.append(True)
 
-    monkeypatch.setattr(ingest_api, "_existing_content_hash", no_existing)
+    monkeypatch.setattr(ingest_api, "_existing_document_state", no_existing)
     monkeypatch.setattr(ingest_api, "summarize_and_tag", fail)
     monkeypatch.setattr(ingest_api, "replace_document_rows", write)
     with pytest.raises(ingest_api.EnrichmentError, match="CSV card 0"):
@@ -369,10 +377,10 @@ def test_markdown_ingest_calls_no_llm_and_writes_doc_rows_with_caller_tags(monke
             row["embedding"] = "[0]"
             row.pop("embedding_text")
 
-    async def write(document_id, rows, namespace="default", schema=None):
+    async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
         written.extend(rows)
 
-    monkeypatch.setattr(ingest_api, "_existing_content_hash", no_existing)
+    monkeypatch.setattr(ingest_api, "_existing_document_state", no_existing)
     monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
     monkeypatch.setattr(enrich, "llm_client", forbidden_llm)
     monkeypatch.setattr(ingest_api, "_embed_rows", embed)
@@ -442,7 +450,7 @@ def test_zero_accepted_chunks_fails_before_enrichment_and_write(monkeypatch, tmp
     async def write(*args, **kwargs):
         writes.append(True)
 
-    monkeypatch.setattr(ingest_api, "_existing_content_hash", no_existing)
+    monkeypatch.setattr(ingest_api, "_existing_document_state", no_existing)
     monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
     monkeypatch.setattr(ingest_api, "replace_document_rows", write)
     with pytest.raises(document.DocumentError, match="zero accepted chunks"):
@@ -476,6 +484,99 @@ def test_oversized_fast_worker_output_is_statted_before_read_and_removed(monkeyp
     with pytest.raises(document.ConversionError, match="exceeds 16 MB"):
         asyncio.run(document.convert_to_markdown(input_path))
     assert not output["path"].exists()
+
+
+def test_same_hash_csv_without_loaded_marker_reruns_and_writes_table_rows(monkeypatch, tmp_path):
+    upload = tmp_path / "data.csv"
+    upload.write_text("name,value\none,1\n")
+    expected_hash = ingest_api._file_hash(upload)
+    captured = {}
+
+    async def existing(document_id, namespace="default", schema=None):
+        return expected_hash, False
+
+    async def csv_rows(*args):
+        return ([{"id": "card", "metadata": {}}], [{"row_index": 0, "data": {"name": "one"}}])
+
+    async def owner(*args, **kwargs):
+        return True, "alice"
+
+    async def embed(rows):
+        rows[0]["embedding"] = "[0]"
+
+    async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
+        captured["table_rows"] = list(table_rows)
+
+    monkeypatch.setattr(ingest_api, "_existing_document_state", existing)
+    monkeypatch.setattr(ingest_api, "_csv_rows", csv_rows)
+    monkeypatch.setattr(ingest_api, "_existing_document_owner", owner)
+    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
+    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
+
+    job = _job("data.csv")
+    asyncio.run(ingest_api.run_document_job(job, upload, "data.csv", "upsert", None))
+    assert job.status == "succeeded"
+    assert captured["table_rows"] == [{"row_index": 0, "data": {"name": "one"}}]
+
+
+def test_same_hash_csv_with_loaded_marker_is_no_op(monkeypatch, tmp_path):
+    upload = tmp_path / "data.csv"
+    upload.write_text("name,value\none,1\n")
+    expected_hash = ingest_api._file_hash(upload)
+
+    async def existing(document_id, namespace="default", schema=None):
+        return expected_hash, True
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("loaded same-hash CSV must not rerun")
+
+    monkeypatch.setattr(ingest_api, "_existing_document_state", existing)
+    monkeypatch.setattr(ingest_api, "_csv_rows", forbidden)
+    monkeypatch.setattr(ingest_api, "replace_document_rows", forbidden)
+
+    job = _job("data.csv")
+    asyncio.run(ingest_api.run_document_job(job, upload, "data.csv", "upsert", None))
+    assert job.status == "no_op"
+    assert job.stage == "done"
+
+
+def test_csv_pipeline_writes_every_parsed_row_and_card_metadata(monkeypatch, tmp_path):
+    upload = tmp_path / "data.csv"
+    upload.write_text("group,value,note\na,1,\nb,2, keep spaces \n")
+    captured = {}
+
+    async def summarize(*args, **kwargs):
+        return {"summary": "A grouped value table.", "tags": ["grouped data"]}
+
+    async def owner(*args, **kwargs):
+        return False, None
+
+    async def embed(rows):
+        for row in rows:
+            row["embedding"] = "[0]"
+            row.pop("embedding_text")
+
+    async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
+        captured["card"] = rows[0]
+        captured["table_rows"] = list(table_rows)
+
+    monkeypatch.setattr(ingest_api, "summarize_and_tag", summarize)
+    monkeypatch.setattr(ingest_api, "_existing_document_owner", owner)
+    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
+    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
+
+    job = _job("data.csv")
+    asyncio.run(ingest_api.run_document_job(job, upload, "data.csv", "force", None))
+
+    assert captured["card"]["metadata"]["columns"] == ["group", "value", "note"]
+    assert captured["card"]["metadata"]["table_rows_loaded"] is True
+    assert captured["table_rows"] == [
+        {"row_index": 0, "data": {"group": "a", "value": "1", "note": None}},
+        {
+            "row_index": 1,
+            "data": {"group": "b", "value": "2", "note": " keep spaces "},
+        },
+    ]
 
 
 # ---- integration: same document_id across namespaces must not collide -----

@@ -119,7 +119,7 @@ def test_ingest_stamps_created_by_with_key_label(monkeypatch, tmp_path):
             row["embedding"] = "[0]"
             row.pop("embedding_text")
 
-    async def write(document_id, rows, namespace="default", schema=None):
+    async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
         written.extend(rows)
 
     monkeypatch.setattr(ingest_api, "_existing_document_owner", no_owner)
@@ -150,7 +150,7 @@ def test_reingest_preserves_original_created_by(monkeypatch, tmp_path):
             row["embedding"] = "[0]"
             row.pop("embedding_text")
 
-    async def write(document_id, rows, namespace="default", schema=None):
+    async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
         written.extend(rows)
 
     monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
@@ -373,10 +373,25 @@ def test_delete_rejects_namespace_outside_callers_allowed_set(monkeypatch):
 # ---- integration: DELETE scoped to one namespace ---------------------------
 
 
+class FakeTransaction:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *args):
+        return None
+
+
 class FakeConnection:
     def __init__(self, rows_by_key):
         self.rows_by_key = rows_by_key
+        self.table_rows_by_key = {
+            ("guide.md", "default"),
+            ("guide.md", "team-a"),
+        }
         self.deletes = []
+
+    def transaction(self):
+        return FakeTransaction()
 
     async def fetchrow(self, query, *args):
         document_id, namespace = args
@@ -386,11 +401,18 @@ class FakeConnection:
     async def execute(self, query, *args):
         if not args:
             return None  # schema bootstrap call from ensure_schema_once
+        if ".doc_rows" in query:
+            namespace, document_id = args
+            key = (document_id, namespace)
+            existed = key in self.table_rows_by_key
+            self.table_rows_by_key.discard(key)
+            self.deletes.append(("table", key))
+            return f"DELETE {1 if existed else 0}"
         document_id, namespace = args
         key = (document_id, namespace)
         existed = key in self.rows_by_key
         self.rows_by_key.pop(key, None)
-        self.deletes.append(key)
+        self.deletes.append(("card", key))
         return f"DELETE {1 if existed else 0}"
 
 
@@ -406,3 +428,9 @@ def test_delete_document_rows_scoped_to_one_namespace(monkeypatch):
     assert deleted == 1
     assert ("guide.md", "team-a") in connection.rows_by_key
     assert ("guide.md", "default") not in connection.rows_by_key
+    assert ("guide.md", "team-a") in connection.table_rows_by_key
+    assert ("guide.md", "default") not in connection.table_rows_by_key
+    assert connection.deletes == [
+        ("card", ("guide.md", "default")),
+        ("table", ("guide.md", "default")),
+    ]

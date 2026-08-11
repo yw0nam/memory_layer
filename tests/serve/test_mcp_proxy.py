@@ -51,6 +51,7 @@ def test_tool_list_includes_document_ingestion():
         "search_code",
         "search_memory",
         "save_memory",
+        "query_table",
         "ingest_document",
         "ingest_repo",
         "remove_repo",
@@ -253,6 +254,48 @@ def test_save_memory_400_response_raises_value_error_with_server_message(monkeyp
         asyncio.run(mcp_server.save_memory(""))
 
 
+def test_query_table_posts_sql_and_namespace_and_returns_body(monkeypatch):
+    captured = {}
+    payload = {
+        "columns": ["group", "mean"],
+        "rows": [["a", 2.5]],
+        "row_count": 1,
+        "truncated": False,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=payload)
+
+    _patch_client(monkeypatch, handler)
+    result = asyncio.run(
+        mcp_server.query_table(
+            "SELECT data->>'group', AVG((data->>'value')::numeric) FROM memory.doc_rows",
+            namespace="team-a",
+        )
+    )
+
+    assert captured == {
+        "path": "/tables/query",
+        "json": {
+            "sql": ("SELECT data->>'group', AVG((data->>'value')::numeric) FROM memory.doc_rows"),
+            "namespace": "team-a",
+        },
+    }
+    assert result == payload
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 408, 413])
+def test_query_table_maps_expected_backend_errors(monkeypatch, status):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"error": "query rejected"})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="query rejected"):
+        asyncio.run(mcp_server.query_table("SELECT 1"))
+
+
 def test_ingest_document_429_non_json_body_raises_generic_value_error(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, text="rate limited")
@@ -327,10 +370,25 @@ def test_ingest_document_omitted_tags_send_no_tags_field(monkeypatch):
     assert b'name="tags"' not in captured["body"]
 
 
-@pytest.mark.parametrize("filename", ["guide.pdf", "slides.pptx", "table.csv"])
+@pytest.mark.parametrize("filename", ["guide.pdf", "slides.pptx"])
 def test_ingest_document_mcp_rejects_binary_formats(filename):
     with pytest.raises(ValueError, match="text formats only"):
         asyncio.run(mcp_server.ingest_document("content", filename))
+
+
+def test_ingest_document_mcp_accepts_csv(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.content
+        return httpx.Response(
+            202,
+            json={"job_id": "job-1", "status": "queued", "status_url": "/ingest/jobs/job-1"},
+        )
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.ingest_document("name,value\none,1\n", "table.csv"))
+    assert b"name,value" in captured["body"]
 
 
 # ---- remove_document proxying ----------------------------------------------

@@ -16,6 +16,15 @@ def model_names(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def table_query_password_for_unit_tests(request, monkeypatch):
+    """Unit schema fakes receive a password without requiring deployment configuration."""
+    if request.node.get_closest_marker("integration") is None:
+        monkeypatch.setenv(
+            "TABLES_QUERY_PASSWORD", os.getenv("TABLES_QUERY_PASSWORD") or "test-only"
+        )
+
+
+@pytest.fixture(autouse=True)
 def isolate_unit_app_lifespan(request, monkeypatch):
     """Keep ordinary tests independent of Postgres-backed worker startup."""
     if request.node.get_closest_marker("integration") is not None:

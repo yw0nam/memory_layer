@@ -212,6 +212,7 @@ def test_mcp_tool_list_unaffected_by_supersede():
         "search_code",
         "search_memory",
         "save_memory",
+        "query_table",
         "ingest_document",
         "ingest_repo",
         "remove_repo",

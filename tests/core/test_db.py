@@ -128,6 +128,61 @@ def test_acquire_forwards_timeout_override(monkeypatch):
     assert pool.timeouts == [1.25]
 
 
+def test_table_query_pool_authenticates_as_dedicated_role_and_sets_jsonb_codec(monkeypatch):
+    from memory_base.core import db
+
+    captured = {}
+
+    class QueryPool:
+        pass
+
+    async def create_pool(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return QueryPool()
+
+    monkeypatch.setenv("DB_URL", "postgresql://memory:main-secret@db/memory_base")
+    monkeypatch.setenv("TABLES_QUERY_PASSWORD", "query-secret")
+    monkeypatch.setattr(db.asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(db, "_table_query_pool", None)
+    monkeypatch.setattr(db, "_table_query_pool_loop", None)
+
+    pool = asyncio.run(db.get_table_query_pool())
+
+    assert isinstance(pool, QueryPool)
+    assert captured["args"] == ("postgresql://memory:main-secret@db/memory_base",)
+    assert captured["kwargs"]["user"] == "memory_tables_query"
+    assert captured["kwargs"]["password"] == "query-secret"
+    assert captured["kwargs"]["min_size"] == 1
+    assert captured["kwargs"]["max_size"] == 2
+    assert callable(captured["kwargs"]["init"])
+
+    codec = {}
+
+    class Connection:
+        async def set_type_codec(self, typename, **kwargs):
+            codec["typename"] = typename
+            codec.update(kwargs)
+
+    asyncio.run(captured["kwargs"]["init"](Connection()))
+    assert codec["typename"] == "jsonb"
+    assert codec["schema"] == "pg_catalog"
+    assert codec["format"] == "text"
+    assert codec["decoder"]('{"value": 1}') == {"value": 1}
+
+
+def test_table_query_password_is_read_lazily(monkeypatch):
+    from memory_base.core import db
+
+    monkeypatch.setenv("DB_URL", "postgresql://unused")
+    monkeypatch.delenv("TABLES_QUERY_PASSWORD", raising=False)
+    monkeypatch.setattr(db, "_table_query_pool", None)
+    monkeypatch.setattr(db, "_table_query_pool_loop", None)
+
+    with pytest.raises(RuntimeError, match="TABLES_QUERY_PASSWORD"):
+        asyncio.run(db.get_table_query_pool())
+
+
 @pytest.mark.integration
 def test_pool_reuses_closes_and_rebinds_across_event_loops():
     from memory_base.core.db import close_pool, get_pool

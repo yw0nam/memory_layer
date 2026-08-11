@@ -267,7 +267,11 @@ def test_csv_card_hit_uses_search_ref():
         "id": "doc:table.csv:card:0",
         "source_ref": "table.csv",
         "chunk_kind": "doc",
-        "metadata": {"search_ref": "table.csv#card-0", "tags": ["data"]},
+        "metadata": {
+            "search_ref": "table.csv#card-0",
+            "tags": ["data"],
+            "columns": ["group", "value"],
+        },
         "distilled": "summary card",
         "content_raw": "summary card",
         "ts_last_active": 100.0,
@@ -277,6 +281,7 @@ def test_csv_card_hit_uses_search_ref():
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
     assert hits[0].ref == "table.csv#card-0"
+    assert hits[0].meta["columns"] == ["group", "value"]
 
 
 def test_memory_hit_falls_back_to_source_ref():
