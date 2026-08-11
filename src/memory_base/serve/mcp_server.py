@@ -282,6 +282,33 @@ async def save_memory(
 
 
 @mcp.tool()
+async def query_table(
+    sql: str,
+    namespace: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Run a read-only SQL query over ingested CSV rows.
+
+    Find the CSV card with `search_memory` first. Its `source_ref` is the
+    `document_id`, and its meta.columns lists the available JSON keys. Rows
+    live in `memory.doc_rows` as jsonb: use `(data->>'column')::numeric` for
+    numeric calculations and `WHERE document_id = '...'` to scope one table.
+    The server restricts the query to one permitted namespace and returns at
+    most 1,000 rows.
+    """
+    body: dict[str, Any] = {"sql": sql}
+    if namespace is not None:
+        body["namespace"] = namespace
+    return await _call(
+        "POST",
+        "/tables/query",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403, 408, 413}),
+    )
+
+
+@mcp.tool()
 async def ingest_document(
     content: str,
     filename: str,
@@ -295,7 +322,7 @@ async def ingest_document(
     """Queue a text document for conversion, chunking, and atomic storage.
 
     The filename must use a supported text extension: .md, .markdown, .txt,
-    .rst, .html, or .htm. Binary documents upload through REST directly.
+    .rst, .html, .htm, or .csv. Binary documents upload through REST directly.
 
     `namespace` picks one namespace the caller's API key can access; omitted,
     the document lands in the key's home namespace. A namespace the key

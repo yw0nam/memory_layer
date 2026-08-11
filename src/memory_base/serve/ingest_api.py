@@ -27,6 +27,7 @@ from memory_base.adapters.document import (
     convert_to_markdown,
     extension_for,
     map_csv_card_row,
+    map_csv_table_rows,
     map_document_rows,
     normalize_document_id,
     read_csv_sample,
@@ -82,15 +83,17 @@ class IngestJob(JobBase):
         return "document"
 
 
-async def _existing_content_hash(
+async def _existing_document_state(
     document_id: str, namespace: str = "default", schema: str | None = None
-) -> str | None:
+) -> tuple[str | None, bool] | None:
     schema = PG_SCHEMA if schema is None else schema
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
-        return await conn.fetchval(
+        row = await conn.fetchrow(
             f"""
-            SELECT metadata->>'content_hash'
+            SELECT metadata->>'content_hash' AS content_hash,
+                   COALESCE(metadata->'table_rows_loaded' = 'true'::jsonb, false)
+                     AS table_rows_loaded
             FROM "{schema}".memory_chunks
             WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
             LIMIT 1
@@ -98,6 +101,9 @@ async def _existing_content_hash(
             document_id,
             namespace,
         )
+        if row is None:
+            return None
+        return row["content_hash"], row["table_rows_loaded"]
 
 
 async def _existing_document_owner(
@@ -129,14 +135,20 @@ async def delete_document_rows(
     schema = PG_SCHEMA if schema is None else schema
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
-        status = await conn.execute(
-            f"""
-            DELETE FROM "{schema}".memory_chunks
-            WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
-            """,
-            document_id,
-            namespace,
-        )
+        async with conn.transaction():
+            status = await conn.execute(
+                f"""
+                DELETE FROM "{schema}".memory_chunks
+                WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
+                """,
+                document_id,
+                namespace,
+            )
+            await conn.execute(
+                f'DELETE FROM "{schema}".doc_rows WHERE namespace = $1 AND document_id = $2',
+                namespace,
+                document_id,
+            )
         return int(status.rsplit(" ", 1)[-1])
 
 
@@ -145,8 +157,9 @@ async def replace_document_rows(
     rows: Sequence[dict[str, Any]],
     namespace: str = "default",
     schema: str | None = None,
+    table_rows: Sequence[dict[str, Any]] = (),
 ) -> None:
-    """Replace one document's rows, within one namespace, in a single transaction.
+    """Replace one document's card, chunks, and table rows in a single transaction.
 
     schema overrides PG_SCHEMA for this call; only the eval harness passes it.
     """
@@ -161,6 +174,11 @@ async def replace_document_rows(
                 """,
                 document_id,
                 namespace,
+            )
+            await conn.execute(
+                f'DELETE FROM "{schema}".doc_rows WHERE namespace = $1 AND document_id = $2',
+                namespace,
+                document_id,
             )
             await conn.executemany(
                 f"""
@@ -187,6 +205,23 @@ async def replace_document_rows(
                     for row in rows
                 ],
             )
+            if table_rows:
+                await conn.executemany(
+                    f"""
+                    INSERT INTO "{schema}".doc_rows
+                      (namespace, document_id, row_index, data)
+                    VALUES ($1, $2, $3, $4::jsonb)
+                    """,
+                    [
+                        (
+                            namespace,
+                            document_id,
+                            row["row_index"],
+                            json.dumps(row["data"], ensure_ascii=False),
+                        )
+                        for row in table_rows
+                    ],
+                )
 
 
 def _file_hash(path: Path) -> str:
@@ -211,7 +246,7 @@ async def _csv_rows(
     origin: str | None,
     now: float,
     namespace: str = "default",
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     job.touch(stage="chunking")
     await job_store.update_document_progress(job)
     sample = read_csv_sample(upload_path)
@@ -237,18 +272,21 @@ async def _csv_rows(
 
     card = await build_csv_card(sample, summarize)
     job.chunks_done = 1
-    return [
-        map_csv_card_row(
-            card,
-            sample,
-            filename=filename,
-            document_id=job.document_id,
-            content_hash=content_hash,
-            origin=origin,
-            timestamp=now,
-            namespace=namespace,
-        )
-    ]
+    return (
+        [
+            map_csv_card_row(
+                card,
+                sample,
+                filename=filename,
+                document_id=job.document_id,
+                content_hash=content_hash,
+                origin=origin,
+                timestamp=now,
+                namespace=namespace,
+            )
+        ],
+        map_csv_table_rows(sample),
+    )
 
 
 async def _markdown_rows(
@@ -313,16 +351,22 @@ async def run_document_job(
     content_hash = _file_hash(upload_path)
     job.content_hash = content_hash
     await job_store.update_document_progress(job)
+    extension = extension_for(filename)
     if mode == "upsert":
-        existing_hash = await _existing_content_hash(job.document_id, namespace, schema=schema)
-        if existing_hash == content_hash:
+        existing = await _existing_document_state(job.document_id, namespace, schema=schema)
+        if existing is not None:
+            existing_hash, table_rows_loaded = existing
+        else:
+            existing_hash, table_rows_loaded = None, False
+        if existing_hash == content_hash and (extension != ".csv" or table_rows_loaded):
             job.touch(status="no_op", stage="done")
             return
 
-    extension = extension_for(filename)
     now = time.time()
     if extension == ".csv":
-        rows = await _csv_rows(job, upload_path, filename, content_hash, origin, now, namespace)
+        rows, table_rows = await _csv_rows(
+            job, upload_path, filename, content_hash, origin, now, namespace
+        )
     else:
         rows = await _markdown_rows(
             job,
@@ -334,6 +378,7 @@ async def run_document_job(
             now,
             namespace,
         )
+        table_rows = []
 
     if not rows:
         raise DocumentError("document produced zero accepted rows")
@@ -350,7 +395,13 @@ async def run_document_job(
     await _embed_rows(rows)
     job.touch(stage="writing")
     await job_store.update_document_progress(job)
-    await replace_document_rows(job.document_id, rows, namespace, schema=schema)
+    await replace_document_rows(
+        job.document_id,
+        rows,
+        namespace,
+        schema=schema,
+        table_rows=table_rows,
+    )
     job.rows_written = len(rows)
     job.touch(status="succeeded", stage="done")
 

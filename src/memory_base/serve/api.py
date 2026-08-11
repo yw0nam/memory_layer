@@ -28,6 +28,7 @@ from memory_base.serve import ingest_api
 from memory_base.serve import job_store
 from memory_base.serve import namespaces
 from memory_base.serve import repos
+from memory_base.serve import tables
 from memory_base.serve.auth import ApiKeyAuthMiddleware
 from memory_base.serve.http import TEXT_LIMIT
 from memory_base.serve.http import error
@@ -55,6 +56,8 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         out["context"] = context
     if hit.meta.get("archived"):
         out["archived"] = True
+    if "columns" in hit.meta:
+        out["columns"] = hit.meta["columns"]
     return out
 
 
@@ -357,6 +360,7 @@ async def lifespan(app: Starlette):
     finally:
         await access_log.stop_flusher(flusher)
         await job_store.stop_workers(workers)
+        await db.close_table_query_pool()
         await db.close_pool()
 
 
@@ -368,6 +372,7 @@ app = Starlette(
         Route("/health/services", health_services, methods=["GET"]),
         Route("/search", search_route, methods=["POST"]),
         Route("/save_memory", save_memory_route, methods=["POST"]),
+        Route("/tables/query", tables.tables_query_route, methods=["POST"]),
         Route("/ingest/document", ingest_api.ingest_document_route, methods=["POST"]),
         Route("/ingest/jobs", ingest_api.ingest_jobs_route, methods=["GET"]),
         Route("/ingest/jobs/{job_id}", ingest_api.ingest_job_route, methods=["GET"]),

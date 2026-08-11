@@ -18,8 +18,9 @@ from typing import Any
 SUPPORTED_EXTENSIONS = frozenset(
     {".md", ".markdown", ".txt", ".rst", ".html", ".htm", ".pdf", ".docx", ".pptx", ".csv"}
 )
-MCP_TEXT_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".rst", ".html", ".htm"})
+MCP_TEXT_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".rst", ".html", ".htm", ".csv"})
 CSV_MAX_BYTES = 5 * 1024 * 1024
+CSV_MAX_ROWS = 100_000
 CONVERSION_MAX_BYTES = 16 * 1024 * 1024
 CONVERSION_TIMEOUT_SECONDS = 120
 EXTRACTED_MAX_CHARS = 2_000_000
@@ -322,32 +323,44 @@ async def convert_to_markdown(input_path: Path) -> ConversionResult:
 
 
 def read_csv_sample(path: Path) -> CSVSample:
-    """Read CSV structure and retain only the header and first twenty rows."""
+    """Read and validate a complete CSV while retaining its verbatim cell strings."""
     if path.stat().st_size > CSV_MAX_BYTES:
         raise DocumentError("CSV exceeds 5 MB")
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as source:
             reader = csv.reader(source, strict=True)
-            header = next(reader)
-            if not header or not any(cell.strip() for cell in header):
+            try:
+                header = next(reader)
+            except StopIteration as exc:
+                raise DocumentError("CSV header must not be empty") from exc
+            if not header:
                 raise DocumentError("CSV header must not be empty")
-            sample_rows: list[list[str]] = []
-            row_count = 0
-            column_count = len(header)
-            for row in reader:
-                row_count += 1
-                column_count = max(column_count, len(row))
-                if len(sample_rows) < 20:
-                    sample_rows.append(row)
-    except (UnicodeDecodeError, csv.Error, StopIteration) as exc:
+            if any(not name.strip() for name in header):
+                raise DocumentError("CSV header names must not be empty")
+            if len(set(header)) != len(header):
+                raise DocumentError("CSV has duplicate header names")
+            if any("\x00" in name for name in header):
+                raise DocumentError("CSV contains a NUL character")
+            rows: list[list[str]] = []
+            for row_number, row in enumerate(reader, start=1):
+                if row_number > CSV_MAX_ROWS:
+                    raise DocumentError(f"CSV exceeds {CSV_MAX_ROWS} rows")
+                if len(row) != len(header):
+                    raise DocumentError(
+                        f"CSV row {row_number} has {len(row)} cells; expected {len(header)}"
+                    )
+                if any("\x00" in cell for cell in row):
+                    raise DocumentError("CSV contains a NUL character")
+                rows.append(row)
+    except (UnicodeDecodeError, csv.Error) as exc:
         raise DocumentError(f"malformed CSV: {exc}") from exc
-    return CSVSample(header, sample_rows, row_count, column_count)
+    return CSVSample(header, rows, len(rows), len(header))
 
 
 def csv_prompt_context(sample: CSVSample) -> str:
     """Build format-specific context for generic summary enrichment."""
     rendered = [",".join(sample.header)]
-    rendered.extend(",".join(row) for row in sample.rows)
+    rendered.extend(",".join(row) for row in sample.rows[:20])
     return (
         "Create one English knowledge card describing this table, its fields, and useful "
         f"patterns visible in the sample. Total data rows: {sample.row_count}. "
@@ -485,9 +498,25 @@ def map_csv_card_row(
             "format": "csv",
             "row_count": sample.row_count,
             "column_count": sample.column_count,
+            "columns": sample.header,
+            "table_rows_loaded": True,
             "content_hash": content_hash,
             "origin": origin,
             "tags": card["tags"],
             "search_ref": f"{document_id}#card-{card_index}",
         },
     )
+
+
+def map_csv_table_rows(sample: CSVSample) -> list[dict[str, Any]]:
+    """Map every CSV data row to its ordered jsonb storage representation."""
+    return [
+        {
+            "row_index": row_index,
+            "data": {
+                name: None if value == "" else value
+                for name, value in zip(sample.header, row, strict=True)
+            },
+        }
+        for row_index, row in enumerate(sample.rows)
+    ]
