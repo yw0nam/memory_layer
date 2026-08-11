@@ -32,6 +32,8 @@ def record_retrieval(
     hit_ids = [hit.ref if hit.source == "code" else hit.meta.get("id", hit.ref) for hit in hits]
     _pending_logs.append((query, source, hit_ids, now))
     for hit in hits:
+        if hit.source == "code":
+            continue
         chunk_id = hit.meta.get("id")
         if not chunk_id:
             continue
