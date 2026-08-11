@@ -1,11 +1,15 @@
 # memory-base
 
-A selective memory layer for coding agents: distilled notes, chunked documents, and
-indexed code in one pgvector store, served through a single REST API and an MCP server.
+A selective memory layer for coding agents: distilled notes, chunked documents, indexed
+code, and SQL-queryable tables in one pgvector store, served through a single REST API
+and an MCP server.
 
-Only high-signal content is stored. Agent notes arrive already distilled, documents pass
-through deterministic chunking and a junk gate before embedding, and code is chunked by
-tree-sitter. Raw transcripts and raw files are never embedded.
+Only high-signal content is embedded. Agent notes arrive already distilled, documents
+pass through deterministic chunking and a junk gate before embedding, and code is
+chunked by tree-sitter. Raw transcripts and raw files are never embedded. Tabular
+documents additionally keep their data rows as structured, never-embedded rows behind a
+read-only SQL interface, so questions about the numbers are computed rather than
+retrieved.
 
 ## Architecture
 
@@ -15,22 +19,22 @@ tree-sitter. Raw transcripts and raw files are never embedded.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | SSE :8765)
         ▼
-   ┌─────────────┐  8 tools: search / search_code / search_memory / save_memory
-   │ mcp_server  │           ingest_document / ingest_repo / remove_repo
-   └──────┬──────┘           list_repos                    (thin proxy, no logic)
-          │ HTTP
+   ┌─────────────┐  10 tools: search / search_code / search_memory / save_memory
+   │ mcp_server  │            ingest_document / remove_document / query_table
+   └──────┬──────┘            ingest_repo / remove_repo / list_repos
+          │ HTTP                                       (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
    ║              REST API  :8010   (the only backend)         ║
    ╚═╤═══════════════╤═══════════════╤═══════════════╤═════════╝
      │ WRITE         │ WRITE         │ WRITE         │ READ + LIFECYCLE
      ▼               ▼               ▼               ▼
-  notes.py     ingest_api.py     repos.py      search.py · admin.py
+  notes.py     ingest_api.py     repos.py      search.py · tables.py · admin.py
      │               │               │               │
      └───────────────┴───────┬───────┴───────────────┘
                              ▼
               Postgres 17 + pgvector + pg_textsearch  :5439
-              memory_chunks · code_chunks · jobs · retrieval_log
+              memory_chunks · code_chunks · doc_rows · jobs · retrieval_log
 
   side services:  vLLM (LLM / embedding / rerank)
 ```
@@ -70,8 +74,14 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
 │ halfvec(2048) + HNSW + BM25          │      │ halfvec + HNSW + BM25  │
 └──────────────────────────────────────┘      └────────────────────────┘
         ▲                                                ▲
-        └──── the only contract between write and read ──┘
+        └────── the write→read contract, with one more ──┘
+               memory.doc_rows — tabular rows, SQL-only
 ```
+
+Three tables are the entire contract between the write side and the read side:
+`memory_chunks` and `code_chunks` feed search, and `doc_rows` holds a tabular
+document's data rows for the SQL read path alone — never embedded, never returned by
+search ([ADR-0001](docs/adr/0001-table-rows-third-read-contract.md)).
 
 Notes are stored exactly as written — the server never summarizes. The response carries
 `similar[]`: active notes above `NOTE_SIMILAR_THRESHOLD` cosine, so the caller can
@@ -87,9 +97,23 @@ observable at `GET /ingest/jobs/{job_id}` and listable at `GET /ingest/jobs`, wi
 embedding → writing → done`, with `chunks_total`, `chunks_done`, `chunks_dropped`,
 `rows_written`, and `enrichment_retries`. Re-uploading identical bytes in `upsert` mode
 short-circuits to `no_op`. Markdown ingest calls no LLM: chunks are stored as written, and
-the optional repeated `tags` upload field lands on every chunk of the document. CSV takes a
-sampling branch instead: header plus the first 20 rows become one LLM-summarized knowledge
-card through an extra `enriching` stage.
+the optional repeated `tags` upload field lands on every chunk of the document.
+
+CSV takes a tabular branch instead. Every data row is validated (unique non-empty
+headers, consistent row width, no NUL bytes, ≤5 MB and ≤100,000 rows) and stored
+verbatim in `memory.doc_rows` — cells as strings, empty cells as JSON null — in the same
+transaction that publishes the document's one LLM-summarized knowledge Card. The Card is
+the only embedded artifact: its metadata carries the `columns` list and marks the rows
+as loaded, and search hits expose those columns next to the `document_id` handle, so a
+consumer can go from a search hit straight to a SQL query. A same-bytes upsert of a CSV
+whose rows are not yet loaded re-runs the pipeline instead of no-opping.
+
+Every document chunk records its creator: ingestion stamps the authenticated key's label
+into metadata as `created_by`, fixed at first ingest and never rewritten by later
+uploads. Overwriting an existing `document_id` (any mode) and deleting a document are
+allowed only for that creator or an admin key; a document with no `created_by` record is
+admin-only, fail-closed. `DELETE /ingest/documents/{document_id}?namespace=…` removes
+the document's chunks and its `doc_rows` together.
 
 Repo jobs use the same durable jobs table and dispatch one at a time, so interrupted clone,
 pull, remove, and index work is retried after an API restart.
@@ -152,7 +176,43 @@ cycle prunes `retrieval_log` rows older than `RETRIEVAL_LOG_RETENTION_DAYS` at s
 then at most hourly. An unclean stop loses at most one interval of counters, which only feed
 lifecycle decisions.
 
-### Lifecycle loop
+### Read path — table SQL (`POST /tables/query`)
+
+Tabular questions are answered by computing over stored rows, not by retrieval. The
+working loop:
+
+```
+search_memory("developer productivity sleep")
+  └► hit: ref = "developer-productivity-metrics#card-0"
+         columns = ["developer_id", "ai_usage", "sleep_hours", "commits"]
+              │     source_ref is the document_id, columns are the JSON keys
+              ▼
+POST /tables/query  {"sql": "...", "namespace": "default"}
+  SELECT data->>'ai_usage'                        AS grp,
+         AVG((data->>'sleep_hours')::numeric)     AS mean_sleep
+  FROM memory.doc_rows
+  WHERE document_id = 'developer-productivity-metrics'
+  GROUP BY 1
+              │
+              ▼
+  {"columns": ["grp", "mean_sleep"], "rows": [["high", 6.5], …],
+   "row_count": 3, "truncated": false}
+```
+
+Rows are jsonb: cast for numbers (`(data->>'col')::numeric`), filter by `document_id` to
+scope one table, or aggregate across every table in the namespace by leaving the filter
+off. Results cap at 1,000 rows (`truncated: true` beyond that — page with `row_index`
+ranges), responses at 5 MB, statements at 10 s (`408`). Decimal, date, and UUID values
+arrive JSON-normalized.
+
+The SQL author is an LLM, so the lane is fenced at the database, not by string
+inspection. Queries must start with `SELECT`/`WITH` and run on a dedicated pool
+authenticated as `memory_tables_query` — a role with `SELECT` on `memory.doc_rows` and
+nothing else — inside a read-only transaction, single-statement by protocol, with forced
+row-level security pinning each request to its validated namespace. Side-effect
+functions (`set_config`, `pg_notify`, advisory locks) are revoked, and role-level
+resource limits bound memory and lock waits. Other Postgres errors return `400` with the
+engine's message so the caller can correct its SQL.
 
 ```
  row returned by a search ──► buffered, then flushed
@@ -207,14 +267,20 @@ known trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active`, `idf_score` | ranking signals |
-| `metadata` | jsonb: `tags`, `heading_path`, `content_hash`, `search_ref`, … |
+| `metadata` | jsonb: `tags`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 
 `memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,
 `code`, `embedding`, `start_line`, `end_line`, `mtime` (last commit time).
 
-These two tables are the only contract between the write side and the read side. Adding a
-source means adding an adapter, not touching retrieval or serving.
+`memory.doc_rows` — a tabular document's data rows: `namespace`, `document_id`,
+`row_index`, `data` (jsonb, one object per row keyed by the CSV header). No embedding,
+no search indexes; read exclusively by `POST /tables/query` under the restricted role,
+written and deleted in the same transactions as the document's Card.
+
+These three tables are the only contract between the write side and the read side
+([ADR-0001](docs/adr/0001-table-rows-third-read-contract.md)). Adding a source means
+adding an adapter, not touching retrieval or serving.
 
 ## REST API
 
@@ -224,7 +290,9 @@ source means adding an adapter, not touching retrieval or serving.
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `repo`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, `kind`, `tags`, and the optional id of a prior note to archive |
-| `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, repeated `tags` |
+| `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, repeated `tags`; overwriting an existing `document_id` is creator-or-admin only |
+| `DELETE` | `/ingest/documents/{document_id}` | remove a document's chunks and table rows in one namespace (`namespace` query param, default the key's home) — the document's creator or an admin key only |
+| `POST` | `/tables/query` | read-only SQL over `memory.doc_rows` — `sql` (`SELECT`/`WITH`), `namespace`; 1,000-row / 5 MB / 10 s caps |
 | `GET` | `/ingest/jobs` | newest document jobs, optionally filtered by exact `origin` and `status` |
 | `GET` | `/ingest/jobs/{job_id}` | document job state |
 | `POST` | `/repos` | add or re-sync a git repo — `url`, `branch`, `name` |
@@ -252,7 +320,8 @@ stdio by default; `MCP_TRANSPORT=sse|streamable-http` with `MCP_HOST`/`MCP_PORT`
 over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
 `search` · `search_code` · `search_memory` · `save_memory` ·
-`ingest_document` (text formats only) · `ingest_repo` · `remove_repo` · `list_repos`
+`ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
+`ingest_repo` · `remove_repo` · `list_repos`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind` and `tags` only where `source="memory"` holds,
@@ -327,6 +396,7 @@ The MCP server needs the same header: over streamable HTTP it forwards the calle
 | `DB_POOL_MIN`, `DB_POOL_MAX` | asyncpg pool size bounds (default `1` / `10`) |
 | `DB_POOL_ACQUIRE_TIMEOUT` | seconds to wait for a pooled connection before failing (default `30`) |
 | `POSTGRES_PASSWORD` | required; consumed by docker-compose for the db service and the api `DB_URL` |
+| `TABLES_QUERY_PASSWORD` | required; login password of `memory_tables_query`, the restricted role the SQL table lane connects as — set and kept current by `ensure_schema` at startup |
 | `DATA_ROOT` | required; host directory docker-compose mounts persisted state under (`pgdata`, `repos_cache`, `cocoindex_state`, `ingest-spool`) |
 | `REPO_CACHE` | git checkout root |
 | `INGEST_SPOOL` | durable uploaded-document spool root |
