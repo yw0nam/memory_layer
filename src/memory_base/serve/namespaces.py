@@ -135,7 +135,13 @@ async def delete_namespace(name: str) -> None:
             if not await _exists_in_conn(conn, name):
                 raise NamespaceNotFoundError(f"unknown namespace: {name}")
             has_rows = await conn.fetchval(
-                f'SELECT EXISTS(SELECT 1 FROM "{PG_SCHEMA}".memory_chunks WHERE namespace = $1)',
+                f"""
+                SELECT EXISTS(
+                  SELECT 1 FROM "{PG_SCHEMA}".memory_chunks WHERE namespace = $1
+                ) OR EXISTS(
+                  SELECT 1 FROM "{PG_SCHEMA}".doc_rows WHERE namespace = $1
+                )
+                """,
                 name,
             )
             if has_rows:

@@ -305,11 +305,31 @@ def test_ingest_document_explicit_namespace_forwarded(monkeypatch):
     assert b"team-a" in captured["body"]
 
 
+def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["headers"] = request.headers
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"columns": [], "rows": [], "row_count": 0, "truncated": False},
+        )
+
+    _patch_client(monkeypatch, handler)
+    ctx = FakeCtx({"X-API-Key": "caller-key"})
+    asyncio.run(mcp_server.query_table("SELECT 1", namespace="team-a", ctx=ctx))
+
+    assert captured["headers"]["x-api-key"] == "caller-key"
+    assert captured["json"] == {"sql": "SELECT 1", "namespace": "team-a"}
+
+
 @pytest.mark.parametrize(
     "tool_call",
     [
         pytest.param(lambda: mcp_server.search_memory(query="q"), id="search"),
         pytest.param(lambda: mcp_server.save_memory("content"), id="save-memory"),
+        pytest.param(lambda: mcp_server.query_table("SELECT 1"), id="query-table"),
         pytest.param(
             lambda: mcp_server.ingest_document("content", "guide.md"), id="ingest-document"
         ),

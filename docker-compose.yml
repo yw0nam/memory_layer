@@ -22,6 +22,7 @@ services:
       - "8010:8010"
     environment:
       DB_URL: postgres://memory:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/memory_base
+      TABLES_QUERY_PASSWORD: ${TABLES_QUERY_PASSWORD:?set TABLES_QUERY_PASSWORD in .env}
       COCOINDEX_DB: /data/cocoindex_state
       EMB_URL: ${EMB_URL}
       RERANK_URL: ${RERANK_URL}
@@ -62,3 +63,4 @@ services:
     environment:
       MCP_TRANSPORT: streamable-http
       REST_URL: http://api:8010
+      TABLES_QUERY_PASSWORD: ${TABLES_QUERY_PASSWORD:?set TABLES_QUERY_PASSWORD in .env}

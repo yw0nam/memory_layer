@@ -11,6 +11,7 @@ COMPOSE = yaml.safe_load(
     (pathlib.Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text()
 )
 API = COMPOSE["services"]["api"]
+MCP = COMPOSE["services"]["mcp"]
 STATEFUL_SERVICES = ("db", "api")
 DATA_ROOT = re.compile(r"^\$\{DATA_ROOT:\?[^}]+\}/")
 
@@ -83,6 +84,12 @@ def test_api_receives_every_backend_endpoint_and_model_name():
     """Anything the container reads from the environment must be forwarded to it."""
     for name in ("LLM_URL", "EMB_URL", "RERANK_URL", "LLM_MODEL", "EMB_MODEL", "RERANK_MODEL"):
         assert API["environment"][name] == f"${{{name}}}"
+
+
+def test_query_password_is_forwarded_to_api_and_mcp():
+    expected = "${TABLES_QUERY_PASSWORD:?set TABLES_QUERY_PASSWORD in .env}"
+    assert API["environment"]["TABLES_QUERY_PASSWORD"] == expected
+    assert MCP["environment"]["TABLES_QUERY_PASSWORD"] == expected
 
 
 def test_api_depends_only_on_postgres():

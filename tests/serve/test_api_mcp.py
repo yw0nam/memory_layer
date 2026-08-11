@@ -79,6 +79,13 @@ def test_hit_to_dict_omits_archived_key_for_live_hits():
     assert "archived" not in api.hit_to_dict(_hit())
 
 
+def test_hit_to_dict_exposes_csv_columns_when_present():
+    assert api.hit_to_dict(_hit(meta={"columns": ["group", "value"]}))["columns"] == [
+        "group",
+        "value",
+    ]
+
+
 # ---- MCP server in-process tool registration --------------------------------
 
 
@@ -102,6 +109,7 @@ def test_mcp_server_registers_expected_tools():
         "search_code",
         "search_memory",
         "save_memory",
+        "query_table",
         "ingest_document",
         "ingest_repo",
         "remove_repo",

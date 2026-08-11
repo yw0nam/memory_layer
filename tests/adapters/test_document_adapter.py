@@ -225,7 +225,7 @@ def test_csv_sample_and_card_builder_use_header_first_twenty_rows(tmp_path):
     path.write_text("name,value\n" + "\n".join(f"row-{i},{i}" for i in range(25)))
     sample = document.read_csv_sample(path)
     assert sample.header == ["name", "value"]
-    assert len(sample.rows) == 20
+    assert len(sample.rows) == 25
     assert sample.row_count == 25
     assert sample.column_count == 2
 
@@ -258,6 +258,8 @@ def test_csv_card_row_mapping():
     assert row["content_raw"] == row["distilled"]
     assert row["metadata"]["search_ref"] == "names.csv#card-0"
     assert row["metadata"]["row_count"] == 1
+    assert row["metadata"]["columns"] == ["name"]
+    assert row["metadata"]["table_rows_loaded"] is True
     assert row["namespace"] == "default"
 
 
@@ -282,4 +284,57 @@ def test_csv_size_cap_is_enforced_before_reading(tmp_path):
     path = tmp_path / "large.csv"
     path.write_bytes(b"x" * (document.CSV_MAX_BYTES + 1))
     with pytest.raises(document.DocumentError, match="5 MB"):
+        document.read_csv_sample(path)
+
+
+def test_csv_all_rows_map_to_verbatim_json_cells_with_empty_cells_as_null(tmp_path):
+    path = tmp_path / "data.csv"
+    path.write_text('name,note,value\n" Alice ","x,y",\nBob,  spaced  ,0\n')
+
+    sample = document.read_csv_sample(path)
+    rows = document.map_csv_table_rows(sample)
+
+    assert rows == [
+        {"row_index": 0, "data": {"name": " Alice ", "note": "x,y", "value": None}},
+        {"row_index": 1, "data": {"name": "Bob", "note": "  spaced  ", "value": "0"}},
+    ]
+
+
+def test_csv_duplicate_header_names_are_rejected(tmp_path):
+    path = tmp_path / "duplicate.csv"
+    path.write_text("name,name\none,two\n")
+
+    with pytest.raises(document.DocumentError, match="duplicate header"):
+        document.read_csv_sample(path)
+
+
+def test_csv_empty_header_name_is_rejected(tmp_path):
+    path = tmp_path / "empty-header.csv"
+    path.write_text("name,   \none,two\n")
+
+    with pytest.raises(document.DocumentError, match="header names must not be empty"):
+        document.read_csv_sample(path)
+
+
+def test_csv_row_width_must_match_header(tmp_path):
+    path = tmp_path / "width.csv"
+    path.write_text("name,value\none\n")
+
+    with pytest.raises(document.DocumentError, match="row 1 has 1 cells; expected 2"):
+        document.read_csv_sample(path)
+
+
+def test_csv_nul_character_is_rejected(tmp_path):
+    path = tmp_path / "nul.csv"
+    path.write_bytes(b"name,value\none,ab\x00cd\n")
+
+    with pytest.raises(document.DocumentError, match="NUL"):
+        document.read_csv_sample(path)
+
+
+def test_csv_row_cap_is_enforced(tmp_path):
+    path = tmp_path / "too-many.csv"
+    path.write_text("value\n" + "1\n" * (document.CSV_MAX_ROWS + 1))
+
+    with pytest.raises(document.DocumentError, match="100000 rows"):
         document.read_csv_sample(path)

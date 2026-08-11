@@ -296,6 +296,16 @@ async def _search_memory(
     for cid, score in scores.items():
         r = by_id[cid]
         metadata = metadata_dict(r["metadata"])
+        hit_meta = {
+            "id": cid,
+            "raw": r["content_raw"],
+            "kind": r["chunk_kind"],
+            "tags": metadata.get("tags", []),
+            "source_ref": r["source_ref"],
+            "archived": r["archived_at"] is not None,
+        }
+        if "columns" in metadata:
+            hit_meta["columns"] = metadata["columns"]
         hits.append(
             Hit(
                 source="memory",
@@ -303,14 +313,7 @@ async def _search_memory(
                 text=r["distilled"] or r["content_raw"],
                 ts=r["ts_last_active"],
                 rrf=score,
-                meta={
-                    "id": cid,
-                    "raw": r["content_raw"],
-                    "kind": r["chunk_kind"],
-                    "tags": metadata.get("tags", []),
-                    "source_ref": r["source_ref"],
-                    "archived": r["archived_at"] is not None,
-                },
+                meta=hit_meta,
             )
         )
     return hits
