@@ -27,8 +27,21 @@ _Avoid_: file, doc, upload
 **Card**:
 A single distilled description of a tabular document — its fields, shape, and the
 patterns visible in a sample — standing in for data that would be noise if chunked
-directly. Distinct from the chunks of a prose document.
+directly. Distinct from the chunks of a prose document. The card is also the handle to
+the document's table rows: it carries the column list and the document id a SQL query
+needs.
 _Avoid_: summary, table summary, doc chunk
+
+**Table rows**:
+A tabular document's data rows, stored verbatim in `doc_rows` and read exclusively
+through the SQL query lane. Never embedded, never returned by search — the card is
+found, the rows are computed over.
+_Avoid_: table chunks, row chunks, records
+
+**Creator**:
+The key label that first ingested a document or repo. Fixed at first ingest; the only
+non-admin identity allowed to overwrite or delete it.
+_Avoid_: owner (reserved for namespaces), author, uploader
 
 **Code chunk**:
 A span of source lines from an indexed repository. Retrieved from its own lane, separate from memories.
