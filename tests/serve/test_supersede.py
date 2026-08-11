@@ -215,6 +215,7 @@ def test_mcp_tool_list_unaffected_by_supersede():
         "ingest_document",
         "ingest_repo",
         "remove_repo",
+        "remove_document",
         "list_repos",
     }
 

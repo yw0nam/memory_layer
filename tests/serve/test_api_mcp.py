@@ -105,5 +105,6 @@ def test_mcp_server_registers_expected_tools():
         "ingest_document",
         "ingest_repo",
         "remove_repo",
+        "remove_document",
         "list_repos",
     }

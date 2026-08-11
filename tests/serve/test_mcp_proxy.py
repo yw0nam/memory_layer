@@ -54,6 +54,7 @@ def test_tool_list_includes_document_ingestion():
         "ingest_document",
         "ingest_repo",
         "remove_repo",
+        "remove_document",
         "list_repos",
     }
 
@@ -330,3 +331,59 @@ def test_ingest_document_omitted_tags_send_no_tags_field(monkeypatch):
 def test_ingest_document_mcp_rejects_binary_formats(filename):
     with pytest.raises(ValueError, match="text formats only"):
         asyncio.run(mcp_server.ingest_document("content", filename))
+
+
+# ---- remove_document proxying ----------------------------------------------
+
+
+def test_remove_document_deletes_with_default_namespace(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(
+            200, json={"document_id": "guide.md", "namespace": "default", "deleted": 3}
+        )
+
+    _patch_client(monkeypatch, handler)
+    result = asyncio.run(mcp_server.remove_document("guide.md"))
+    assert captured["method"] == "DELETE"
+    assert captured["path"] == "/ingest/documents/guide.md"
+    assert captured["params"] == {}
+    assert result == {"document_id": "guide.md", "namespace": "default", "deleted": 3}
+
+
+def test_remove_document_forwards_namespace(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(
+            200, json={"document_id": "guide.md", "namespace": "team-a", "deleted": 1}
+        )
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.remove_document("guide.md", namespace="team-a"))
+    assert captured["params"] == {"namespace": "team-a"}
+
+
+def test_remove_document_403_raises_backend_error_message(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403, json={"error": "only the document owner or an admin can delete this document"}
+        )
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="only the document owner or an admin"):
+        asyncio.run(mcp_server.remove_document("guide.md"))
+
+
+def test_remove_document_404_raises_backend_error_message(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "document not found"})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="document not found"):
+        asyncio.run(mcp_server.remove_document("ghost.md"))
