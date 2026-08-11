@@ -100,6 +100,46 @@ async def _existing_content_hash(
         )
 
 
+async def _existing_document_owner(
+    document_id: str, namespace: str = "default", schema: str | None = None
+) -> tuple[bool, str | None]:
+    """Whether a document has stored chunks in this namespace, and its recorded creator."""
+    schema = PG_SCHEMA if schema is None else schema
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        row = await conn.fetchrow(
+            f"""
+            SELECT metadata->>'created_by' AS created_by
+            FROM "{schema}".memory_chunks
+            WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
+            LIMIT 1
+            """,
+            document_id,
+            namespace,
+        )
+        if row is None:
+            return False, None
+        return True, row["created_by"]
+
+
+async def delete_document_rows(
+    document_id: str, namespace: str = "default", schema: str | None = None
+) -> int:
+    """Delete a document's chunks in one namespace; returns the number of rows removed."""
+    schema = PG_SCHEMA if schema is None else schema
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        status = await conn.execute(
+            f"""
+            DELETE FROM "{schema}".memory_chunks
+            WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
+            """,
+            document_id,
+            namespace,
+        )
+        return int(status.rsplit(" ", 1)[-1])
+
+
 async def replace_document_rows(
     document_id: str,
     rows: Sequence[dict[str, Any]],
@@ -299,6 +339,12 @@ async def run_document_job(
         raise DocumentError("document produced zero accepted rows")
     if len(rows) > MAX_TOTAL_ROWS:
         raise DocumentError("document exceeds 5000 total rows")
+    _, existing_created_by = await _existing_document_owner(
+        job.document_id, namespace, schema=schema
+    )
+    created_by = existing_created_by or job.key_label
+    for row in rows:
+        row.setdefault("metadata", {})["created_by"] = created_by
     job.touch(stage="embedding")
     await job_store.update_document_progress(job)
     await _embed_rows(rows)
@@ -390,6 +436,11 @@ async def ingest_document_route(request: Request) -> JSONResponse:
         await upload.close()
         return error(f"unregistered namespace: {namespace}", 400)
 
+    exists, existing_created_by = await _existing_document_owner(document_id, namespace)
+    if exists and not key.is_admin and existing_created_by != key.label:
+        await upload.close()
+        return error("only the document owner or an admin can overwrite this document", 403)
+
     try:
         upload_path = await _copy_upload(upload, extension)
     except OverflowError as exc:
@@ -432,6 +483,25 @@ async def ingest_job_route(request: Request) -> JSONResponse:
     if job is None:
         return error("ingest job not found", 404)
     return JSONResponse(job.response())
+
+
+async def remove_document_route(request: Request) -> JSONResponse:
+    """Delete a document's chunks in one namespace; restricted to its creator or an admin.
+
+    `namespace` is a query parameter defaulting to the caller's home namespace.
+    """
+    key = request.state.key
+    document_id = request.path_params["document_id"]
+    namespace = request.query_params.get("namespace") or key.home
+    if not key.permits(namespace):
+        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
+    exists, created_by = await _existing_document_owner(document_id, namespace)
+    if not exists:
+        return error("document not found", 404)
+    if not key.is_admin and created_by != key.label:
+        return error("only the document owner or an admin can delete this document", 403)
+    deleted = await delete_document_rows(document_id, namespace)
+    return JSONResponse({"document_id": document_id, "namespace": namespace, "deleted": deleted})
 
 
 async def ingest_jobs_route(request: Request) -> JSONResponse:

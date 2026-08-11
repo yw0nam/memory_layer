@@ -331,6 +331,28 @@ async def ingest_document(
 
 
 @mcp.tool()
+async def remove_document(
+    document_id: str, namespace: str | None = None, ctx: Context | None = None
+) -> dict[str, Any]:
+    """Delete a document's stored chunks from one namespace by its document_id.
+
+    Restricted to an admin key or the document's creator (the key that first
+    ingested it); a non-creator, non-admin caller gets a 403, and an unknown
+    document in that namespace gets a 404. `namespace` defaults to the
+    caller's home namespace. Returns {document_id, namespace, deleted} where
+    `deleted` is the number of chunk rows removed.
+    """
+    params = {"namespace": namespace} if namespace is not None else None
+    return await _call(
+        "DELETE",
+        f"/ingest/documents/{document_id}",
+        params=params,
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403, 404}),
+    )
+
+
+@mcp.tool()
 async def ingest_repo(
     url: str,
     branch: str | None = None,
