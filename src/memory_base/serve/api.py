@@ -371,6 +371,11 @@ app = Starlette(
         Route("/ingest/document", ingest_api.ingest_document_route, methods=["POST"]),
         Route("/ingest/jobs", ingest_api.ingest_jobs_route, methods=["GET"]),
         Route("/ingest/jobs/{job_id}", ingest_api.ingest_job_route, methods=["GET"]),
+        Route(
+            "/ingest/documents/{document_id}",
+            ingest_api.remove_document_route,
+            methods=["DELETE"],
+        ),
         Route("/repos", repos.ingest_repo_route, methods=["POST"]),
         Route("/repos", repos.list_repos_route, methods=["GET"]),
         Route("/repos/jobs/{job_id}", repos.repo_job_route, methods=["GET"]),

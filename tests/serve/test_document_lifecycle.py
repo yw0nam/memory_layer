@@ -14,9 +14,9 @@ import pytest
 from memory_base.serve import api, auth, ingest_api
 
 
-def _identity(label, *, is_admin=False):
+def _identity(label, *, is_admin=False, allowed=frozenset({"default"})):
     return auth.KeyIdentity(
-        key_id=f"{label}-hash", label=label, home="default", is_admin=is_admin, allowed=frozenset()
+        key_id=f"{label}-hash", label=label, home="default", is_admin=is_admin, allowed=allowed
     )
 
 
@@ -343,7 +343,9 @@ def test_delete_respects_namespace_query_param(monkeypatch):
 
     monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
     monkeypatch.setattr(ingest_api, "delete_document_rows", delete_rows)
-    _auth_map(monkeypatch, {"alice-key": _identity("alice")})
+    _auth_map(
+        monkeypatch, {"alice-key": _identity("alice", allowed=frozenset({"default", "team-a"}))}
+    )
 
     response = _delete("/ingest/documents/guide.md?namespace=team-a", api_key="alice-key")
     assert response.status_code == 200
@@ -354,9 +356,7 @@ def test_delete_respects_namespace_query_param(monkeypatch):
 def test_delete_rejects_namespace_outside_callers_allowed_set(monkeypatch):
     _auth_map(monkeypatch, {"member-key": _identity("member")})
 
-    response = _delete(
-        "/ingest/documents/guide.md?namespace=other-team", api_key="member-key"
-    )
+    response = _delete("/ingest/documents/guide.md?namespace=other-team", api_key="member-key")
     assert response.status_code == 403
 
 
