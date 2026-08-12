@@ -128,6 +128,11 @@ uv run python -m memory_base.retrieval.search "your query" --source code
 The memory schema is created on first write (`ensure_schema`); the code table is created
 by the indexer.
 
+[memory-base-example](https://github.com/yw0nam/memory-base-example) is a runnable
+deployment of this stack with a chat interface in front of it: Hermes Agent as an
+OpenAI-compatible backend, Open WebUI as the client, and a seed that loads public
+documents, a metrics CSV, and source repositories into the three lanes.
+
 ## Authentication
 
 Every route except `/health` and `/health/services` requires an `X-API-Key` header
