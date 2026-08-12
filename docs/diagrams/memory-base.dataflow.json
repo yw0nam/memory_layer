@@ -1,0 +1,355 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "memory-base Data Flow",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1440,
+      760
+    ],
+    "views": [
+      {
+        "id": "note-path",
+        "label": "Note path",
+        "focus": [
+          "note_in",
+          "validate",
+          "memory_chunks",
+          "search"
+        ],
+        "note": "A note arrives already distilled and is stored exactly as written."
+      },
+      {
+        "id": "doc-path",
+        "label": "Document and CSV path",
+        "focus": [
+          "doc_in",
+          "convert",
+          "chunk_gate",
+          "csv_branch",
+          "doc_rows"
+        ],
+        "note": "Prose is chunked; a table splits into one card and its verbatim rows."
+      },
+      {
+        "id": "read-path",
+        "label": "Read paths",
+        "focus": [
+          "memory_chunks",
+          "code_chunks",
+          "doc_rows",
+          "search",
+          "sql"
+        ],
+        "note": "Three tables are the whole contract between the write and read sides."
+      }
+    ]
+  },
+  "stages": [
+    {
+      "label": "Intake"
+    },
+    {
+      "label": "Validate · Convert"
+    },
+    {
+      "label": "Chunk · Transform"
+    },
+    {
+      "label": "Store"
+    },
+    {
+      "label": "Read"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "note_in",
+      "type": "external",
+      "label": "Agent Note",
+      "sublabel": "POST /save_memory",
+      "stage": 0,
+      "row": 0,
+      "tag": "already distilled"
+    },
+    {
+      "id": "doc_in",
+      "type": "external",
+      "label": "Document Upload",
+      "sublabel": "POST /ingest/document",
+      "stage": 0,
+      "row": 2
+    },
+    {
+      "id": "repo_in",
+      "type": "external",
+      "label": "Git Repo",
+      "sublabel": "POST /repos",
+      "stage": 0,
+      "row": 4
+    },
+    {
+      "id": "validate",
+      "type": "security",
+      "label": "Validate · Dedup",
+      "sublabel": "≤4000 chars · kind",
+      "stage": 1,
+      "row": 0,
+      "tag": "id = sha256"
+    },
+    {
+      "id": "convert",
+      "type": "backend",
+      "label": "MarkItDown",
+      "sublabel": "job backlog · 120 s",
+      "stage": 1,
+      "row": 2,
+      "tag": "202 job_id"
+    },
+    {
+      "id": "clone",
+      "type": "backend",
+      "label": "git clone",
+      "sublabel": "blob filter · 2 GiB",
+      "stage": 1,
+      "row": 4,
+      "tag": "keeps commit time"
+    },
+    {
+      "id": "chunk_gate",
+      "type": "backend",
+      "label": "Chunk + Junk Gate",
+      "sublabel": "1500 / 2000 / 200",
+      "stage": 2,
+      "row": 2,
+      "tag": "heading path kept"
+    },
+    {
+      "id": "csv_branch",
+      "type": "backend",
+      "label": "CSV Branch",
+      "sublabel": "row check · one card",
+      "stage": 2,
+      "row": 3,
+      "tag": "the only LLM call"
+    },
+    {
+      "id": "code_chunker",
+      "type": "backend",
+      "label": "tree-sitter chunks",
+      "sublabel": "1000 / 300 · per file",
+      "stage": 2,
+      "row": 4
+    },
+    {
+      "id": "memory_chunks",
+      "type": "database",
+      "label": "memory_chunks",
+      "sublabel": "note · decision · doc",
+      "stage": 3,
+      "row": 1,
+      "tag": "halfvec(2048) HNSW + BM25"
+    },
+    {
+      "id": "doc_rows",
+      "type": "database",
+      "label": "doc_rows",
+      "sublabel": "jsonb data rows",
+      "stage": 3,
+      "row": 3,
+      "tag": "no embedding · not searched"
+    },
+    {
+      "id": "code_chunks",
+      "type": "database",
+      "label": "code_chunks",
+      "sublabel": "repo · file · lines",
+      "stage": 3,
+      "row": 4,
+      "tag": "halfvec + BM25"
+    },
+    {
+      "id": "search",
+      "type": "backend",
+      "label": "Hybrid Search",
+      "sublabel": "RRF → decay → rerank",
+      "stage": 4,
+      "row": 2,
+      "tag": "POST /search"
+    },
+    {
+      "id": "sql",
+      "type": "security",
+      "label": "Table SQL lane",
+      "sublabel": "read-only role · RLS",
+      "stage": 4,
+      "row": 3,
+      "tag": "POST /tables/query"
+    }
+  ],
+  "flows": [
+    {
+      "id": "note-request",
+      "from": "note_in",
+      "to": "validate",
+      "label": "note write",
+      "classification": "synchronous",
+      "variant": "emphasis"
+    },
+    {
+      "id": "note-store",
+      "from": "validate",
+      "to": "memory_chunks",
+      "label": "embed, then INSERT · same content is a no-op",
+      "classification": "idempotent",
+      "variant": "emphasis"
+    },
+    {
+      "id": "doc-upload",
+      "from": "doc_in",
+      "to": "convert",
+      "label": "multipart upload",
+      "classification": "async job"
+    },
+    {
+      "id": "markdown-text",
+      "from": "convert",
+      "to": "chunk_gate",
+      "label": "markdown text",
+      "classification": "prose",
+      "route": "straight",
+      "labelDy": -30
+    },
+    {
+      "id": "csv-detect",
+      "from": "convert",
+      "to": "csv_branch",
+      "label": "CSV detected",
+      "classification": "tabular",
+      "variant": "dashed"
+    },
+    {
+      "id": "chunk-store",
+      "from": "chunk_gate",
+      "to": "memory_chunks",
+      "label": "chunk embeddings · one transaction",
+      "classification": "embedded",
+      "variant": "emphasis",
+      "labelDx": -100
+    },
+    {
+      "id": "card-store",
+      "from": "csv_branch",
+      "to": "memory_chunks",
+      "label": "only the card is embedded",
+      "classification": "embedded",
+      "labelDx": 85
+    },
+    {
+      "id": "rows-store",
+      "from": "csv_branch",
+      "to": "doc_rows",
+      "label": "verbatim rows · same transaction",
+      "classification": "never embedded",
+      "route": "straight",
+      "labelDy": 60
+    },
+    {
+      "id": "repo-clone",
+      "from": "repo_in",
+      "to": "clone",
+      "label": "URL check · free disk",
+      "classification": "async job",
+      "labelDy": 60
+    },
+    {
+      "id": "repo-chunk",
+      "from": "clone",
+      "to": "code_chunker",
+      "label": "mtime = last commit time",
+      "classification": "per file",
+      "labelDy": 60
+    },
+    {
+      "id": "code-store",
+      "from": "code_chunker",
+      "to": "code_chunks",
+      "label": "embed, then incremental update",
+      "classification": "embedded",
+      "labelDy": 60
+    },
+    {
+      "id": "memory-search",
+      "from": "memory_chunks",
+      "to": "search",
+      "label": "vector + BM25 + recency",
+      "classification": "archived excluded",
+      "variant": "emphasis"
+    },
+    {
+      "id": "code-search",
+      "from": "code_chunks",
+      "to": "search",
+      "label": "code lane · ±40-line context",
+      "classification": "repo filter",
+      "fromSide": "bottom",
+      "toSide": "right",
+      "via": [
+        [
+          745,
+          700
+        ],
+        [
+          1090,
+          700
+        ],
+        [
+          1090,
+          385
+        ]
+      ],
+      "labelAt": [
+        910,
+        700
+      ]
+    },
+    {
+      "id": "rows-query",
+      "from": "doc_rows",
+      "to": "sql",
+      "label": "SELECT / WITH only",
+      "classification": "namespace pinned",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "What gets embedded",
+      "items": [
+        "Notes arrive already distilled; the server never summarizes",
+        "Documents are chunked and junk-gated before embedding",
+        "Raw transcripts, raw files, and table rows are never embedded"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Tables are computed",
+      "items": [
+        "A CSV becomes one LLM-summarized card plus verbatim rows",
+        "The card carries document_id and columns for the SQL query",
+        "Rows commit with the card, read only by the SQL lane"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "The three-table contract",
+      "items": [
+        "memory_chunks, code_chunks, doc_rows are the whole contract",
+        "A new source means a new adapter, not new retrieval code",
+        "Search hit counters drive the archive and restore lifecycle"
+      ]
+    }
+  ]
+}

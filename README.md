@@ -17,7 +17,7 @@ retrieved.
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  CONSUMERS      coding agents · n8n · scripts                                 │
 └───────┬──────────────────────────────────────────────────────────────────────┘
-        │ MCP  (stdio | SSE :8765)
+        │ MCP  (stdio | streamable HTTP :8765)
         ▼
    ┌─────────────┐  10 tools: search / search_code / search_memory / save_memory
    │ mcp_server  │            ingest_document / remove_document / query_table
@@ -45,9 +45,15 @@ side: `memory_chunks` and `code_chunks` feed search, and `doc_rows` holds a tabu
 document's data rows for the SQL read path alone — never embedded, never returned by
 search ([ADR-0001](docs/adr/0001-table-rows-third-read-contract.md)).
 
+The same components as an explorable diagram, with guided views and image export:
+[docs/diagrams/memory-base-architecture.html](docs/diagrams/memory-base-architecture.html)
+— a self-contained page, opened in a browser.
+
 How notes, documents, CSV rows, and code move through the system — write pipelines,
 the hybrid-search and table-SQL read paths, the archive lifecycle, and the storage
-schema — is documented in [docs/data-flow.md](docs/data-flow.md).
+schema — is documented in [docs/data-flow.md](docs/data-flow.md) and drawn in
+[docs/diagrams/memory-base-dataflow.html](docs/diagrams/memory-base-dataflow.html).
+Both pages are rendered from the JSON specification beside them.
 
 ## Retrieval quality
 
