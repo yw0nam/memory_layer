@@ -1,0 +1,354 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "memory-base Architecture",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1690,
+      740
+    ],
+    "views": [
+      {
+        "id": "consumer-path",
+        "label": "Consumer entry path",
+        "focus": [
+          "consumers",
+          "mcp",
+          "api",
+          "auth"
+        ],
+        "note": "Agents reach stored chunks through MCP and the REST API alone."
+      },
+      {
+        "id": "write-path",
+        "label": "Writes and indexing",
+        "focus": [
+          "api",
+          "write_lane",
+          "doc_worker",
+          "code_indexer",
+          "db"
+        ],
+        "note": "Write routes enqueue durable jobs; workers do the storing."
+      },
+      {
+        "id": "read-path",
+        "label": "Reads and the SQL lane",
+        "focus": [
+          "read_lane",
+          "db",
+          "tables_role",
+          "vllm"
+        ],
+        "note": "Search and table SQL are separated by database privilege."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "consumers",
+      "type": "external",
+      "label": "Coding Agents",
+      "sublabel": "n8n · scripts",
+      "pos": [
+        40,
+        336
+      ],
+      "size": [
+        175,
+        72
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "backend",
+      "label": "MCP Server",
+      "sublabel": "10 tools · thin proxy",
+      "tag": "stdio | :8765",
+      "pos": [
+        275,
+        336
+      ],
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "REST API",
+      "sublabel": "FastAPI :8010",
+      "tag": "the only backend",
+      "pos": [
+        520,
+        326
+      ],
+      "size": [
+        200,
+        92
+      ]
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "API Key Auth",
+      "sublabel": "namespace scope · ownership",
+      "pos": [
+        520,
+        146
+      ],
+      "size": [
+        200,
+        78
+      ]
+    },
+    {
+      "id": "write_lane",
+      "type": "backend",
+      "label": "Write routes",
+      "sublabel": "notes · ingest_api · repos",
+      "pos": [
+        800,
+        146
+      ],
+      "size": [
+        200,
+        78
+      ]
+    },
+    {
+      "id": "read_lane",
+      "type": "backend",
+      "label": "Read routes",
+      "sublabel": "search · tables · admin",
+      "pos": [
+        800,
+        336
+      ],
+      "size": [
+        200,
+        78
+      ]
+    },
+    {
+      "id": "doc_worker",
+      "type": "backend",
+      "label": "Document Workers ×2",
+      "sublabel": "MarkItDown · chunk · embed",
+      "tag": "durable jobs",
+      "pos": [
+        1090,
+        40
+      ],
+      "size": [
+        215,
+        78
+      ]
+    },
+    {
+      "id": "code_indexer",
+      "type": "backend",
+      "label": "Code Indexer",
+      "sublabel": "CocoIndex · tree-sitter",
+      "tag": "per-file incremental",
+      "pos": [
+        1090,
+        180
+      ],
+      "size": [
+        215,
+        78
+      ]
+    },
+    {
+      "id": "vllm",
+      "type": "external",
+      "label": "vLLM",
+      "sublabel": "embedding · rerank · LLM",
+      "tag": "shared by index and search",
+      "pos": [
+        800,
+        596
+      ],
+      "size": [
+        200,
+        78
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "Postgres 17",
+      "sublabel": "pgvector · pg_textsearch :5439",
+      "tag": "memory_chunks · code_chunks · doc_rows",
+      "pos": [
+        1400,
+        316
+      ],
+      "size": [
+        240,
+        112
+      ]
+    },
+    {
+      "id": "tables_role",
+      "type": "security",
+      "label": "memory_tables_query",
+      "sublabel": "SELECT-only role · forced RLS",
+      "pos": [
+        1400,
+        500
+      ],
+      "size": [
+        240,
+        82
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "memory_base_api container",
+      "wraps": [
+        "api",
+        "write_lane",
+        "read_lane",
+        "doc_worker",
+        "code_indexer"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "agents-to-mcp",
+      "from": "consumers",
+      "to": "mcp",
+      "label": "MCP tool calls",
+      "variant": "emphasis",
+      "labelDy": -40
+    },
+    {
+      "id": "mcp-to-api",
+      "from": "mcp",
+      "to": "api",
+      "label": "HTTP · no logic of its own",
+      "variant": "emphasis",
+      "labelDy": -50
+    },
+    {
+      "id": "api-auth",
+      "from": "api",
+      "to": "auth",
+      "label": "X-API-Key check",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "api-write",
+      "from": "api",
+      "to": "write_lane",
+      "label": "notes · documents · repos"
+    },
+    {
+      "id": "api-read",
+      "from": "api",
+      "to": "read_lane",
+      "label": "search · table SQL · lifecycle",
+      "variant": "emphasis",
+      "labelDy": 70
+    },
+    {
+      "id": "doc-job",
+      "from": "write_lane",
+      "to": "doc_worker",
+      "label": "document job backlog",
+      "labelDy": 18
+    },
+    {
+      "id": "repo-job",
+      "from": "write_lane",
+      "to": "code_indexer",
+      "label": "repo job (serialized)",
+      "labelDy": 80
+    },
+    {
+      "id": "worker-write",
+      "from": "doc_worker",
+      "to": "db",
+      "label": "one transaction per document",
+      "labelDy": -45
+    },
+    {
+      "id": "code-write",
+      "from": "code_indexer",
+      "to": "db",
+      "label": "code_chunks incremental update",
+      "labelDx": -95
+    },
+    {
+      "id": "hybrid-search",
+      "from": "read_lane",
+      "to": "db",
+      "label": "hybrid search (vector + BM25)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sql-lane",
+      "from": "read_lane",
+      "to": "tables_role",
+      "label": "SELECT / WITH only",
+      "variant": "security"
+    },
+    {
+      "id": "rows-read",
+      "from": "tables_role",
+      "to": "db",
+      "label": "doc_rows read-only",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "model-calls",
+      "from": "read_lane",
+      "to": "vllm",
+      "label": "query embedding · rerank",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 110
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "One backend",
+      "items": [
+        "Every consumer reaches stored chunks through REST API :8010, never the database directly",
+        "The MCP server forwards 10 tools to REST and holds no logic of its own",
+        "The API key decides namespace scope and document · repo ownership"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Writes and indexing",
+      "items": [
+        "Document uploads and repo registrations answer 202 and land in the durable jobs table",
+        "Two document workers dispatch fairly across API keys and serialize jobs for one document",
+        "The code indexer indexes per file, incrementally, against the CocoIndex ledger"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Split read privilege",
+      "items": [
+        "Search reads memory_chunks and code_chunks only; doc_rows never appears in results",
+        "Table SQL runs as a role holding SELECT on doc_rows alone, inside a read-only transaction",
+        "The vLLM embedding, rerank, and LLM endpoints are shared by indexing and search"
+      ]
+    }
+  ]
+}
