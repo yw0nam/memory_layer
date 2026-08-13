@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 
+import asyncpg
 import pytest
 
 from memory_base.core.config import PG_SCHEMA
@@ -35,6 +36,17 @@ class FakeSearchConnection:
     async def fetch(self, query, *args):
         self.queries.append((query, args))
         return self.fetch_results.pop(0)
+
+
+class UndefinedTableConnection:
+    async def fetch(self, query, *args):
+        raise asyncpg.exceptions.UndefinedTableError("relation does not exist")
+
+
+def test_search_code_returns_no_hits_when_code_chunks_table_is_missing():
+    conn = UndefinedTableConnection()
+    hits = asyncio.run(_search_code(conn, "query", "[1]"))
+    assert hits == []
 
 
 @pytest.mark.parametrize("kind", ["doc", "note", "decision"])
