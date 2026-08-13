@@ -62,10 +62,7 @@ EXCLUDED_PATTERNS = [
     "**/build",
     "**/vendor",
     "**/*.min.js",
-    "**/*.min.css",
     "**/*-bundle.js",
-    "**/*.lock",
-    "**/package-lock.json",
     "**/pnpm-lock.yaml",
 ]
 # Minified/generated files pack far more characters per line than hand-written

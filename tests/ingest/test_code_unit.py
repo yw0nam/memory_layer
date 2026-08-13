@@ -48,9 +48,7 @@ def test_batched_embed_collapses_concurrent_calls_into_few_batch_requests():
     n = 200
 
     async def run():
-        return await asyncio.gather(
-            *(code._batched_embed(f"text-{i}", embedder) for i in range(n))
-        )
+        return await asyncio.gather(*(code._batched_embed(f"text-{i}", embedder) for i in range(n)))
 
     results = asyncio.run(run())
 
