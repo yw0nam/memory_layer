@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Annotated, AsyncIterator
 
 import asyncpg
+from loguru import logger
 from numpy.typing import NDArray
 
 import cocoindex as coco
@@ -53,7 +54,22 @@ INCLUDED_PATTERNS = [
     "**/*.yaml",
     "**/*.sql",
 ]
-EXCLUDED_PATTERNS = ["**/.*", "**/.venv", "**/__pycache__", "**/node_modules"]
+EXCLUDED_PATTERNS = [
+    "**/.*",
+    "**/.venv",
+    "**/__pycache__",
+    "**/node_modules",
+    "**/dist",
+    "**/build",
+    "**/vendor",
+    "**/*.min.js",
+    "**/*-bundle.js",
+    "**/pnpm-lock.yaml",
+]
+# Minified/generated files pack far more characters per line than hand-written
+# source; average line length is a size-independent proxy that large honest
+# source files (e.g. a 500KB unminified lodash.js, avg ~32 chars/line) pass.
+_MAX_AVG_LINE_LENGTH = 200
 
 PG_DB = coco.ContextKey[asyncpg.Pool]("memory_base_db")
 EMBEDDER = coco.ContextKey[VllmEmbedder]("embedder")
@@ -64,6 +80,16 @@ _splitter = RecursiveSplitter()
 def _cache_rel(path: pathlib.PurePath) -> str:
     """Cache-relative path (repo/sub/file.py): unique per repo, ref-friendly."""
     return str(pathlib.Path(path).relative_to(CACHE_ROOT))
+
+
+def _avg_line_length(text: str) -> float:
+    lines = text.splitlines() or [""]
+    return len(text) / len(lines)
+
+
+def _is_minified(text: str, filename: str) -> bool:
+    """True when average line length looks minified/bundled; markdown prose is exempt."""
+    return not filename.endswith(".md") and _avg_line_length(text) > _MAX_AVG_LINE_LENGTH
 
 
 async def _commit_time(path: pathlib.Path) -> float:
@@ -106,6 +132,19 @@ async def coco_lifespan(builder: coco.EnvironmentBuilder) -> AsyncIterator[None]
         yield
 
 
+_EMBED_BATCH_SIZE = 64
+
+
+@coco.fn.as_async(batching=True, max_batch_size=_EMBED_BATCH_SIZE)
+async def _batched_embed(texts: list[str], embedder: VllmEmbedder) -> list[NDArray]:
+    """Groups concurrent process_chunk embed calls into one vLLM request per batch."""
+    try:
+        return await embedder.embed_many(texts)
+    except Exception as err:
+        # One bad text must not fail every other text sharing this batch; halve and retry.
+        raise coco.RetryWithSmallerBatch() from err
+
+
 @coco.fn
 async def process_chunk(
     chunk: Chunk,
@@ -115,7 +154,7 @@ async def process_chunk(
     id_gen: IdGenerator,
     table: postgres.TableTarget[CodeChunk],
 ) -> None:
-    embedding = await coco.use_context(EMBEDDER).embed(chunk.text)
+    embedding = await _batched_embed(chunk.text, coco.use_context(EMBEDDER))
     table.declare_row(
         row=CodeChunk(
             id=await id_gen.next_id(chunk.text),
@@ -137,7 +176,15 @@ async def process_file(
     table: postgres.TableTarget[CodeChunk],
 ) -> None:
     text = await file.read_text()
-    language = detect_code_language(filename=str(file.file_path.path.name))
+    filename = str(file.file_path.path.name)
+    if _is_minified(text, filename):
+        logger.info(
+            "skip minified file {}: avg line length {:.0f}",
+            _cache_rel(file.file_path.path),
+            _avg_line_length(text),
+        )
+        return
+    language = detect_code_language(filename=filename)
     chunks = _splitter.split(
         text,
         chunk_size=1000,

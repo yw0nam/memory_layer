@@ -72,6 +72,12 @@ class VllmEmbedder:
         r = await self._client.embeddings.create(model=emb_model(), input=text)
         return np.asarray(r.data[0].embedding, dtype=np.float16)
 
+    async def embed_many(self, texts: list[str]) -> list[NDArray]:
+        """Embed a batch of texts in one request, returned in input order."""
+        r = await self._client.embeddings.create(model=emb_model(), input=texts)
+        ordered = sorted(r.data, key=lambda item: item.index)
+        return [np.asarray(item.embedding, dtype=np.float16) for item in ordered]
+
 
 def vector_literal(vector: NDArray) -> str:
     return "[" + ",".join(f"{value:.6f}" for value in vector.astype(float)) + "]"
