@@ -261,9 +261,6 @@ async def _search_memory(
     schema = PG_SCHEMA if schema is None else schema
     tbl = f'"{schema}"."memory_chunks"'
     bm25_index = f"{schema}.{MEMORY_BM25_INDEX}"
-    exists = await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"{schema}.memory_chunks")
-    if not exists:
-        return []
     predicates, filter_args = history_predicates(
         include_archived=include_archived,
         kind=kind,
@@ -274,20 +271,24 @@ async def _search_memory(
         "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
         "idf_score, archived_at"
     )
-    vec_rows = await conn.fetch(
-        f"SELECT {columns} FROM {tbl} WHERE {predicates} "
-        f"ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
-        qvec_lit,
-        *filter_args,
-    )
-    fts_rows = await conn.fetch(
-        f"SELECT {columns} FROM {tbl} WHERE {predicates} AND "
-        f"(content_raw <@> to_bm25query($1, '{bm25_index}')) < 0 "
-        f"ORDER BY content_raw <@> to_bm25query($1, '{bm25_index}') "
-        f"LIMIT {CANDIDATES_PER_SIGNAL}",
-        query,
-        *filter_args,
-    )
+    try:
+        vec_rows = await conn.fetch(
+            f"SELECT {columns} FROM {tbl} WHERE {predicates} "
+            f"ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
+            qvec_lit,
+            *filter_args,
+        )
+        fts_rows = await conn.fetch(
+            f"SELECT {columns} FROM {tbl} WHERE {predicates} AND "
+            f"(content_raw <@> to_bm25query($1, '{bm25_index}')) < 0 "
+            f"ORDER BY content_raw <@> to_bm25query($1, '{bm25_index}') "
+            f"LIMIT {CANDIDATES_PER_SIGNAL}",
+            query,
+            *filter_args,
+        )
+    except asyncpg.exceptions.UndefinedTableError:
+        # ensure_schema creates memory_chunks up front; missing means an unprovisioned schema.
+        return []
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
     recency = time_decay_list({r["id"]: r["ts_last_active"] for r in by_id.values()})
     idf = time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})

@@ -29,10 +29,6 @@ class FakeSearchConnection:
         self.fetch_results = list(fetch_results)
         self.queries = []
 
-    async def fetchval(self, query, *args):
-        self.queries.append((query, args))
-        return True
-
     async def fetch(self, query, *args):
         self.queries.append((query, args))
         return self.fetch_results.pop(0)
@@ -209,8 +205,8 @@ def test_history_predicates_namespace_clause_uses_alias():
 def test_search_memory_filters_by_namespace():
     conn = FakeSearchConnection([[], []])
     asyncio.run(_search_memory(conn, "query", "[1]", namespaces=["team-a"]))
-    vector_sql, vector_args = conn.queries[1]
-    fts_sql, fts_args = conn.queries[2]
+    vector_sql, vector_args = conn.queries[0]
+    fts_sql, fts_args = conn.queries[1]
     for sql in (vector_sql, fts_sql):
         assert "namespace = ANY($" in sql
     assert vector_args == ("[1]", ["team-a"])
@@ -220,14 +216,14 @@ def test_search_memory_filters_by_namespace():
 def test_search_memory_fts_leg_qualifies_bm25_index_with_default_schema():
     conn = FakeSearchConnection([[], []])
     asyncio.run(_search_memory(conn, "query", "[1]"))
-    fts_sql, _ = conn.queries[2]
+    fts_sql, _ = conn.queries[1]
     assert fts_sql.count(f"to_bm25query($1, '{PG_SCHEMA}.memory_chunks_bm25')") == 2
 
 
 def test_search_memory_fts_leg_qualifies_bm25_index_with_explicit_schema():
     conn = FakeSearchConnection([[], []])
     asyncio.run(_search_memory(conn, "query", "[1]", schema="memory_eval_scratch"))
-    fts_sql, _ = conn.queries[2]
+    fts_sql, _ = conn.queries[1]
     assert fts_sql.count("to_bm25query($1, 'memory_eval_scratch.memory_chunks_bm25')") == 2
     assert f"'{PG_SCHEMA}.memory_chunks_bm25'" not in fts_sql
 
@@ -244,8 +240,8 @@ def test_memory_filters_are_inside_both_candidate_queries():
         )
     )
 
-    vector_sql, vector_args = conn.queries[1]
-    fts_sql, fts_args = conn.queries[2]
+    vector_sql, vector_args = conn.queries[0]
+    fts_sql, fts_args = conn.queries[1]
     for sql in (vector_sql, fts_sql):
         assert "chunk_kind =" in sql
         assert "metadata->'tags' ?|" in sql
