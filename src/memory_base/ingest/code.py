@@ -130,6 +130,15 @@ async def coco_lifespan(builder: coco.EnvironmentBuilder) -> AsyncIterator[None]
         yield
 
 
+_EMBED_BATCH_SIZE = 64
+
+
+@coco.fn.as_async(batching=True, max_batch_size=_EMBED_BATCH_SIZE)
+async def _batched_embed(texts: list[str], embedder: VllmEmbedder) -> list[NDArray]:
+    """Groups concurrent process_chunk embed calls into one vLLM request per batch."""
+    return await embedder.embed_many(texts)
+
+
 @coco.fn
 async def process_chunk(
     chunk: Chunk,
@@ -139,7 +148,7 @@ async def process_chunk(
     id_gen: IdGenerator,
     table: postgres.TableTarget[CodeChunk],
 ) -> None:
-    embedding = await coco.use_context(EMBEDDER).embed(chunk.text)
+    embedding = await _batched_embed(chunk.text, coco.use_context(EMBEDDER))
     table.declare_row(
         row=CodeChunk(
             id=await id_gen.next_id(chunk.text),
