@@ -31,6 +31,18 @@ def scratch_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(release, "REPO_ROOT", repo)
     monkeypatch.setattr(release, "PYPROJECT", repo / "pyproject.toml")
     monkeypatch.setattr(release, "CHANGELOG", repo / "CHANGELOG.md")
+    monkeypatch.setattr(release, "LOCKFILE", repo / "uv.lock")
+
+    # Stub out `uv lock` alone: it would hit the network for a scratch repo with no real deps.
+    real_run = release._run
+
+    def fake_run(*args: str) -> str:
+        if args == ("uv", "lock"):
+            (repo / "uv.lock").write_text("")
+            return ""
+        return real_run(*args)
+
+    monkeypatch.setattr(release, "_run", fake_run)
     return repo
 
 

@@ -212,3 +212,60 @@ def test_agent_refusal_precedes_every_git_call(monkeypatch):
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setattr("release._run", lambda *args: pytest.fail(f"ran git: {args}"))
     assert main(["minor"]) == 1
+
+
+# ---- main(): uv.lock refresh --------------------------------------------------
+
+
+def _stub_git(calls):
+    """Fake `_run` that answers the git queries `main()` makes before its effects."""
+
+    def fake_run(*args):
+        calls.append(args)
+        if args == ("git", "status", "--porcelain"):
+            return ""
+        if args == ("git", "branch", "--show-current"):
+            return "main\n"
+        if args[:2] in (("git", "tag"), ("git", "log")):
+            return ""
+        return ""
+
+    return fake_run
+
+
+def test_uv_lock_runs_before_git_add_with_uv_lock_staged(monkeypatch, tmp_path):
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    monkeypatch.setattr("release.REPO_ROOT", tmp_path)
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "memory-base"\nversion = "0.1.0"\n', encoding="utf-8")
+    monkeypatch.setattr("release.PYPROJECT", pyproject)
+    monkeypatch.setattr("release.CHANGELOG", tmp_path / "CHANGELOG.md")
+    monkeypatch.setattr("release.LOCKFILE", tmp_path / "uv.lock")
+
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr("release._run", _stub_git(calls))
+
+    assert main(["patch"]) == 0
+
+    lock_index = calls.index(("uv", "lock"))
+    add_index = next(i for i, c in enumerate(calls) if c[:2] == ("git", "add"))
+    commit_index = next(i for i, c in enumerate(calls) if c[:2] == ("git", "commit"))
+    assert lock_index < add_index < commit_index
+    assert "uv.lock" in calls[add_index]
+
+
+def test_uv_lock_runs_even_without_a_bump_level(monkeypatch, tmp_path):
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    monkeypatch.setattr("release.REPO_ROOT", tmp_path)
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "memory-base"\nversion = "0.1.0"\n', encoding="utf-8")
+    monkeypatch.setattr("release.PYPROJECT", pyproject)
+    monkeypatch.setattr("release.CHANGELOG", tmp_path / "CHANGELOG.md")
+    monkeypatch.setattr("release.LOCKFILE", tmp_path / "uv.lock")
+
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr("release._run", _stub_git(calls))
+
+    assert main([]) == 0
+
+    assert ("uv", "lock") in calls
