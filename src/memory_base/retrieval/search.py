@@ -202,20 +202,24 @@ async def _search_code(
     # survives the unfiltered top-k cut.
     repo_clause = " AND repo = ANY($2::text[])" if repo else ""
     repo_args = [repo] if repo else []
-    vec_rows = await conn.fetch(
-        f"SELECT {columns} FROM {tbl} WHERE true{repo_clause} "
-        f"ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
-        qvec_lit,
-        *repo_args,
-    )
-    fts_rows = await conn.fetch(
-        f"SELECT {columns} FROM {tbl} "
-        f"WHERE (code <@> to_bm25query($1, '{bm25_index}')) < 0{repo_clause} "
-        f"ORDER BY code <@> to_bm25query($1, '{bm25_index}') "
-        f"LIMIT {CANDIDATES_PER_SIGNAL}",
-        query,
-        *repo_args,
-    )
+    try:
+        vec_rows = await conn.fetch(
+            f"SELECT {columns} FROM {tbl} WHERE true{repo_clause} "
+            f"ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
+            qvec_lit,
+            *repo_args,
+        )
+        fts_rows = await conn.fetch(
+            f"SELECT {columns} FROM {tbl} "
+            f"WHERE (code <@> to_bm25query($1, '{bm25_index}')) < 0{repo_clause} "
+            f"ORDER BY code <@> to_bm25query($1, '{bm25_index}') "
+            f"LIMIT {CANDIDATES_PER_SIGNAL}",
+            query,
+            *repo_args,
+        )
+    except asyncpg.exceptions.UndefinedTableError:
+        # CocoIndex creates code_chunks on first repo ingestion; no repo yet means no hits.
+        return []
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
     recency = time_decay_list({r["id"]: r["mtime"] for r in by_id.values()})
     scores = rrf_fuse(
