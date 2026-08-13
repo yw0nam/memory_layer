@@ -23,6 +23,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
+LOCKFILE = REPO_ROOT / "uv.lock"
 
 BUMP_LEVELS = ("major", "minor", "patch")
 
@@ -249,7 +250,15 @@ def main(argv: list[str] | None = None) -> int:
 
     CHANGELOG.write_text(build_changelog(target_version), encoding="utf-8")
 
-    _run("git", "add", str(PYPROJECT.relative_to(REPO_ROOT)), str(CHANGELOG.relative_to(REPO_ROOT)))
+    # Refresh unconditionally: even on the no-bump path this is a no-op that stages nothing new.
+    _run("uv", "lock")
+    _run(
+        "git",
+        "add",
+        str(PYPROJECT.relative_to(REPO_ROOT)),
+        str(CHANGELOG.relative_to(REPO_ROOT)),
+        str(LOCKFILE.relative_to(REPO_ROOT)),
+    )
     _run("git", "commit", "-m", f"chore: release v{target_version}")
     # Annotated: the printed push carries annotated tags only.
     _run("git", "tag", "-a", f"v{target_version}", "-m", f"v{target_version}")
