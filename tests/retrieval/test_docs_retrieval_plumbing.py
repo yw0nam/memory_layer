@@ -49,6 +49,12 @@ def test_search_code_returns_no_hits_when_code_chunks_table_is_missing():
     assert hits == []
 
 
+def test_search_memory_returns_no_hits_when_memory_chunks_table_is_missing():
+    conn = UndefinedTableConnection()
+    hits = asyncio.run(_search_memory(conn, "query", "[1]"))
+    assert hits == []
+
+
 @pytest.mark.parametrize("kind", ["doc", "note", "decision"])
 def test_memory_kind_filters_are_valid(kind):
     assert validate_search_options("memory", kind, None) == (kind, None, None)
