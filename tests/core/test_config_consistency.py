@@ -5,6 +5,7 @@ No DB, no vLLM.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -71,3 +72,24 @@ def test_rerank_uses_service_timeout(monkeypatch):
     hit = search_mod.Hit(source="memory", ref="r", text="text", ts=0.0)
     asyncio.run(search_mod._rerank("q", [hit]))
     assert captured.get("timeout") == config.SERVICE_TIMEOUT_SECONDS
+
+
+def test_embed_many_orders_output_by_response_index_not_response_order(monkeypatch):
+    monkeypatch.setenv("EMB_URL", "http://fake")
+    embedder = config.VllmEmbedder()
+
+    class _ShuffledEmbeddings:
+        async def create(self, **kwargs):
+            del kwargs
+            # Response items arrive out of input order; each embedding encodes its true index.
+            return SimpleNamespace(
+                data=[
+                    SimpleNamespace(index=2, embedding=[2.0]),
+                    SimpleNamespace(index=0, embedding=[0.0]),
+                    SimpleNamespace(index=1, embedding=[1.0]),
+                ]
+            )
+
+    embedder._client = SimpleNamespace(embeddings=_ShuffledEmbeddings())
+    vectors = asyncio.run(embedder.embed_many(["a", "b", "c"]))
+    assert [float(v[0]) for v in vectors] == [0.0, 1.0, 2.0]

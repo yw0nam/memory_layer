@@ -25,13 +25,33 @@ def test_cache_rel_is_unique_across_repos_for_same_relative_path():
 def test_is_minified_flags_long_average_line_length():
     # 3 lines, ~500KB each: mirrors a real minified swagger-ui-bundle.js.
     minified = "\n".join("x" * 500_000 for _ in range(3))
-    assert code._is_minified(minified) is True
+    assert code._is_minified(minified, "swagger-ui-bundle.js") is True
 
 
 def test_is_minified_spares_large_normally_formatted_source():
     # 17k lines averaging ~32 chars/line, like an unminified lodash.js.
     normal = "\n".join(f"function fn{i}(a, b) {{ return a + b; }}" for i in range(17_000))
-    assert code._is_minified(normal) is False
+    assert code._is_minified(normal, "lodash.js") is False
+
+
+def test_is_minified_exempts_markdown_regardless_of_line_length():
+    # One long paragraph-per-line, and a table using <br><br> instead of newlines:
+    # legitimate markdown, not a generated bundle.
+    prose = "word " * 300 + "\n" + "<br><br>".join(f"cell {i}" for i in range(100))
+    assert code._is_minified(prose, "swagger-ui-bundle.js") is True
+    assert code._is_minified(prose, "notes.md") is False
+
+
+def test_is_minified_empty_file_is_not_minified():
+    assert code._is_minified("", "empty.py") is False
+
+
+def test_is_minified_no_trailing_newline():
+    assert code._is_minified("x" * (code._MAX_AVG_LINE_LENGTH + 1), "one_line.js") is True
+
+
+def test_is_minified_all_blank_lines_is_not_minified():
+    assert code._is_minified("\n\n\n\n", "blank.py") is False
 
 
 class _FakeEmbedder:

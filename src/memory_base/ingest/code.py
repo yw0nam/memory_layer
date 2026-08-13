@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Annotated, AsyncIterator
 
 import asyncpg
+from loguru import logger
 from numpy.typing import NDArray
 
 import cocoindex as coco
@@ -81,10 +82,14 @@ def _cache_rel(path: pathlib.PurePath) -> str:
     return str(pathlib.Path(path).relative_to(CACHE_ROOT))
 
 
-def _is_minified(text: str) -> bool:
-    """True when the file's average line length looks minified/bundled, not hand-written."""
+def _avg_line_length(text: str) -> float:
     lines = text.splitlines() or [""]
-    return len(text) / len(lines) > _MAX_AVG_LINE_LENGTH
+    return len(text) / len(lines)
+
+
+def _is_minified(text: str, filename: str) -> bool:
+    """True when average line length looks minified/bundled; markdown prose is exempt."""
+    return not filename.endswith(".md") and _avg_line_length(text) > _MAX_AVG_LINE_LENGTH
 
 
 async def _commit_time(path: pathlib.Path) -> float:
@@ -167,9 +172,15 @@ async def process_file(
     table: postgres.TableTarget[CodeChunk],
 ) -> None:
     text = await file.read_text()
-    if _is_minified(text):
+    filename = str(file.file_path.path.name)
+    if _is_minified(text, filename):
+        logger.info(
+            "skip minified file {}: avg line length {:.0f}",
+            _cache_rel(file.file_path.path),
+            _avg_line_length(text),
+        )
         return
-    language = detect_code_language(filename=str(file.file_path.path.name))
+    language = detect_code_language(filename=filename)
     chunks = _splitter.split(
         text,
         chunk_size=1000,
