@@ -1,6 +1,6 @@
 [project]
 name = "memory-base"
-version = "0.2.1"
+version = "0.2.0"
 description = "Selective memory layer: distilled agent-history and code retrieval over pgvector"
 license = "MIT"
 license-files = ["LICENSE"]
