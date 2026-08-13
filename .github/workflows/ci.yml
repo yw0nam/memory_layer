@@ -20,6 +20,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen
+      - run: uv lock --check
       - run: uv run ruff format --check .
       - run: uv run ruff check .
 
