@@ -53,7 +53,25 @@ INCLUDED_PATTERNS = [
     "**/*.yaml",
     "**/*.sql",
 ]
-EXCLUDED_PATTERNS = ["**/.*", "**/.venv", "**/__pycache__", "**/node_modules"]
+EXCLUDED_PATTERNS = [
+    "**/.*",
+    "**/.venv",
+    "**/__pycache__",
+    "**/node_modules",
+    "**/dist",
+    "**/build",
+    "**/vendor",
+    "**/*.min.js",
+    "**/*.min.css",
+    "**/*-bundle.js",
+    "**/*.lock",
+    "**/package-lock.json",
+    "**/pnpm-lock.yaml",
+]
+# Minified/generated files pack far more characters per line than hand-written
+# source; average line length is a size-independent proxy that large honest
+# source files (e.g. a 500KB unminified lodash.js, avg ~32 chars/line) pass.
+_MAX_AVG_LINE_LENGTH = 200
 
 PG_DB = coco.ContextKey[asyncpg.Pool]("memory_base_db")
 EMBEDDER = coco.ContextKey[VllmEmbedder]("embedder")
@@ -64,6 +82,12 @@ _splitter = RecursiveSplitter()
 def _cache_rel(path: pathlib.PurePath) -> str:
     """Cache-relative path (repo/sub/file.py): unique per repo, ref-friendly."""
     return str(pathlib.Path(path).relative_to(CACHE_ROOT))
+
+
+def _is_minified(text: str) -> bool:
+    """True when the file's average line length looks minified/bundled, not hand-written."""
+    lines = text.splitlines() or [""]
+    return len(text) / len(lines) > _MAX_AVG_LINE_LENGTH
 
 
 async def _commit_time(path: pathlib.Path) -> float:
@@ -137,6 +161,8 @@ async def process_file(
     table: postgres.TableTarget[CodeChunk],
 ) -> None:
     text = await file.read_text()
+    if _is_minified(text):
+        return
     language = detect_code_language(filename=str(file.file_path.path.name))
     chunks = _splitter.split(
         text,
