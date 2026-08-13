@@ -76,3 +76,32 @@ def test_batched_embed_collapses_concurrent_calls_into_few_batch_requests():
     assert sum(embedder.batch_sizes) == n  # every text embedded exactly once
     assert len(embedder.batch_sizes) <= 5  # ceil(200 / 64) == 4, +1 slack for scheduling
     assert max(embedder.batch_sizes) <= code._EMBED_BATCH_SIZE
+
+
+class _FlakyEmbedder:
+    def __init__(self):
+        self.calls = 0
+
+    async def embed_many(self, texts):
+        self.calls += 1
+        if "bad" in texts:
+            raise RuntimeError("upstream rejected this batch")
+        return [np.zeros(1, dtype=np.float16) for _ in texts]
+
+
+def test_batched_embed_retries_smaller_batches_so_one_bad_text_spares_the_rest():
+    embedder = _FlakyEmbedder()
+    n = code._EMBED_BATCH_SIZE
+    texts = [f"text-{i}" for i in range(n)]
+    texts[30] = "bad"
+
+    async def run():
+        return await asyncio.gather(
+            *(code._batched_embed(t, embedder) for t in texts), return_exceptions=True
+        )
+
+    results = asyncio.run(run())
+    failures = [r for r in results if isinstance(r, Exception)]
+    successes = [r for r in results if not isinstance(r, Exception)]
+    assert len(failures) == 1
+    assert len(successes) == n - 1

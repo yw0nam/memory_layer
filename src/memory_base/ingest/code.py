@@ -138,7 +138,11 @@ _EMBED_BATCH_SIZE = 64
 @coco.fn.as_async(batching=True, max_batch_size=_EMBED_BATCH_SIZE)
 async def _batched_embed(texts: list[str], embedder: VllmEmbedder) -> list[NDArray]:
     """Groups concurrent process_chunk embed calls into one vLLM request per batch."""
-    return await embedder.embed_many(texts)
+    try:
+        return await embedder.embed_many(texts)
+    except Exception as err:
+        # One bad text must not fail every other text sharing this batch; halve and retry.
+        raise coco.RetryWithSmallerBatch() from err
 
 
 @coco.fn
