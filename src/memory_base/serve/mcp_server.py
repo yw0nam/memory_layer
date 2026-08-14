@@ -39,6 +39,31 @@ DEFAULT_PORT = 8765
 REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
 API_KEY_HEADER = "x-api-key"
 
+# Served in the initialize response, so it is stated once per client session:
+# the store's invariants only. Per-consumer usage belongs to the consumer.
+SERVER_INSTRUCTIONS = """\
+memory-base holds only distilled knowledge, in three lanes: notes (why something was
+decided), code (indexed repositories), and table rows (numbers, read with SQL).
+
+Read first. Before starting a task or answering from recall, search_memory for earlier
+decisions on the subject — arriving without them is this server's most common misuse.
+search_code spans every indexed repository, not only the one in front of you. Questions
+about numbers are computed, not retrieved: search finds the card, query_table computes
+over the rows, and search never returns the rows themselves.
+
+Write rarely. A note earns its place when it captures what the next session would
+otherwise have to rediscover: a decision and the alternatives it rejected, a reproduced
+bug with its known fix, a non-obvious environment fact, an approach that failed and why.
+The status of a PR or issue, progress updates, and descriptions of what a file does are
+none of those — git and search_code already answer them, and stale copies only dilute
+retrieval. When a note goes out of date, supersede it rather than adding a second note
+that contradicts it.
+
+Work knowledge belongs in the key's home namespace. Personal context — schedule,
+relationships, private preferences — belongs in a private namespace, never the shared
+one. A note's first tag names its subject, usually the repository or domain it belongs
+to, so that a later search can narrow to it."""
+
 
 def resolve_transport_security(
     env: Mapping[str, str],
@@ -52,7 +77,11 @@ def resolve_transport_security(
     return TransportSecuritySettings(allowed_hosts=allowed_hosts)
 
 
-mcp = FastMCP("memory-base", transport_security=resolve_transport_security(os.environ))
+mcp = FastMCP(
+    "memory-base",
+    instructions=SERVER_INSTRUCTIONS,
+    transport_security=resolve_transport_security(os.environ),
+)
 
 
 def _client() -> httpx.AsyncClient:
