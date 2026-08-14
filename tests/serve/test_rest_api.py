@@ -346,6 +346,53 @@ def test_search_respects_custom_top_k(monkeypatch):
     assert len(response.json()) == 2
 
 
+def test_search_forwards_min_score(monkeypatch):
+    captured = {}
+
+    async def fake_search(query, source="all", **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post("/search", json={"query": "hello", "min_score": 0.3})
+    assert response.status_code == 200
+    assert captured["min_score"] == 0.3
+
+
+def test_search_omitted_min_score_does_not_reach_search(monkeypatch):
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post("/search", json={"query": "hello"})
+    assert response.status_code == 200
+    assert "min_score" not in captured
+
+
+@pytest.mark.parametrize("min_score", [True, "0.7", -0.1, 1.5])
+def test_search_invalid_min_score_400(min_score):
+    response = client.post("/search", json={"query": "hello", "min_score": min_score})
+    assert response.status_code == 400
+    assert response.json()["error"] == "min_score must be a number between 0 and 1"
+
+
+@pytest.mark.parametrize("min_score", [0, 1])
+def test_search_boundary_min_score_accepted(monkeypatch, min_score):
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post("/search", json={"query": "hello", "min_score": min_score})
+    assert response.status_code == 200
+    assert captured["min_score"] == min_score
+
+
 def test_search_malformed_json_400():
     response = client.post(
         "/search", content=b"{not valid json", headers={"content-type": "application/json"}

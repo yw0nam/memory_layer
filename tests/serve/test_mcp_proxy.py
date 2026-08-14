@@ -175,6 +175,30 @@ def test_search_memory_forwards_include_archived(monkeypatch):
     assert captured["json"]["include_archived"] is True
 
 
+def test_search_memory_forwards_min_score(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.search_memory(query="burst gate", min_score=0.3))
+    assert captured["json"]["min_score"] == 0.3
+
+
+def test_search_memory_omitted_min_score_not_in_body(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.search_memory(query="burst gate"))
+    assert "min_score" not in captured["json"]
+
+
 def test_search_400_non_json_body_raises_generic_value_error(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, text="upstream proxy error")
