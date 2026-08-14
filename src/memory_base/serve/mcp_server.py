@@ -145,6 +145,7 @@ async def _search(
     include_archived: bool = False,
     repo: list[str] | None = None,
     namespace: str | None = None,
+    min_score: float | None = None,
     ctx: "Context | None" = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {"query": query, "source": source, "top_k": top_k}
@@ -158,6 +159,8 @@ async def _search(
         body["include_archived"] = True
     if namespace is not None:
         body["namespaces"] = [namespace]
+    if min_score is not None:
+        body["min_score"] = min_score
     return await _call(
         "POST",
         "/search",
@@ -173,6 +176,7 @@ async def search_all(
     top_k: int = 10,
     include_archived: bool = False,
     namespace: str | None = None,
+    min_score: float | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search both code and memory for the given query.
@@ -191,6 +195,9 @@ async def search_all(
     `namespace` narrows the memory search to one namespace the caller's API
     key can access; omitted, it covers every namespace the key can access.
     A namespace the key cannot access is rejected by the server.
+
+    Hits scoring below `min_score` are dropped (default 0.25 on the 0-1 rerank
+    relevance scale; pass 0 to disable).
     """
     return await _search(
         query,
@@ -198,6 +205,7 @@ async def search_all(
         top_k,
         include_archived=include_archived,
         namespace=namespace,
+        min_score=min_score,
         ctx=ctx,
     )
 
@@ -208,6 +216,7 @@ async def search_code(
     top_k: int = 10,
     repo: list[str] | None = None,
     namespace: str | None = None,
+    min_score: float | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search only the indexed codebase for the given query.
@@ -223,8 +232,13 @@ async def search_code(
     ones; `list_repos` reports the names that exist, and an unknown name simply
     matches nothing. `namespace` has no effect on code (code is not
     namespaced) but is accepted for a uniform tool shape.
+
+    Hits scoring below `min_score` are dropped (default 0.25 on the 0-1 rerank
+    relevance scale; pass 0 to disable).
     """
-    return await _search(query, "code", top_k, repo=repo, namespace=namespace, ctx=ctx)
+    return await _search(
+        query, "code", top_k, repo=repo, namespace=namespace, min_score=min_score, ctx=ctx
+    )
 
 
 @mcp.tool()
@@ -235,6 +249,7 @@ async def search_memory(
     tags: list[str] | None = None,
     include_archived: bool = False,
     namespace: str | None = None,
+    min_score: float | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search only stored memory for the given query.
@@ -253,6 +268,9 @@ async def search_memory(
     `namespace` narrows the search to one namespace the caller's API key can
     access; omitted, it covers every namespace the key can access. A
     namespace the key cannot access is rejected by the server.
+
+    Hits scoring below `min_score` are dropped (default 0.25 on the 0-1 rerank
+    relevance scale; pass 0 to disable).
     """
     return await _search(
         query,
@@ -262,6 +280,7 @@ async def search_memory(
         tags,
         include_archived,
         namespace=namespace,
+        min_score=min_score,
         ctx=ctx,
     )
 

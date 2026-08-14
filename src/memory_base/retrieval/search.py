@@ -38,6 +38,8 @@ NEIGHBOR_LINE_WINDOW = 40
 NEIGHBOR_LIMIT = 2
 MEMORY_BM25_INDEX = "memory_chunks_bm25"
 CODE_BM25_INDEX = "code_chunks_bm25"
+# Reranker relevance floor (0..1, rerank-only): above junk (<=~0.01), below weak true hits (~0.29).
+MIN_SCORE = 0.25
 FTS_RRF_WEIGHT = 0.2
 # Recency/idf are tie-breakers ("when relevance is otherwise equal, the newer wins");
 # ranked recency itself is enforced post-fusion by the time-decay multiplier.
@@ -363,6 +365,14 @@ def _dedup_cap(hits: list[Hit]) -> list[Hit]:
     return out
 
 
+def _apply_min_score(hits: list[Hit], min_score: float | None, rerank: bool) -> list[Hit]:
+    """Drop hits scoring below the floor; None resolves to MIN_SCORE only when rerank ran."""
+    floor = min_score if min_score is not None else (MIN_SCORE if rerank else None)
+    if floor is None:
+        return hits
+    return [h for h in hits if h.score >= floor]
+
+
 def rerank_payload(model: str, query: str, texts: list[str]) -> dict:
     """Build the /rerank request body, templated for Qwen3 rerankers."""
     truncated = [text[:RERANK_TEXT_LIMIT] for text in texts]
@@ -422,6 +432,7 @@ async def search(
     tags: list[str] | None = None,
     repo: list[str] | None = None,
     namespaces: list[str] | None = None,
+    min_score: float | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
     """schema overrides PG_SCHEMA for this call; only the eval harness passes it."""
@@ -451,6 +462,7 @@ async def search(
         hits = _dedup_cap(hits)
     if rerank:
         hits = await _rerank(query, hits)
+    hits = _apply_min_score(hits, min_score, rerank)
     async with db.acquire() as conn:
         await _restore_context(conn, hits, schema=schema)
     return hits
@@ -461,9 +473,15 @@ async def _main() -> None:
     ap.add_argument("query")
     ap.add_argument("--source", choices=["code", "memory", "all"], default="all")
     ap.add_argument("--no-rerank", action="store_true")
+    ap.add_argument("--min-score", type=float, default=None)
     args = ap.parse_args()
 
-    for h in await search(args.query, source=args.source, rerank=not args.no_rerank):
+    for h in await search(
+        args.query,
+        source=args.source,
+        rerank=not args.no_rerank,
+        min_score=args.min_score,
+    ):
         print(f"[{h.score:.4f}] ({h.source}) {h.ref}")
         print("    " + h.text[:300].replace("\n", "\n    "))
         print("---")

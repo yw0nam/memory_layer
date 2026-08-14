@@ -151,6 +151,13 @@ async def search_route(request: Request) -> JSONResponse:
     if not isinstance(include_archived, bool):
         return error("include_archived must be a boolean")
 
+    if "min_score" in body:
+        min_score = body["min_score"]
+        if isinstance(min_score, bool) or not isinstance(min_score, (int, float)):
+            return error("min_score must be a number between 0 and 1")
+        if not 0 <= min_score <= 1:
+            return error("min_score must be a number between 0 and 1")
+
     # Explicit null is a caller error distinct from an omitted key; search() sees
     # only the resolved value and cannot tell the two apart, so this stays here.
     if "tags" in body and body["tags"] is None:
@@ -171,6 +178,8 @@ async def search_route(request: Request) -> JSONResponse:
             options["tags"] = body["tags"]
         if "repo" in body:
             options["repo"] = body["repo"]
+        if "min_score" in body:
+            options["min_score"] = body["min_score"]
         if requested_namespaces is not None:
             options["namespaces"] = requested_namespaces
         elif not key.is_admin:

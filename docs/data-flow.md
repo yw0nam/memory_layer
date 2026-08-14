@@ -116,7 +116,8 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
 ```
 
 Response text is truncated to 2000 chars. `score` is the rerank score, falling back to the
-fused RRF score. `include_archived` surfaces archived rows and turns recency decay off for
+fused RRF score. Hits below the min_score floor (default 0.25, request-adjustable, 0 disables)
+are dropped after reranking. `include_archived` surfaces archived rows and turns recency decay off for
 memory so they are not buried; code hits have no archived state and keep decaying. `/search`
 hits mark archived rows `"archived": true` since an archived note may have been superseded by
 a newer one.
