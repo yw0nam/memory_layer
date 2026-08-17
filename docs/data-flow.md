@@ -109,6 +109,8 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
                         ▼
                 🎯 rerank (vLLM) → top 10
                         ▼
+                min_score floor (default 0.25, rerank scale only)
+                        ▼
                 code hits get ±40-line neighbour chunks as `context`
                         ▼
                     hits[]  ─────► in-process buffer
