@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.0] - 2026-08-18
+
+### Added
+- add a min_score relevance floor to search (#177)
+- advertise memory-base usage instructions in the MCP handshake (#176)
+
+### Fixed
+- keep vendored bundles out of code ingest and bound its embedding fan-out (#169)
+- refresh uv.lock before staging a release commit (#168)
+- return no code hits when code_chunks has never been created (#167)
+
+### Refactored
+- unify the missing-chunk-table guard in retrieval on one mechanism (#174)
+
+### Documentation
+- add architecture and data-flow diagrams (#166)
+- link the runnable example deployment (#165)
+
+### Maintenance
+- read mcp allowlist in docker compose
+- fail a PR whose uv.lock has drifted from pyproject.toml (#173)
+
 ## [0.2.0] - 2026-08-11
 
 ### Added
