@@ -61,6 +61,7 @@ services:
     ports:
       - "8765:8765"
     environment:
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
       MCP_TRANSPORT: streamable-http
       REST_URL: http://api:8010
       TABLES_QUERY_PASSWORD: ${TABLES_QUERY_PASSWORD:?set TABLES_QUERY_PASSWORD in .env}
