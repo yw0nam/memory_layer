@@ -14,12 +14,14 @@ import pytest
 from memory_base.core.config import vector_literal
 from memory_base.retrieval.search import (
     FUSED_TOP,
+    MIN_SCORE,
     PER_FILE_CAP,
     QWEN3_RERANK_PREFIX,
     QWEN3_RERANK_SUFFIX,
     RERANK_TEXT_LIMIT,
     RRF_K,
     Hit,
+    _apply_min_score,
     _apply_time_decay,
     _decay_targets,
     _dedup_cap,
@@ -146,6 +148,51 @@ def test_dedup_cap_falls_back_to_ref_when_no_filename_meta():
     out = _dedup_cap(hits)
     assert len(out) == 1
     assert out[0].ref == "sess-1"
+
+
+# ---- _apply_min_score -----------------------------------------------------
+
+
+def _reranked_hit(ref, score):
+    return Hit(source="code", ref=ref, text="", ts=0.0, rrf=0.02, rerank_score=score)
+
+
+def _rrf_only_hit(ref, score):
+    return Hit(source="code", ref=ref, text="", ts=0.0, rrf=score)
+
+
+def test_apply_min_score_drops_below_and_keeps_at_or_above_floor():
+    below = _reranked_hit("a", MIN_SCORE - 0.01)
+    at_floor = _reranked_hit("b", MIN_SCORE)
+    above = _reranked_hit("c", MIN_SCORE + 0.1)
+    out = _apply_min_score([below, at_floor, above], min_score=None, rerank=True)
+    assert out == [at_floor, above]
+
+
+def test_apply_min_score_default_filters_nothing_without_rerank():
+    hits = [_rrf_only_hit("a", 0.02), _rrf_only_hit("b", 0.016)]
+    out = _apply_min_score(hits, min_score=None, rerank=False)
+    assert out == hits
+
+
+def test_apply_min_score_explicit_value_applies_to_rrf_score_without_rerank():
+    keep = _rrf_only_hit("a", 0.05)
+    drop = _rrf_only_hit("b", 0.02)
+    out = _apply_min_score([keep, drop], min_score=0.03, rerank=False)
+    assert out == [keep]
+
+
+def test_apply_min_score_explicit_zero_disables_default_floor_with_rerank():
+    hits = [_reranked_hit("a", 0.1), _reranked_hit("b", 0.0)]
+    out = _apply_min_score(hits, min_score=0.0, rerank=True)
+    assert out == hits
+
+
+def test_apply_min_score_uses_min_score_constant_as_rerank_default():
+    dropped = _reranked_hit("a", MIN_SCORE - 0.01)
+    kept = _reranked_hit("b", MIN_SCORE)
+    out = _apply_min_score([dropped, kept], min_score=None, rerank=True)
+    assert out == [kept]
 
 
 # ---- Hit dataclass --------------------------------------------------------

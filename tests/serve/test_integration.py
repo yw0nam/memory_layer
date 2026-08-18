@@ -74,7 +74,10 @@ def test_search_memory_source_returns_memory_hits():
 
 
 def test_search_all_source_with_rerank_populates_rerank_score():
-    hits = asyncio.run(search("embedding vector search pipeline", source="all", rerank=True))
+    # min_score=0: this test checks rerank_score population, not the relevance floor.
+    hits = asyncio.run(
+        search("embedding vector search pipeline", source="all", rerank=True, min_score=0)
+    )
     assert len(hits) >= 1
     assert any(h.rerank_score is not None for h in hits)
 
