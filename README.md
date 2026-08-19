@@ -19,9 +19,9 @@ retrieved.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  10 tools: search / search_code / search_memory / save_memory
-   │ mcp_server  │            ingest_document / remove_document / query_table
-   └──────┬──────┘            ingest_repo / remove_repo / list_repos
+   ┌─────────────┐  11 tools: search / search_code / search_memory / save_memory
+   │ mcp_server  │            list_notes / ingest_document / remove_document
+   └──────┬──────┘            query_table / ingest_repo / remove_repo / list_repos
           │ HTTP                                       (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
@@ -67,8 +67,9 @@ trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 |---|---|---|
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
-| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `repo`, `include_archived` |
+| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `repo`, `since`/`until`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, `kind`, `tags`, and the optional id of a prior note to archive |
+| `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
 | `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, repeated `tags`; overwriting an existing `document_id` is creator-or-admin only |
 | `DELETE` | `/ingest/documents/{document_id}` | remove a document's chunks and table rows in one namespace (`namespace` query param, default the key's home) — the document's creator or an admin key only |
 | `POST` | `/tables/query` | read-only SQL over `memory.doc_rows` — `sql` (`SELECT`/`WITH`), `namespace`; 1,000-row / 5 MB / 10 s caps |
@@ -87,10 +88,12 @@ trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 | `POST` | `/admin/archive` | preview cold rows, or archive with `confirm` |
 | `POST` | `/admin/restore` | preview, or restore with `confirm` |
 
-Filters are bound to the source they belong to: `kind` and `tags` require
-`source="memory"`, `repo` requires `source="code"`, and `source="all"` takes neither.
-`repo` is a list of cache directory names as reported by `GET /repos`; an unknown name
-matches nothing. Code hits carry their `repo` whether or not the filter is set.
+Filters are bound to the source they belong to: `kind`, `tags`, and `since`/`until`
+require `source="memory"`, `repo` requires `source="code"`, and `source="all"` takes
+none of them. `repo` is a list of cache directory names as reported by `GET /repos`; an
+unknown name matches nothing. Code hits carry their `repo` whether or not the filter is
+set. `since` and `until` are ISO 8601 dates or datetimes bounding `ts_last_active`: a
+bare date covers that whole day, and naive values are read as UTC.
 
 ## MCP tools
 
@@ -98,13 +101,15 @@ matches nothing. Code hits carry their `repo` whether or not the filter is set.
 stdio by default; `MCP_TRANSPORT=sse|streamable-http` with `MCP_HOST`/`MCP_PORT` serves
 over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
-`search` · `search_code` · `search_memory` · `save_memory` ·
+`search` · `search_code` · `search_memory` · `save_memory` · `list_notes` ·
 `ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
 `ingest_repo` · `remove_repo` · `list_repos`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
-`search_memory`; `kind` and `tags` only where `source="memory"` holds,
-so `search` and `search_code` do not offer them; `repo` on `search_code` alone. Lifecycle
+`search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,
+so `search` and `search_code` do not offer them; `repo` on `search_code` alone.
+`list_notes` reads notes by filters alone — no query, no embedding call — for
+deterministic reads like tag-scoped profile notes or a time window. Lifecycle
 routes (`/admin/*`) have no MCP tool — archiving and restoring stay operator actions, while
 reading archived rows does not.
 

@@ -115,4 +115,5 @@ def test_mcp_server_registers_expected_tools():
         "remove_repo",
         "remove_document",
         "list_repos",
+        "list_notes",
     }

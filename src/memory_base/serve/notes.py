@@ -6,12 +6,18 @@ import hashlib
 import json
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
-from memory_base.retrieval.search import normalize_tags
+from memory_base.retrieval.search import (
+    history_predicates,
+    metadata_dict,
+    normalize_tags,
+    normalize_time_range,
+)
 from memory_base.serve import namespaces
 from memory_base.serve.http import TEXT_LIMIT
 from memory_base.serve.namespaces import DEFAULT_NAMESPACE
@@ -19,6 +25,8 @@ from memory_base.serve.namespaces import DEFAULT_NAMESPACE
 NOTE_MAX_CHARS = 4000
 NOTE_KINDS = ("note", "decision")
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
+LIST_NOTES_DEFAULT_LIMIT = 50
+LIST_NOTES_MAX_LIMIT = 200
 
 
 def build_note_row(
@@ -150,3 +158,67 @@ async def save_note(
         "superseded": supersedes,
         "similar": [dict(similar) for similar in similar_rows],
     }
+
+
+async def list_notes(
+    *,
+    tags: list[str] | None = None,
+    kind: str | None = None,
+    namespaces: list[str] | None = None,
+    include_archived: bool = False,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = LIST_NOTES_DEFAULT_LIMIT,
+) -> list[dict[str, Any]]:
+    """List agent notes newest-first without a search query or embedding call.
+
+    Every filter is optional; `namespaces` of None means every namespace (the
+    caller resolves permission scope before calling).
+    """
+    if kind is not None and kind not in NOTE_KINDS:
+        raise ValueError(f"kind must be one of {NOTE_KINDS}")
+    normalized_tags = normalize_tags(tags)
+    since_ts, until_ts = normalize_time_range(since, until)
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not 1 <= limit <= LIST_NOTES_MAX_LIMIT
+    ):
+        raise ValueError(f"limit must be an integer between 1 and {LIST_NOTES_MAX_LIMIT}")
+    predicates, filter_args = history_predicates(
+        include_archived=include_archived,
+        kind=kind,
+        tags=normalized_tags,
+        namespaces=namespaces,
+        since=since_ts,
+        until=until_ts,
+    )
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT id, chunk_kind AS kind, content_raw AS text, metadata,
+                   ts_last_active, namespace, archived_at
+            FROM "{PG_SCHEMA}".memory_chunks
+            WHERE source_type = 'agent_note' AND {predicates}
+            ORDER BY ts_last_active DESC
+            LIMIT $1
+            """,
+            limit,
+            *filter_args,
+        )
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        note = {
+            "id": row["id"],
+            "kind": row["kind"],
+            "text": row["text"][:TEXT_LIMIT],
+            "tags": metadata_dict(row["metadata"]).get("tags", []),
+            "namespace": row["namespace"],
+            "date": datetime.fromtimestamp(row["ts_last_active"], tz=timezone.utc).strftime(
+                "%Y-%m-%d"
+            ),
+        }
+        if row["archived_at"] is not None:
+            note["archived"] = True
+        out.append(note)
+    return out

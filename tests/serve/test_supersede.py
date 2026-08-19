@@ -218,6 +218,7 @@ def test_mcp_tool_list_unaffected_by_supersede():
         "remove_repo",
         "remove_document",
         "list_repos",
+        "list_notes",
     }
 
 

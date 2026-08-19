@@ -145,6 +145,8 @@ async def _search(
     include_archived: bool = False,
     repo: list[str] | None = None,
     namespace: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
     min_score: float | None = None,
     ctx: "Context | None" = None,
 ) -> list[dict[str, Any]]:
@@ -159,6 +161,10 @@ async def _search(
         body["include_archived"] = True
     if namespace is not None:
         body["namespaces"] = [namespace]
+    if since is not None:
+        body["since"] = since
+    if until is not None:
+        body["until"] = until
     if min_score is not None:
         body["min_score"] = min_score
     return await _call(
@@ -249,6 +255,8 @@ async def search_memory(
     tags: list[str] | None = None,
     include_archived: bool = False,
     namespace: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
     min_score: float | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
@@ -269,6 +277,11 @@ async def search_memory(
     access; omitted, it covers every namespace the key can access. A
     namespace the key cannot access is rejected by the server.
 
+    `since`/`until` bound the search to memory last active in that window, for
+    time-anchored questions ("what did we decide last week"). Both are ISO 8601
+    dates or datetimes; a bare date covers that whole day, and naive values are
+    read as UTC.
+
     Hits scoring below `min_score` are dropped (default 0.25 on the 0-1 rerank
     relevance scale; pass 0 to disable).
     """
@@ -280,8 +293,59 @@ async def search_memory(
         tags,
         include_archived,
         namespace=namespace,
+        since=since,
+        until=until,
         min_score=min_score,
         ctx=ctx,
+    )
+
+
+@mcp.tool()
+async def list_notes(
+    tags: list[str] | None = None,
+    kind: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    include_archived: bool = False,
+    namespace: str | None = None,
+    limit: int | None = None,
+    ctx: Context | None = None,
+) -> list[dict[str, Any]]:
+    """List stored notes deterministically — no search query, no relevance ranking.
+
+    Use this for exact reads a similarity search cannot promise to be complete:
+    every note carrying a tag (e.g. loading profile or preference notes at
+    session start), or every note saved in a time window ("what was saved last
+    week"). Works without the embedding backend. Returns up to `limit` notes
+    (default 50, max 200) newest-first, each with id, kind, text (truncated to
+    2000 chars), tags, namespace, and date (YYYY-MM-DD).
+
+    `tags` matches notes carrying any of the given tags. `kind` is "note" or
+    "decision". `since`/`until` are ISO 8601 dates or datetimes (a bare date
+    covers that whole day; naive values are read as UTC). `include_archived`
+    adds superseded notes, marked "archived": true. `namespace` narrows to one
+    namespace the caller's API key can access; omitted, it covers every
+    namespace the key can access.
+    """
+    params: list[tuple[str, str]] = [("tags", tag) for tag in tags or []]
+    if kind is not None:
+        params.append(("kind", kind))
+    if since is not None:
+        params.append(("since", since))
+    if until is not None:
+        params.append(("until", until))
+    if include_archived:
+        params.append(("include_archived", "true"))
+    if namespace is not None:
+        params.append(("namespace", namespace))
+    if limit is not None:
+        params.append(("limit", str(limit)))
+    return await _call(
+        "GET",
+        "/notes",
+        params=params,
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403}),
     )
 
 
