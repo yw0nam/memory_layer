@@ -537,3 +537,60 @@ def test_search_memory_source_accepted(monkeypatch):
     monkeypatch.setattr(api, "search", fake_search)
     response = client.post("/search", json={"query": "hello", "source": "memory"})
     assert response.status_code == 200
+
+
+# ---- POST /search since/until ----------------------------------------------
+
+
+def test_search_forwards_raw_since_and_until(monkeypatch):
+    """The route forwards raw body values as-is; search() does the parsing."""
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post(
+        "/search",
+        json={"query": "q", "source": "memory", "since": "2026-08-01", "until": "2026-08-12"},
+    )
+    assert response.status_code == 200
+    assert captured["since"] == "2026-08-01"
+    assert captured["until"] == "2026-08-12"
+
+
+def test_search_omitted_time_bounds_do_not_reach_search(monkeypatch):
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post("/search", json={"query": "q", "source": "memory"})
+    assert response.status_code == 200
+    assert "since" not in captured
+    assert "until" not in captured
+
+
+@pytest.mark.parametrize("field", ["since", "until"])
+def test_search_explicit_null_time_bound_400(field):
+    response = client.post("/search", json={"query": "q", "source": "memory", field: None})
+    assert response.status_code == 400
+    assert field in response.json()["error"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"query": "q", "source": "memory", "since": "not-a-date"},
+        {"query": "q", "source": "memory", "since": "2026-08-13", "until": "2026-08-12"},
+        {"query": "q", "source": "code", "since": "2026-08-01"},
+        {"query": "q", "source": "all", "until": "2026-08-01"},
+    ],
+)
+def test_search_time_bound_validation_errors_are_400(body):
+    response = client.post("/search", json=body)
+    assert response.status_code == 400
+    assert set(response.json()) == {"error"}
