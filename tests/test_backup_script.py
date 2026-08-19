@@ -15,9 +15,7 @@ def _run(tmp_path: pathlib.Path, backup_dir: pathlib.Path, *args: str, docker_ex
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     fake_docker = bin_dir / "docker"
-    fake_docker.write_text(
-        f"#!/usr/bin/env bash\necho '{FAKE_DUMP_LINE}'\nexit {docker_exit}\n"
-    )
+    fake_docker.write_text(f"#!/usr/bin/env bash\necho '{FAKE_DUMP_LINE}'\nexit {docker_exit}\n")
     fake_docker.chmod(0o755)
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
     return subprocess.run(

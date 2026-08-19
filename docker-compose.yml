@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: db.Dockerfile
     container_name: memory_base_db
+    restart: unless-stopped
     command: postgres -c shared_preload_libraries=pg_textsearch
     environment:
       POSTGRES_USER: memory
@@ -17,6 +18,7 @@ services:
   api:
     build: .
     container_name: memory_base_api
+    restart: unless-stopped
     depends_on: [db]
     ports:
       - "8010:8010"
@@ -55,6 +57,7 @@ services:
   mcp:
     build: .
     container_name: memory_base_mcp
+    restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy

@@ -134,6 +134,13 @@ uv run python -m memory_base.retrieval.search "your query" --source code
 The memory schema is created on first write (`ensure_schema`); the code table is created
 by the indexer.
 
+### Backup
+
+`scripts/backup.sh <backup-dir> [keep]` writes a gzipped `pg_dump` of the database and
+keeps the newest `keep` dumps (default 14); schedule it from cron for recurring backups.
+The database is the only state that needs backing up — the repo cache and CocoIndex
+ledger are rebuilt by re-adding repos.
+
 [memory-base-example](https://github.com/yw0nam/memory-base-example) is a runnable
 deployment of this stack with a chat interface in front of it: Hermes Agent as an
 OpenAI-compatible backend, Open WebUI as the client, and a seed that loads public
