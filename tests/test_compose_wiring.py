@@ -105,3 +105,9 @@ def test_api_healthcheck_probes_liveness_not_the_vllm_endpoints():
 
 def test_mcp_waits_for_a_healthy_api():
     assert COMPOSE["services"]["mcp"]["depends_on"]["api"]["condition"] == "service_healthy"
+
+
+def test_every_service_restarts_unless_stopped():
+    """A host reboot must bring the whole stack back without manual intervention."""
+    for name, service in COMPOSE["services"].items():
+        assert service.get("restart") == "unless-stopped", name
