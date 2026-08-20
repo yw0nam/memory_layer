@@ -11,6 +11,7 @@ import json
 import math
 import time
 from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from typing import Any
 
 import asyncpg
@@ -144,12 +145,47 @@ def normalize_namespaces(namespaces: Any) -> list[str] | None:
     return normalized or None
 
 
+def parse_time_bound(value: Any, *, end: bool = False) -> float:
+    """Epoch seconds for an ISO 8601 date or datetime; naive values are read as UTC.
+
+    A bare date names a whole day, so as an end bound it resolves to the next
+    midnight; a datetime is the exact instant either way.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("since/until must be ISO 8601 date or datetime strings")
+    text = value.strip()
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        raise ValueError(f"invalid ISO 8601 timestamp: {value!r}") from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    is_bare_date = True
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        is_bare_date = False
+    epoch = parsed.timestamp()
+    return epoch + 86400.0 if end and is_bare_date else epoch
+
+
+def normalize_time_range(since: Any, until: Any) -> tuple[float | None, float | None]:
+    """Epoch bounds for the optional since/until filter; omitted bounds stay None."""
+    since_ts = parse_time_bound(since) if since is not None else None
+    until_ts = parse_time_bound(until, end=True) if until is not None else None
+    if since_ts is not None and until_ts is not None and since_ts >= until_ts:
+        raise ValueError("since must be earlier than until")
+    return since_ts, until_ts
+
+
 def validate_search_options(
     source: str,
     kind: Any,
     tags: Any,
     repo: Any = None,
-) -> tuple[str | None, list[str] | None, list[str] | None]:
+    since: Any = None,
+    until: Any = None,
+) -> tuple[str | None, list[str] | None, list[str] | None, float | None, float | None]:
     """Validate source-specific filters and return normalized values."""
     if kind is not None and kind not in SEARCH_KINDS:
         raise ValueError(f"kind must be one of {SEARCH_KINDS}")
@@ -159,7 +195,10 @@ def validate_search_options(
     normalized_repo = _normalize_repo(repo)
     if normalized_repo is not None and source != "code":
         raise ValueError('repo filter requires source="code"')
-    return kind, normalized_tags, normalized_repo
+    since_ts, until_ts = normalize_time_range(since, until)
+    if (since_ts is not None or until_ts is not None) and source != "memory":
+        raise ValueError('since and until filters require source="memory"')
+    return kind, normalized_tags, normalized_repo, since_ts, until_ts
 
 
 def history_predicates(
@@ -169,7 +208,10 @@ def history_predicates(
     tags: list[str] | None,
     alias: str = "",
     namespaces: list[str] | None = None,
+    since: float | None = None,
+    until: float | None = None,
 ) -> tuple[str, list[Any]]:
+    """Filter clauses over memory_chunks; placeholders start at $2, $1 being the caller's."""
     prefix = f"{alias}." if alias else ""
     clauses: list[str] = []
     args: list[Any] = []
@@ -184,6 +226,12 @@ def history_predicates(
     if namespaces:
         args.append(namespaces)
         clauses.append(f"{prefix}namespace = ANY(${len(args) + 1}::text[])")
+    if since is not None:
+        args.append(since)
+        clauses.append(f"{prefix}ts_last_active >= ${len(args) + 1}")
+    if until is not None:
+        args.append(until)
+        clauses.append(f"{prefix}ts_last_active < ${len(args) + 1}")
     return " AND ".join(clauses) or "true", args
 
 
@@ -258,6 +306,8 @@ async def _search_memory(
     kind: str | None = None,
     tags: list[str] | None = None,
     namespaces: list[str] | None = None,
+    since: float | None = None,
+    until: float | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
     schema = PG_SCHEMA if schema is None else schema
@@ -268,6 +318,8 @@ async def _search_memory(
         kind=kind,
         tags=tags,
         namespaces=namespaces,
+        since=since,
+        until=until,
     )
     columns = (
         "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
@@ -432,11 +484,15 @@ async def search(
     tags: list[str] | None = None,
     repo: list[str] | None = None,
     namespaces: list[str] | None = None,
+    since: str | None = None,
+    until: str | None = None,
     min_score: float | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
     """schema overrides PG_SCHEMA for this call; only the eval harness passes it."""
-    kind, tags, repo = validate_search_options(source, kind, tags, repo)
+    kind, tags, repo, since_ts, until_ts = validate_search_options(
+        source, kind, tags, repo, since, until
+    )
     namespaces = normalize_namespaces(namespaces)
 
     embedder = VllmEmbedder()
@@ -456,6 +512,8 @@ async def search(
                 kind=kind,
                 tags=tags,
                 namespaces=namespaces,
+                since=since_ts,
+                until=until_ts,
                 schema=schema,
             )
         _apply_time_decay(_decay_targets(hits, include_archived))

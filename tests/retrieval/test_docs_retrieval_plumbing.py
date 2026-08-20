@@ -53,7 +53,7 @@ def test_search_memory_returns_no_hits_when_memory_chunks_table_is_missing():
 
 @pytest.mark.parametrize("kind", ["doc", "note", "decision"])
 def test_memory_kind_filters_are_valid(kind):
-    assert validate_search_options("memory", kind, None) == (kind, None, None)
+    assert validate_search_options("memory", kind, None) == (kind, None, None, None, None)
 
 
 @pytest.mark.parametrize("kind", ["code", "", 1])
@@ -79,7 +79,7 @@ def test_filters_require_memory_source(source, kind, tags):
 def test_search_tags_are_normalized_with_any_semantics():
     assert validate_search_options(
         "memory", None, [" Infrastructure ", "DATABASE", "infrastructure"]
-    ) == (None, ["infrastructure", "database"], None)
+    ) == (None, ["infrastructure", "database"], None, None, None)
 
 
 @pytest.mark.parametrize("tags", [[], [" "], "infra", [1], ["infra", None]])
@@ -93,6 +93,8 @@ def test_repo_filter_is_normalized_for_code_source():
         None,
         None,
         ["YUI", "agent-team"],
+        None,
+        None,
     )
 
 

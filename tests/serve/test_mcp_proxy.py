@@ -57,6 +57,7 @@ def test_tool_list_includes_document_ingestion():
         "remove_repo",
         "remove_document",
         "list_repos",
+        "list_notes",
     }
 
 
@@ -138,6 +139,78 @@ def test_search_code_forwards_repo_filter(monkeypatch):
 
 def test_search_all_does_not_expose_repo_filter():
     assert "repo" not in inspect.signature(mcp_server.search_all).parameters
+
+
+def test_search_memory_forwards_since_and_until(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.search_memory("last week", since="2026-08-01", until="2026-08-12"))
+    assert captured["json"]["since"] == "2026-08-01"
+    assert captured["json"]["until"] == "2026-08-12"
+
+
+@pytest.mark.parametrize("tool", ["search_all", "search_code"])
+def test_only_search_memory_exposes_time_bounds(tool):
+    parameters = inspect.signature(getattr(mcp_server, tool)).parameters
+    assert "since" not in parameters
+    assert "until" not in parameters
+
+
+# ---- list_notes proxying ----------------------------------------------------
+
+
+def test_list_notes_gets_notes_with_repeated_params(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["params"] = request.url.params.multi_items()
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(
+        mcp_server.list_notes(
+            tags=["infra", "db"],
+            kind="decision",
+            since="2026-08-01",
+            until="2026-08-12",
+            include_archived=True,
+            namespace="team-a",
+            limit=5,
+        )
+    )
+    assert captured["method"] == "GET"
+    assert captured["path"] == "/notes"
+    assert sorted(captured["params"]) == sorted(
+        [
+            ("tags", "infra"),
+            ("tags", "db"),
+            ("kind", "decision"),
+            ("since", "2026-08-01"),
+            ("until", "2026-08-12"),
+            ("include_archived", "true"),
+            ("namespace", "team-a"),
+            ("limit", "5"),
+        ]
+    )
+
+
+def test_list_notes_omits_unset_filters(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = request.url.params.multi_items()
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.list_notes())
+    assert captured["params"] == []
 
 
 def test_search_all_does_not_expose_memory_only_filters():

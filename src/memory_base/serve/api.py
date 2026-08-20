@@ -27,6 +27,7 @@ from memory_base.serve import admin
 from memory_base.serve import ingest_api
 from memory_base.serve import job_store
 from memory_base.serve import namespaces
+from memory_base.serve import notes
 from memory_base.serve import repos
 from memory_base.serve import tables
 from memory_base.serve.auth import ApiKeyAuthMiddleware
@@ -164,6 +165,10 @@ async def search_route(request: Request) -> JSONResponse:
         return error("tags must be a non-empty list of strings")
     if "repo" in body and body["repo"] is None:
         return error("repo must be a non-empty list of strings")
+    if "since" in body and body["since"] is None:
+        return error("since must be an ISO 8601 date or datetime string")
+    if "until" in body and body["until"] is None:
+        return error("until must be an ISO 8601 date or datetime string")
     try:
         requested_namespaces = normalize_namespaces(body.get("namespaces"))
         if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
@@ -178,6 +183,10 @@ async def search_route(request: Request) -> JSONResponse:
             options["tags"] = body["tags"]
         if "repo" in body:
             options["repo"] = body["repo"]
+        if "since" in body:
+            options["since"] = body["since"]
+        if "until" in body:
+            options["until"] = body["until"]
         if "min_score" in body:
             options["min_score"] = body["min_score"]
         if requested_namespaces is not None:
@@ -215,6 +224,41 @@ async def save_memory_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse(result)
+
+
+async def notes_list_route(request: Request) -> JSONResponse:
+    """List agent notes by filters alone — no query, no embedding — scoped like search."""
+    key = request.state.key
+    params = request.query_params
+    try:
+        limit = int(params.get("limit", str(notes.LIST_NOTES_DEFAULT_LIMIT)))
+    except ValueError:
+        return error("limit must be an integer")
+    include_archived = params.get("include_archived", "false").lower()
+    if include_archived not in ("true", "false"):
+        return error("include_archived must be true or false")
+    try:
+        requested_namespaces = normalize_namespaces(params.getlist("namespace") or None)
+    except ValueError as exc:
+        return error(str(exc))
+    if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
+        return error("requested namespaces are outside the caller's allowed set", 403)
+    scope = requested_namespaces
+    if scope is None and not key.is_admin:
+        scope = sorted(key.allowed)
+    try:
+        rows = await notes.list_notes(
+            tags=params.getlist("tags") or None,
+            kind=params.get("kind") or None,
+            namespaces=scope,
+            include_archived=include_archived == "true",
+            since=params.get("since"),
+            until=params.get("until"),
+            limit=limit,
+        )
+    except ValueError as exc:
+        return error(str(exc))
+    return JSONResponse(rows)
 
 
 def _admin_scope(key) -> list[str] | None:
@@ -381,6 +425,7 @@ app = Starlette(
         Route("/health/services", health_services, methods=["GET"]),
         Route("/search", search_route, methods=["POST"]),
         Route("/save_memory", save_memory_route, methods=["POST"]),
+        Route("/notes", notes_list_route, methods=["GET"]),
         Route("/tables/query", tables.tables_query_route, methods=["POST"]),
         Route("/ingest/document", ingest_api.ingest_document_route, methods=["POST"]),
         Route("/ingest/jobs", ingest_api.ingest_jobs_route, methods=["GET"]),
