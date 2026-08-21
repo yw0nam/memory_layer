@@ -8,6 +8,7 @@ crash a conversation on a memory-base outage.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -17,6 +18,9 @@ import httpx
 DIGEST_TITLE = "Recent events (episodic memory):"
 PREFETCH_CHAR_BUDGET = 2000
 DEFAULT_API_KEY_ENV = "MEMORY_BASE_API_KEY"
+
+_CLIENT_CONTEXT_BLOCK = re.compile(r"<client_context>\n?(.*?)</client_context>\s*", re.DOTALL)
+_CONTEXT_BOILERPLATE_LINE = re.compile(r"^(time|frontmost|trigger|screenshot|Client-injected)\b")
 
 
 @dataclass
@@ -71,14 +75,38 @@ class MemoryBaseClient:
         dedup compares each hit's exact ``text`` against the digest episodes'
         text instead.
         """
+        cleaned = clean_prefetch_query(query)
+        if not cleaned:
+            return ""
         lines = [
             f"- [{hit.get('date', '')}] {hit['text']}"
-            for hit in self.search(query)
+            for hit in self.search(cleaned)
             if hit.get("text") and hit["text"] not in digest_ids
         ]
         if not lines:
             return ""
         return _truncate_at_line_boundary("\n".join(lines), PREFETCH_CHAR_BUDGET)
+
+
+def clean_prefetch_query(text: str) -> str:
+    """Strip client_context boilerplate from a prefetch query, keeping semantic lines.
+
+    YUI prepends a ``<client_context>`` block (timestamp, frontmost app,
+    trigger) to every user message. Fed to search verbatim, that boilerplate
+    self-matches notes describing the client_context format instead of what
+    the turn is about. Event payload lines (agent event/detail, signal, body,
+    cue note) stay — on autonomous turns they are the turn's only content.
+    """
+
+    def keep_semantic_lines(match: re.Match[str]) -> str:
+        lines = [
+            line
+            for line in match.group(1).splitlines()
+            if line.strip() and not _CONTEXT_BOILERPLATE_LINE.match(line.strip())
+        ]
+        return "\n".join(lines) + "\n" if lines else ""
+
+    return _CLIENT_CONTEXT_BLOCK.sub(keep_semantic_lines, text).strip()
 
 
 def format_digest(episodes: list[dict[str, Any]]) -> str:

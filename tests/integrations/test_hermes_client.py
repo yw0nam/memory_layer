@@ -11,6 +11,7 @@ from __future__ import annotations
 import httpx
 
 from client import MemoryBaseClient
+from client import clean_prefetch_query
 from client import digest_identities
 from client import format_digest
 from client import resolve_api_key
@@ -233,3 +234,88 @@ def test_resolve_api_key_falls_back_to_configured_env_var_name():
 
 def test_resolve_api_key_empty_when_neither_configured_nor_in_env():
     assert resolve_api_key({}, {}) == ""
+
+
+# ---- clean_prefetch_query -------------------------------------------------------
+
+
+RAW_USER_TURN = (
+    "<client_context>\n"
+    "Client-injected context; not typed by the user.\n"
+    "time: 2026-08-21T21:38:11+09:00 (Asia/Seoul)\n"
+    "frontmost: Orca (for 1min)\n"
+    "trigger: user message\n"
+    "</client_context>\n\n"
+    "それ、多分できるよ。"
+)
+
+RAW_AGENT_TURN = (
+    "<client_context>\n"
+    "Client-injected context; not typed by the user.\n"
+    "time: 2026-08-21T21:38:07+09:00 (Asia/Seoul)\n"
+    "frontmost: Orca (for 1min)\n"
+    "trigger: agent catchup (1 events)\n"
+    'agent event: claude-code done, project "YUI" - "Polled v0.3.2 build completion." (3min ago)\n'
+    "agent detail: 빌드가 아직 도는 중.\n"
+    "</client_context>\n\n"
+    "(my claude-code tasks piled up while I was away)"
+)
+
+
+def test_clean_prefetch_query_drops_boilerplate_keeps_user_text():
+    assert clean_prefetch_query(RAW_USER_TURN) == "それ、多分できるよ。"
+
+
+def test_clean_prefetch_query_keeps_semantic_context_lines():
+    cleaned = clean_prefetch_query(RAW_AGENT_TURN)
+    assert cleaned == (
+        'agent event: claude-code done, project "YUI" - "Polled v0.3.2 build completion." (3min ago)\n'
+        "agent detail: 빌드가 아직 도는 중.\n"
+        "(my claude-code tasks piled up while I was away)"
+    )
+    assert "<client_context>" not in cleaned
+    assert "frontmost" not in cleaned
+
+
+def test_clean_prefetch_query_passes_plain_text_through():
+    assert clean_prefetch_query("no context block here") == "no context block here"
+
+
+def test_clean_prefetch_query_empty_when_only_boilerplate():
+    raw = "<client_context>\ntime: now\ntrigger: screen app_switched\n</client_context>"
+    assert clean_prefetch_query(raw) == ""
+
+
+def test_clean_prefetch_query_handles_multiple_blocks():
+    raw = (
+        "<client_context>\ntime: t1\nbody: first payload\n</client_context>\n"
+        "hello\n"
+        "<client_context>\ntrigger: x\ncue note: second payload\n</client_context>"
+    )
+    cleaned = clean_prefetch_query(raw)
+    assert "body: first payload" in cleaned
+    assert "cue note: second payload" in cleaned
+    assert "time: t1" not in cleaned
+
+
+def test_build_prefetch_searches_with_cleaned_query():
+    import json as jsonlib
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = jsonlib.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    client = _client(handler)
+    client.build_prefetch(RAW_USER_TURN, set())
+    assert captured["body"]["query"] == "それ、多分できるよ。"
+
+
+def test_build_prefetch_skips_search_when_query_cleans_to_empty():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no search request expected")
+
+    client = _client(handler)
+    raw = "<client_context>\ntime: now\ntrigger: screen\n</client_context>"
+    assert client.build_prefetch(raw, set()) == ""
