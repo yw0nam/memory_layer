@@ -13,6 +13,7 @@ import httpx
 from client import MemoryBaseClient
 from client import digest_identities
 from client import format_digest
+from client import resolve_api_key
 
 
 def _client(handler, **kwargs):
@@ -207,3 +208,28 @@ def test_build_prefetch_returns_empty_when_first_line_alone_exceeds_limit():
 
     client = _client(handler)
     assert client.build_prefetch("q", set()) == ""
+
+
+# ---- resolve_api_key -----------------------------------------------------------
+
+
+def test_resolve_api_key_prefers_configured_key_over_env():
+    config = {"api_key": "from-config"}
+    environ = {"MEMORY_BASE_API_KEY": "from-env"}
+    assert resolve_api_key(config, environ) == "from-config"
+
+
+def test_resolve_api_key_falls_back_to_default_env_var():
+    config = {}
+    environ = {"MEMORY_BASE_API_KEY": "from-env"}
+    assert resolve_api_key(config, environ) == "from-env"
+
+
+def test_resolve_api_key_falls_back_to_configured_env_var_name():
+    config = {"api_key_env": "CUSTOM_KEY_VAR"}
+    environ = {"CUSTOM_KEY_VAR": "from-custom-env"}
+    assert resolve_api_key(config, environ) == "from-custom-env"
+
+
+def test_resolve_api_key_empty_when_neither_configured_nor_in_env():
+    assert resolve_api_key({}, {}) == ""
