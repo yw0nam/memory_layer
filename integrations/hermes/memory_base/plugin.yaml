@@ -1,0 +1,5 @@
+name: memory_base
+version: 1.0.0
+description: "Memory Base — episodic digest and semantic prefetch over the memory-base REST API."
+requires_env:
+  - MEMORY_BASE_API_KEY
