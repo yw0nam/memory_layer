@@ -356,6 +356,7 @@ async def save_memory(
     tags: list[str] | None = None,
     supersedes: str | None = None,
     namespace: str | None = None,
+    occurred_at: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Store a distilled memory worth recalling in a future session.
@@ -367,8 +368,13 @@ async def save_memory(
 
     `content` MUST be written in English regardless of the conversation
     language, and be already distilled (the server does no summarization).
-    `kind` is "note" (default) or "decision". `tags` are optional labels.
-    `supersedes` archives an older note by id.
+    `kind` is "note" (default), "decision", or "episode" (a 1-3 sentence
+    past-tense record of one conversation session). `tags` are optional
+    labels. `supersedes` archives an older note by id.
+
+    `occurred_at` backdates the stored timestamp to an ISO 8601 date or
+    datetime instead of now, e.g. to land a backfilled episode on the day it
+    happened; a future or unparseable value is rejected.
 
     `namespace` picks one namespace the caller's API key can access; omitted,
     the note lands in the key's home namespace. A namespace the key cannot
@@ -384,6 +390,8 @@ async def save_memory(
     }
     if namespace is not None:
         body["namespace"] = namespace
+    if occurred_at is not None:
+        body["occurred_at"] = occurred_at
     return await _call(
         "POST",
         "/save_memory",

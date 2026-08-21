@@ -10,7 +10,7 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
    │                       │ 202 {job_id}                │ 202 {job_id}
    ▼                       ▼                             ▼
  validate ≤4000         MarkItDown worker            url validated
- kind ∈ note|decision   (killable, 120 s)            free disk? → 507
+ kind ∈ note|decision|episode   (killable, 120 s)            free disk? → 507
    │                       │                             │
    ▼                       ▼                             ▼
  id = sha256(content)   chunk 1500 / 2000 / 200      git clone --filter=blob:none
@@ -28,7 +28,7 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
    ▼                       ▼                             ▼
 ┌──────────────────────────────────────┐      ┌────────────────────────┐
 │ memory.memory_chunks                 │      │ memory.code_chunks     │
-│ note │ decision │ doc                │      │ repo · file · L1-L40   │
+│ note │ decision │ episode │ doc      │      │ repo · file · L1-L40   │
 │ halfvec(2048) + HNSW + BM25          │      │ halfvec + HNSW + BM25  │
 └──────────────────────────────────────┘      └────────────────────────┘
         ▲                                                ▲
@@ -203,7 +203,7 @@ previews by default and acts only with `{"confirm": true}`.
 | `id` | `note:<hash>` · `doc:<document_id>:<ordinal>` |
 | `source_type` | `agent_note` · `document` |
 | `source_ref` | `save_memory` or the document id |
-| `chunk_kind` | `note` · `decision` · `doc` |
+| `chunk_kind` | `note` · `decision` · `episode` · `doc` |
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active`, `idf_score` | ranking signals |

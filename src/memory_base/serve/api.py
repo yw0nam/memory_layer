@@ -213,6 +213,8 @@ async def save_memory_route(request: Request) -> JSONResponse:
         return error("namespace must be a non-empty string")
     if not key.permits(namespace):
         return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
+    if "occurred_at" in body and body["occurred_at"] is None:
+        return error("occurred_at must be an ISO 8601 date or datetime string")
     try:
         result = await save_note(
             body.get("content", ""),
@@ -220,6 +222,7 @@ async def save_memory_route(request: Request) -> JSONResponse:
             tags=body.get("tags"),
             supersedes=body.get("supersedes"),
             namespace=namespace,
+            occurred_at=body.get("occurred_at"),
         )
     except ValueError as exc:
         return error(str(exc))
@@ -293,6 +296,28 @@ async def admin_notes_delete_route(request: Request) -> JSONResponse:
         deleted = await admin.delete_notes(ids, namespaces=scope)
         return JSONResponse({"deleted": deleted})
     return JSONResponse({"rows": rows})
+
+
+async def admin_notes_move_route(request: Request) -> JSONResponse:
+    """Move agent notes into another registered namespace; admin keys only."""
+    key = request.state.key
+    if not key.is_admin:
+        return error("admin key required", 403)
+    try:
+        body = await json_body(request)
+    except Exception as exc:
+        return error(f"invalid JSON body: {exc}")
+    ids = _ids(body)
+    if ids is None:
+        return error("ids must be a non-empty list")
+    target_namespace = body.get("namespace")
+    if not isinstance(target_namespace, str) or not target_namespace.strip():
+        return error("namespace must be a non-empty string")
+    try:
+        result = await admin.move_notes(ids, target_namespace)
+    except namespaces.NamespaceError as exc:
+        return error(str(exc))
+    return JSONResponse(result)
 
 
 async def admin_duplicates_route(request: Request) -> JSONResponse:
@@ -444,6 +469,7 @@ app = Starlette(
         Route("/namespaces/{name}", namespaces_delete_route, methods=["DELETE"]),
         Route("/admin/notes", admin_notes_route, methods=["GET"]),
         Route("/admin/notes/delete", admin_notes_delete_route, methods=["POST"]),
+        Route("/admin/notes/move", admin_notes_move_route, methods=["POST"]),
         Route("/admin/duplicates", admin_duplicates_route, methods=["GET"]),
         Route("/admin/archive", admin_archive_route, methods=["POST"]),
         Route("/admin/restore", admin_restore_route, methods=["POST"]),
