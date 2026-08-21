@@ -6,6 +6,8 @@ import os
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
+from memory_base.core.schema import ensure_schema_once
+from memory_base.serve import namespaces
 from memory_base.serve.http import TEXT_LIMIT
 
 COLD_AGE_DAYS = int(os.getenv("COLD_AGE_DAYS", "180"))
@@ -80,6 +82,57 @@ async def delete_notes(ids: list[str], namespaces: list[str] | None = None) -> i
             namespaces,
         )
         return int(status.rsplit(" ", 1)[-1])
+
+
+async def move_notes(ids: list[str], target_namespace: str) -> dict[str, list]:
+    """Move agent-note rows to another namespace, rewriting each id to its target format.
+
+    An id already present in the target namespace is left alone and reported skipped
+    instead of overwriting it; an id that names no agent_note row is skipped the same way.
+    """
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        async with conn.transaction():
+            await namespaces.require_registered(conn, target_namespace)
+            existing = await conn.fetch(
+                f"""
+                SELECT id FROM "{PG_SCHEMA}".memory_chunks
+                WHERE source_type = 'agent_note' AND id = ANY($1::text[])
+                """,
+                ids,
+            )
+            found = {row["id"] for row in existing}
+            moved: list[dict[str, str]] = []
+            skipped: list[str] = []
+            for old_id in ids:
+                if old_id not in found:
+                    skipped.append(old_id)
+                    continue
+                note_hash = old_id.rsplit(":", 1)[-1]
+                new_id = (
+                    f"note:{note_hash}"
+                    if target_namespace == namespaces.DEFAULT_NAMESPACE
+                    else f"note:{target_namespace}:{note_hash}"
+                )
+                collides = await conn.fetchval(
+                    f'SELECT EXISTS(SELECT 1 FROM "{PG_SCHEMA}".memory_chunks WHERE id = $1)',
+                    new_id,
+                )
+                if collides:
+                    skipped.append(old_id)
+                    continue
+                await conn.execute(
+                    f"""
+                    UPDATE "{PG_SCHEMA}".memory_chunks
+                    SET id = $1, session_id = $1, namespace = $2
+                    WHERE id = $3
+                    """,
+                    new_id,
+                    target_namespace,
+                    old_id,
+                )
+                moved.append({"old": old_id, "new": new_id})
+            return {"moved": moved, "skipped": skipped}
 
 
 async def find_duplicates(

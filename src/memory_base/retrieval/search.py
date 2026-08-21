@@ -32,7 +32,7 @@ PER_FILE_CAP = 3
 FUSED_TOP = 20
 RERANK_TOP = 10
 TIME_DECAY_HALF_LIFE_DAYS = 90.0
-SEARCH_KINDS = ("doc", "note", "decision")
+SEARCH_KINDS = ("doc", "note", "decision", "episode")
 # Reranker input budget; the API's TEXT_LIMIT is separate and bounds only the response.
 RERANK_TEXT_LIMIT = 4000
 NEIGHBOR_LINE_WINDOW = 40

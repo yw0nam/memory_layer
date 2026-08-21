@@ -17,13 +17,14 @@ from memory_base.retrieval.search import (
     metadata_dict,
     normalize_tags,
     normalize_time_range,
+    parse_time_bound,
 )
 from memory_base.serve import namespaces
 from memory_base.serve.http import TEXT_LIMIT
 from memory_base.serve.namespaces import DEFAULT_NAMESPACE
 
 NOTE_MAX_CHARS = 4000
-NOTE_KINDS = ("note", "decision")
+NOTE_KINDS = ("note", "decision", "episode")
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
 LIST_NOTES_DEFAULT_LIMIT = 50
 LIST_NOTES_MAX_LIMIT = 200
@@ -76,9 +77,18 @@ async def save_note(
     tags: list[str] | None = None,
     supersedes: str | None = None,
     namespace: str = DEFAULT_NAMESPACE,
+    occurred_at: str | None = None,
 ) -> dict[str, Any]:
-    """Validate, embed, and idempotently store an agent-authored memory."""
-    row = build_note_row(content, kind, tags, time.time(), namespace)
+    """Validate, embed, and idempotently store an agent-authored memory.
+
+    `occurred_at`, when given, backdates the stored timestamp to that ISO 8601
+    date/datetime instead of now; a future or unparseable value raises ValueError.
+    """
+    now = time.time()
+    ts = parse_time_bound(occurred_at) if occurred_at is not None else now
+    if ts > now:
+        raise ValueError("occurred_at must not be in the future")
+    row = build_note_row(content, kind, tags, ts, namespace)
     embedding = await embed_text(VllmEmbedder(), row["raw"])
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
