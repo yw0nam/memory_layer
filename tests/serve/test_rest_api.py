@@ -419,7 +419,7 @@ def test_save_memory_oversized_content_400():
 def test_save_memory_bad_kind_400():
     response = client.post("/save_memory", json={"content": "valid content", "kind": "reminder"})
     assert response.status_code == 400
-    assert response.json()["error"] == "kind must be one of ('note', 'decision')"
+    assert response.json()["error"] == "kind must be one of ('note', 'decision', 'episode')"
 
 
 @pytest.mark.parametrize("tags", ["infra", {"tag": "infra"}, [1], ["infra", None]])
@@ -432,7 +432,9 @@ def test_save_memory_malformed_tags_400(tags):
 def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
     captured = {}
 
-    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+    async def fake_save_note(
+        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+    ):
         captured["content"] = content
         captured["kind"] = kind
         captured["tags"] = tags
@@ -474,7 +476,9 @@ def test_save_memory_malformed_json_400():
 def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
     captured = {}
 
-    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+    async def fake_save_note(
+        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+    ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
@@ -487,7 +491,9 @@ def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
 def test_save_memory_forwards_explicit_namespace(monkeypatch):
     captured = {}
 
-    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+    async def fake_save_note(
+        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+    ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
@@ -500,7 +506,9 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
 
 
 def test_save_memory_unregistered_namespace_400(monkeypatch):
-    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+    async def fake_save_note(
+        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+    ):
         raise ValueError(f"unregistered namespace: {namespace}")
 
     monkeypatch.setattr(api, "save_note", fake_save_note)

@@ -55,7 +55,9 @@ def client():
 
 
 def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, client):
-    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+    async def fake_save_note(
+        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+    ):
         return {
             "id": "note:aaaaaaaaaaaaaaaa",
             "kind": "note",
@@ -76,7 +78,9 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
 def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
     captured = {}
 
-    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+    async def fake_save_note(
+        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+    ):
         captured["supersedes"] = supersedes
         return {
             "id": "note:bbbbbbbbbbbbbbbb",
@@ -98,7 +102,9 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
 def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
     captured = {}
 
-    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+    async def fake_save_note(
+        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+    ):
         captured["supersedes"] = supersedes
         return {
             "id": "note:cccccccccccccccc",
@@ -116,7 +122,9 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
 
 
 def test_save_memory_unknown_supersedes_id_400(monkeypatch, client):
-    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+    async def fake_save_note(
+        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+    ):
         raise ValueError(f"unknown supersedes id: {supersedes}")
 
     monkeypatch.setattr(api, "save_note", fake_save_note)

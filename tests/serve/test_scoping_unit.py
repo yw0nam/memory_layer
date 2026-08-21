@@ -52,7 +52,9 @@ def test_search_omitted_namespaces_uses_full_allowed_set(monkeypatch):
 def test_save_memory_omitted_namespace_lands_in_key_home(monkeypatch):
     captured = {}
 
-    async def fake_save_note(content, kind="note", tags=None, supersedes=None, namespace="default"):
+    async def fake_save_note(
+        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+    ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
