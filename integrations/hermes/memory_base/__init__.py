@@ -9,6 +9,7 @@ Config via config.yaml (memory.memory_base):
   timeout      — request timeout in seconds (default: 5)
   top_k        — max prefetch search results (default: 5)
   min_score    — relevance floor for prefetch search (default: 0.6)
+  api_key      — API key value, takes precedence over api_key_env (optional)
   api_key_env  — env var holding the API key (default: MEMORY_BASE_API_KEY)
 """
 
@@ -24,7 +25,6 @@ from . import client
 _DEFAULT_TIMEOUT = 5
 _DEFAULT_TOP_K = 5
 _DEFAULT_MIN_SCORE = 0.6
-_DEFAULT_API_KEY_ENV = "MEMORY_BASE_API_KEY"
 
 
 def _load_plugin_config() -> dict[str, Any]:
@@ -57,8 +57,7 @@ class MemoryBaseProvider(MemoryProvider):
         return str(self._config.get("url") or "")
 
     def _api_key(self) -> str:
-        env_var = str(self._config.get("api_key_env") or _DEFAULT_API_KEY_ENV)
-        return os.environ.get(env_var, "")
+        return client.resolve_api_key(self._config, os.environ)
 
     def is_available(self) -> bool:
         """Config presence only — no network I/O."""

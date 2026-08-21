@@ -32,10 +32,11 @@ Read from `memory.memory_base` in the Hermes profile's `config.yaml`:
 | `timeout`     | `5`                        | request timeout, in seconds                 |
 | `top_k`       | `5`                        | max prefetch search results                 |
 | `min_score`   | `0.6`                      | relevance floor for prefetch search          |
+| `api_key`     | *(none)*                   | API key value; takes precedence over `api_key_env` |
 | `api_key_env` | `MEMORY_BASE_API_KEY`     | env var holding the memory-base API key     |
 
-The API key itself is read from the environment variable named by `api_key_env`, never from
-`config.yaml`.
+The API key is `api_key` when set, otherwise the environment variable named by
+`api_key_env`.
 
 ## Deployment
 

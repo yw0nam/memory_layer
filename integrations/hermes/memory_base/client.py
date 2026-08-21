@@ -8,6 +8,7 @@ crash a conversation on a memory-base outage.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,7 @@ import httpx
 
 DIGEST_TITLE = "Recent events (episodic memory):"
 PREFETCH_CHAR_BUDGET = 2000
+DEFAULT_API_KEY_ENV = "MEMORY_BASE_API_KEY"
 
 
 @dataclass
@@ -90,6 +92,15 @@ def format_digest(episodes: list[dict[str, Any]]) -> str:
 def digest_identities(episodes: list[dict[str, Any]]) -> set[str]:
     """Exact-text identity set for digest episodes, used to dedup prefetch hits."""
     return {e["text"] for e in episodes if e.get("text")}
+
+
+def resolve_api_key(config: Mapping[str, Any], environ: Mapping[str, str]) -> str:
+    """Resolve the memory-base API key: a configured value beats the ambient env var."""
+    configured = config.get("api_key")
+    if configured:
+        return str(configured)
+    env_var = str(config.get("api_key_env") or DEFAULT_API_KEY_ENV)
+    return environ.get(env_var, "")
 
 
 def _truncate_at_line_boundary(text: str, limit: int) -> str:
