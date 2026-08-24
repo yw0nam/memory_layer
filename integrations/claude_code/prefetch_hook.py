@@ -5,14 +5,19 @@ prints a <memory-context> block for fresh, relevant hits. Every failure mode
 is fail-open: no output, exit 0, never a blocked prompt. Stdlib only — the
 script runs under whatever python3 Claude Code invokes, outside any venv.
 
-Registration (user-level ~/.claude/settings.json):
+Install (identical on every machine):
+    cp integrations/claude_code/prefetch_hook.py ~/.claude/hooks/memory_base_prefetch.py
+    printf 'MEMORY_BASE_API_KEY=...\n' > ~/.config/memory-base/env   # chmod 600
+    # ~/.claude/settings.json:
     {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command",
-        "command": "python3 /path/to/prefetch_hook.py", "timeout": 5}]}]}}
+        "command": "python3 \"$HOME/.claude/hooks/memory_base_prefetch.py\"",
+        "timeout": 5}]}]}}
 
-Config via environment: MEMORY_BASE_URL (default http://127.0.0.1:8010),
-MEMORY_BASE_API_KEY, or MEMORY_BASE_ENV pointing at an env file holding the
-key. Each invocation appends one metrics row to MEMORY_PREFETCH_LOG
-(default ~/.claude/memory_prefetch_log.jsonl) for later evaluation.
+Config via environment, every var optional: MEMORY_BASE_URL (default
+http://127.0.0.1:8010), MEMORY_BASE_API_KEY, MEMORY_BASE_ENV (env file
+holding the key; default ~/.config/memory-base/env). Each invocation
+appends one metrics row to MEMORY_PREFETCH_LOG (default
+~/.claude/memory_prefetch_log.jsonl) for later evaluation.
 """
 
 from __future__ import annotations
@@ -149,14 +154,15 @@ def _resolve_api_key() -> str:
     key = os.environ.get("MEMORY_BASE_API_KEY", "")
     if key:
         return key
-    env_file = os.environ.get("MEMORY_BASE_ENV", "")
-    if env_file:
-        try:
-            for line in Path(env_file).read_text().splitlines():
-                if line.startswith("MEMORY_BASE_API_KEY="):
-                    return line.split("=", 1)[1].strip()
-        except Exception:
-            pass
+    env_file = os.environ.get("MEMORY_BASE_ENV", "") or str(
+        Path.home() / ".config" / "memory-base" / "env"
+    )
+    try:
+        for line in Path(env_file).read_text().splitlines():
+            if line.startswith("MEMORY_BASE_API_KEY="):
+                return line.split("=", 1)[1].strip()
+    except Exception:
+        pass
     return ""
 
 
