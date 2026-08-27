@@ -164,3 +164,30 @@ def test_query_truncated_before_fetch(env):
 
     run_hook(_payload("y" * 5000), fetch, **env)
     assert len(seen["q"]) <= 500
+
+
+def test_fetch_timeout_leaves_room_for_a_cold_start_search(monkeypatch):
+    """Measured cold-start searches land just past 1.5s; the hook's own budget is 5s."""
+    import urllib.request
+
+    import prefetch_hook
+
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"[]"
+
+    def fake_urlopen(request, timeout=None):
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert prefetch_hook._fetch_from_server("http://memory.test", "key")("q") == []
+    assert 3.0 <= captured["timeout"] < 5.0
