@@ -19,7 +19,7 @@ import asyncpg
 from memory_base.core import db
 from memory_base.core.config import (
     PG_SCHEMA,
-    SERVICE_TIMEOUT_SECONDS,
+    QUERY_TIMEOUT_SECONDS,
     VllmEmbedder,
     rerank_model,
     require_env,
@@ -58,6 +58,14 @@ QWEN3_RERANK_SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\
 QWEN3_RERANK_INSTRUCTION = (
     "Given a web search query, retrieve relevant passages that answer the query"
 )
+
+
+class UpstreamUnavailable(RuntimeError):
+    """A vLLM endpoint the query path depends on is unreachable."""
+
+    def __init__(self, service: str) -> None:
+        super().__init__(f"the {service} service is not responding")
+        self.service = service
 
 
 @dataclass
@@ -437,17 +445,33 @@ def rerank_payload(model: str, query: str, texts: list[str]) -> dict:
     return {"model": model, "query": templated_query, "documents": templated_docs}
 
 
+async def _embed_query(query: str) -> str:
+    """Embed the query as a vector literal, or report the embedder as unavailable."""
+    import openai
+
+    try:
+        vector = await asyncio.wait_for(
+            VllmEmbedder().embed(query, query=True), timeout=QUERY_TIMEOUT_SECONDS
+        )
+    except (TimeoutError, openai.APIError) as exc:
+        raise UpstreamUnavailable("embedding") from exc
+    return vector_literal(vector)
+
+
 async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
     import httpx
 
     if not hits:
         return hits
-    async with httpx.AsyncClient(timeout=SERVICE_TIMEOUT_SECONDS) as client:
-        r = await client.post(
-            require_env("RERANK_URL").rstrip("/") + "/rerank",
-            json=rerank_payload(rerank_model(), query, [h.text for h in hits]),
-        )
-        r.raise_for_status()
+    async with httpx.AsyncClient(timeout=QUERY_TIMEOUT_SECONDS) as client:
+        try:
+            r = await client.post(
+                require_env("RERANK_URL").rstrip("/") + "/rerank",
+                json=rerank_payload(rerank_model(), query, [h.text for h in hits]),
+            )
+            r.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise UpstreamUnavailable("reranking") from exc
     for item in r.json()["results"]:
         hits[item["index"]].rerank_score = item["relevance_score"]
     hits.sort(key=lambda h: h.rerank_score or 0.0, reverse=True)
@@ -495,9 +519,7 @@ async def search(
     )
     namespaces = normalize_namespaces(namespaces)
 
-    embedder = VllmEmbedder()
-    qvec = await embedder.embed(query, query=True)
-    qvec_lit = vector_literal(qvec)
+    qvec_lit = await _embed_query(query)
 
     async with db.acquire() as conn:
         hits: list[Hit] = []

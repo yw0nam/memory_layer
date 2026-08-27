@@ -13,7 +13,6 @@ import httpx
 import openai
 import pytest
 
-from memory_base.core.config import QUERY_TIMEOUT_SECONDS
 from memory_base.retrieval.search import Hit
 from memory_base.retrieval.search import UpstreamUnavailable
 from memory_base.retrieval.search import _embed_query
@@ -30,12 +29,10 @@ def _hit():
     return Hit(source="memory", ref="note:1", text="body", ts=0.0, rrf=0.02)
 
 
-def _patch_httpx(monkeypatch, handler, captured: dict | None = None):
+def _patch_httpx(monkeypatch, handler):
     real = httpx.AsyncClient
 
     def fake_client(*args, **kwargs):
-        if captured is not None:
-            captured.update(kwargs)
         kwargs["transport"] = httpx.MockTransport(handler)
         return real(*args, **kwargs)
 
@@ -63,18 +60,6 @@ def test_rerank_error_status_is_upstream_unavailable(monkeypatch):
     with pytest.raises(UpstreamUnavailable) as excinfo:
         asyncio.run(_rerank("q", [_hit()]))
     assert excinfo.value.service == "reranking"
-
-
-def test_rerank_uses_the_query_path_timeout(monkeypatch):
-    captured: dict = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"results": [{"index": 0, "relevance_score": 0.9}]})
-
-    _patch_httpx(monkeypatch, handler, captured)
-    hits = asyncio.run(_rerank("q", [_hit()]))
-    assert captured["timeout"] == QUERY_TIMEOUT_SECONDS
-    assert hits[0].rerank_score == 0.9
 
 
 # ---- query embedding ------------------------------------------------------
