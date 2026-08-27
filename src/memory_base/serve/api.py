@@ -20,6 +20,7 @@ from memory_base.core import db
 from memory_base.core.config import require_env
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval.search import Hit
+from memory_base.retrieval.search import UpstreamUnavailable
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
 from memory_base.serve import access_log
@@ -37,6 +38,9 @@ from memory_base.serve.http import json_body
 from memory_base.serve.notes import save_note
 
 SOURCES = ("all", "code", "memory")
+# Beyond this a query is a pasted payload, not a question: it costs embedder and BM25
+# work no ranking can use.
+MAX_QUERY_CHARS = 2000
 HEALTH_PROBE_TIMEOUT_SECONDS = 5.0
 
 
@@ -141,6 +145,7 @@ async def search_route(request: Request) -> JSONResponse:
     query = body.get("query")
     if not isinstance(query, str) or not query.strip():
         return error("query must be a non-empty string")
+    query = query[:MAX_QUERY_CHARS]
     source = body.get("source", "all")
     if source not in SOURCES:
         return error(f"source must be one of {SOURCES}")
@@ -194,6 +199,8 @@ async def search_route(request: Request) -> JSONResponse:
         elif not key.is_admin:
             options["namespaces"] = sorted(key.allowed)
         hits = (await search(query, **options))[:top_k]
+    except UpstreamUnavailable as exc:
+        return error(f"search unavailable: {exc}, so memory cannot be attached right now", 503)
     except ValueError as exc:
         return error(str(exc))
     access_log.record_retrieval(query, source, hits)

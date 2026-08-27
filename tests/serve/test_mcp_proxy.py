@@ -281,6 +281,24 @@ def test_search_400_non_json_body_raises_generic_value_error(monkeypatch):
         asyncio.run(mcp_server.search_code(query="q"))
 
 
+@pytest.mark.parametrize(
+    "tool", [mcp_server.search_all, mcp_server.search_code, mcp_server.search_memory]
+)
+def test_search_503_surfaces_the_backend_message(monkeypatch, tool):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            503,
+            json={
+                "error": "search unavailable: the embedding service is not responding, "
+                "so memory cannot be attached right now"
+            },
+        )
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="memory cannot be attached right now"):
+        asyncio.run(tool(query="q"))
+
+
 def test_search_400_json_without_error_key_raises_generic_value_error(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"detail": "bad request"})

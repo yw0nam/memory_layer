@@ -16,6 +16,9 @@ EMB_DIM = 2048  # Qwen3-VL-Embedding-2B, no matryoshka -> halfvec(2048) in pgvec
 
 PG_SCHEMA = "memory"
 SERVICE_TIMEOUT_SECONDS = 120
+# Query-path ceiling: callers budget 1.5-5s, so a stalled endpoint must fail long before
+# the ingest timeout would.
+QUERY_TIMEOUT_SECONDS = 10
 
 # Qwen3 embedding convention: instruction-prefixed query, raw document.
 _QUERY_PREFIX = (

@@ -172,7 +172,7 @@ async def _search(
         "/search",
         json=body,
         headers=_auth_headers(ctx),
-        expect_errors=frozenset({400, 401, 403}),
+        expect_errors=frozenset({400, 401, 403, 503}),
     )
 
 

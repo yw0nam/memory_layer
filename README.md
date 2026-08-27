@@ -142,7 +142,12 @@ by the indexer.
 ### Backup
 
 `scripts/backup.sh <backup-dir> [keep]` writes a gzipped `pg_dump` of the database and
-keeps the newest `keep` dumps (default 14); schedule it from cron for recurring backups.
+keeps the newest `keep` dumps (default 14). A daily dump is one crontab line:
+
+```cron
+0 4 * * * /path/to/memory_base/scripts/backup.sh /path/to/backups >> /path/to/backup.log 2>&1
+```
+
 The database is the only state that needs backing up — the repo cache and CocoIndex
 ledger are rebuilt by re-adding repos.
 
