@@ -25,6 +25,19 @@ def table_query_password_for_unit_tests(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolated_access_log_buffer():
+    """Rows buffered by one test's /search calls must never be flushed into the
+    real retrieval_log by a later integration test in the same run."""
+    from memory_base.serve import access_log
+
+    access_log._pending_logs.clear()
+    access_log._pending_hits.clear()
+    yield
+    access_log._pending_logs.clear()
+    access_log._pending_hits.clear()
+
+
+@pytest.fixture(autouse=True)
 def isolate_unit_app_lifespan(request, monkeypatch):
     """Keep ordinary tests independent of Postgres-backed worker startup."""
     if request.node.get_closest_marker("integration") is not None:
