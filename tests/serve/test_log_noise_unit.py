@@ -51,8 +51,7 @@ def test_malformed_records_pass_through():
 
 def test_api_module_attaches_the_filter_to_uvicorn_access():
     assert any(
-        isinstance(f, api.HealthAccessFilter)
-        for f in logging.getLogger("uvicorn.access").filters
+        isinstance(f, api.HealthAccessFilter) for f in logging.getLogger("uvicorn.access").filters
     )
 
 

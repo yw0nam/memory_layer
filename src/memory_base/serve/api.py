@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -431,6 +432,20 @@ async def namespaces_delete_route(request: Request) -> JSONResponse:
 
 
 setup_logging()
+
+
+class HealthAccessFilter(logging.Filter):
+    """Successful liveness probes drown real requests in the access log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            _, method, path, _, status = record.args
+        except (TypeError, ValueError):
+            return True
+        return not (method == "GET" and path == "/health" and status == 200)
+
+
+logging.getLogger("uvicorn.access").addFilter(HealthAccessFilter())
 
 
 @asynccontextmanager
