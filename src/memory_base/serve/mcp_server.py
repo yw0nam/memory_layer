@@ -23,6 +23,7 @@ Run directly:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Mapping
 
@@ -559,6 +560,11 @@ async def list_repos(ctx: Context | None = None) -> list[dict[str, Any]]:
     return await _call("GET", "/repos", headers=_auth_headers(ctx))
 
 
+def quiet_request_noise() -> None:
+    """Routine Ping/ListTools request lines drown real events at INFO."""
+    logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.WARNING)
+
+
 def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:
     """Return (transport, host, port) from the MCP environment settings.
 
@@ -579,6 +585,7 @@ def resolve_transport(env: Mapping[str, str]) -> tuple[str, str, int]:
 
 if __name__ == "__main__":
     setup_logging()
+    quiet_request_noise()
     _transport, _host, _port = resolve_transport(os.environ)
     if _transport == "stdio":
         mcp.run(transport="stdio")
