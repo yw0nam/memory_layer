@@ -16,6 +16,8 @@
 | `INGEST_SPOOL` | durable uploaded-document spool root |
 | `REST_URL` | backend the MCP server proxies to |
 | `MEMORY_API_KEY` | the MCP server's `X-API-Key` over stdio transport; streamable HTTP forwards the caller's own header instead |
+| `MCP_TRANSPORT` | `stdio` (default), `sse`, or `streamable-http` |
+| `MCP_HOST`, `MCP_PORT` | bind address of the MCP HTTP transports (default `0.0.0.0` / `8765`) |
 | `MCP_ALLOWED_HOSTS` | comma-separated `Host` header values accepted by MCP HTTP transports; empty keeps the loopback-only SDK default |
 | `LOG_DIR` | file-sink directory (default `logs/`) |
 
