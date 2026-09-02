@@ -168,18 +168,52 @@ def test_flush_drains_the_buffer(connection):
     assert connection.statements == []
 
 
-def test_flush_survives_a_failing_write(monkeypatch):
+@pytest.fixture()
+def failing_connection(monkeypatch):
     @contextlib.asynccontextmanager
     async def failing_acquire(*args, **kwargs):
         raise RuntimeError("pool down")
         yield  # pragma: no cover
 
     monkeypatch.setattr(db, "acquire", failing_acquire)
-    access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=NOW)
+
+
+def test_failed_flush_keeps_the_buffer_for_the_next_interval(failing_connection, monkeypatch):
+    access_log.record_retrieval("first", "memory", [_hit("chunk-a")], now=NOW)
 
     asyncio.run(access_log.flush(now=NOW))
 
+    assert [row[0] for row in access_log._pending_logs] == ["first"]
+    assert access_log._pending_hits == {"chunk-a": (1, NOW)}
+
+    recording = RecordingConnection()
+
+    @contextlib.asynccontextmanager
+    async def fake_acquire(*args, **kwargs):
+        yield recording
+
+    monkeypatch.setattr(db, "acquire", fake_acquire)
+    access_log.record_retrieval("second", "memory", [_hit("chunk-a")], now=NOW + 1)
+
+    asyncio.run(access_log.flush(now=NOW + 1))
+
+    _, rows = recording.matching("INSERT")[0]
+    assert [row[0] for row in rows] == ["first", "second"]
+    _, args = recording.matching("UPDATE")[0]
+    assert dict(zip(args[0], args[1])) == {"chunk-a": 2}
+    assert args[2] == [NOW + 1]
+    assert access_log._pending_logs == []
     assert access_log._pending_hits == {}
+
+
+def test_failed_flush_keeps_only_the_newest_logs(failing_connection, monkeypatch):
+    monkeypatch.setattr(access_log, "MAX_PENDING_LOGS", 2)
+    for i in range(3):
+        access_log.record_retrieval(f"q{i}", "memory", [_hit("chunk-a")], now=NOW + i)
+
+    asyncio.run(access_log.flush(now=NOW))
+
+    assert [row[0] for row in access_log._pending_logs] == ["q1", "q2"]
 
 
 # ---- retention moves off the request path ----------------------------------
