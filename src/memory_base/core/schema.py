@@ -155,6 +155,8 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           created_at timestamptz NOT NULL DEFAULT now(),
           revoked_at timestamptz
         );
+        ALTER TABLE {schema}.api_keys
+          ADD COLUMN IF NOT EXISTS authors text[] NOT NULL DEFAULT '{{}}';
         CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
           id bigserial PRIMARY KEY,
           query text NOT NULL,

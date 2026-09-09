@@ -35,13 +35,18 @@ def generate_key() -> str:
 
 @dataclass(frozen=True)
 class KeyIdentity:
-    """A request's authenticated caller: an admin sees every namespace."""
+    """A request's authenticated caller: an admin sees every namespace.
+
+    `authors` is the note authors this key may save as; an empty allowlist
+    means the key cannot save notes at all.
+    """
 
     key_id: str
     label: str
     home: str
     is_admin: bool
     allowed: frozenset[str]
+    authors: frozenset[str] = frozenset()
 
     def permits(self, namespace: str) -> bool:
         return self.is_admin or namespace in self.allowed
@@ -64,7 +69,7 @@ async def authenticate_request(plaintext_key: str) -> KeyIdentity | None:
         await ensure_schema_once(conn)
         key_id = hash_key(plaintext_key)
         row = await conn.fetchrow(
-            f'SELECT label, home, is_admin FROM "{PG_SCHEMA}".api_keys '
+            f'SELECT label, home, is_admin, authors FROM "{PG_SCHEMA}".api_keys '
             "WHERE key_hash = $1 AND revoked_at IS NULL",
             key_id,
         )
@@ -81,6 +86,7 @@ async def authenticate_request(plaintext_key: str) -> KeyIdentity | None:
             home=row["home"],
             is_admin=row["is_admin"],
             allowed=allowed,
+            authors=frozenset(row["authors"] or ()),
         )
 
 
