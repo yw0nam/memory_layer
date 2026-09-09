@@ -28,6 +28,7 @@ from memory_base.serve import access_log
 from memory_base.serve import admin
 from memory_base.serve import ingest_api
 from memory_base.serve import job_store
+from memory_base.serve import keys
 from memory_base.serve import namespaces
 from memory_base.serve import notes
 from memory_base.serve import repos
@@ -379,6 +380,37 @@ async def admin_restore_route(request: Request) -> JSONResponse:
     return JSONResponse({"rows": rows})
 
 
+async def keys_authors_route(request: Request) -> JSONResponse:
+    """Report a label's author allowlist; a non-admin key may read only its own label."""
+    key = request.state.key
+    label = request.path_params["label"]
+    if not (key.is_admin or key.label == label):
+        return error("not permitted to read another label's authors", 403)
+    authors = await keys.get_authors(label)
+    if authors is None:
+        return JSONResponse({"error": f"unknown key label: {label}"}, status_code=404)
+    return JSONResponse({"label": label, "authors": authors})
+
+
+async def keys_authors_put_route(request: Request) -> JSONResponse:
+    """Replace a label's author allowlist; admin keys only."""
+    if not request.state.key.is_admin:
+        return error("admin key required", 403)
+    label = request.path_params["label"]
+    try:
+        body = await json_body(request)
+    except Exception as exc:
+        return error(f"invalid JSON body: {exc}")
+    try:
+        authors = keys.validate_authors(body.get("authors"))
+    except keys.AuthorError as exc:
+        return error(str(exc))
+    stored = await keys.set_authors(label, authors)
+    if stored is None:
+        return JSONResponse({"error": f"unknown key label: {label}"}, status_code=404)
+    return JSONResponse({"label": label, "authors": stored})
+
+
 async def namespaces_create_route(request: Request) -> JSONResponse:
     """Register a new namespace; 400 on a bad slug, 409 on a duplicate name.
 
@@ -486,6 +518,8 @@ app = Starlette(
         Route("/repos", repos.list_repos_route, methods=["GET"]),
         Route("/repos/jobs/{job_id}", repos.repo_job_route, methods=["GET"]),
         Route("/repos/{name}", repos.remove_repo_route, methods=["DELETE"]),
+        Route("/keys/{label}/authors", keys_authors_route, methods=["GET"]),
+        Route("/keys/{label}/authors", keys_authors_put_route, methods=["PUT"]),
         Route("/namespaces", namespaces_create_route, methods=["POST"]),
         Route("/namespaces", namespaces_list_route, methods=["GET"]),
         Route("/namespaces/{name}", namespaces_delete_route, methods=["DELETE"]),
