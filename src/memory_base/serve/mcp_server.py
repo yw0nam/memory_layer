@@ -63,7 +63,13 @@ that contradicts it.
 Work knowledge belongs in the key's home namespace. Personal context — schedule,
 relationships, private preferences — belongs in a private namespace, never the shared
 one. A note's first tag names its subject, usually the repository or domain it belongs
-to, so that a later search can narrow to it."""
+to, so that a later search can narrow to it.
+
+Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly
+coincides; read both sides, then either merge them into one note with
+save_memory(supersedes=...) or drop one with archive_notes. Every write and archive names
+its author. delete_notes is for rows that must never resurface; archiving is otherwise
+always preferred."""
 
 
 def resolve_transport_security(
@@ -416,6 +422,112 @@ async def save_memory(
         json=body,
         headers=_auth_headers(ctx),
         expect_errors=frozenset({400, 401, 403}),
+    )
+
+
+LIFECYCLE_ERRORS = frozenset({400, 401, 403, 404})
+
+
+@mcp.tool()
+async def list_memory_duplicates(
+    threshold: float | None = None,
+    kind: str | None = None,
+    limit: int | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """List active note pairs whose meaning nearly coincides.
+
+    Read-only. Each pair carries both notes' id, kind, author, and text plus
+    their cosine score, over the namespaces the caller's API key can access.
+    Read both sides before acting: merge them into one note with
+    `save_memory(supersedes=...)`, or drop one with `archive_notes`.
+    `threshold` (default 0.9), `kind`, and `limit` (default 50) narrow the scan.
+    """
+    params: list[tuple[str, str]] = []
+    if threshold is not None:
+        params.append(("threshold", str(threshold)))
+    if kind is not None:
+        params.append(("kind", kind))
+    if limit is not None:
+        params.append(("limit", str(limit)))
+    return await _call(
+        "GET",
+        "/admin/duplicates",
+        params=params,
+        headers=_auth_headers(ctx),
+        expect_errors=LIFECYCLE_ERRORS,
+    )
+
+
+@mcp.tool()
+async def archive_notes(
+    ids: list[str],
+    author: str,
+    confirm: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Archive the named notes, recording `author` as the agent that archived them.
+
+    Without `confirm` this previews the rows instead of changing them. Archived
+    notes leave search results and prefetch but stay restorable with
+    `restore_notes`; `author` must be in the calling key's author allowlist.
+    """
+    body: dict[str, Any] = {"ids": ids, "author": author}
+    if confirm:
+        body["confirm"] = True
+    return await _call(
+        "POST",
+        "/admin/archive",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=LIFECYCLE_ERRORS,
+    )
+
+
+@mcp.tool()
+async def restore_notes(
+    ids: list[str],
+    confirm: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Bring archived notes back into search results.
+
+    Without `confirm` this previews the rows instead of changing them.
+    Restoring clears the archiving agent's name from the note.
+    """
+    body: dict[str, Any] = {"ids": ids}
+    if confirm:
+        body["confirm"] = True
+    return await _call(
+        "POST",
+        "/admin/restore",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=LIFECYCLE_ERRORS,
+    )
+
+
+@mcp.tool()
+async def delete_notes(
+    ids: list[str],
+    confirm: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Delete the named notes permanently, recording nothing.
+
+    Without `confirm` this previews the rows instead of deleting them. Prefer
+    `archive_notes` unless the row must never resurface: a deleted note cannot
+    be restored and leaves no trace of who removed it.
+    """
+    body: dict[str, Any] = {"ids": ids}
+    if confirm:
+        body["confirm"] = True
+    return await _call(
+        "POST",
+        "/admin/notes/delete",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=LIFECYCLE_ERRORS,
     )
 
 
