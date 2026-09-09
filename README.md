@@ -19,10 +19,11 @@ retrieved.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  11 tools: search / search_code / search_memory / save_memory
+   ┌─────────────┐  15 tools: search / search_code / search_memory / save_memory
    │ mcp_server  │            list_notes / ingest_document / remove_document
    └──────┬──────┘            query_table / ingest_repo / remove_repo / list_repos
-          │ HTTP                                       (thin proxy, no logic)
+          │                   list_memory_duplicates / archive_notes /
+          │ HTTP              restore_notes / delete_notes  (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
    ║              REST API  :8010   (the only backend)         ║
@@ -67,9 +68,9 @@ trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 |---|---|---|
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
-| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `repo`, `since`/`until`, `include_archived` |
-| `POST` | `/save_memory` | store a distilled note — `content`, `kind`, `tags`, and the optional id of a prior note to archive |
-| `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
+| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
+| `POST` | `/save_memory` | store a distilled note — `content`, the required `author`, `kind`, `tags`, and the optional id of a prior note to archive |
+| `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind`, `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
 | `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, repeated `tags`; overwriting an existing `document_id` is creator-or-admin only |
 | `DELETE` | `/ingest/documents/{document_id}` | remove a document's chunks and table rows in one namespace (`namespace` query param, default the key's home) — the document's creator or an admin key only |
 | `POST` | `/tables/query` | read-only SQL over `memory.doc_rows` — `sql` (`SELECT`/`WITH`), `namespace`; 1,000-row / 5 MB / 10 s caps |
@@ -82,15 +83,17 @@ trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 | `POST` | `/namespaces` | register a namespace — `name` (`^[a-z0-9_-]{1,64}$`), `visibility` (`public`\|`private`, default `public`); a private namespace records the caller's key label as owner |
 | `GET` | `/namespaces` | list namespaces the caller can access (every namespace for an admin key) |
 | `DELETE` | `/namespaces/{name}` | unregister an empty namespace — the namespace's owner or an admin key only; the reserved `default` namespace cannot be deleted |
+| `GET` | `/keys/{label}/authors` | a label's author allowlist — an admin key reads any label, a member key only its own |
+| `PUT` | `/keys/{label}/authors` | replace a label's allowlist — `authors` (slugs matching `^[a-z0-9][a-z0-9-]{0,39}$`); admin keys only |
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
 | `POST` | `/admin/notes/delete` | preview, or delete with `confirm` |
 | `GET` | `/admin/duplicates` | near-duplicate pairs above `threshold` |
-| `POST` | `/admin/archive` | preview cold rows, or archive with `confirm` |
-| `POST` | `/admin/restore` | preview, or restore with `confirm` |
+| `POST` | `/admin/archive` | preview cold rows, or the rows named by `ids`, and archive with `confirm`; `ids` requires an `author`, which is stamped on every row archived |
+| `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author |
 
-Filters are bound to the source they belong to: `kind`, `tags`, and `since`/`until`
-require `source="memory"`, `repo` requires `source="code"`, and `source="all"` takes
-none of them. `repo` is a list of cache directory names as reported by `GET /repos`; an
+Filters are bound to the source they belong to: `kind`, `tags`, `author`, and
+`since`/`until` require `source="memory"`, `repo` requires `source="code"`, and
+`source="all"` takes none of them. `repo` is a list of cache directory names as reported by `GET /repos`; an
 unknown name matches nothing. Code hits carry their `repo` whether or not the filter is
 set. `since` and `until` are ISO 8601 dates or datetimes bounding `ts_last_active`: a
 bare date covers that whole day, and naive values are read as UTC.
@@ -103,15 +106,21 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
 `search` · `search_code` · `search_memory` · `save_memory` · `list_notes` ·
 `ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
-`ingest_repo` · `remove_repo` · `list_repos`
+`ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
+`archive_notes` · `restore_notes` · `delete_notes`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,
 so `search` and `search_code` do not offer them; `repo` on `search_code` alone.
 `list_notes` reads notes by filters alone — no query, no embedding call — for
-deterministic reads like tag-scoped profile notes or a time window. Lifecycle
-routes (`/admin/*`) have no MCP tool — archiving and restoring stay operator actions, while
-reading archived rows does not.
+deterministic reads like tag-scoped profile notes or a time window. `author` filters
+`search_memory` and `list_notes` to one agent's notes.
+
+Curation runs over the same tools: `list_memory_duplicates` reads near-duplicate pairs
+with both sides' authors, and `archive_notes` (`ids` and `author` required),
+`restore_notes`, and `delete_notes` preview by default and act only with `confirm`.
+Archiving is restorable and records its author; deleting is permanent and records
+nothing.
 
 ## Running
 
@@ -180,6 +189,11 @@ An admin key (`--admin`) can read and act in every namespace. A member key's all
 set is every public namespace plus any private namespace it owns — ownership is set to
 the minting key's label when the namespace is created with `visibility: private`.
 Requests naming a namespace outside that set get `403`.
+
+Every saved note names its author, and the value must be in the key's author allowlist
+(`api_keys.authors`, empty on a new key, so it cannot save until an allowlist is set).
+Admin keys get no bypass. The allowlist is managed over REST alone:
+`GET /keys/{label}/authors` and `PUT /keys/{label}/authors` (admin only).
 
 The MCP server needs the same header: over streamable HTTP it forwards the caller's own
 `X-API-Key`, and over stdio (no inbound HTTP request to read one from) it reads the
