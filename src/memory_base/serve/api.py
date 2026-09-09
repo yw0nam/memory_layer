@@ -28,6 +28,7 @@ from memory_base.serve import access_log
 from memory_base.serve import admin
 from memory_base.serve import ingest_api
 from memory_base.serve import job_store
+from memory_base.serve import keys
 from memory_base.serve import namespaces
 from memory_base.serve import notes
 from memory_base.serve import repos
@@ -62,6 +63,8 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         out["context"] = context
     if hit.meta.get("archived"):
         out["archived"] = True
+    if hit.meta.get("author"):
+        out["author"] = hit.meta["author"]
     if "columns" in hit.meta:
         out["columns"] = hit.meta["columns"]
     return out
@@ -175,6 +178,8 @@ async def search_route(request: Request) -> JSONResponse:
         return error("since must be an ISO 8601 date or datetime string")
     if "until" in body and body["until"] is None:
         return error("until must be an ISO 8601 date or datetime string")
+    if "author" in body and body["author"] is None:
+        return error("author must be a non-empty string")
     try:
         requested_namespaces = normalize_namespaces(body.get("namespaces"))
         if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
@@ -195,6 +200,8 @@ async def search_route(request: Request) -> JSONResponse:
             options["until"] = body["until"]
         if "min_score" in body:
             options["min_score"] = body["min_score"]
+        if "author" in body:
+            options["author"] = body["author"]
         if requested_namespaces is not None:
             options["namespaces"] = requested_namespaces
         elif not key.is_admin:
@@ -223,6 +230,11 @@ async def save_memory_route(request: Request) -> JSONResponse:
         return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
     if "occurred_at" in body and body["occurred_at"] is None:
         return error("occurred_at must be an ISO 8601 date or datetime string")
+    author = body.get("author")
+    if not isinstance(author, str) or not author.strip():
+        return error("author is required")
+    if author not in key.authors:
+        return error(f"author {author!r} is not permitted for this key", 403)
     try:
         result = await save_note(
             body.get("content", ""),
@@ -231,6 +243,7 @@ async def save_memory_route(request: Request) -> JSONResponse:
             supersedes=body.get("supersedes"),
             namespace=namespace,
             occurred_at=body.get("occurred_at"),
+            author=author,
         )
     except ValueError as exc:
         return error(str(exc))
@@ -265,6 +278,7 @@ async def notes_list_route(request: Request) -> JSONResponse:
             include_archived=include_archived == "true",
             since=params.get("since"),
             until=params.get("until"),
+            author=params.get("author") or None,
             limit=limit,
         )
     except ValueError as exc:
@@ -346,17 +360,36 @@ async def admin_duplicates_route(request: Request) -> JSONResponse:
 
 
 async def admin_archive_route(request: Request) -> JSONResponse:
-    """Preview or archive cold memory rows, scoped to the caller's namespaces."""
+    """Preview or archive named rows, or the cold ones, scoped to the caller's namespaces."""
+    key = request.state.key
     try:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
+    ids = None
+    if "ids" in body:
+        ids = _ids(body)
+        if ids is None:
+            return error("ids must be a non-empty list")
+    author = body.get("author")
+    if ids is not None and author is None:
+        return error("author is required")
+    if author is not None:
+        if not isinstance(author, str) or not author.strip():
+            return error("author must be a non-empty string")
+        if author not in key.authors:
+            return error(f"author {author!r} is not permitted for this key", 403)
     now = time.time()
-    scope = _admin_scope(request.state.key)
+    scope = _admin_scope(key)
+    if ids is not None:
+        if body.get("confirm") is True:
+            archived = await admin.archive_rows(ids, now, namespaces=scope, archived_by=author)
+            return JSONResponse({"archived": archived})
+        return JSONResponse({"rows": await admin.rows_by_ids(ids, namespaces=scope)})
     candidates = await admin.archive_candidates(now, namespaces=scope)
     if body.get("confirm") is True:
         archived = await admin.archive_rows(
-            [row["id"] for row in candidates], now, namespaces=scope
+            [row["id"] for row in candidates], now, namespaces=scope, archived_by=author
         )
         return JSONResponse({"archived": archived})
     return JSONResponse({"candidates": candidates})
@@ -377,6 +410,37 @@ async def admin_restore_route(request: Request) -> JSONResponse:
         return JSONResponse({"restored": restored})
     rows = await admin.rows_by_ids(ids, namespaces=scope)
     return JSONResponse({"rows": rows})
+
+
+async def keys_authors_route(request: Request) -> JSONResponse:
+    """Report a label's author allowlist; a non-admin key may read only its own label."""
+    key = request.state.key
+    label = request.path_params["label"]
+    if not (key.is_admin or key.label == label):
+        return error("not permitted to read another label's authors", 403)
+    authors = await keys.get_authors(label)
+    if authors is None:
+        return JSONResponse({"error": f"unknown key label: {label}"}, status_code=404)
+    return JSONResponse({"label": label, "authors": authors})
+
+
+async def keys_authors_put_route(request: Request) -> JSONResponse:
+    """Replace a label's author allowlist; admin keys only."""
+    if not request.state.key.is_admin:
+        return error("admin key required", 403)
+    label = request.path_params["label"]
+    try:
+        body = await json_body(request)
+    except Exception as exc:
+        return error(f"invalid JSON body: {exc}")
+    try:
+        authors = keys.validate_authors(body.get("authors"))
+    except keys.AuthorError as exc:
+        return error(str(exc))
+    stored = await keys.set_authors(label, authors)
+    if stored is None:
+        return JSONResponse({"error": f"unknown key label: {label}"}, status_code=404)
+    return JSONResponse({"label": label, "authors": stored})
 
 
 async def namespaces_create_route(request: Request) -> JSONResponse:
@@ -486,6 +550,8 @@ app = Starlette(
         Route("/repos", repos.list_repos_route, methods=["GET"]),
         Route("/repos/jobs/{job_id}", repos.repo_job_route, methods=["GET"]),
         Route("/repos/{name}", repos.remove_repo_route, methods=["DELETE"]),
+        Route("/keys/{label}/authors", keys_authors_route, methods=["GET"]),
+        Route("/keys/{label}/authors", keys_authors_put_route, methods=["PUT"]),
         Route("/namespaces", namespaces_create_route, methods=["POST"]),
         Route("/namespaces", namespaces_list_route, methods=["GET"]),
         Route("/namespaces/{name}", namespaces_delete_route, methods=["DELETE"]),

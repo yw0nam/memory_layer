@@ -28,6 +28,7 @@ def _stub_api_key_auth(request, monkeypatch):
         home="default",
         is_admin=True,
         allowed=frozenset(),
+        authors=frozenset({"claude-code", "natsume"}),
     )
 
     async def fake_authenticate_request(plaintext_key):

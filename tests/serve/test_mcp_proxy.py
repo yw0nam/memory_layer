@@ -58,6 +58,10 @@ def test_tool_list_includes_document_ingestion():
         "remove_document",
         "list_repos",
         "list_notes",
+        "list_memory_duplicates",
+        "archive_notes",
+        "restore_notes",
+        "delete_notes",
     }
 
 
@@ -199,6 +203,42 @@ def test_list_notes_gets_notes_with_repeated_params(monkeypatch):
             ("limit", "5"),
         ]
     )
+
+
+def test_search_memory_forwards_the_author_filter(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.search_memory("who decided", author="natsume"))
+    assert captured["json"]["author"] == "natsume"
+
+
+def test_search_memory_omits_an_unset_author(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.search_memory("who decided"))
+    assert "author" not in captured["json"]
+
+
+def test_list_notes_forwards_the_author_filter(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = request.url.params.multi_items()
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.list_notes(author="natsume"))
+    assert captured["params"] == [("author", "natsume")]
 
 
 def test_list_notes_omits_unset_filters(monkeypatch):
@@ -349,10 +389,13 @@ def test_save_memory_posts_to_save_memory_and_returns_body(monkeypatch):
         return httpx.Response(200, json={"id": "note:abc", "kind": "note", "stored": True})
 
     _patch_client(monkeypatch, handler)
-    result = asyncio.run(mcp_server.save_memory("distilled content", kind="note", tags=["infra"]))
+    result = asyncio.run(
+        mcp_server.save_memory("distilled content", "natsume", kind="note", tags=["infra"])
+    )
     assert captured["path"] == "/save_memory"
     assert captured["json"] == {
         "content": "distilled content",
+        "author": "natsume",
         "kind": "note",
         "tags": ["infra"],
         "supersedes": None,
@@ -366,7 +409,146 @@ def test_save_memory_400_response_raises_value_error_with_server_message(monkeyp
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="content must not be empty"):
-        asyncio.run(mcp_server.save_memory(""))
+        asyncio.run(mcp_server.save_memory("", "natsume"))
+
+
+# ---- lifecycle tool proxying ------------------------------------------------
+
+
+def test_list_memory_duplicates_gets_admin_duplicates(monkeypatch):
+    captured = {}
+    payload = {"pairs": [{"a": {"id": "note:a"}, "b": {"id": "note:b"}, "score": 0.97}]}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["params"] = request.url.params.multi_items()
+        captured["header"] = request.headers.get("x-api-key")
+        return httpx.Response(200, json=payload)
+
+    _patch_client(monkeypatch, handler)
+    monkeypatch.setenv("MEMORY_API_KEY", "env-key")
+    result = asyncio.run(mcp_server.list_memory_duplicates(threshold=0.95, kind="note", limit=5))
+    assert captured["method"] == "GET"
+    assert captured["path"] == "/admin/duplicates"
+    assert sorted(captured["params"]) == sorted(
+        [("threshold", "0.95"), ("kind", "note"), ("limit", "5")]
+    )
+    assert captured["header"] == "env-key"
+    assert result == payload
+
+
+def test_list_memory_duplicates_omits_unset_params(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = request.url.params.multi_items()
+        return httpx.Response(200, json={"pairs": []})
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.list_memory_duplicates())
+    assert captured["params"] == []
+
+
+def test_archive_notes_posts_ids_and_author(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["json"] = json.loads(request.content)
+        captured["header"] = request.headers.get("x-api-key")
+        return httpx.Response(200, json={"rows": []})
+
+    _patch_client(monkeypatch, handler)
+    monkeypatch.setenv("MEMORY_API_KEY", "env-key")
+    asyncio.run(mcp_server.archive_notes(["note:a"], "natsume"))
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/admin/archive"
+    assert captured["json"] == {"ids": ["note:a"], "author": "natsume"}
+    assert captured["header"] == "env-key"
+
+
+def test_archive_notes_sends_confirm_only_when_true(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={"archived": 1})
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.archive_notes(["note:a"], "natsume", confirm=True))
+    assert captured["json"]["confirm"] is True
+
+
+def test_restore_notes_posts_ids(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={"rows": []})
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.restore_notes(["note:a"]))
+    assert captured["path"] == "/admin/restore"
+    assert captured["json"] == {"ids": ["note:a"]}
+
+
+def test_restore_notes_sends_confirm_only_when_true(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={"restored": 1})
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.restore_notes(["note:a"], confirm=True))
+    assert captured["json"] == {"ids": ["note:a"], "confirm": True}
+
+
+def test_delete_notes_posts_ids(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={"rows": []})
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.delete_notes(["note:a"]))
+    assert captured["path"] == "/admin/notes/delete"
+    assert captured["json"] == {"ids": ["note:a"]}
+
+
+def test_delete_notes_sends_confirm_only_when_true(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={"deleted": 1})
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.delete_notes(["note:a"], confirm=True))
+    assert captured["json"] == {"ids": ["note:a"], "confirm": True}
+
+
+@pytest.mark.parametrize(
+    "tool_call",
+    [
+        pytest.param(lambda: mcp_server.list_memory_duplicates(), id="list-duplicates"),
+        pytest.param(lambda: mcp_server.archive_notes(["note:a"], "natsume"), id="archive-notes"),
+        pytest.param(lambda: mcp_server.restore_notes(["note:a"]), id="restore-notes"),
+        pytest.param(lambda: mcp_server.delete_notes(["note:a"]), id="delete-notes"),
+    ],
+)
+def test_lifecycle_tools_surface_backend_errors(monkeypatch, tool_call):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": "author 'x' is not permitted for this key"})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="not permitted for this key"):
+        asyncio.run(tool_call())
 
 
 def test_query_table_posts_sql_and_namespace_and_returns_body(monkeypatch):

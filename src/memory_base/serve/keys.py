@@ -1,4 +1,4 @@
-"""CLI for provisioning memory_base API keys.
+"""API-key provisioning CLI, and the author allowlist behind /keys/{label}/authors.
 
     uv run python -m memory_base.serve.keys new <label> [--home <ns>] [--admin]
     uv run python -m memory_base.serve.keys list
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 from typing import Any
 
 from memory_base.core import db
@@ -19,8 +20,15 @@ from memory_base.core.schema import ensure_schema_once
 from memory_base.serve.auth import generate_key, hash_key
 
 
+AUTHOR_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+
+
 class HomeNamespaceError(ValueError):
     """A key-provisioning request is invalid."""
+
+
+class AuthorError(ValueError):
+    """An author allowlist request is invalid; REST maps it to 400."""
 
 
 class KeyPrefixError(ValueError):
@@ -58,6 +66,42 @@ async def new_key(label: str, home: str = "default", is_admin: bool = False) -> 
             is_admin,
         )
     return plaintext
+
+
+def validate_authors(authors: Any) -> list[str]:
+    """Validate an author allowlist and return it deduplicated and sorted."""
+    if not isinstance(authors, list) or any(not isinstance(name, str) for name in authors):
+        raise AuthorError("authors must be a list of strings")
+    for name in authors:
+        if not AUTHOR_RE.fullmatch(name):
+            raise AuthorError("each author must match ^[a-z0-9][a-z0-9-]{0,39}$")
+    return sorted(set(authors))
+
+
+async def get_authors(label: str) -> list[str] | None:
+    """The authors every non-revoked key for `label` may save as; None when no such key exists."""
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        rows = await conn.fetch(
+            f'SELECT authors FROM "{PG_SCHEMA}".api_keys WHERE label = $1 AND revoked_at IS NULL',
+            label,
+        )
+    if not rows:
+        return None
+    return sorted({name for row in rows for name in (row["authors"] or ())})
+
+
+async def set_authors(label: str, authors: list[str]) -> list[str] | None:
+    """Replace the allowlist on every non-revoked key for `label`; None when no such key exists."""
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        status = await conn.execute(
+            f'UPDATE "{PG_SCHEMA}".api_keys SET authors = $2::text[] '
+            "WHERE label = $1 AND revoked_at IS NULL",
+            label,
+            authors,
+        )
+    return authors if int(status.rsplit(" ", 1)[-1]) else None
 
 
 async def list_keys() -> list[dict[str, Any]]:

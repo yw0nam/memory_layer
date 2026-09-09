@@ -317,6 +317,95 @@ def test_memory_hit_falls_back_to_source_ref():
     assert hits[0].ref == "save_memory"
 
 
+# ---- author filter ---------------------------------------------------------
+
+
+def test_author_filter_is_accepted_for_memory_source():
+    assert validate_search_options("memory", None, None, author="natsume") == (
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+@pytest.mark.parametrize("source", ["all", "code"])
+def test_author_filter_requires_memory_source(source):
+    with pytest.raises(ValueError, match='author filter requires source="memory"'):
+        validate_search_options(source, None, None, author="natsume")
+
+
+@pytest.mark.parametrize("author", [1, ["natsume"], {"a": 1}])
+def test_malformed_author_filter_is_rejected(author):
+    with pytest.raises(ValueError, match="author"):
+        validate_search_options("memory", None, None, author=author)
+
+
+def test_history_predicates_adds_author_clause():
+    predicates, args = history_predicates(
+        include_archived=True, kind=None, tags=None, author="natsume"
+    )
+    assert predicates == "metadata->>'author' = $2"
+    assert args == ["natsume"]
+
+
+def test_history_predicates_author_clause_numbers_last():
+    predicates, args = history_predicates(
+        include_archived=False,
+        kind="note",
+        tags=["infra"],
+        namespaces=["team-a"],
+        since=1.0,
+        until=2.0,
+        author="natsume",
+    )
+    assert args == ["note", ["infra"], ["team-a"], 1.0, 2.0, "natsume"]
+    assert "metadata->>'author' = $7" in predicates
+
+
+def test_search_memory_filters_by_author():
+    conn = FakeSearchConnection([[], []])
+    asyncio.run(_search_memory(conn, "query", "[1]", author="natsume"))
+    for sql, args in conn.queries:
+        assert "metadata->>'author' = $" in sql
+        assert args[-1] == "natsume"
+
+
+def test_memory_hit_carries_the_author():
+    row = {
+        "id": "note:1",
+        "source_ref": "save_memory",
+        "chunk_kind": "note",
+        "metadata": {"author": "natsume"},
+        "distilled": "note",
+        "content_raw": "note",
+        "ts_last_active": 100.0,
+        "idf_score": None,
+        "archived_at": None,
+    }
+    conn = FakeSearchConnection([[row], []])
+    hits = asyncio.run(_search_memory(conn, "query", "[1]"))
+    assert hits[0].meta["author"] == "natsume"
+
+
+def test_memory_hit_author_is_none_when_unrecorded():
+    row = {
+        "id": "note:1",
+        "source_ref": "save_memory",
+        "chunk_kind": "note",
+        "metadata": {},
+        "distilled": "note",
+        "content_raw": "note",
+        "ts_last_active": 100.0,
+        "idf_score": None,
+        "archived_at": None,
+    }
+    conn = FakeSearchConnection([[row], []])
+    hits = asyncio.run(_search_memory(conn, "query", "[1]"))
+    assert hits[0].meta["author"] is None
+
+
 def test_document_chunks_remain_subject_to_per_file_cap():
     hits = [
         Hit(

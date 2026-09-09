@@ -41,6 +41,11 @@ Notes are stored exactly as written — the server never summarizes. The respons
 consolidate instead of accumulating near-duplicates. A prior-note id in the payload
 archives that row.
 
+Every note records the agent that wrote it in `metadata.author`, drawn from the calling
+key's allowlist in `api_keys.authors`; a key with an empty allowlist cannot save. A note
+archived by a save or by a targeted archive additionally carries `metadata.archived_by`,
+which a restore removes.
+
 Document uploads enter a durable Postgres backlog capped by `INGEST_BACKLOG_PER_KEY` and
 `INGEST_BACKLOG_MAX`. Two document workers dispatch fairly across API keys while serializing
 jobs for the same document. Jobs and their spooled uploads survive API restarts; startup
@@ -190,9 +195,12 @@ engine's message so the caller can correct its SQL.
                                           (memory decay off, code decay on)
 ```
 
-`GET /admin/duplicates` lists near-duplicate pairs by cosine, `GET /admin/notes` lists old
-agent notes, and `POST /admin/restore` clears `archived_at`. Every mutating admin route
-previews by default and acts only with `{"confirm": true}`.
+`GET /admin/duplicates` lists near-duplicate pairs by cosine with each side's author,
+`GET /admin/notes` lists old agent notes, and `POST /admin/restore` clears `archived_at`
+and `metadata.archived_by`. `POST /admin/archive` archives the rows named by `ids`, or
+the cold ones when `ids` is omitted. Every mutating admin route previews by default and
+acts only with `{"confirm": true}`, and each is reachable over MCP as
+`list_memory_duplicates`, `archive_notes`, `restore_notes`, and `delete_notes`.
 
 ## Storage
 
@@ -207,7 +215,7 @@ previews by default and acts only with `{"confirm": true}`.
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active`, `idf_score` | ranking signals |
-| `metadata` | jsonb: `tags`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
+| `metadata` | jsonb: `tags`, `author`, `archived_by`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 
 `memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,

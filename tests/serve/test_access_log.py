@@ -252,7 +252,7 @@ def test_save_memory_endpoint_roundtrip_and_dedup(client):
     note_id = build_note_row(content, "note", None, NOW)["id"]
     client.portal.call(_delete_note, note_id)
     try:
-        first = client.post("/save_memory", json={"content": content})
+        first = client.post("/save_memory", json={"author": "natsume", "content": content})
         assert first.status_code == 200
         assert first.json() == {
             "id": note_id,
@@ -262,7 +262,7 @@ def test_save_memory_endpoint_roundtrip_and_dedup(client):
             "similar": [],
         }
 
-        second = client.post("/save_memory", json={"content": content})
+        second = client.post("/save_memory", json={"author": "natsume", "content": content})
         assert second.status_code == 200
         assert second.json()["id"] == note_id
         assert second.json()["stored"] is False

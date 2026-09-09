@@ -36,6 +36,7 @@ def build_note_row(
     tags: list[str] | None,
     now: float,
     namespace: str = DEFAULT_NAMESPACE,
+    author: str | None = None,
 ) -> dict[str, Any]:
     """Validate a note and map it to memory_chunks columns (no embedding).
 
@@ -52,6 +53,11 @@ def build_note_row(
     if kind not in NOTE_KINDS:
         raise ValueError(f"kind must be one of {NOTE_KINDS}")
     normalized_tags = normalize_tags(tags, allow_empty=True)
+    metadata: dict[str, Any] = {}
+    if normalized_tags:
+        metadata["tags"] = normalized_tags
+    if author is not None:
+        metadata["author"] = author
     content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
     if namespace == DEFAULT_NAMESPACE:
         note_id = f"note:{content_hash}"
@@ -67,7 +73,7 @@ def build_note_row(
         "distilled": content,
         "timestamp": now,
         "idf": None,
-        "metadata": {"tags": normalized_tags} if normalized_tags else {},
+        "metadata": metadata,
     }
 
 
@@ -78,6 +84,7 @@ async def save_note(
     supersedes: str | None = None,
     namespace: str = DEFAULT_NAMESPACE,
     occurred_at: str | None = None,
+    author: str | None = None,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory.
 
@@ -88,7 +95,7 @@ async def save_note(
     ts = parse_time_bound(occurred_at) if occurred_at is not None else now
     if ts > now:
         raise ValueError("occurred_at must not be in the future")
-    row = build_note_row(content, kind, tags, ts, namespace)
+    row = build_note_row(content, kind, tags, ts, namespace, author)
     embedding = await embed_text(VllmEmbedder(), row["raw"])
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
@@ -133,12 +140,14 @@ async def save_note(
                 await conn.execute(
                     f"""
                     UPDATE "{PG_SCHEMA}".memory_chunks
-                    SET archived_at = $2
+                    SET archived_at = $2,
+                        metadata = metadata || jsonb_build_object('archived_by', $4::text)
                     WHERE id = $1 AND namespace = $3
                     """,
                     supersedes,
                     row["timestamp"],
                     namespace,
+                    author,
                 )
             excluded_ids = [row["id"]]
             if supersedes is not None:
@@ -178,6 +187,7 @@ async def list_notes(
     include_archived: bool = False,
     since: str | None = None,
     until: str | None = None,
+    author: str | None = None,
     limit: int = LIST_NOTES_DEFAULT_LIMIT,
 ) -> list[dict[str, Any]]:
     """List agent notes newest-first without a search query or embedding call.
@@ -202,6 +212,7 @@ async def list_notes(
         namespaces=namespaces,
         since=since_ts,
         until=until_ts,
+        author=author,
     )
     async with db.acquire() as conn:
         rows = await conn.fetch(
@@ -218,11 +229,13 @@ async def list_notes(
         )
     out: list[dict[str, Any]] = []
     for row in rows:
+        metadata = metadata_dict(row["metadata"])
         note = {
             "id": row["id"],
             "kind": row["kind"],
             "text": row["text"][:TEXT_LIMIT],
-            "tags": metadata_dict(row["metadata"]).get("tags", []),
+            "tags": metadata.get("tags", []),
+            "author": metadata.get("author"),
             "namespace": row["namespace"],
             "date": datetime.fromtimestamp(row["ts_last_active"], tz=timezone.utc).strftime(
                 "%Y-%m-%d"
@@ -230,5 +243,7 @@ async def list_notes(
         }
         if row["archived_at"] is not None:
             note["archived"] = True
+        if metadata.get("archived_by") is not None:
+            note["archived_by"] = metadata["archived_by"]
         out.append(note)
     return out

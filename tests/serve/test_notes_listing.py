@@ -65,6 +65,20 @@ def test_list_notes_forwards_every_filter(monkeypatch):
     assert captured["include_archived"] is True
 
 
+def test_list_notes_forwards_the_author_filter(monkeypatch):
+    captured = _capture_list_notes(monkeypatch)
+    response = client.get("/notes?author=natsume")
+    assert response.status_code == 200
+    assert captured["author"] == "natsume"
+
+
+def test_list_notes_omitted_author_filter_is_none(monkeypatch):
+    captured = _capture_list_notes(monkeypatch)
+    response = client.get("/notes")
+    assert response.status_code == 200
+    assert captured["author"] is None
+
+
 def test_list_notes_invalid_limit_400():
     response = client.get("/notes?limit=lots")
     assert response.status_code == 400
@@ -186,6 +200,7 @@ def test_list_notes_maps_rows_to_response_shape(monkeypatch):
             "kind": "note",
             "text": "hello",
             "tags": ["infra"],
+            "author": None,
             "namespace": "default",
             "date": "2026-08-12",
         }
@@ -223,6 +238,37 @@ def test_list_notes_forwards_filters_into_predicates(monkeypatch):
     assert "archived_at IS NULL" in conn.query
     assert ["infra"] in conn.args  # tags normalized like the search filter
     assert ["team-a"] in conn.args
+
+
+def test_list_notes_returns_the_recorded_author(monkeypatch):
+    conn = FakeConnection([_row(metadata={"tags": [], "author": "natsume"})])
+    _patch_conn(monkeypatch, conn)
+    rows = asyncio.run(notes.list_notes())
+    assert rows[0]["author"] == "natsume"
+
+
+def test_list_notes_omits_archived_by_when_unrecorded(monkeypatch):
+    conn = FakeConnection([_row()])
+    _patch_conn(monkeypatch, conn)
+    rows = asyncio.run(notes.list_notes())
+    assert "archived_by" not in rows[0]
+
+
+def test_list_notes_reports_archived_by_when_recorded(monkeypatch):
+    conn = FakeConnection(
+        [_row(archived_at=AUG_12, metadata={"tags": [], "archived_by": "claude-code"})]
+    )
+    _patch_conn(monkeypatch, conn)
+    rows = asyncio.run(notes.list_notes(include_archived=True))
+    assert rows[0]["archived_by"] == "claude-code"
+
+
+def test_list_notes_filters_by_author(monkeypatch):
+    conn = FakeConnection([])
+    _patch_conn(monkeypatch, conn)
+    asyncio.run(notes.list_notes(author="natsume"))
+    assert "metadata->>'author' = $" in conn.query
+    assert "natsume" in conn.args
 
 
 @pytest.mark.parametrize("limit", [0, -1, 201, "many", True])

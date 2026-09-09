@@ -63,7 +63,13 @@ that contradicts it.
 Work knowledge belongs in the key's home namespace. Personal context — schedule,
 relationships, private preferences — belongs in a private namespace, never the shared
 one. A note's first tag names its subject, usually the repository or domain it belongs
-to, so that a later search can narrow to it."""
+to, so that a later search can narrow to it.
+
+Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly
+coincides; read both sides, then either merge them into one note with
+save_memory(supersedes=...) or drop one with archive_notes. Every write and archive names
+its author. delete_notes is for rows that must never resurface; archiving is otherwise
+always preferred."""
 
 
 def resolve_transport_security(
@@ -149,6 +155,7 @@ async def _search(
     since: str | None = None,
     until: str | None = None,
     min_score: float | None = None,
+    author: str | None = None,
     ctx: "Context | None" = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {"query": query, "source": source, "top_k": top_k}
@@ -168,6 +175,8 @@ async def _search(
         body["until"] = until
     if min_score is not None:
         body["min_score"] = min_score
+    if author is not None:
+        body["author"] = author
     return await _call(
         "POST",
         "/search",
@@ -259,6 +268,7 @@ async def search_memory(
     since: str | None = None,
     until: str | None = None,
     min_score: float | None = None,
+    author: str | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search only stored memory for the given query.
@@ -277,6 +287,9 @@ async def search_memory(
     `namespace` narrows the search to one namespace the caller's API key can
     access; omitted, it covers every namespace the key can access. A
     namespace the key cannot access is rejected by the server.
+
+    `author` narrows the search to notes saved by one agent, e.g. claude-code
+    or natsume.
 
     `since`/`until` bound the search to memory last active in that window, for
     time-anchored questions ("what did we decide last week"). Both are ISO 8601
@@ -297,6 +310,7 @@ async def search_memory(
         since=since,
         until=until,
         min_score=min_score,
+        author=author,
         ctx=ctx,
     )
 
@@ -309,6 +323,7 @@ async def list_notes(
     until: str | None = None,
     include_archived: bool = False,
     namespace: str | None = None,
+    author: str | None = None,
     limit: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
@@ -324,9 +339,9 @@ async def list_notes(
     `tags` matches notes carrying any of the given tags. `kind` is "note" or
     "decision". `since`/`until` are ISO 8601 dates or datetimes (a bare date
     covers that whole day; naive values are read as UTC). `include_archived`
-    adds superseded notes, marked "archived": true. `namespace` narrows to one
-    namespace the caller's API key can access; omitted, it covers every
-    namespace the key can access.
+    adds superseded notes, marked "archived": true. `author` narrows to notes
+    saved by one agent. `namespace` narrows to one namespace the caller's API
+    key can access; omitted, it covers every namespace the key can access.
     """
     params: list[tuple[str, str]] = [("tags", tag) for tag in tags or []]
     if kind is not None:
@@ -339,6 +354,8 @@ async def list_notes(
         params.append(("include_archived", "true"))
     if namespace is not None:
         params.append(("namespace", namespace))
+    if author is not None:
+        params.append(("author", author))
     if limit is not None:
         params.append(("limit", str(limit)))
     return await _call(
@@ -353,6 +370,7 @@ async def list_notes(
 @mcp.tool()
 async def save_memory(
     content: str,
+    author: str,
     kind: str = "note",
     tags: list[str] | None = None,
     supersedes: str | None = None,
@@ -373,6 +391,10 @@ async def save_memory(
     past-tense record of one conversation session). `tags` are optional
     labels. `supersedes` archives an older note by id.
 
+    `author` names the agent saving this note, e.g. claude-code or natsume; it
+    must be in the calling key's author allowlist, and is stored with the note
+    and stamped on any note this save archives.
+
     `occurred_at` backdates the stored timestamp to an ISO 8601 date or
     datetime instead of now, e.g. to land a backfilled episode on the day it
     happened; a future or unparseable value is rejected.
@@ -385,6 +407,7 @@ async def save_memory(
     """
     body: dict[str, Any] = {
         "content": content,
+        "author": author,
         "kind": kind,
         "tags": tags,
         "supersedes": supersedes,
@@ -399,6 +422,112 @@ async def save_memory(
         json=body,
         headers=_auth_headers(ctx),
         expect_errors=frozenset({400, 401, 403}),
+    )
+
+
+LIFECYCLE_ERRORS = frozenset({400, 401, 403, 404})
+
+
+@mcp.tool()
+async def list_memory_duplicates(
+    threshold: float | None = None,
+    kind: str | None = None,
+    limit: int | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """List active note pairs whose meaning nearly coincides.
+
+    Read-only. Each pair carries both notes' id, kind, author, and text plus
+    their cosine score, over the namespaces the caller's API key can access.
+    Read both sides before acting: merge them into one note with
+    `save_memory(supersedes=...)`, or drop one with `archive_notes`.
+    `threshold` (default 0.9), `kind`, and `limit` (default 50) narrow the scan.
+    """
+    params: list[tuple[str, str]] = []
+    if threshold is not None:
+        params.append(("threshold", str(threshold)))
+    if kind is not None:
+        params.append(("kind", kind))
+    if limit is not None:
+        params.append(("limit", str(limit)))
+    return await _call(
+        "GET",
+        "/admin/duplicates",
+        params=params,
+        headers=_auth_headers(ctx),
+        expect_errors=LIFECYCLE_ERRORS,
+    )
+
+
+@mcp.tool()
+async def archive_notes(
+    ids: list[str],
+    author: str,
+    confirm: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Archive the named notes, recording `author` as the agent that archived them.
+
+    Without `confirm` this previews the rows instead of changing them. Archived
+    notes leave search results and prefetch but stay restorable with
+    `restore_notes`; `author` must be in the calling key's author allowlist.
+    """
+    body: dict[str, Any] = {"ids": ids, "author": author}
+    if confirm:
+        body["confirm"] = True
+    return await _call(
+        "POST",
+        "/admin/archive",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=LIFECYCLE_ERRORS,
+    )
+
+
+@mcp.tool()
+async def restore_notes(
+    ids: list[str],
+    confirm: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Bring archived notes back into search results.
+
+    Without `confirm` this previews the rows instead of changing them.
+    Restoring clears the archiving agent's name from the note.
+    """
+    body: dict[str, Any] = {"ids": ids}
+    if confirm:
+        body["confirm"] = True
+    return await _call(
+        "POST",
+        "/admin/restore",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=LIFECYCLE_ERRORS,
+    )
+
+
+@mcp.tool()
+async def delete_notes(
+    ids: list[str],
+    confirm: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Delete the named notes permanently, recording nothing.
+
+    Without `confirm` this previews the rows instead of deleting them. Prefer
+    `archive_notes` unless the row must never resurface: a deleted note cannot
+    be restored and leaves no trace of who removed it.
+    """
+    body: dict[str, Any] = {"ids": ids}
+    if confirm:
+        body["confirm"] = True
+    return await _call(
+        "POST",
+        "/admin/notes/delete",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=LIFECYCLE_ERRORS,
     )
 
 

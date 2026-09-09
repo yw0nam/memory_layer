@@ -13,12 +13,15 @@ import re
 from contextlib import asynccontextmanager
 
 import pytest
+from starlette.testclient import TestClient
 
-from memory_base.serve import notes
+from memory_base.serve import api, notes
 from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0
 ID_RE = re.compile(r"^note:[0-9a-f]{16}$")
+
+client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 
 # ---- id scheme --------------------------------------------------------
@@ -130,6 +133,69 @@ def test_oversized_content_rejected():
 def test_unknown_kind_rejected():
     with pytest.raises(ValueError):
         build_note_row("valid content", "reminder", None, NOW)
+
+
+# ---- REST: author is required and allowlisted ------------------------------
+
+
+async def _fake_save_note(
+    content,
+    kind="note",
+    tags=None,
+    supersedes=None,
+    namespace="default",
+    occurred_at=None,
+    author=None,
+):
+    return {
+        "id": "note:aaaaaaaaaaaaaaaa",
+        "kind": kind,
+        "stored": True,
+        "superseded": None,
+        "similar": [],
+        "author": author,
+    }
+
+
+@pytest.mark.parametrize("author", [None, "", "   ", 123, ["natsume"]])
+def test_save_memory_missing_author_400(monkeypatch, author):
+    monkeypatch.setattr(api, "save_note", _fake_save_note)
+    body = {"content": "distilled note text"}
+    if author is not None:
+        body["author"] = author
+    response = client.post("/save_memory", json=body)
+    assert response.status_code == 400
+    assert response.json()["error"] == "author is required"
+
+
+def test_save_memory_author_outside_the_allowlist_403(monkeypatch):
+    monkeypatch.setattr(api, "save_note", _fake_save_note)
+    response = client.post(
+        "/save_memory", json={"author": "mallory", "content": "distilled note text"}
+    )
+    assert response.status_code == 403
+    assert response.json()["error"] == "author 'mallory' is not permitted for this key"
+
+
+def test_save_memory_forwards_the_author_to_save_note(monkeypatch):
+    captured = {}
+
+    async def fake_save_note(content, **kwargs):
+        captured.update(kwargs)
+        return {
+            "id": "note:aaaaaaaaaaaaaaaa",
+            "kind": "note",
+            "stored": True,
+            "superseded": None,
+            "similar": [],
+        }
+
+    monkeypatch.setattr(api, "save_note", fake_save_note)
+    response = client.post(
+        "/save_memory", json={"author": "claude-code", "content": "distilled note text"}
+    )
+    assert response.status_code == 200
+    assert captured["author"] == "claude-code"
 
 
 # ---- save_note namespace gating (no DB/network) ----------------------------
