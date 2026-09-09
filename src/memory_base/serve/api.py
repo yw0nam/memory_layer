@@ -360,17 +360,33 @@ async def admin_duplicates_route(request: Request) -> JSONResponse:
 
 
 async def admin_archive_route(request: Request) -> JSONResponse:
-    """Preview or archive cold memory rows, scoped to the caller's namespaces."""
+    """Preview or archive named rows, or the cold ones, scoped to the caller's namespaces."""
+    key = request.state.key
     try:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
+    ids = None
+    if "ids" in body:
+        ids = _ids(body)
+        if ids is None:
+            return error("ids must be a non-empty list")
+    author = body.get("author")
+    if ids is not None and (not isinstance(author, str) or not author.strip()):
+        return error("author is required")
+    if author is not None and author not in key.authors:
+        return error(f"author {author!r} is not permitted for this key", 403)
     now = time.time()
-    scope = _admin_scope(request.state.key)
+    scope = _admin_scope(key)
+    if ids is not None:
+        if body.get("confirm") is True:
+            archived = await admin.archive_rows(ids, now, namespaces=scope, archived_by=author)
+            return JSONResponse({"archived": archived})
+        return JSONResponse({"rows": await admin.rows_by_ids(ids, namespaces=scope)})
     candidates = await admin.archive_candidates(now, namespaces=scope)
     if body.get("confirm") is True:
         archived = await admin.archive_rows(
-            [row["id"] for row in candidates], now, namespaces=scope
+            [row["id"] for row in candidates], now, namespaces=scope, archived_by=author
         )
         return JSONResponse({"archived": archived})
     return JSONResponse({"candidates": candidates})

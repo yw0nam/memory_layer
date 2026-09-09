@@ -267,7 +267,7 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
         assert isinstance(now, float)
         return candidates
 
-    async def fake_archive_rows(ids, now, namespaces=None):
+    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
         calls["archive_rows"] = (ids, now)
         return len(ids)
 
@@ -290,7 +290,7 @@ def test_admin_archive_confirm_true_archives_exactly_candidate_ids(monkeypatch):
     async def fake_archive_candidates(now, namespaces=None):
         return candidates
 
-    async def fake_archive_rows(ids, now, namespaces=None):
+    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
         calls["ids"] = ids
         return len(ids)
 

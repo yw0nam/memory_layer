@@ -239,19 +239,31 @@ async def archive_candidates(now: float, namespaces: list[str] | None = None) ->
         return [dict(row) for row in rows]
 
 
-async def archive_rows(ids: list[str], now: float, namespaces: list[str] | None = None) -> int:
+async def archive_rows(
+    ids: list[str],
+    now: float,
+    namespaces: list[str] | None = None,
+    archived_by: str | None = None,
+) -> int:
     """Archive active rows matching the supplied identifiers, scoped to namespaces."""
+    stamp = (
+        ", metadata = metadata || jsonb_build_object('archived_by', $4::text)"
+        if archived_by is not None
+        else ""
+    )
+    extra = [archived_by] if archived_by is not None else []
     async with db.acquire() as conn:
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
-            SET archived_at = $2
+            SET archived_at = $2{stamp}
             WHERE id = ANY($1::text[]) AND archived_at IS NULL
               AND ($3::text[] IS NULL OR namespace = ANY($3::text[]))
             """,
             ids,
             now,
             namespaces,
+            *extra,
         )
         return int(status.rsplit(" ", 1)[-1])
 
@@ -262,7 +274,7 @@ async def restore_rows(ids: list[str], namespaces: list[str] | None = None) -> i
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
-            SET archived_at = NULL
+            SET archived_at = NULL, metadata = metadata - 'archived_by'
             WHERE id = ANY($1::text[])
               AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             """,
@@ -277,7 +289,8 @@ async def rows_by_ids(ids: list[str], namespaces: list[str] | None = None) -> li
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
-            SELECT id, chunk_kind AS kind, archived_at, hit_count, last_hit_at
+            SELECT id, chunk_kind AS kind, archived_at, hit_count, last_hit_at,
+                   metadata->>'archived_by' AS archived_by
             FROM "{PG_SCHEMA}".memory_chunks
             WHERE id = ANY($1::text[])
               AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
