@@ -116,4 +116,8 @@ def test_mcp_server_registers_expected_tools():
         "remove_document",
         "list_repos",
         "list_notes",
+        "list_memory_duplicates",
+        "archive_notes",
+        "restore_notes",
+        "delete_notes",
     }
