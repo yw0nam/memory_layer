@@ -302,6 +302,167 @@ def test_admin_archive_confirm_true_archives_exactly_candidate_ids(monkeypatch):
     assert calls["ids"] == ["note:old1", "note:old2"]
 
 
+def test_admin_archive_with_ids_previews_those_rows(monkeypatch):
+    calls = {"rows_by_ids": None, "archive_rows": None, "archive_candidates": 0}
+    rows = [{"id": "note:a", "kind": "note", "archived_at": None, "archived_by": None}]
+
+    async def fake_rows_by_ids(ids, namespaces=None):
+        calls["rows_by_ids"] = ids
+        return rows
+
+    async def fake_archive_candidates(now, namespaces=None):
+        calls["archive_candidates"] += 1
+        return []
+
+    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+        calls["archive_rows"] = ids
+        return len(ids)
+
+    monkeypatch.setattr(admin, "rows_by_ids", fake_rows_by_ids)
+    monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
+    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    response = client.post("/admin/archive", json={"ids": ["note:a"], "author": "natsume"})
+    assert response.status_code == 200
+    assert response.json() == {"rows": rows}
+    assert calls["rows_by_ids"] == ["note:a"]
+    assert calls["archive_rows"] is None
+    assert calls["archive_candidates"] == 0
+
+
+def test_admin_archive_with_ids_confirm_stamps_the_author(monkeypatch):
+    captured = {}
+
+    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+        captured["ids"] = ids
+        captured["archived_by"] = archived_by
+        return len(ids)
+
+    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    response = client.post(
+        "/admin/archive",
+        json={"ids": ["note:a", "note:b"], "author": "natsume", "confirm": True},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"archived": 2}
+    assert captured == {"ids": ["note:a", "note:b"], "archived_by": "natsume"}
+
+
+def test_admin_archive_with_ids_requires_an_author():
+    response = client.post("/admin/archive", json={"ids": ["note:a"]})
+    assert response.status_code == 400
+    assert response.json()["error"] == "author is required"
+
+
+def test_admin_archive_author_outside_the_allowlist_403():
+    response = client.post("/admin/archive", json={"ids": ["note:a"], "author": "mallory"})
+    assert response.status_code == 403
+    assert response.json()["error"] == "author 'mallory' is not permitted for this key"
+
+
+def test_admin_archive_malformed_ids_400():
+    response = client.post("/admin/archive", json={"ids": [], "author": "natsume"})
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+def test_admin_archive_cold_candidates_stamp_a_given_author(monkeypatch):
+    captured = {}
+    candidates = [{"id": "note:old", "kind": "note", "hit_count": 0, "last_hit_at": None}]
+
+    async def fake_archive_candidates(now, namespaces=None):
+        return candidates
+
+    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+        captured["archived_by"] = archived_by
+        return len(ids)
+
+    monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
+    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    response = client.post("/admin/archive", json={"author": "natsume", "confirm": True})
+    assert response.status_code == 200
+    assert captured["archived_by"] == "natsume"
+
+
+def test_admin_archive_without_ids_or_author_stamps_nothing(monkeypatch):
+    captured = {}
+    candidates = [{"id": "note:old", "kind": "note", "hit_count": 0, "last_hit_at": None}]
+
+    async def fake_archive_candidates(now, namespaces=None):
+        return candidates
+
+    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+        captured["archived_by"] = archived_by
+        return len(ids)
+
+    monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
+    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    response = client.post("/admin/archive", json={"confirm": True})
+    assert response.status_code == 200
+    assert captured["archived_by"] is None
+
+
+# ---- admin SQL: archived_by is written, cleared, and reported ---------------
+
+
+class RecordingConnection:
+    def __init__(self, rows=None, status="UPDATE 1"):
+        self.rows = rows or []
+        self.status = status
+        self.queries: list[tuple] = []
+
+    async def execute(self, query, *args):
+        self.queries.append((query, args))
+        return self.status
+
+    async def fetch(self, query, *args):
+        self.queries.append((query, args))
+        return self.rows
+
+
+def _patch_admin_conn(monkeypatch, conn):
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def acquire(timeout=None):
+        yield conn
+
+    monkeypatch.setattr(admin.db, "acquire", acquire)
+
+
+def test_archive_rows_stamps_archived_by(monkeypatch):
+    conn = RecordingConnection()
+    _patch_admin_conn(monkeypatch, conn)
+    asyncio.run(admin.archive_rows(["note:a"], 1.0, archived_by="natsume"))
+    query, args = conn.queries[0]
+    assert "jsonb_build_object('archived_by'" in query
+    assert args[-1] == "natsume"
+
+
+def test_archive_rows_without_an_author_writes_no_archived_by(monkeypatch):
+    conn = RecordingConnection()
+    _patch_admin_conn(monkeypatch, conn)
+    asyncio.run(admin.archive_rows(["note:a"], 1.0))
+    query, _ = conn.queries[0]
+    assert "archived_by" not in query
+
+
+def test_restore_rows_clears_archived_by(monkeypatch):
+    conn = RecordingConnection()
+    _patch_admin_conn(monkeypatch, conn)
+    asyncio.run(admin.restore_rows(["note:a"]))
+    query, _ = conn.queries[0]
+    assert "metadata = metadata - 'archived_by'" in query
+
+
+def test_rows_by_ids_reports_archived_by(monkeypatch):
+    conn = RecordingConnection(rows=[{"id": "note:a", "archived_by": "natsume"}])
+    _patch_admin_conn(monkeypatch, conn)
+    rows = asyncio.run(admin.rows_by_ids(["note:a"]))
+    query, _ = conn.queries[0]
+    assert "metadata->>'archived_by'" in query
+    assert rows[0]["archived_by"] == "natsume"
+
+
 # ---- POST /admin/restore -----------------------------------------------------
 
 
