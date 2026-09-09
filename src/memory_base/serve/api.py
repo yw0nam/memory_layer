@@ -224,6 +224,11 @@ async def save_memory_route(request: Request) -> JSONResponse:
         return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
     if "occurred_at" in body and body["occurred_at"] is None:
         return error("occurred_at must be an ISO 8601 date or datetime string")
+    author = body.get("author")
+    if not isinstance(author, str) or not author.strip():
+        return error("author is required")
+    if author not in key.authors:
+        return error(f"author {author!r} is not permitted for this key", 403)
     try:
         result = await save_note(
             body.get("content", ""),
@@ -232,6 +237,7 @@ async def save_memory_route(request: Request) -> JSONResponse:
             supersedes=body.get("supersedes"),
             namespace=namespace,
             occurred_at=body.get("occurred_at"),
+            author=author,
         )
     except ValueError as exc:
         return error(str(exc))

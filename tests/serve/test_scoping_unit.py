@@ -19,6 +19,7 @@ def _non_admin_client(monkeypatch):
         home=HOME,
         is_admin=False,
         allowed=frozenset(ALLOWED),
+        authors=frozenset({"natsume"}),
     )
 
     async def fake_authenticate_request(plaintext_key):

@@ -353,6 +353,7 @@ async def list_notes(
 @mcp.tool()
 async def save_memory(
     content: str,
+    author: str,
     kind: str = "note",
     tags: list[str] | None = None,
     supersedes: str | None = None,
@@ -373,6 +374,10 @@ async def save_memory(
     past-tense record of one conversation session). `tags` are optional
     labels. `supersedes` archives an older note by id.
 
+    `author` names the agent saving this note, e.g. claude-code or natsume; it
+    must be in the calling key's author allowlist, and is stored with the note
+    and stamped on any note this save archives.
+
     `occurred_at` backdates the stored timestamp to an ISO 8601 date or
     datetime instead of now, e.g. to land a backfilled episode on the day it
     happened; a future or unparseable value is rejected.
@@ -385,6 +390,7 @@ async def save_memory(
     """
     body: dict[str, Any] = {
         "content": content,
+        "author": author,
         "kind": kind,
         "tags": tags,
         "supersedes": supersedes,
