@@ -32,6 +32,17 @@ def test_ensure_schema_creates_doc_rows_with_only_its_primary_key(monkeypatch):
     assert "doc_rows__" not in sql
 
 
+def test_ensure_schema_adds_the_api_key_author_allowlist(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    sql = "\n".join(conn.queries)
+    assert 'ALTER TABLE "scratch_schema".api_keys' in sql
+    assert "ADD COLUMN IF NOT EXISTS authors text[] NOT NULL DEFAULT '{}'" in sql
+
+
 def test_production_schema_self_heals_query_role_and_hardens_function_acls(
     monkeypatch,
 ):

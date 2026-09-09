@@ -97,7 +97,7 @@ def test_authenticate_request_unknown_key_returns_none(monkeypatch):
 
 def test_authenticate_request_admin_skips_namespace_query(monkeypatch):
     conn = FakeConnection(
-        fetchrow_results=[{"label": "alice", "home": "default", "is_admin": True}]
+        fetchrow_results=[{"label": "alice", "home": "default", "is_admin": True, "authors": []}]
     )
     _patch_acquire(monkeypatch, conn)
     identity = asyncio.run(auth.authenticate_request("plaintext"))
@@ -109,13 +109,57 @@ def test_authenticate_request_admin_skips_namespace_query(monkeypatch):
 
 def test_authenticate_request_non_admin_computes_allowed_set(monkeypatch):
     conn = FakeConnection(
-        fetchrow_results=[{"label": "alice", "home": "default", "is_admin": False}],
+        fetchrow_results=[{"label": "alice", "home": "default", "is_admin": False, "authors": []}],
         fetch_results=[[{"name": "default"}, {"name": "team-a"}]],
     )
     _patch_acquire(monkeypatch, conn)
     identity = asyncio.run(auth.authenticate_request("plaintext"))
     assert identity.is_admin is False
     assert identity.allowed == frozenset({"default", "team-a"})
+
+
+def test_authenticate_request_fills_authors_from_the_row(monkeypatch):
+    conn = FakeConnection(
+        fetchrow_results=[
+            {
+                "label": "alice",
+                "home": "default",
+                "is_admin": True,
+                "authors": ["claude-code", "natsume"],
+            }
+        ]
+    )
+    _patch_acquire(monkeypatch, conn)
+    identity = asyncio.run(auth.authenticate_request("plaintext"))
+    assert identity.authors == frozenset({"claude-code", "natsume"})
+
+
+def test_authenticate_request_empty_allowlist_is_an_empty_frozenset(monkeypatch):
+    conn = FakeConnection(
+        fetchrow_results=[{"label": "alice", "home": "default", "is_admin": False, "authors": []}],
+        fetch_results=[[{"name": "default"}]],
+    )
+    _patch_acquire(monkeypatch, conn)
+    identity = asyncio.run(auth.authenticate_request("plaintext"))
+    assert identity.authors == frozenset()
+
+
+def test_authenticate_request_selects_authors_column(monkeypatch):
+    class RecordingConnection(FakeConnection):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.queries: list[str] = []
+
+        async def fetchrow(self, query, *args):
+            self.queries.append(query)
+            return await super().fetchrow(query, *args)
+
+    conn = RecordingConnection(
+        fetchrow_results=[{"label": "alice", "home": "default", "is_admin": True, "authors": []}]
+    )
+    _patch_acquire(monkeypatch, conn)
+    asyncio.run(auth.authenticate_request("plaintext"))
+    assert "authors" in conn.queries[0]
 
 
 # ---- ApiKeyAuthMiddleware -----------------------------------------------------
