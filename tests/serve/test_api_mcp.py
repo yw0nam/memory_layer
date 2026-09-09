@@ -79,6 +79,17 @@ def test_hit_to_dict_omits_archived_key_for_live_hits():
     assert "archived" not in api.hit_to_dict(_hit())
 
 
+def test_hit_to_dict_exposes_the_note_author_when_present():
+    assert api.hit_to_dict(_hit(source="memory", meta={"author": "natsume"}))["author"] == (
+        "natsume"
+    )
+
+
+def test_hit_to_dict_omits_the_author_when_unrecorded():
+    assert "author" not in api.hit_to_dict(_hit(source="memory", meta={"author": None}))
+    assert "author" not in api.hit_to_dict(_hit())
+
+
 def test_hit_to_dict_exposes_csv_columns_when_present():
     assert api.hit_to_dict(_hit(meta={"columns": ["group", "value"]}))["columns"] == [
         "group",
