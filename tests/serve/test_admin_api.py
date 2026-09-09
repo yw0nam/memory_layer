@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import admin, api
@@ -357,6 +358,20 @@ def test_admin_archive_author_outside_the_allowlist_403():
     response = client.post("/admin/archive", json={"ids": ["note:a"], "author": "mallory"})
     assert response.status_code == 403
     assert response.json()["error"] == "author 'mallory' is not permitted for this key"
+
+
+@pytest.mark.parametrize("author", [["natsume"], {"a": 1}, 123, "", "   "])
+def test_admin_archive_malformed_author_400(author):
+    response = client.post("/admin/archive", json={"author": author})
+    assert response.status_code == 400
+    assert response.json()["error"] == "author must be a non-empty string"
+
+
+@pytest.mark.parametrize("author", [["natsume"], 123, ""])
+def test_admin_archive_malformed_author_with_ids_400(author):
+    response = client.post("/admin/archive", json={"ids": ["note:a"], "author": author})
+    assert response.status_code == 400
+    assert response.json()["error"] == "author must be a non-empty string"
 
 
 def test_admin_archive_malformed_ids_400():
