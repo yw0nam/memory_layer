@@ -63,6 +63,8 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         out["context"] = context
     if hit.meta.get("archived"):
         out["archived"] = True
+    if hit.meta.get("author"):
+        out["author"] = hit.meta["author"]
     if "columns" in hit.meta:
         out["columns"] = hit.meta["columns"]
     return out
@@ -176,6 +178,8 @@ async def search_route(request: Request) -> JSONResponse:
         return error("since must be an ISO 8601 date or datetime string")
     if "until" in body and body["until"] is None:
         return error("until must be an ISO 8601 date or datetime string")
+    if "author" in body and body["author"] is None:
+        return error("author must be a non-empty string")
     try:
         requested_namespaces = normalize_namespaces(body.get("namespaces"))
         if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
@@ -196,6 +200,8 @@ async def search_route(request: Request) -> JSONResponse:
             options["until"] = body["until"]
         if "min_score" in body:
             options["min_score"] = body["min_score"]
+        if "author" in body:
+            options["author"] = body["author"]
         if requested_namespaces is not None:
             options["namespaces"] = requested_namespaces
         elif not key.is_admin:
@@ -272,6 +278,7 @@ async def notes_list_route(request: Request) -> JSONResponse:
             include_archived=include_archived == "true",
             since=params.get("since"),
             until=params.get("until"),
+            author=params.get("author") or None,
             limit=limit,
         )
     except ValueError as exc:

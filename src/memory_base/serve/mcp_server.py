@@ -149,6 +149,7 @@ async def _search(
     since: str | None = None,
     until: str | None = None,
     min_score: float | None = None,
+    author: str | None = None,
     ctx: "Context | None" = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {"query": query, "source": source, "top_k": top_k}
@@ -168,6 +169,8 @@ async def _search(
         body["until"] = until
     if min_score is not None:
         body["min_score"] = min_score
+    if author is not None:
+        body["author"] = author
     return await _call(
         "POST",
         "/search",
@@ -259,6 +262,7 @@ async def search_memory(
     since: str | None = None,
     until: str | None = None,
     min_score: float | None = None,
+    author: str | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search only stored memory for the given query.
@@ -277,6 +281,9 @@ async def search_memory(
     `namespace` narrows the search to one namespace the caller's API key can
     access; omitted, it covers every namespace the key can access. A
     namespace the key cannot access is rejected by the server.
+
+    `author` narrows the search to notes saved by one agent, e.g. claude-code
+    or natsume.
 
     `since`/`until` bound the search to memory last active in that window, for
     time-anchored questions ("what did we decide last week"). Both are ISO 8601
@@ -297,6 +304,7 @@ async def search_memory(
         since=since,
         until=until,
         min_score=min_score,
+        author=author,
         ctx=ctx,
     )
 
@@ -309,6 +317,7 @@ async def list_notes(
     until: str | None = None,
     include_archived: bool = False,
     namespace: str | None = None,
+    author: str | None = None,
     limit: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
@@ -324,9 +333,9 @@ async def list_notes(
     `tags` matches notes carrying any of the given tags. `kind` is "note" or
     "decision". `since`/`until` are ISO 8601 dates or datetimes (a bare date
     covers that whole day; naive values are read as UTC). `include_archived`
-    adds superseded notes, marked "archived": true. `namespace` narrows to one
-    namespace the caller's API key can access; omitted, it covers every
-    namespace the key can access.
+    adds superseded notes, marked "archived": true. `author` narrows to notes
+    saved by one agent. `namespace` narrows to one namespace the caller's API
+    key can access; omitted, it covers every namespace the key can access.
     """
     params: list[tuple[str, str]] = [("tags", tag) for tag in tags or []]
     if kind is not None:
@@ -339,6 +348,8 @@ async def list_notes(
         params.append(("include_archived", "true"))
     if namespace is not None:
         params.append(("namespace", namespace))
+    if author is not None:
+        params.append(("author", author))
     if limit is not None:
         params.append(("limit", str(limit)))
     return await _call(

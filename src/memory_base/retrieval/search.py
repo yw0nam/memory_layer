@@ -193,8 +193,12 @@ def validate_search_options(
     repo: Any = None,
     since: Any = None,
     until: Any = None,
+    author: Any = None,
 ) -> tuple[str | None, list[str] | None, list[str] | None, float | None, float | None]:
-    """Validate source-specific filters and return normalized values."""
+    """Validate source-specific filters and return normalized values.
+
+    `author` needs no normalization, so it is validated here but not returned.
+    """
     if kind is not None and kind not in SEARCH_KINDS:
         raise ValueError(f"kind must be one of {SEARCH_KINDS}")
     normalized_tags = normalize_tags(tags)
@@ -206,6 +210,11 @@ def validate_search_options(
     since_ts, until_ts = normalize_time_range(since, until)
     if (since_ts is not None or until_ts is not None) and source != "memory":
         raise ValueError('since and until filters require source="memory"')
+    if author is not None:
+        if not isinstance(author, str) or not author.strip():
+            raise ValueError("author must be a non-empty string")
+        if source != "memory":
+            raise ValueError('author filter requires source="memory"')
     return kind, normalized_tags, normalized_repo, since_ts, until_ts
 
 
@@ -218,6 +227,7 @@ def history_predicates(
     namespaces: list[str] | None = None,
     since: float | None = None,
     until: float | None = None,
+    author: str | None = None,
 ) -> tuple[str, list[Any]]:
     """Filter clauses over memory_chunks; placeholders start at $2, $1 being the caller's."""
     prefix = f"{alias}." if alias else ""
@@ -240,6 +250,9 @@ def history_predicates(
     if until is not None:
         args.append(until)
         clauses.append(f"{prefix}ts_last_active < ${len(args) + 1}")
+    if author is not None:
+        args.append(author)
+        clauses.append(f"{prefix}metadata->>'author' = ${len(args) + 1}")
     return " AND ".join(clauses) or "true", args
 
 
@@ -316,6 +329,7 @@ async def _search_memory(
     namespaces: list[str] | None = None,
     since: float | None = None,
     until: float | None = None,
+    author: str | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
     schema = PG_SCHEMA if schema is None else schema
@@ -328,6 +342,7 @@ async def _search_memory(
         namespaces=namespaces,
         since=since,
         until=until,
+        author=author,
     )
     columns = (
         "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
@@ -368,6 +383,7 @@ async def _search_memory(
             "raw": r["content_raw"],
             "kind": r["chunk_kind"],
             "tags": metadata.get("tags", []),
+            "author": metadata.get("author"),
             "source_ref": r["source_ref"],
             "archived": r["archived_at"] is not None,
         }
@@ -511,11 +527,12 @@ async def search(
     since: str | None = None,
     until: str | None = None,
     min_score: float | None = None,
+    author: str | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
     """schema overrides PG_SCHEMA for this call; only the eval harness passes it."""
     kind, tags, repo, since_ts, until_ts = validate_search_options(
-        source, kind, tags, repo, since, until
+        source, kind, tags, repo, since, until, author
     )
     namespaces = normalize_namespaces(namespaces)
 
@@ -536,6 +553,7 @@ async def search(
                 namespaces=namespaces,
                 since=since_ts,
                 until=until_ts,
+                author=author,
                 schema=schema,
             )
         _apply_time_decay(_decay_targets(hits, include_archived))

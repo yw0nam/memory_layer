@@ -187,6 +187,7 @@ async def list_notes(
     include_archived: bool = False,
     since: str | None = None,
     until: str | None = None,
+    author: str | None = None,
     limit: int = LIST_NOTES_DEFAULT_LIMIT,
 ) -> list[dict[str, Any]]:
     """List agent notes newest-first without a search query or embedding call.
@@ -211,6 +212,7 @@ async def list_notes(
         namespaces=namespaces,
         since=since_ts,
         until=until_ts,
+        author=author,
     )
     async with db.acquire() as conn:
         rows = await conn.fetch(
@@ -227,11 +229,13 @@ async def list_notes(
         )
     out: list[dict[str, Any]] = []
     for row in rows:
+        metadata = metadata_dict(row["metadata"])
         note = {
             "id": row["id"],
             "kind": row["kind"],
             "text": row["text"][:TEXT_LIMIT],
-            "tags": metadata_dict(row["metadata"]).get("tags", []),
+            "tags": metadata.get("tags", []),
+            "author": metadata.get("author"),
             "namespace": row["namespace"],
             "date": datetime.fromtimestamp(row["ts_last_active"], tz=timezone.utc).strftime(
                 "%Y-%m-%d"
@@ -239,5 +243,7 @@ async def list_notes(
         }
         if row["archived_at"] is not None:
             note["archived"] = True
+        if metadata.get("archived_by") is not None:
+            note["archived_by"] = metadata["archived_by"]
         out.append(note)
     return out

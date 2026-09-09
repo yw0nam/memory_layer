@@ -149,14 +149,19 @@ async def find_duplicates(
                        AS least_kind,
                      CASE WHEN a.id < b.id THEN left(a.content_raw, {TEXT_LIMIT})
                           ELSE left(b.content_raw, {TEXT_LIMIT}) END AS least_text,
+                     CASE WHEN a.id < b.id THEN a.metadata->>'author'
+                          ELSE b.metadata->>'author' END AS least_author,
                      CASE WHEN a.id < b.id THEN b.chunk_kind ELSE a.chunk_kind END
                        AS greatest_kind,
                      CASE WHEN a.id < b.id THEN left(b.content_raw, {TEXT_LIMIT})
                           ELSE left(a.content_raw, {TEXT_LIMIT}) END AS greatest_text,
+                     CASE WHEN a.id < b.id THEN b.metadata->>'author'
+                          ELSE a.metadata->>'author' END AS greatest_author,
                      1 - b.distance AS score
               FROM "{PG_SCHEMA}".memory_chunks AS a
               CROSS JOIN LATERAL (
                 SELECT candidate.id, candidate.chunk_kind, candidate.content_raw,
+                       candidate.metadata,
                        candidate.embedding <=> a.embedding AS distance
                 FROM "{PG_SCHEMA}".memory_chunks AS candidate
                 WHERE candidate.archived_at IS NULL
@@ -173,13 +178,14 @@ async def find_duplicates(
             deduplicated AS (
               SELECT DISTINCT ON (least_id, greatest_id)
                      least_id AS a_id, least_kind AS a_kind, least_text AS a_text,
+                     least_author AS a_author,
                      greatest_id AS b_id, greatest_kind AS b_kind,
-                     greatest_text AS b_text, score
+                     greatest_text AS b_text, greatest_author AS b_author, score
               FROM directed
               WHERE score >= $1
               ORDER BY least_id, greatest_id, score DESC
             )
-            SELECT a_id, a_kind, a_text, b_id, b_kind, b_text, score
+            SELECT a_id, a_kind, a_text, a_author, b_id, b_kind, b_text, b_author, score
             FROM deduplicated
             ORDER BY score DESC
             LIMIT $3
@@ -191,8 +197,18 @@ async def find_duplicates(
         )
         return [
             {
-                "a": {"id": row["a_id"], "kind": row["a_kind"], "text": row["a_text"]},
-                "b": {"id": row["b_id"], "kind": row["b_kind"], "text": row["b_text"]},
+                "a": {
+                    "id": row["a_id"],
+                    "kind": row["a_kind"],
+                    "text": row["a_text"],
+                    "author": row["a_author"],
+                },
+                "b": {
+                    "id": row["b_id"],
+                    "kind": row["b_kind"],
+                    "text": row["b_text"],
+                    "author": row["b_author"],
+                },
                 "score": row["score"],
             }
             for row in rows
