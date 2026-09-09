@@ -48,6 +48,8 @@ every call below observes ``namespaces=None``.
 
 from __future__ import annotations
 
+import asyncio
+
 from starlette.testclient import TestClient
 
 from memory_base.serve import admin, api
@@ -217,6 +219,42 @@ def test_admin_duplicates_non_numeric_threshold_400():
     assert "error" in response.json()
 
 
+def test_duplicate_pairs_carry_each_sides_author(monkeypatch):
+    from contextlib import asynccontextmanager
+
+    row = {
+        "a_id": "note:a",
+        "a_kind": "note",
+        "a_text": "one",
+        "a_author": "natsume",
+        "b_id": "note:b",
+        "b_kind": "note",
+        "b_text": "two",
+        "b_author": "claude-code",
+        "score": 0.97,
+    }
+
+    class FakeConnection:
+        def __init__(self):
+            self.query = None
+
+        async def fetch(self, query, *args):
+            self.query = query
+            return [row]
+
+    conn = FakeConnection()
+
+    @asynccontextmanager
+    async def acquire(timeout=None):
+        yield conn
+
+    monkeypatch.setattr(admin.db, "acquire", acquire)
+    pairs = asyncio.run(admin.find_duplicates(0.9, None, 10))
+    assert "metadata->>'author'" in conn.query
+    assert pairs[0]["a"]["author"] == "natsume"
+    assert pairs[0]["b"]["author"] == "claude-code"
+
+
 # ---- POST /admin/archive -----------------------------------------------------
 
 
@@ -324,6 +362,40 @@ def test_search_include_archived_true_reaches_search(monkeypatch):
     response = client.post("/search", json={"query": "hello", "include_archived": True})
     assert response.status_code == 200
     assert captured["include_archived"] is True
+
+
+def test_search_forwards_the_author_filter(monkeypatch):
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post(
+        "/search", json={"query": "hello", "source": "memory", "author": "natsume"}
+    )
+    assert response.status_code == 200
+    assert captured["author"] == "natsume"
+
+
+def test_search_omitted_author_is_not_forwarded(monkeypatch):
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post("/search", json={"query": "hello"})
+    assert response.status_code == 200
+    assert "author" not in captured
+
+
+def test_search_null_author_400():
+    response = client.post("/search", json={"query": "hello", "author": None})
+    assert response.status_code == 400
+    assert "error" in response.json()
 
 
 def test_search_include_archived_defaults_to_false(monkeypatch):

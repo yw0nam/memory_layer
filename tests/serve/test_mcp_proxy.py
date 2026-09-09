@@ -201,6 +201,42 @@ def test_list_notes_gets_notes_with_repeated_params(monkeypatch):
     )
 
 
+def test_search_memory_forwards_the_author_filter(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.search_memory("who decided", author="natsume"))
+    assert captured["json"]["author"] == "natsume"
+
+
+def test_search_memory_omits_an_unset_author(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.search_memory("who decided"))
+    assert "author" not in captured["json"]
+
+
+def test_list_notes_forwards_the_author_filter(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = request.url.params.multi_items()
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.list_notes(author="natsume"))
+    assert captured["params"] == [("author", "natsume")]
+
+
 def test_list_notes_omits_unset_filters(monkeypatch):
     captured = {}
 
