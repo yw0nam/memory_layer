@@ -349,10 +349,13 @@ def test_save_memory_posts_to_save_memory_and_returns_body(monkeypatch):
         return httpx.Response(200, json={"id": "note:abc", "kind": "note", "stored": True})
 
     _patch_client(monkeypatch, handler)
-    result = asyncio.run(mcp_server.save_memory("distilled content", kind="note", tags=["infra"]))
+    result = asyncio.run(
+        mcp_server.save_memory("distilled content", "natsume", kind="note", tags=["infra"])
+    )
     assert captured["path"] == "/save_memory"
     assert captured["json"] == {
         "content": "distilled content",
+        "author": "natsume",
         "kind": "note",
         "tags": ["infra"],
         "supersedes": None,
@@ -366,7 +369,7 @@ def test_save_memory_400_response_raises_value_error_with_server_message(monkeyp
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="content must not be empty"):
-        asyncio.run(mcp_server.save_memory(""))
+        asyncio.run(mcp_server.save_memory("", "natsume"))
 
 
 def test_query_table_posts_sql_and_namespace_and_returns_body(monkeypatch):

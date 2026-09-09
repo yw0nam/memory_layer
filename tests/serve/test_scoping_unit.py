@@ -53,14 +53,22 @@ def test_save_memory_omitted_namespace_lands_in_key_home(monkeypatch):
     captured = {}
 
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     client = _non_admin_client(monkeypatch)
-    response = client.post("/save_memory", json={"content": "distilled note text"})
+    response = client.post(
+        "/save_memory", json={"author": "natsume", "content": "distilled note text"}
+    )
     assert response.status_code == 200
     assert captured["namespace"] == HOME
 
@@ -68,7 +76,8 @@ def test_save_memory_omitted_namespace_lands_in_key_home(monkeypatch):
 def test_save_memory_rejects_namespace_outside_allowed_set(monkeypatch):
     client = _non_admin_client(monkeypatch)
     response = client.post(
-        "/save_memory", json={"content": "distilled note text", "namespace": "team-b"}
+        "/save_memory",
+        json={"author": "natsume", "content": "distilled note text", "namespace": "team-b"},
     )
     assert response.status_code == 403
     assert "error" in response.json()

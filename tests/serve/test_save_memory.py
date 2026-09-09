@@ -99,6 +99,22 @@ def test_tags_are_normalized_and_deduplicated():
     assert row["metadata"] == {"tags": ["infrastructure", "database"]}
 
 
+def test_author_lands_in_metadata():
+    row = build_note_row("content with an author", "note", None, NOW, "default", "natsume")
+    assert row["metadata"]["author"] == "natsume"
+
+
+def test_author_omitted_leaves_no_author_in_metadata():
+    row = build_note_row("content without an author", "note", None, NOW)
+    assert "author" not in row["metadata"]
+
+
+def test_author_does_not_participate_in_the_id():
+    a = build_note_row("shared content", "note", None, NOW, "default", "natsume")
+    b = build_note_row("shared content", "note", None, NOW, "default", "claude-code")
+    assert a["id"] == b["id"]
+
+
 # ---- pure: validation ------------------------------------------------------
 
 
@@ -178,7 +194,7 @@ def test_save_memory_stores_row_in_db(rest_in_process):
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        result = asyncio.run(save_memory(content, kind="note", tags=["pytest"]))
+        result = asyncio.run(save_memory(content, "natsume", kind="note", tags=["pytest"]))
         assert result["id"] == note_id
         assert result["stored"] is True
 
@@ -202,8 +218,8 @@ def test_save_memory_duplicate_is_noop(rest_in_process):
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        first = asyncio.run(save_memory(content))
-        second = asyncio.run(save_memory(content))
+        first = asyncio.run(save_memory(content, "natsume"))
+        second = asyncio.run(save_memory(content, "natsume"))
         assert first["stored"] is True
         assert second["stored"] is False
         assert asyncio.run(_count(note_id)) == 1
@@ -218,7 +234,7 @@ def test_saved_note_found_by_search(rest_in_process):
     note_id = build_note_row(content, "note", None, NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        asyncio.run(save_memory(content))
+        asyncio.run(save_memory(content, "natsume"))
         hits = asyncio.run(search(content, source="memory", rerank=False))
         assert any(h.meta.get("id") == note_id for h in hits)
     finally:

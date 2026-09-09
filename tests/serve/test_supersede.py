@@ -56,7 +56,13 @@ def client():
 
 def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, client):
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         return {
             "id": "note:aaaaaaaaaaaaaaaa",
@@ -67,7 +73,9 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
         }
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
-    response = client.post("/save_memory", json={"content": "some distilled content"})
+    response = client.post(
+        "/save_memory", json={"author": "natsume", "content": "some distilled content"}
+    )
     assert response.status_code == 200
     assert set(response.json()) == {"id", "kind", "stored", "superseded", "similar"}
 
@@ -79,7 +87,13 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
     captured = {}
 
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         captured["supersedes"] = supersedes
         return {
@@ -92,7 +106,8 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
-        "/save_memory", json={"content": "new content", "supersedes": "note:old0000000000"}
+        "/save_memory",
+        json={"author": "natsume", "content": "new content", "supersedes": "note:old0000000000"},
     )
     assert response.status_code == 200
     assert captured["supersedes"] == "note:old0000000000"
@@ -103,7 +118,13 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
     captured = {}
 
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         captured["supersedes"] = supersedes
         return {
@@ -115,7 +136,7 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
         }
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
-    response = client.post("/save_memory", json={"content": "new content"})
+    response = client.post("/save_memory", json={"author": "natsume", "content": "new content"})
     assert response.status_code == 200
     assert captured["supersedes"] is None
     assert response.json()["superseded"] is None
@@ -123,16 +144,84 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
 
 def test_save_memory_unknown_supersedes_id_400(monkeypatch, client):
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         raise ValueError(f"unknown supersedes id: {supersedes}")
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
-        "/save_memory", json={"content": "new content", "supersedes": "note:missing00000000"}
+        "/save_memory",
+        json={"author": "natsume", "content": "new content", "supersedes": "note:missing00000000"},
     )
     assert response.status_code == 400
     assert response.json()["error"] == "unknown supersedes id: note:missing00000000"
+
+
+# ---- save_note: the supersede UPDATE stamps archived_by --------------------
+
+
+class FakeTransaction:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *args):
+        return None
+
+
+class FakeConnection:
+    def __init__(self):
+        self.updates: list[tuple] = []
+
+    def transaction(self):
+        return FakeTransaction()
+
+    async def fetchval(self, query, *args):
+        return True
+
+    async def execute(self, query, *args):
+        if "SET archived_at" in query:
+            self.updates.append((query, args))
+            return "UPDATE 1"
+        return "INSERT 0 1"
+
+    async def fetch(self, query, *args):
+        return []
+
+
+def _patch_note_deps(monkeypatch, conn):
+    from contextlib import asynccontextmanager
+
+    from memory_base.serve import notes
+
+    @asynccontextmanager
+    async def acquire(timeout=None):
+        yield conn
+
+    async def fake_embed_text(embedder, text):
+        return "[0]"
+
+    async def noop(conn):
+        return None
+
+    monkeypatch.setattr(notes.db, "acquire", acquire)
+    monkeypatch.setattr(notes, "embed_text", fake_embed_text)
+    monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
+    monkeypatch.setattr(notes, "ensure_schema_once", noop)
+
+
+def test_supersede_stamps_archived_by_with_the_new_notes_author(monkeypatch):
+    conn = FakeConnection()
+    _patch_note_deps(monkeypatch, conn)
+    asyncio.run(save_note("new content", supersedes="note:old0000000000", author="natsume"))
+    query, args = conn.updates[0]
+    assert "jsonb_build_object('archived_by'" in query
+    assert "natsume" in args
 
 
 # ---- MCP proxy: posts supersedes, tool list unchanged ----------------------
@@ -166,11 +255,12 @@ def test_mcp_save_memory_posts_supersedes_in_body(monkeypatch):
     _patch_client(monkeypatch, handler)
     result = asyncio.run(
         mcp_server.save_memory(
-            "new content", kind="note", tags=None, supersedes="note:old0000000000"
+            "new content", "natsume", kind="note", tags=None, supersedes="note:old0000000000"
         )
     )
     assert captured["json"] == {
         "content": "new content",
+        "author": "natsume",
         "kind": "note",
         "tags": None,
         "supersedes": "note:old0000000000",
@@ -195,9 +285,10 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.save_memory("new content"))
+    asyncio.run(mcp_server.save_memory("new content", "natsume"))
     assert captured["json"] == {
         "content": "new content",
+        "author": "natsume",
         "kind": "note",
         "tags": None,
         "supersedes": None,
@@ -277,11 +368,13 @@ def test_supersede_archives_old_note_and_stores_new_one(client):
     asyncio.run(_delete(note_a))
     asyncio.run(_delete(note_b))
     try:
-        response_a = client.post("/save_memory", json={"content": content_a})
+        response_a = client.post("/save_memory", json={"author": "natsume", "content": content_a})
         assert response_a.status_code == 200
         assert response_a.json()["id"] == note_a
 
-        response_b = client.post("/save_memory", json={"content": content_b, "supersedes": note_a})
+        response_b = client.post(
+            "/save_memory", json={"author": "natsume", "content": content_b, "supersedes": note_a}
+        )
         assert response_b.status_code == 200
         assert response_b.json()["id"] == note_b
         assert response_b.json()["superseded"] == note_a
@@ -299,7 +392,11 @@ def test_supersede_unknown_id_400_over_rest(client):
     content = f"supersede integration pin C {NOW}: zzzsupersedepin unique marker three"
     response = client.post(
         "/save_memory",
-        json={"content": content, "supersedes": "note:0000000000000000"},
+        json={
+            "author": "natsume",
+            "content": content,
+            "supersedes": "note:0000000000000000",
+        },
     )
     assert response.status_code == 400
     assert "unknown supersedes id" in response.json()["error"]
@@ -319,7 +416,7 @@ def test_similar_hints_include_near_identical_active_note(client):
         asyncio.run(save_note(content_b))
         time.sleep(0.2)  # let the embedder-backed insert settle before querying similarity
 
-        response_c = client.post("/save_memory", json={"content": content_c})
+        response_c = client.post("/save_memory", json={"author": "natsume", "content": content_c})
         assert response_c.status_code == 200
         similar_ids = [item["id"] for item in response_c.json()["similar"]]
         assert note_b in similar_ids

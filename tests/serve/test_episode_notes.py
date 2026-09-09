@@ -143,14 +143,21 @@ def test_save_memory_forwards_occurred_at_to_save_note(monkeypatch):
     captured = {}
 
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         captured["occurred_at"] = occurred_at
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
-        "/save_memory", json={"content": "distilled text", "occurred_at": "2023-06-01"}
+        "/save_memory",
+        json={"author": "natsume", "content": "distilled text", "occurred_at": "2023-06-01"},
     )
     assert response.status_code == 200
     assert captured["occurred_at"] == "2023-06-01"
@@ -160,32 +167,47 @@ def test_save_memory_omitted_occurred_at_forwards_none(monkeypatch):
     captured = {}
 
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         captured["occurred_at"] = occurred_at
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
-    response = client.post("/save_memory", json={"content": "distilled text"})
+    response = client.post("/save_memory", json={"author": "natsume", "content": "distilled text"})
     assert response.status_code == 200
     assert captured["occurred_at"] is None
 
 
 def test_save_memory_null_occurred_at_400():
-    response = client.post("/save_memory", json={"content": "distilled text", "occurred_at": None})
+    response = client.post(
+        "/save_memory", json={"author": "natsume", "content": "distilled text", "occurred_at": None}
+    )
     assert response.status_code == 400
     assert "error" in response.json()
 
 
 def test_save_memory_malformed_occurred_at_400(monkeypatch):
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         raise ValueError(f"invalid ISO 8601 timestamp: {occurred_at!r}")
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
-        "/save_memory", json={"content": "distilled text", "occurred_at": "nonsense"}
+        "/save_memory",
+        json={"author": "natsume", "content": "distilled text", "occurred_at": "nonsense"},
     )
     assert response.status_code == 400
     assert "invalid ISO 8601 timestamp" in response.json()["error"]
@@ -193,13 +215,20 @@ def test_save_memory_malformed_occurred_at_400(monkeypatch):
 
 def test_save_memory_future_occurred_at_400(monkeypatch):
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         raise ValueError("occurred_at must not be in the future")
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
-        "/save_memory", json={"content": "distilled text", "occurred_at": "2999-01-01"}
+        "/save_memory",
+        json={"author": "natsume", "content": "distilled text", "occurred_at": "2999-01-01"},
     )
     assert response.status_code == 400
     assert response.json()["error"] == "occurred_at must not be in the future"
@@ -209,14 +238,21 @@ def test_save_memory_episode_kind_delegates_to_save_note(monkeypatch):
     captured = {}
 
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         captured["kind"] = kind
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
-        "/save_memory", json={"content": "caught up with the team today", "kind": "episode"}
+        "/save_memory",
+        json={"author": "natsume", "content": "caught up with the team today", "kind": "episode"},
     )
     assert response.status_code == 200
     assert captured["kind"] == "episode"
@@ -255,7 +291,9 @@ def test_mcp_save_memory_posts_occurred_at_in_body(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     asyncio.run(
-        save_memory("caught up with the team today", kind="episode", occurred_at="2023-06-01")
+        save_memory(
+            "caught up with the team today", "natsume", kind="episode", occurred_at="2023-06-01"
+        )
     )
     assert captured["json"]["occurred_at"] == "2023-06-01"
     assert captured["json"]["kind"] == "episode"
@@ -278,5 +316,5 @@ def test_mcp_save_memory_omits_occurred_at_when_not_given(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(save_memory("plain note"))
+    asyncio.run(save_memory("plain note", "natsume"))
     assert "occurred_at" not in captured["json"]

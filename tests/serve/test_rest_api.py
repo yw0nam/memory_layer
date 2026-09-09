@@ -405,26 +405,30 @@ def test_search_malformed_json_400():
 
 
 def test_save_memory_empty_content_400():
-    response = client.post("/save_memory", json={"content": ""})
+    response = client.post("/save_memory", json={"author": "natsume", "content": ""})
     assert response.status_code == 400
     assert response.json()["error"] == "content must not be empty"
 
 
 def test_save_memory_oversized_content_400():
-    response = client.post("/save_memory", json={"content": "x" * 4001})
+    response = client.post("/save_memory", json={"author": "natsume", "content": "x" * 4001})
     assert response.status_code == 400
     assert response.json()["error"] == "content exceeds 4000 chars"
 
 
 def test_save_memory_bad_kind_400():
-    response = client.post("/save_memory", json={"content": "valid content", "kind": "reminder"})
+    response = client.post(
+        "/save_memory", json={"author": "natsume", "content": "valid content", "kind": "reminder"}
+    )
     assert response.status_code == 400
     assert response.json()["error"] == "kind must be one of ('note', 'decision', 'episode')"
 
 
 @pytest.mark.parametrize("tags", ["infra", {"tag": "infra"}, [1], ["infra", None]])
 def test_save_memory_malformed_tags_400(tags):
-    response = client.post("/save_memory", json={"content": "valid content", "tags": tags})
+    response = client.post(
+        "/save_memory", json={"author": "natsume", "content": "valid content", "tags": tags}
+    )
     assert response.status_code == 400
     assert response.json()["error"] == "tags must be a list of strings"
 
@@ -433,7 +437,13 @@ def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
     captured = {}
 
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         captured["content"] = content
         captured["kind"] = kind
@@ -448,7 +458,9 @@ def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
         }
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
-    response = client.post("/save_memory", json={"content": "distilled note text"})
+    response = client.post(
+        "/save_memory", json={"author": "natsume", "content": "distilled note text"}
+    )
     assert response.status_code == 200
     assert response.json() == {
         "id": "note:deadbeefdeadbeef",
@@ -477,13 +489,21 @@ def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
     captured = {}
 
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
-    response = client.post("/save_memory", json={"content": "distilled note text"})
+    response = client.post(
+        "/save_memory", json={"author": "natsume", "content": "distilled note text"}
+    )
     assert response.status_code == 200
     assert captured["namespace"] == "default"
 
@@ -492,14 +512,21 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
     captured = {}
 
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
-        "/save_memory", json={"content": "distilled note text", "namespace": "team-a"}
+        "/save_memory",
+        json={"author": "natsume", "content": "distilled note text", "namespace": "team-a"},
     )
     assert response.status_code == 200
     assert captured["namespace"] == "team-a"
@@ -507,13 +534,20 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
 
 def test_save_memory_unregistered_namespace_400(monkeypatch):
     async def fake_save_note(
-        content, kind="note", tags=None, supersedes=None, namespace="default", occurred_at=None
+        content,
+        kind="note",
+        tags=None,
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
     ):
         raise ValueError(f"unregistered namespace: {namespace}")
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
-        "/save_memory", json={"content": "distilled note text", "namespace": "ghost"}
+        "/save_memory",
+        json={"author": "natsume", "content": "distilled note text", "namespace": "ghost"},
     )
     assert response.status_code == 400
     assert "unregistered namespace" in response.json()["error"]
@@ -522,7 +556,8 @@ def test_save_memory_unregistered_namespace_400(monkeypatch):
 @pytest.mark.parametrize("namespace", ["", "   ", 123, [], None])
 def test_save_memory_malformed_namespace_400(namespace):
     response = client.post(
-        "/save_memory", json={"content": "distilled note text", "namespace": namespace}
+        "/save_memory",
+        json={"author": "natsume", "content": "distilled note text", "namespace": namespace},
     )
     assert response.status_code == 400
     assert response.json()["error"] == "namespace must be a non-empty string"
