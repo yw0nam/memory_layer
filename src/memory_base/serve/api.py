@@ -372,10 +372,13 @@ async def admin_archive_route(request: Request) -> JSONResponse:
         if ids is None:
             return error("ids must be a non-empty list")
     author = body.get("author")
-    if ids is not None and (not isinstance(author, str) or not author.strip()):
+    if ids is not None and author is None:
         return error("author is required")
-    if author is not None and author not in key.authors:
-        return error(f"author {author!r} is not permitted for this key", 403)
+    if author is not None:
+        if not isinstance(author, str) or not author.strip():
+            return error("author must be a non-empty string")
+        if author not in key.authors:
+            return error(f"author {author!r} is not permitted for this key", 403)
     now = time.time()
     scope = _admin_scope(key)
     if ids is not None:
