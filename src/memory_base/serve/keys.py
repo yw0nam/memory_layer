@@ -1,4 +1,4 @@
-"""CLI for provisioning memory_base API keys.
+"""API-key provisioning CLI, and the author allowlist behind /keys/{label}/authors.
 
     uv run python -m memory_base.serve.keys new <label> [--home <ns>] [--admin]
     uv run python -m memory_base.serve.keys list
