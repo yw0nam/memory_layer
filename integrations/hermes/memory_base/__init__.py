@@ -1,8 +1,7 @@
 """memory_base Hermes memory plugin — MemoryProvider interface.
 
-Pre-injects memory-base content into every conversation: a session-start
-digest of recent episode notes, plus a per-turn semantic prefetch over the
-memory-base REST API.
+Pre-injects a per-turn semantic prefetch over the memory-base REST API into
+every conversation turn.
 
 Config via config.yaml (memory.memory_base):
   url          — memory-base REST API base URL (required)
@@ -41,13 +40,11 @@ def _load_plugin_config() -> dict[str, Any]:
 
 
 class MemoryBaseProvider(MemoryProvider):
-    """Episode digest at session start, semantic prefetch every turn."""
+    """Semantic prefetch every turn."""
 
     def __init__(self) -> None:
         self._config = _load_plugin_config()
         self._client: client.MemoryBaseClient | None = None
-        self._digest = ""
-        self._digest_ids: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -72,29 +69,22 @@ class MemoryBaseProvider(MemoryProvider):
             min_score=self._config.get("min_score", _DEFAULT_MIN_SCORE),
         )
 
-    def _refresh_digest(self) -> None:
-        episodes = self._client.recent_episodes(5) if self._client else []
-        self._digest = client.format_digest(episodes)
-        self._digest_ids = client.digest_identities(episodes)
-
     def initialize(self, session_id: str, **kwargs) -> None:
         self._client = self._build_client()
-        self._refresh_digest()
 
     def system_prompt_block(self) -> str:
-        """Byte-stable within a session — the digest fetched at initialize()."""
-        return self._digest
+        return ""
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         if not self._client:
             return ""
         try:
-            return self._client.build_prefetch(query, self._digest_ids)
+            return self._client.build_prefetch(query)
         except Exception:
             return ""
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
-        self._refresh_digest()
+        pass
 
     # -- Context-only provider: no tools, no writes. -------------------------
 

@@ -12,8 +12,6 @@ import httpx
 
 from client import MemoryBaseClient
 from client import clean_prefetch_query
-from client import digest_identities
-from client import format_digest
 from client import resolve_api_key
 
 
@@ -24,66 +22,6 @@ def _client(handler, **kwargs):
         transport=httpx.MockTransport(handler),
         **kwargs,
     )
-
-
-# ---- format_digest ----------------------------------------------------------
-
-
-def test_format_digest_orders_oldest_first_with_dates():
-    episodes = [
-        {"date": "2026-08-20", "text": "newest event"},
-        {"date": "2026-08-10", "text": "oldest event"},
-    ]
-    digest = format_digest(episodes)
-    assert digest == (
-        "Recent events (episodic memory):\n- [2026-08-10] oldest event\n- [2026-08-20] newest event"
-    )
-
-
-def test_format_digest_empty_returns_empty_string():
-    assert format_digest([]) == ""
-
-
-# ---- recent_episodes ---------------------------------------------------------
-
-
-def test_recent_episodes_returns_empty_list_on_connection_error():
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("refused")
-
-    client = _client(handler)
-    assert client.recent_episodes(limit=5) == []
-
-
-def test_recent_episodes_returns_empty_list_on_http_500():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={"error": "boom"})
-
-    client = _client(handler)
-    assert client.recent_episodes(limit=5) == []
-
-
-def test_recent_episodes_returns_empty_list_on_invalid_json():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=b"not json")
-
-    client = _client(handler)
-    assert client.recent_episodes(limit=5) == []
-
-
-def test_recent_episodes_requests_notes_with_kind_episode():
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["path"] = request.url.path
-        captured["params"] = dict(request.url.params)
-        return httpx.Response(200, json=[{"id": "note:1", "date": "2026-08-01", "text": "x"}])
-
-    client = _client(handler)
-    result = client.recent_episodes(limit=3)
-    assert captured["path"] == "/notes"
-    assert captured["params"] == {"kind": "episode", "limit": "3"}
-    assert result == [{"id": "note:1", "date": "2026-08-01", "text": "x"}]
 
 
 # ---- search -------------------------------------------------------------------
@@ -145,43 +83,27 @@ def test_auth_header_sent_on_every_request():
         return httpx.Response(200, json=[])
 
     client = _client(handler)
-    client.recent_episodes()
     client.search("q")
-    assert seen == ["secret-key", "secret-key"]
-
-
-# ---- digest_identities --------------------------------------------------------
-
-
-def test_digest_identities_collects_episode_text():
-    episodes = [{"text": "a"}, {"text": "b"}, {"text": ""}]
-    assert digest_identities(episodes) == {"a", "b"}
+    assert seen == ["secret-key"]
 
 
 # ---- build_prefetch ------------------------------------------------------------
 
 
-def test_build_prefetch_drops_digest_duplicate_hits():
+def test_build_prefetch_returns_every_search_hit():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json=[
-                {"date": "2026-08-19", "text": "already in digest"},
-                {"date": "2026-08-18", "text": "fresh hit"},
+                {"date": "2026-08-19", "text": "first hit"},
+                {"date": "2026-08-18", "text": "second hit"},
             ],
         )
 
     client = _client(handler)
-    result = client.build_prefetch("q", {"already in digest"})
-    assert result == "- [2026-08-18] fresh hit"
-
-
-def test_build_prefetch_returns_empty_when_all_filtered():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=[{"date": "2026-08-19", "text": "dup"}])
-
-    client = _client(handler)
-    assert client.build_prefetch("q", {"dup"}) == ""
+    result = client.build_prefetch("q")
+    assert "- [2026-08-19] first hit" in result
+    assert "- [2026-08-18] second hit" in result
 
 
 def test_build_prefetch_truncates_to_2000_chars_at_line_boundary():
@@ -192,7 +114,7 @@ def test_build_prefetch_truncates_to_2000_chars_at_line_boundary():
         return httpx.Response(200, json=hits)
 
     client = _client(handler)
-    result = client.build_prefetch("q", set())
+    result = client.build_prefetch("q")
     assert len(result) <= 2000
     assert result != ""
     for line in result.splitlines():
@@ -208,7 +130,7 @@ def test_build_prefetch_returns_empty_when_first_line_alone_exceeds_limit():
         return httpx.Response(200, json=hits)
 
     client = _client(handler)
-    assert client.build_prefetch("q", set()) == ""
+    assert client.build_prefetch("q") == ""
 
 
 # ---- resolve_api_key -----------------------------------------------------------
@@ -308,7 +230,7 @@ def test_build_prefetch_searches_with_cleaned_query():
         return httpx.Response(200, json=[])
 
     client = _client(handler)
-    client.build_prefetch(RAW_USER_TURN, set())
+    client.build_prefetch(RAW_USER_TURN)
     assert captured["body"]["query"] == "それ、多分できるよ。"
 
 
@@ -318,4 +240,4 @@ def test_build_prefetch_skips_search_when_query_cleans_to_empty():
 
     client = _client(handler)
     raw = "<client_context>\ntime: now\ntrigger: screen\n</client_context>"
-    assert client.build_prefetch(raw, set()) == ""
+    assert client.build_prefetch(raw) == ""
