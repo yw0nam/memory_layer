@@ -273,6 +273,20 @@ def test_stop_flusher_flushes_pending_hits(connection):
     assert access_log._pending_hits == {}
 
 
+def test_flush_persists_the_search_filters_that_narrowed_each_row(connection):
+    access_log.record_retrieval(
+        "narrowed", "memory", [], now=NOW, filters={"kind": "note", "min_score": 0.6, "top_k": 3}
+    )
+    access_log.record_retrieval("wide", "memory", [_hit("chunk-a")], now=NOW + 1)
+
+    asyncio.run(access_log.flush(now=NOW + 1))
+
+    sql, rows = connection.matching("INSERT")[0]
+    assert "filters" in sql
+    assert rows[0][4] == {"kind": "note", "min_score": 0.6, "top_k": 3}
+    assert rows[1][4] == {}
+
+
 def test_flush_interval_is_env_configurable_with_a_default(monkeypatch):
     monkeypatch.delenv("HIT_FLUSH_INTERVAL_SECONDS", raising=False)
     try:
