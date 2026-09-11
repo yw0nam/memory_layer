@@ -184,40 +184,45 @@ RAW_AGENT_TURN = (
 )
 
 
-def test_clean_prefetch_query_drops_boilerplate_keeps_user_text():
+def test_clean_prefetch_query_drops_the_block_keeps_user_text():
     assert clean_prefetch_query(RAW_USER_TURN) == "それ、多分できるよ。"
 
 
-def test_clean_prefetch_query_keeps_semantic_context_lines():
+def test_clean_prefetch_query_drops_every_line_the_client_injected():
+    """The block is the client's own text, whatever fields it holds today."""
     cleaned = clean_prefetch_query(RAW_AGENT_TURN)
-    assert cleaned == (
-        'agent event: claude-code done, project "YUI" - "Polled v0.3.2 build completion." (3min ago)\n'
-        "agent detail: 빌드가 아직 도는 중.\n"
-        "(my claude-code tasks piled up while I was away)"
+    assert cleaned == "(my claude-code tasks piled up while I was away)"
+
+
+def test_clean_prefetch_query_drops_fields_the_client_adds_later():
+    """A field this module has never heard of must not reach the embedder either."""
+    raw = (
+        "<client_context>\n"
+        "body: sitting on 카카오톡 (for 17min)\n"
+        "recent: Cursor 10min -> Slack\n"
+        "weather: raining in Seoul\n"
+        "</client_context>\n\n"
+        "うんーまずは原因を調べてどうするかはみてから決めよう。"
     )
-    assert "<client_context>" not in cleaned
-    assert "frontmost" not in cleaned
+    assert clean_prefetch_query(raw) == "うんーまずは原因を調べてどうするかはみてから決めよう。"
 
 
 def test_clean_prefetch_query_passes_plain_text_through():
     assert clean_prefetch_query("no context block here") == "no context block here"
 
 
-def test_clean_prefetch_query_empty_when_only_boilerplate():
-    raw = "<client_context>\ntime: now\ntrigger: screen app_switched\n</client_context>"
+def test_clean_prefetch_query_empty_when_the_block_was_the_whole_turn():
+    raw = "<client_context>\ntime: now\ntrigger: signals (1 signal)\nsignal: {}\n</client_context>"
     assert clean_prefetch_query(raw) == ""
 
 
 def test_clean_prefetch_query_handles_multiple_blocks():
     raw = (
-        "<client_context>\ntime: t1\nbody: first payload\n</client_context>\n"
+        "<client_context>\ntime: t1\nbody: standing (for 0min)\n</client_context>\n"
         "hello\n"
         "<client_context>\ntrigger: x\ncue note: second payload\n</client_context>"
     )
-    cleaned = clean_prefetch_query(raw)
-    assert "body: first payload" in cleaned
-    assert "cue note: second payload" in cleaned
-    assert "time: t1" not in cleaned
+    assert clean_prefetch_query(raw) == "hello"
 
 
 def test_build_prefetch_searches_with_cleaned_query():

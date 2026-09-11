@@ -6,6 +6,11 @@ every injected note matched the turn's query at `min_score`.
 - **Every turn** — runs a semantic search over memory (all kinds) with the profile's
   configured `top_k`/`min_score` and returns the hits as prefetched context. Returns
   nothing on any error, timeout, or when there is nothing to add.
+- **The query is what the turn says.** A `<client_context>` block, which the client
+  labels as not typed by the user, is dropped whole before searching — its fields are
+  the client's own and change without notice, and their wording matches notes about
+  that machinery instead of the turn's subject. A turn holding nothing else skips the
+  search.
 
 The provider never registers tools — the MCP server already exposes `search`/`search_memory`/
 `save_memory` for on-demand recall.

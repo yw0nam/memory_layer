@@ -18,8 +18,7 @@ import httpx
 PREFETCH_CHAR_BUDGET = 2000
 DEFAULT_API_KEY_ENV = "MEMORY_BASE_API_KEY"
 
-_CLIENT_CONTEXT_BLOCK = re.compile(r"<client_context>\n?(.*?)</client_context>\s*", re.DOTALL)
-_CONTEXT_BOILERPLATE_LINE = re.compile(r"^(time|frontmost|trigger|screenshot|Client-injected)\b")
+_CLIENT_CONTEXT_BLOCK = re.compile(r"<client_context>\n?.*?</client_context>\s*", re.DOTALL)
 
 
 @dataclass
@@ -69,24 +68,16 @@ class MemoryBaseClient:
 
 
 def clean_prefetch_query(text: str) -> str:
-    """Strip client_context boilerplate from a prefetch query, keeping semantic lines.
+    """Drop the client-injected context block, searching on what the turn itself says.
 
-    YUI prepends a ``<client_context>`` block (timestamp, frontmost app,
-    trigger) to every user message. Fed to search verbatim, that boilerplate
-    self-matches notes describing the client_context format instead of what
-    the turn is about. Event payload lines (agent event/detail, signal, body,
-    cue note) stay — on autonomous turns they are the turn's only content.
+    A client prepends a ``<client_context>`` block it labels as not typed by
+    the user: timestamp, frontmost app, posture, trigger, event payloads. Fed
+    to search verbatim it self-matches notes about that machinery rather than
+    the turn's subject, so none of it belongs in the query. Which fields the
+    block holds is the client's business and changes without notice, so the
+    whole block goes; a turn left with nothing skips the search.
     """
-
-    def keep_semantic_lines(match: re.Match[str]) -> str:
-        lines = [
-            line
-            for line in match.group(1).splitlines()
-            if line.strip() and not _CONTEXT_BOILERPLATE_LINE.match(line.strip())
-        ]
-        return "\n".join(lines) + "\n" if lines else ""
-
-    return _CLIENT_CONTEXT_BLOCK.sub(keep_semantic_lines, text).strip()
+    return _CLIENT_CONTEXT_BLOCK.sub("", text).strip()
 
 
 def resolve_api_key(config: Mapping[str, Any], environ: Mapping[str, str]) -> str:
