@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib
+import json
 
 import pytest
 from starlette.testclient import TestClient
@@ -283,8 +284,8 @@ def test_flush_persists_the_search_filters_that_narrowed_each_row(connection):
 
     sql, rows = connection.matching("INSERT")[0]
     assert "filters" in sql
-    assert rows[0][4] == {"kind": "note", "min_score": 0.6, "top_k": 3}
-    assert rows[1][4] == {}
+    assert json.loads(rows[0][4]) == {"kind": "note", "min_score": 0.6, "top_k": 3}
+    assert json.loads(rows[1][4]) == {}
 
 
 def test_flush_interval_is_env_configurable_with_a_default(monkeypatch):

@@ -132,7 +132,10 @@ a newer one.
 The read path writes nothing to the database. Returned hit ids and per-chunk counters land
 in an in-process buffer that a background task flushes every `HIT_FLUSH_INTERVAL_SECONDS`
 (default 30) and on shutdown: one batched `retrieval_log` insert plus one deduplicated
-`hit_count` update, so repeated hits on a popular row collapse into a single `+ n`. The same
+`hit_count` update, so repeated hits on a popular row collapse into a single `+ n`. Each
+`retrieval_log` row carries the request's narrowing options — `kind`, `tags`, `repo`, `since`,
+`until`, `min_score`, `author`, `namespaces`, `include_archived`, `top_k` — in a `filters`
+jsonb column, so an empty result is attributable to the filters that produced it. The same
 cycle prunes `retrieval_log` rows older than `RETRIEVAL_LOG_RETENTION_DAYS` at startup and
 then at most hourly. An unclean stop loses at most one interval of counters, which only feed
 lifecycle decisions.

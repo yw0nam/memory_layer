@@ -206,12 +206,13 @@ async def search_route(request: Request) -> JSONResponse:
             options["namespaces"] = requested_namespaces
         elif not key.is_admin:
             options["namespaces"] = sorted(key.allowed)
+        log_filters = {k: v for k, v in options.items() if k != "source"} | {"top_k": top_k}
         hits = (await search(query, **options))[:top_k]
     except UpstreamUnavailable as exc:
         return error(f"search unavailable: {exc}, so memory cannot be attached right now", 503)
     except ValueError as exc:
         return error(str(exc))
-    access_log.record_retrieval(query, source, hits)
+    access_log.record_retrieval(query, source, hits, filters=log_filters)
     return JSONResponse([hit_to_dict(hit) for hit in hits])
 
 

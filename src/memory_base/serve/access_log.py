@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
 from collections.abc import Sequence
+from typing import Any
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
@@ -20,19 +22,25 @@ RETENTION_INTERVAL_SECONDS = 3600.0
 MAX_PENDING_LOGS = 10_000
 
 # Counters feed lifecycle decisions only, so an unclean shutdown may lose one interval of them.
-_pending_logs: list[tuple[str, str, list[str], float]] = []
+_pending_logs: list[tuple[str, str, list[str], float, str]] = []
 _pending_hits: dict[str, tuple[int, float]] = {}
 _last_retention = 0.0
 
 
 def record_retrieval(
-    query: str, source: str, hits: Sequence[Hit], now: float | None = None
+    query: str,
+    source: str,
+    hits: Sequence[Hit],
+    now: float | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> None:
     """Buffer a search's log row and per-chunk hit counts, touching no database."""
     if now is None:
         now = time.time()
     hit_ids = [hit.ref if hit.source == "code" else hit.meta.get("id", hit.ref) for hit in hits]
-    _pending_logs.append((query, source, hit_ids, now))
+    _pending_logs.append(
+        (query, source, hit_ids, now, json.dumps(filters or {}, ensure_ascii=False))
+    )
     for hit in hits:
         if hit.source == "code":
             continue
@@ -59,8 +67,8 @@ async def flush(now: float | None = None) -> None:
         async with db.acquire() as conn:
             if logs:
                 await conn.executemany(
-                    f'INSERT INTO "{PG_SCHEMA}".retrieval_log(query, source, hit_ids, ts) '
-                    "VALUES($1,$2,$3,$4)",
+                    f'INSERT INTO "{PG_SCHEMA}".retrieval_log'
+                    "(query, source, hit_ids, ts, filters) VALUES($1,$2,$3,$4,$5::jsonb)",
                     logs,
                 )
             if hits:

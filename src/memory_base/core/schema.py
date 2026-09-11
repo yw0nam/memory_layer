@@ -162,8 +162,11 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           query text NOT NULL,
           source text NOT NULL,
           hit_ids text[] NOT NULL,
-          ts double precision NOT NULL
+          ts double precision NOT NULL,
+          filters jsonb NOT NULL DEFAULT '{{}}'::jsonb
         );
+        ALTER TABLE {schema}.retrieval_log
+          ADD COLUMN IF NOT EXISTS filters jsonb NOT NULL DEFAULT '{{}}'::jsonb;
         CREATE INDEX IF NOT EXISTS retrieval_log__ts ON {schema}.retrieval_log (ts);
         CREATE TABLE IF NOT EXISTS {schema}.jobs (
           job_id text PRIMARY KEY,
