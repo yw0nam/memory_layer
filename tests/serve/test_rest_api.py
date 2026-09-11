@@ -451,6 +451,7 @@ def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
         namespace="default",
         occurred_at=None,
         author=None,
+        allow_similar=False,
     ):
         captured["content"] = content
         captured["kind"] = kind
@@ -504,6 +505,7 @@ def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
         namespace="default",
         occurred_at=None,
         author=None,
+        allow_similar=False,
     ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
@@ -528,6 +530,7 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
         namespace="default",
         occurred_at=None,
         author=None,
+        allow_similar=False,
     ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
@@ -551,6 +554,7 @@ def test_save_memory_unregistered_namespace_400(monkeypatch):
         namespace="default",
         occurred_at=None,
         author=None,
+        allow_similar=False,
     ):
         raise ValueError(f"unregistered namespace: {namespace}")
 

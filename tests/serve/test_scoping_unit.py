@@ -62,6 +62,7 @@ def test_save_memory_omitted_namespace_lands_in_key_home(monkeypatch):
         namespace="default",
         occurred_at=None,
         author=None,
+        allow_similar=False,
     ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
