@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import time
 
 import pytest
@@ -194,6 +195,39 @@ def test_search_logs_retrieval_and_bumps_hit_columns_after_flush(client):
             assert row["last_hit_at"] is not None and row["last_hit_at"] >= t0
     finally:
         client.portal.call(_delete_note, note_id)
+        client.portal.call(_delete_retrieval_log, content)
+
+
+@pytest.mark.integration
+@requires_db
+def test_search_logs_the_filters_that_narrowed_it(client):
+    """An empty result is only attributable if the log says what narrowed the search."""
+    content = "access-log filter pin: zzzfilterpin unique retrieval marker"
+    client.portal.call(_delete_retrieval_log, content)
+    try:
+        response = client.post(
+            "/search",
+            json={
+                "query": content,
+                "source": "memory",
+                "top_k": 3,
+                "kind": "decision",
+                "tags": ["zzzfilterpin"],
+                "min_score": 0.9,
+            },
+        )
+        assert response.status_code == 200
+
+        _force_flush(client)
+
+        log_row = client.portal.call(_fetch_latest_retrieval_log, content, "memory")
+        assert log_row is not None
+        filters = json.loads(log_row["filters"])
+        assert filters["kind"] == "decision"
+        assert filters["tags"] == ["zzzfilterpin"]
+        assert filters["min_score"] == 0.9
+        assert filters["top_k"] == 3
+    finally:
         client.portal.call(_delete_retrieval_log, content)
 
 

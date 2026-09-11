@@ -64,7 +64,7 @@ def test_long_query_is_truncated_in_the_access_log(monkeypatch):
 
     monkeypatch.setattr(api, "search", fake_search)
     client.post("/search", json={"query": "y" * (api.MAX_QUERY_CHARS + 500)})
-    logged_query, _, _, _ = api.access_log._pending_logs[0]
+    logged_query = api.access_log._pending_logs[0][0]
     assert logged_query == "y" * api.MAX_QUERY_CHARS
 
 
