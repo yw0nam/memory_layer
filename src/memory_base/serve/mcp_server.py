@@ -371,8 +371,8 @@ async def list_notes(
 async def save_memory(
     content: str,
     author: str,
+    tags: list[str],
     kind: str = "note",
-    tags: list[str] | None = None,
     supersedes: str | None = None,
     namespace: str | None = None,
     occurred_at: str | None = None,
@@ -388,8 +388,9 @@ async def save_memory(
     `content` MUST be written in English regardless of the conversation
     language, and be already distilled (the server does no summarization).
     `kind` is "note" (default), "decision", or "episode" (a 1-3 sentence
-    past-tense record of one conversation session). `tags` are optional
-    labels. `supersedes` archives an older note by id.
+    past-tense record of one conversation session). `tags` is required; the
+    first tag names the subject, usually the repository or domain, so a later
+    search can narrow to it. `supersedes` archives an older note by id.
 
     `author` names the agent saving this note, e.g. claude-code or natsume; it
     must be in the calling key's author allowlist, and is stored with the note
