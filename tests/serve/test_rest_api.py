@@ -430,7 +430,13 @@ def test_save_memory_malformed_tags_400(tags):
         "/save_memory", json={"author": "natsume", "content": "valid content", "tags": tags}
     )
     assert response.status_code == 400
-    assert response.json()["error"] == "tags must be a list of strings"
+    assert response.json()["error"] == "tags must be a non-empty list of strings"
+
+
+def test_save_memory_missing_tags_400():
+    response = client.post("/save_memory", json={"author": "natsume", "content": "valid content"})
+    assert response.status_code == 400
+    assert response.json()["error"] == "tags must be a non-empty list of strings"
 
 
 def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
@@ -438,8 +444,9 @@ def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
 
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -490,8 +497,9 @@ def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
 
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -513,8 +521,9 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
 
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -535,8 +544,9 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
 def test_save_memory_unregistered_namespace_400(monkeypatch):
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,

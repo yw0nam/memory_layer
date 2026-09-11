@@ -55,8 +55,9 @@ def test_save_memory_omitted_namespace_lands_in_key_home(monkeypatch):
 
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,

@@ -30,7 +30,7 @@ client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 
 def test_episode_kind_accepted():
-    row = build_note_row("met alice for lunch and discussed the roadmap", "episode", None, NOW)
+    row = build_note_row("met alice for lunch and discussed the roadmap", "episode", ["test"], NOW)
     assert row["kind"] == "episode"
 
 
@@ -95,7 +95,7 @@ def test_occurred_at_sets_stored_timestamp(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
     monkeypatch.setattr(notes.time, "time", lambda: NOW)
-    asyncio.run(save_note("distilled content", occurred_at="2020-01-01"))
+    asyncio.run(save_note("distilled content", tags=["test"], occurred_at="2020-01-01"))
     expected = datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp()
     assert conn.insert_args[8] == expected
 
@@ -104,7 +104,7 @@ def test_occurred_at_omitted_uses_current_time(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
     monkeypatch.setattr(notes.time, "time", lambda: NOW)
-    asyncio.run(save_note("distilled content"))
+    asyncio.run(save_note("distilled content", tags=["test"]))
     assert conn.insert_args[8] == NOW
 
 
@@ -113,7 +113,7 @@ def test_occurred_at_malformed_rejected(monkeypatch):
     _patch_note_deps(monkeypatch, conn)
     monkeypatch.setattr(notes.time, "time", lambda: NOW)
     with pytest.raises(ValueError):
-        asyncio.run(save_note("distilled content", occurred_at="not-a-date"))
+        asyncio.run(save_note("distilled content", tags=["test"], occurred_at="not-a-date"))
     assert conn.insert_args is None
 
 
@@ -122,7 +122,7 @@ def test_occurred_at_in_future_rejected(monkeypatch):
     _patch_note_deps(monkeypatch, conn)
     monkeypatch.setattr(notes.time, "time", lambda: NOW)
     with pytest.raises(ValueError, match="future"):
-        asyncio.run(save_note("distilled content", occurred_at="2024-01-01"))
+        asyncio.run(save_note("distilled content", tags=["test"], occurred_at="2024-01-01"))
     assert conn.insert_args is None
 
 
@@ -131,8 +131,10 @@ def test_occurred_at_does_not_change_content_hash_id(monkeypatch):
     _patch_note_deps(monkeypatch, conn)
     monkeypatch.setattr(notes.time, "time", lambda: NOW)
     content = "backfilled episode: shipped the search fix"
-    plain_id = build_note_row(content, "episode", None, NOW)["id"]
-    result = asyncio.run(save_note(content, kind="episode", occurred_at="2020-01-01"))
+    plain_id = build_note_row(content, "episode", ["test"], NOW)["id"]
+    result = asyncio.run(
+        save_note(content, tags=["test"], kind="episode", occurred_at="2020-01-01")
+    )
     assert result["id"] == plain_id
 
 
@@ -144,8 +146,9 @@ def test_save_memory_forwards_occurred_at_to_save_note(monkeypatch):
 
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -168,8 +171,9 @@ def test_save_memory_omitted_occurred_at_forwards_none(monkeypatch):
 
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -195,8 +199,9 @@ def test_save_memory_null_occurred_at_400():
 def test_save_memory_malformed_occurred_at_400(monkeypatch):
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -216,8 +221,9 @@ def test_save_memory_malformed_occurred_at_400(monkeypatch):
 def test_save_memory_future_occurred_at_400(monkeypatch):
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -239,8 +245,9 @@ def test_save_memory_episode_kind_delegates_to_save_note(monkeypatch):
 
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -292,7 +299,11 @@ def test_mcp_save_memory_posts_occurred_at_in_body(monkeypatch):
     _patch_client(monkeypatch, handler)
     asyncio.run(
         save_memory(
-            "caught up with the team today", "natsume", kind="episode", occurred_at="2023-06-01"
+            "caught up with the team today",
+            "natsume",
+            tags=["test"],
+            kind="episode",
+            occurred_at="2023-06-01",
         )
     )
     assert captured["json"]["occurred_at"] == "2023-06-01"
@@ -316,5 +327,5 @@ def test_mcp_save_memory_omits_occurred_at_when_not_given(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(save_memory("plain note", "natsume"))
+    asyncio.run(save_memory("plain note", "natsume", tags=["test"]))
     assert "occurred_at" not in captured["json"]

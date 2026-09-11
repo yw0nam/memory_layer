@@ -65,6 +65,19 @@ def test_tool_list_includes_document_ingestion():
     }
 
 
+def test_save_memory_schema_requires_content_author_tags():
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    async def _run():
+        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
+            result = await client.list_tools()
+            return {t.name: t for t in result.tools}
+
+    tools = asyncio.run(_run())
+    required = set(tools["save_memory"].inputSchema["required"])
+    assert {"tags", "content", "author"} <= required
+
+
 # ---- search proxying --------------------------------------------------------
 
 
@@ -409,7 +422,7 @@ def test_save_memory_400_response_raises_value_error_with_server_message(monkeyp
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="content must not be empty"):
-        asyncio.run(mcp_server.save_memory("", "natsume"))
+        asyncio.run(mcp_server.save_memory("", "natsume", tags=["test"]))
 
 
 # ---- lifecycle tool proxying ------------------------------------------------

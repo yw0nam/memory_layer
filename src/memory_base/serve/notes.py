@@ -33,7 +33,7 @@ LIST_NOTES_MAX_LIMIT = 200
 def build_note_row(
     content: str,
     kind: str,
-    tags: list[str] | None,
+    tags: list[str],
     now: float,
     namespace: str = DEFAULT_NAMESPACE,
     author: str | None = None,
@@ -52,10 +52,8 @@ def build_note_row(
         raise ValueError(f"content exceeds {NOTE_MAX_CHARS} chars")
     if kind not in NOTE_KINDS:
         raise ValueError(f"kind must be one of {NOTE_KINDS}")
-    normalized_tags = normalize_tags(tags, allow_empty=True)
-    metadata: dict[str, Any] = {}
-    if normalized_tags:
-        metadata["tags"] = normalized_tags
+    normalized_tags = normalize_tags([] if tags is None else tags)
+    metadata: dict[str, Any] = {"tags": normalized_tags}
     if author is not None:
         metadata["author"] = author
     content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
@@ -79,8 +77,9 @@ def build_note_row(
 
 async def save_note(
     content: str,
+    *,
+    tags: list[str],
     kind: str = "note",
-    tags: list[str] | None = None,
     supersedes: str | None = None,
     namespace: str = DEFAULT_NAMESPACE,
     occurred_at: str | None = None,
