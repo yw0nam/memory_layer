@@ -36,10 +36,11 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
                memory.doc_rows — tabular rows, SQL-only
 ```
 
-Notes are stored exactly as written — the server never summarizes. The response carries
-`similar[]`: active notes above `NOTE_SIMILAR_THRESHOLD` cosine, so the caller can
-consolidate instead of accumulating near-duplicates. A prior-note id in the payload
-archives that row.
+Notes are stored exactly as written — the server never summarizes. A note landing next to
+active notes above `NOTE_SIMILAR_THRESHOLD` cosine is refused with HTTP 409 listing them,
+unless `supersedes` names one of them or `allow_similar` is set; an accepted override
+records the neighbours' ids in `metadata.similar_ack`. The response carries `similar[]`
+either way. A prior-note id in the payload archives that row.
 
 Every note records the agent that wrote it in `metadata.author`, drawn from the calling
 key's allowlist in `api_keys.authors`; a key with an empty allowlist cannot save. A note
@@ -218,7 +219,7 @@ acts only with `{"confirm": true}`, and each is reachable over MCP as
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active`, `idf_score` | ranking signals |
-| `metadata` | jsonb: `tags`, `author`, `archived_by`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
+| `metadata` | jsonb: `tags`, `author`, `archived_by`, `similar_ack`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 
 `memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,
