@@ -28,19 +28,19 @@ client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 
 def test_same_content_same_id():
-    a = build_note_row("prefer ruff for linting", "note", None, NOW)
-    b = build_note_row("prefer ruff for linting", "note", None, NOW)
+    a = build_note_row("prefer ruff for linting", "note", ["test"], NOW)
+    b = build_note_row("prefer ruff for linting", "note", ["test"], NOW)
     assert a["id"] == b["id"]
 
 
 def test_different_content_different_id():
-    a = build_note_row("prefer ruff for linting", "note", None, NOW)
-    b = build_note_row("prefer black for formatting", "note", None, NOW)
+    a = build_note_row("prefer ruff for linting", "note", ["test"], NOW)
+    b = build_note_row("prefer black for formatting", "note", ["test"], NOW)
     assert a["id"] != b["id"]
 
 
 def test_id_format_note_prefix_16_hex():
-    row = build_note_row("use pgvector halfvec for embeddings", "note", None, NOW)
+    row = build_note_row("use pgvector halfvec for embeddings", "note", ["test"], NOW)
     assert ID_RE.match(row["id"]), row["id"]
 
 
@@ -50,26 +50,26 @@ def test_id_format_note_prefix_16_hex():
 def test_default_namespace_id_is_byte_identical_to_legacy_format():
     """No namespace arg and explicit namespace='default' must produce the same id
     as before namespaces existed, so pre-existing rows keep their identity."""
-    omitted = build_note_row("distilled content", "note", None, NOW)
-    explicit_default = build_note_row("distilled content", "note", None, NOW, "default")
+    omitted = build_note_row("distilled content", "note", ["test"], NOW)
+    explicit_default = build_note_row("distilled content", "note", ["test"], NOW, "default")
     assert omitted["id"] == explicit_default["id"]
     assert ID_RE.match(omitted["id"])
 
 
 def test_non_default_namespace_id_is_namespace_qualified():
-    row = build_note_row("distilled content", "note", None, NOW, "team-a")
+    row = build_note_row("distilled content", "note", ["test"], NOW, "team-a")
     assert row["id"].startswith("note:team-a:")
 
 
 def test_same_content_different_namespace_different_id():
-    default_row = build_note_row("distilled content", "note", None, NOW, "default")
-    team_row = build_note_row("distilled content", "note", None, NOW, "team-a")
+    default_row = build_note_row("distilled content", "note", ["test"], NOW, "default")
+    team_row = build_note_row("distilled content", "note", ["test"], NOW, "team-a")
     assert default_row["id"] != team_row["id"]
 
 
 def test_same_content_same_namespace_same_id():
-    a = build_note_row("distilled content", "note", None, NOW, "team-a")
-    b = build_note_row("distilled content", "note", None, NOW, "team-a")
+    a = build_note_row("distilled content", "note", ["test"], NOW, "team-a")
+    b = build_note_row("distilled content", "note", ["test"], NOW, "team-a")
     assert a["id"] == b["id"]
 
 
@@ -77,7 +77,7 @@ def test_same_content_same_namespace_same_id():
 
 
 def test_row_shape_exact_keys_no_embedding():
-    row = build_note_row("distilled memory content", "note", None, NOW)
+    row = build_note_row("distilled memory content", "note", ["test"], NOW)
     assert set(row) == {
         "id",
         "source_type",
@@ -95,7 +95,7 @@ def test_row_shape_exact_keys_no_embedding():
 
 def test_row_field_values():
     content = "the burst gate uses a weighted signal sum"
-    row = build_note_row(content, "decision", None, NOW)
+    row = build_note_row(content, "decision", ["test"], NOW)
     assert row["source_type"] == "agent_note"
     assert row["source_ref"] == "save_memory"
     assert row["kind"] == "decision"
@@ -109,11 +109,6 @@ def test_row_field_values():
 def test_tags_land_in_metadata():
     row = build_note_row("content with tags", "note", ["infra", "db"], NOW)
     assert row["metadata"] == {"tags": ["infra", "db"]}
-
-
-def test_no_tags_empty_metadata():
-    row = build_note_row("content without tags", "note", None, NOW)
-    assert row["metadata"] == {}
 
 
 # ---- validation ---------------------------------------------------------
@@ -140,8 +135,9 @@ def test_unknown_kind_rejected():
 
 async def _fake_save_note(
     content,
+    *,
+    tags,
     kind="note",
-    tags=None,
     supersedes=None,
     namespace="default",
     occurred_at=None,
@@ -264,14 +260,14 @@ def test_save_note_rejects_unregistered_namespace(monkeypatch):
     conn = FakeConnection(registered=False)
     _patch_note_deps(monkeypatch, conn)
     with pytest.raises(ValueError, match="unregistered namespace"):
-        asyncio.run(save_note("distilled content", namespace="ghost"))
+        asyncio.run(save_note("distilled content", tags=["test"], namespace="ghost"))
     assert conn.insert_args is None
 
 
 def test_save_note_stamps_namespace_column_on_insert(monkeypatch):
     conn = FakeConnection(registered=True)
     _patch_note_deps(monkeypatch, conn)
-    asyncio.run(save_note("distilled content", namespace="team-a"))
+    asyncio.run(save_note("distilled content", tags=["test"], namespace="team-a"))
     assert conn.insert_args is not None
     assert "team-a" in conn.insert_args
 
@@ -279,7 +275,7 @@ def test_save_note_stamps_namespace_column_on_insert(monkeypatch):
 def test_save_note_defaults_to_default_namespace(monkeypatch):
     conn = FakeConnection(registered=True)
     _patch_note_deps(monkeypatch, conn)
-    asyncio.run(save_note("distilled content"))
+    asyncio.run(save_note("distilled content", tags=["test"]))
     assert "default" in conn.insert_args
 
 
@@ -290,8 +286,8 @@ def test_save_note_same_content_two_namespaces_both_stored(monkeypatch):
     conn = FakeConnection(registered=True)
     _patch_note_deps(monkeypatch, conn)
     content = "distilled content shared across namespaces"
-    result_default = asyncio.run(save_note(content, namespace="default"))
-    result_team = asyncio.run(save_note(content, namespace="team-a"))
+    result_default = asyncio.run(save_note(content, tags=["test"], namespace="default"))
+    result_team = asyncio.run(save_note(content, tags=["test"], namespace="team-a"))
     assert result_default["stored"] is True
     assert result_team["stored"] is True
     assert result_default["id"] != result_team["id"]
@@ -302,8 +298,8 @@ def test_save_note_same_content_same_namespace_still_dedups(monkeypatch):
     conn = FakeConnection(registered=True)
     _patch_note_deps(monkeypatch, conn)
     content = "distilled content repeated in one namespace"
-    first = asyncio.run(save_note(content, namespace="team-a"))
-    second = asyncio.run(save_note(content, namespace="team-a"))
+    first = asyncio.run(save_note(content, tags=["test"], namespace="team-a"))
+    second = asyncio.run(save_note(content, tags=["test"], namespace="team-a"))
     assert first["stored"] is True
     assert second["stored"] is False
     assert first["id"] == second["id"]

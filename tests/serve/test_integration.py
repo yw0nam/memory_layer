@@ -62,10 +62,10 @@ def test_search_code_source_returns_code_hits_with_line_refs():
 
 def test_search_memory_source_returns_memory_hits():
     content = "integration-test pin: zzz_integ_marker 7f3a9b2c"
-    note_id = build_note_row(content, "note", None, 1_700_000_000.0)["id"]
+    note_id = build_note_row(content, "note", ["test"], 1_700_000_000.0)["id"]
     asyncio.run(_delete_note(note_id))
     try:
-        asyncio.run(save_note(content))
+        asyncio.run(save_note(content, tags=["test"]))
         hits = asyncio.run(search(content, source="memory", rerank=False))
         assert len(hits) >= 1
         assert all(h.source == "memory" for h in hits)

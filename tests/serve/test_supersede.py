@@ -57,8 +57,9 @@ def client():
 def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, client):
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -88,8 +89,9 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
 
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -119,8 +121,9 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
 
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -145,8 +148,9 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
 def test_save_memory_unknown_supersedes_id_400(monkeypatch, client):
     async def fake_save_note(
         content,
+        *,
+        tags,
         kind="note",
-        tags=None,
         supersedes=None,
         namespace="default",
         occurred_at=None,
@@ -218,7 +222,9 @@ def _patch_note_deps(monkeypatch, conn):
 def test_supersede_stamps_archived_by_with_the_new_notes_author(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
-    asyncio.run(save_note("new content", supersedes="note:old0000000000", author="natsume"))
+    asyncio.run(
+        save_note("new content", tags=["test"], supersedes="note:old0000000000", author="natsume")
+    )
     query, args = conn.updates[0]
     assert "jsonb_build_object('archived_by'" in query
     assert "natsume" in args
@@ -285,12 +291,12 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.save_memory("new content", "natsume"))
+    asyncio.run(mcp_server.save_memory("new content", "natsume", tags=["test"]))
     assert captured["json"] == {
         "content": "new content",
         "author": "natsume",
         "kind": "note",
-        "tags": None,
+        "tags": ["test"],
         "supersedes": None,
     }
 
@@ -367,17 +373,25 @@ async def _fetch_archived_at(note_id: str):
 def test_supersede_archives_old_note_and_stores_new_one(client):
     content_a = f"supersede integration pin A {NOW}: zzzsupersedepin unique marker one"
     content_b = f"supersede integration pin B {NOW}: zzzsupersedepin unique marker two"
-    note_a = build_note_row(content_a, "note", None, NOW)["id"]
-    note_b = build_note_row(content_b, "note", None, NOW)["id"]
+    note_a = build_note_row(content_a, "note", ["test"], NOW)["id"]
+    note_b = build_note_row(content_b, "note", ["test"], NOW)["id"]
     asyncio.run(_delete(note_a))
     asyncio.run(_delete(note_b))
     try:
-        response_a = client.post("/save_memory", json={"author": "natsume", "content": content_a})
+        response_a = client.post(
+            "/save_memory", json={"author": "natsume", "content": content_a, "tags": ["test"]}
+        )
         assert response_a.status_code == 200
         assert response_a.json()["id"] == note_a
 
         response_b = client.post(
-            "/save_memory", json={"author": "natsume", "content": content_b, "supersedes": note_a}
+            "/save_memory",
+            json={
+                "author": "natsume",
+                "content": content_b,
+                "tags": ["test"],
+                "supersedes": note_a,
+            },
         )
         assert response_b.status_code == 200
         assert response_b.json()["id"] == note_b
@@ -399,6 +413,7 @@ def test_supersede_unknown_id_400_over_rest(client):
         json={
             "author": "natsume",
             "content": content,
+            "tags": ["test"],
             "supersedes": "note:0000000000000000",
         },
     )
@@ -412,15 +427,17 @@ def test_similar_hints_include_near_identical_active_note(client):
     marker = f"zzzsimilarpin{int(NOW)}"
     content_b = f"similar-hint integration pin: {marker} a hard-won troubleshooting conclusion"
     content_c = f"similar-hint integration pin: {marker} a hard won troubleshooting conclusion!"
-    note_b = build_note_row(content_b, "note", None, NOW)["id"]
-    note_c = build_note_row(content_c, "note", None, NOW)["id"]
+    note_b = build_note_row(content_b, "note", ["test"], NOW)["id"]
+    note_c = build_note_row(content_c, "note", ["test"], NOW)["id"]
     asyncio.run(_delete(note_b))
     asyncio.run(_delete(note_c))
     try:
-        asyncio.run(save_note(content_b))
+        asyncio.run(save_note(content_b, tags=["test"]))
         time.sleep(0.2)  # let the embedder-backed insert settle before querying similarity
 
-        response_c = client.post("/save_memory", json={"author": "natsume", "content": content_c})
+        response_c = client.post(
+            "/save_memory", json={"author": "natsume", "content": content_c, "tags": ["test"]}
+        )
         assert response_c.status_code == 200
         similar_ids = [item["id"] for item in response_c.json()["similar"]]
         assert note_b in similar_ids

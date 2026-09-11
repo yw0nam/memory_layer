@@ -30,19 +30,19 @@ ID_RE = re.compile(r"^note:[0-9a-f]{16}$")
 
 
 def test_same_content_same_id():
-    a = build_note_row("prefer ruff for linting", "note", None, NOW)
-    b = build_note_row("prefer ruff for linting", "note", None, NOW)
+    a = build_note_row("prefer ruff for linting", "note", ["test"], NOW)
+    b = build_note_row("prefer ruff for linting", "note", ["test"], NOW)
     assert a["id"] == b["id"]
 
 
 def test_different_content_different_id():
-    a = build_note_row("prefer ruff for linting", "note", None, NOW)
-    b = build_note_row("prefer black for formatting", "note", None, NOW)
+    a = build_note_row("prefer ruff for linting", "note", ["test"], NOW)
+    b = build_note_row("prefer black for formatting", "note", ["test"], NOW)
     assert a["id"] != b["id"]
 
 
 def test_id_format_note_prefix_16_hex():
-    row = build_note_row("use pgvector halfvec for embeddings", "note", None, NOW)
+    row = build_note_row("use pgvector halfvec for embeddings", "note", ["test"], NOW)
     assert ID_RE.match(row["id"]), row["id"]
 
 
@@ -50,7 +50,7 @@ def test_id_format_note_prefix_16_hex():
 
 
 def test_row_shape_exact_keys_no_embedding():
-    row = build_note_row("distilled memory content", "note", None, NOW)
+    row = build_note_row("distilled memory content", "note", ["test"], NOW)
     assert set(row) == {
         "id",
         "source_type",
@@ -68,7 +68,7 @@ def test_row_shape_exact_keys_no_embedding():
 
 def test_row_field_values():
     content = "the burst gate uses a weighted signal sum"
-    row = build_note_row(content, "decision", None, NOW)
+    row = build_note_row(content, "decision", ["test"], NOW)
     assert row["source_type"] == "agent_note"
     assert row["source_ref"] == "save_memory"
     assert row["kind"] == "decision"
@@ -84,9 +84,10 @@ def test_tags_land_in_metadata():
     assert row["metadata"] == {"tags": ["infra", "db"]}
 
 
-def test_no_tags_empty_metadata():
-    row = build_note_row("content without tags", "note", None, NOW)
-    assert row["metadata"] == {}
+@pytest.mark.parametrize("missing_tags", [None, [], ["", "  "]])
+def test_missing_tags_rejected(missing_tags):
+    with pytest.raises(ValueError, match="tags must be a non-empty list of strings"):
+        build_note_row("content without tags", "note", missing_tags, NOW)
 
 
 def test_tags_are_normalized_and_deduplicated():
@@ -100,18 +101,18 @@ def test_tags_are_normalized_and_deduplicated():
 
 
 def test_author_lands_in_metadata():
-    row = build_note_row("content with an author", "note", None, NOW, "default", "natsume")
+    row = build_note_row("content with an author", "note", ["test"], NOW, "default", "natsume")
     assert row["metadata"]["author"] == "natsume"
 
 
 def test_author_omitted_leaves_no_author_in_metadata():
-    row = build_note_row("content without an author", "note", None, NOW)
+    row = build_note_row("content without an author", "note", ["test"], NOW)
     assert "author" not in row["metadata"]
 
 
 def test_author_does_not_participate_in_the_id():
-    a = build_note_row("shared content", "note", None, NOW, "default", "natsume")
-    b = build_note_row("shared content", "note", None, NOW, "default", "claude-code")
+    a = build_note_row("shared content", "note", ["test"], NOW, "default", "natsume")
+    b = build_note_row("shared content", "note", ["test"], NOW, "default", "claude-code")
     assert a["id"] == b["id"]
 
 
@@ -136,7 +137,7 @@ def test_unknown_kind_rejected():
 
 @pytest.mark.parametrize("tags", ["infra", {"infra": True}, [1], ["infra", None]])
 def test_malformed_tags_rejected(tags):
-    with pytest.raises(ValueError, match="tags must be a list of strings"):
+    with pytest.raises(ValueError, match="tags must be a non-empty list of strings"):
         build_note_row("valid content", "note", tags, NOW)
 
 
@@ -191,7 +192,7 @@ async def _count(note_id: str) -> int:
 @requires_db
 def test_save_memory_stores_row_in_db(rest_in_process):
     content = "save_memory integration: notes are stored without LLM distillation"
-    note_id = build_note_row(content, "note", None, NOW)["id"]
+    note_id = build_note_row(content, "note", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
         result = asyncio.run(save_memory(content, "natsume", kind="note", tags=["pytest"]))
@@ -215,11 +216,11 @@ def test_save_memory_stores_row_in_db(rest_in_process):
 @requires_db
 def test_save_memory_duplicate_is_noop(rest_in_process):
     content = "save_memory integration: re-saving identical content is idempotent"
-    note_id = build_note_row(content, "note", None, NOW)["id"]
+    note_id = build_note_row(content, "note", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        first = asyncio.run(save_memory(content, "natsume"))
-        second = asyncio.run(save_memory(content, "natsume"))
+        first = asyncio.run(save_memory(content, "natsume", tags=["test"]))
+        second = asyncio.run(save_memory(content, "natsume", tags=["test"]))
         assert first["stored"] is True
         assert second["stored"] is False
         assert asyncio.run(_count(note_id)) == 1
@@ -231,10 +232,10 @@ def test_save_memory_duplicate_is_noop(rest_in_process):
 @requires_db
 def test_saved_note_found_by_search(rest_in_process):
     content = "save_memory integration: pgvector halfvec powers hybrid retrieval search"
-    note_id = build_note_row(content, "note", None, NOW)["id"]
+    note_id = build_note_row(content, "note", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        asyncio.run(save_memory(content, "natsume"))
+        asyncio.run(save_memory(content, "natsume", tags=["test"]))
         hits = asyncio.run(search(content, source="memory", rerank=False))
         assert any(h.meta.get("id") == note_id for h in hits)
     finally:
@@ -247,15 +248,15 @@ def test_same_content_two_namespaces_are_independent_rows():
     """Regression: identical content saved into two namespaces must not collide
     on id and silently no-op the second namespace's save (issue #81 review)."""
     content = "namespace independence regression: zzz_ns_dedup_marker unique text"
-    default_id = build_note_row(content, "note", None, NOW, "default")["id"]
-    team_id = build_note_row(content, "note", None, NOW, "team-ns-dedup-test")["id"]
+    default_id = build_note_row(content, "note", ["test"], NOW, "default")["id"]
+    team_id = build_note_row(content, "note", ["test"], NOW, "team-ns-dedup-test")["id"]
     assert default_id != team_id
 
     async def scenario():
         await namespaces.create_namespace("team-ns-dedup-test")
         try:
-            result_default = await save_note(content, namespace="default")
-            result_team = await save_note(content, namespace="team-ns-dedup-test")
+            result_default = await save_note(content, tags=["test"], namespace="default")
+            result_team = await save_note(content, tags=["test"], namespace="team-ns-dedup-test")
             assert result_default["stored"] is True
             assert result_team["stored"] is True
             assert await _count(default_id) == 1
