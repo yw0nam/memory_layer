@@ -40,7 +40,7 @@ from starlette.testclient import TestClient
 
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api, mcp_server
-from memory_base.serve.notes import build_note_row, save_note
+from memory_base.serve.notes import SimilarNotesError, build_note_row, save_note
 
 NOW = 1_700_000_000.0
 
@@ -64,6 +64,7 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
         namespace="default",
         occurred_at=None,
         author=None,
+        allow_similar=False,
     ):
         return {
             "id": "note:aaaaaaaaaaaaaaaa",
@@ -96,6 +97,7 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
         namespace="default",
         occurred_at=None,
         author=None,
+        allow_similar=False,
     ):
         captured["supersedes"] = supersedes
         return {
@@ -128,6 +130,7 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
         namespace="default",
         occurred_at=None,
         author=None,
+        allow_similar=False,
     ):
         captured["supersedes"] = supersedes
         return {
@@ -155,6 +158,7 @@ def test_save_memory_unknown_supersedes_id_400(monkeypatch, client):
         namespace="default",
         occurred_at=None,
         author=None,
+        allow_similar=False,
     ):
         raise ValueError(f"unknown supersedes id: {supersedes}")
 
@@ -165,6 +169,76 @@ def test_save_memory_unknown_supersedes_id_400(monkeypatch, client):
     )
     assert response.status_code == 400
     assert response.json()["error"] == "unknown supersedes id: note:missing00000000"
+
+
+# ---- REST: the near-duplicate gate ------------------------------------------
+
+
+def test_save_memory_similar_notes_error_409(monkeypatch, client):
+    similar = [{"id": "note:neighbour000000", "score": 0.97, "text": "nearly the same content"}]
+
+    async def fake_save_note(
+        content,
+        *,
+        tags,
+        kind="note",
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
+        allow_similar=False,
+    ):
+        raise SimilarNotesError(similar)
+
+    monkeypatch.setattr(api, "save_note", fake_save_note)
+    response = client.post("/save_memory", json={"author": "natsume", "content": "new content"})
+    assert response.status_code == 409
+    body = response.json()
+    assert "Refused: 1 active note(s)" in body["error"]
+    assert "note:neighbour000000" in body["error"]
+    assert body["similar"] == similar
+
+
+def test_save_memory_non_bool_allow_similar_400(monkeypatch, client):
+    async def fake_save_note(content, **kwargs):
+        return {"id": "note:x", "kind": "note", "stored": True, "superseded": None, "similar": []}
+
+    monkeypatch.setattr(api, "save_note", fake_save_note)
+    response = client.post(
+        "/save_memory",
+        json={"author": "natsume", "content": "new content", "allow_similar": "yes"},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "allow_similar must be a boolean"
+
+
+def test_save_memory_forwards_allow_similar_to_save_note(monkeypatch, client):
+    captured = {}
+
+    async def fake_save_note(
+        content,
+        *,
+        tags,
+        kind="note",
+        supersedes=None,
+        namespace="default",
+        occurred_at=None,
+        author=None,
+        allow_similar=False,
+    ):
+        captured["allow_similar"] = allow_similar
+        return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
+
+    monkeypatch.setattr(api, "save_note", fake_save_note)
+    response = client.post(
+        "/save_memory",
+        json={"author": "natsume", "content": "new content", "allow_similar": True},
+    )
+    assert response.status_code == 200
+    assert captured["allow_similar"] is True
+    response = client.post("/save_memory", json={"author": "natsume", "content": "new content"})
+    assert response.status_code == 200
+    assert captured["allow_similar"] is False
 
 
 # ---- save_note: the supersede UPDATE stamps archived_by --------------------
@@ -179,8 +253,11 @@ class FakeTransaction:
 
 
 class FakeConnection:
-    def __init__(self):
+    def __init__(self, similar_rows=None, insert_status="INSERT 0 1"):
         self.updates: list[tuple] = []
+        self.similar_rows = similar_rows or []
+        self.insert_status = insert_status
+        self.inserts: list[tuple] = []
 
     def transaction(self):
         return FakeTransaction()
@@ -192,10 +269,11 @@ class FakeConnection:
         if "SET archived_at" in query:
             self.updates.append((query, args))
             return "UPDATE 1"
-        return "INSERT 0 1"
+        self.inserts.append((query, args))
+        return self.insert_status
 
     async def fetch(self, query, *args):
-        return []
+        return self.similar_rows
 
 
 def _patch_note_deps(monkeypatch, conn):
@@ -228,6 +306,82 @@ def test_supersede_stamps_archived_by_with_the_new_notes_author(monkeypatch):
     query, args = conn.updates[0]
     assert "jsonb_build_object('archived_by'" in query
     assert "natsume" in args
+
+
+# ---- save_note: the near-duplicate gate -------------------------------------
+
+
+def _neighbour():
+    return {"id": "note:neighbour000000", "score": 0.97, "text": "nearly the same content"}
+
+
+def test_save_note_refused_next_to_near_identical_active_note(monkeypatch):
+    neighbour = _neighbour()
+    conn = FakeConnection(similar_rows=[neighbour])
+    _patch_note_deps(monkeypatch, conn)
+    with pytest.raises(SimilarNotesError) as exc_info:
+        asyncio.run(save_note("new content", tags=["test"], author="natsume"))
+    assert exc_info.value.similar == [neighbour]
+    message = str(exc_info.value)
+    assert neighbour["id"] in message
+    assert "supersedes" in message
+    assert "allow_similar" in message
+    assert conn.updates == []
+
+
+def test_save_note_with_supersedes_of_the_neighbour_passes(monkeypatch):
+    neighbour = _neighbour()
+    conn = FakeConnection(similar_rows=[neighbour])
+    _patch_note_deps(monkeypatch, conn)
+    result = asyncio.run(
+        save_note("new content", tags=["test"], supersedes=neighbour["id"], author="natsume")
+    )
+    assert result["stored"] is True
+    assert result["superseded"] == neighbour["id"]
+    assert result["similar"] == []
+    assert len(conn.updates) == 1
+
+
+def test_save_note_with_allow_similar_records_similar_ack(monkeypatch):
+    neighbour = _neighbour()
+    conn = FakeConnection(similar_rows=[neighbour])
+    _patch_note_deps(monkeypatch, conn)
+    result = asyncio.run(
+        save_note("new content", tags=["test"], allow_similar=True, author="natsume")
+    )
+    assert result["stored"] is True
+    assert result["similar"] == [neighbour]
+    _, args = conn.inserts[0]
+    metadata = json.loads(args[11])
+    assert metadata["similar_ack"] == [neighbour["id"]]
+
+
+def test_save_note_allow_similar_with_supersedes_neighbour_stamps_nothing(monkeypatch):
+    neighbour = _neighbour()
+    conn = FakeConnection(similar_rows=[neighbour])
+    _patch_note_deps(monkeypatch, conn)
+    result = asyncio.run(
+        save_note(
+            "new content",
+            tags=["test"],
+            supersedes=neighbour["id"],
+            allow_similar=True,
+            author="natsume",
+        )
+    )
+    assert result["stored"] is True
+    _, args = conn.inserts[0]
+    metadata = json.loads(args[11])
+    assert "similar_ack" not in metadata
+    assert result["similar"] == []
+
+
+def test_save_note_not_stored_is_never_gated(monkeypatch):
+    neighbour = _neighbour()
+    conn = FakeConnection(similar_rows=[neighbour], insert_status="INSERT 0 0")
+    _patch_note_deps(monkeypatch, conn)
+    result = asyncio.run(save_note("new content", tags=["test"], author="natsume"))
+    assert result["stored"] is False
 
 
 # ---- MCP proxy: posts supersedes, tool list unchanged ----------------------
@@ -270,6 +424,7 @@ def test_mcp_save_memory_posts_supersedes_in_body(monkeypatch):
         "kind": "note",
         "tags": None,
         "supersedes": "note:old0000000000",
+        "allow_similar": False,
     }
     assert result["superseded"] == "note:old0000000000"
 
@@ -298,7 +453,38 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
         "kind": "note",
         "tags": ["test"],
         "supersedes": None,
+        "allow_similar": False,
     }
+
+
+def test_mcp_save_memory_posts_allow_similar_true_when_passed(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "id": "note:ffffffffffffffff",
+                "kind": "note",
+                "stored": True,
+                "superseded": None,
+                "similar": [],
+            },
+        )
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(mcp_server.save_memory("new content", "natsume", tags=["test"], allow_similar=True))
+    assert captured["json"]["allow_similar"] is True
+
+
+def test_mcp_save_memory_409_surfaces_backend_message(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"error": "Refused: 1 active note(s) say the same thing"})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match=r"Refused: 1 active note\(s\) say the same thing"):
+        asyncio.run(mcp_server.save_memory("new content", "natsume", tags=["test"]))
 
 
 def test_mcp_tool_list_unaffected_by_supersede():
@@ -368,6 +554,17 @@ async def _fetch_archived_at(note_id: str):
         await conn.close()
 
 
+async def _fetch_similar_ack(note_id: str):
+    conn = await asyncpg.connect(db_url())
+    try:
+        return await conn.fetchval(
+            f"SELECT metadata->'similar_ack' FROM \"{PG_SCHEMA}\".memory_chunks WHERE id=$1",
+            note_id,
+        )
+    finally:
+        await conn.close()
+
+
 @pytest.mark.integration
 @requires_db
 def test_supersede_archives_old_note_and_stores_new_one(client):
@@ -423,7 +620,7 @@ def test_supersede_unknown_id_400_over_rest(client):
 
 @pytest.mark.integration
 @requires_db
-def test_similar_hints_include_near_identical_active_note(client):
+def test_similar_gate_refuses_then_resolves_by_supersede_or_ack(client):
     marker = f"zzzsimilarpin{int(NOW)}"
     content_b = f"similar-hint integration pin: {marker} a hard-won troubleshooting conclusion"
     content_c = f"similar-hint integration pin: {marker} a hard won troubleshooting conclusion!"
@@ -438,11 +635,37 @@ def test_similar_hints_include_near_identical_active_note(client):
         response_c = client.post(
             "/save_memory", json={"author": "natsume", "content": content_c, "tags": ["test"]}
         )
-        assert response_c.status_code == 200
-        similar_ids = [item["id"] for item in response_c.json()["similar"]]
-        assert note_b in similar_ids
-        for item in response_c.json()["similar"]:
+        assert response_c.status_code == 409
+        body = response_c.json()
+        assert note_b in body["error"]
+        assert note_b in [item["id"] for item in body["similar"]]
+        for item in body["similar"]:
             assert {"id", "score", "text"} <= set(item)
+
+        response_ack = client.post(
+            "/save_memory",
+            json={
+                "author": "natsume",
+                "content": content_c,
+                "tags": ["test"],
+                "allow_similar": True,
+            },
+        )
+        assert response_ack.status_code == 200
+        assert response_ack.json()["id"] == note_c
+        assert json.loads(asyncio.run(_fetch_similar_ack(note_c))) == [note_b]
+
+        response_sup = client.post(
+            "/save_memory",
+            json={
+                "author": "natsume",
+                "content": content_c,
+                "tags": ["test"],
+                "supersedes": note_b,
+            },
+        )
+        assert response_sup.status_code == 200
+        assert asyncio.run(_fetch_archived_at(note_b)) is not None
     finally:
         asyncio.run(_delete(note_b))
         asyncio.run(_delete(note_c))

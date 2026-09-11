@@ -30,6 +30,20 @@ LIST_NOTES_DEFAULT_LIMIT = 50
 LIST_NOTES_MAX_LIMIT = 200
 
 
+class SimilarNotesError(ValueError):
+    """A new note landed next to near-identical active notes without resolving them."""
+
+    def __init__(self, similar: list[dict[str, Any]]) -> None:
+        self.similar = similar
+        listing = "\n".join(f"  {s['id']} ({s['score']:.2f}): {s['text'][:300]}" for s in similar)
+        super().__init__(
+            f"Refused: {len(similar)} active note(s) in this namespace say nearly the same thing. "
+            "Read them. If this note replaces one, call again with supersedes=<id> so the old one "
+            "is archived. Only if it records a genuinely different fact, call again with "
+            f"allow_similar=true.\n{listing}"
+        )
+
+
 def build_note_row(
     content: str,
     kind: str,
@@ -84,6 +98,7 @@ async def save_note(
     namespace: str = DEFAULT_NAMESPACE,
     occurred_at: str | None = None,
     author: str | None = None,
+    allow_similar: bool = False,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory.
 
@@ -114,6 +129,30 @@ async def save_note(
                 if not exists:
                     raise ValueError(f"unknown supersedes id: {supersedes}")
 
+            neighbours = [
+                dict(neighbour)
+                for neighbour in await conn.fetch(
+                    f"""
+                    SELECT id, 1 - (embedding <=> $1::halfvec) AS score,
+                           left(content_raw, {TEXT_LIMIT}) AS text
+                    FROM "{PG_SCHEMA}".memory_chunks
+                    WHERE source_type = 'agent_note'
+                      AND archived_at IS NULL
+                      AND namespace = $4
+                      AND id <> $2
+                      AND 1 - (embedding <=> $1::halfvec) > $3
+                    ORDER BY score DESC
+                    LIMIT 3
+                    """,
+                    embedding,
+                    row["id"],
+                    NOTE_SIMILAR_THRESHOLD,
+                    namespace,
+                )
+            ]
+            acknowledged = [n["id"] for n in neighbours if n["id"] != supersedes]
+            if allow_similar and acknowledged:
+                row["metadata"]["similar_ack"] = acknowledged
             status = await conn.execute(
                 f"""
                 INSERT INTO "{PG_SCHEMA}".memory_chunks
@@ -135,6 +174,14 @@ async def save_note(
                 namespace,
                 json.dumps(row["metadata"], ensure_ascii=False),
             )
+            stored = status.endswith(" 1")
+            if (
+                stored
+                and neighbours
+                and not allow_similar
+                and supersedes not in {n["id"] for n in neighbours}
+            ):
+                raise SimilarNotesError(neighbours)
             if supersedes is not None:
                 await conn.execute(
                     f"""
@@ -148,33 +195,12 @@ async def save_note(
                     namespace,
                     author,
                 )
-            excluded_ids = [row["id"]]
-            if supersedes is not None:
-                excluded_ids.append(supersedes)
-            similar_rows = await conn.fetch(
-                f"""
-                SELECT id, 1 - (embedding <=> $1::halfvec) AS score,
-                       left(content_raw, {TEXT_LIMIT}) AS text
-                FROM "{PG_SCHEMA}".memory_chunks
-                WHERE source_type = 'agent_note'
-                  AND archived_at IS NULL
-                  AND namespace = $4
-                  AND id <> ALL($2::text[])
-                  AND 1 - (embedding <=> $1::halfvec) > $3
-                ORDER BY score DESC
-                LIMIT 3
-                """,
-                embedding,
-                excluded_ids,
-                NOTE_SIMILAR_THRESHOLD,
-                namespace,
-            )
     return {
         "id": row["id"],
         "kind": row["kind"],
-        "stored": status.endswith(" 1"),
+        "stored": stored,
         "superseded": supersedes,
-        "similar": [dict(similar) for similar in similar_rows],
+        "similar": [n for n in neighbours if n["id"] != supersedes],
     }
 
 

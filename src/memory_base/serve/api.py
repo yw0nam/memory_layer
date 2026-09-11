@@ -37,7 +37,7 @@ from memory_base.serve.auth import ApiKeyAuthMiddleware
 from memory_base.serve.http import TEXT_LIMIT
 from memory_base.serve.http import error
 from memory_base.serve.http import json_body
-from memory_base.serve.notes import save_note
+from memory_base.serve.notes import SimilarNotesError, save_note
 
 SOURCES = ("all", "code", "memory")
 # Beyond this a query is a pasted payload, not a question: it costs embedder and BM25
@@ -236,6 +236,9 @@ async def save_memory_route(request: Request) -> JSONResponse:
         return error("author is required")
     if author not in key.authors:
         return error(f"author {author!r} is not permitted for this key", 403)
+    allow_similar = body.get("allow_similar", False)
+    if not isinstance(allow_similar, bool):
+        return error("allow_similar must be a boolean")
     try:
         result = await save_note(
             body.get("content", ""),
@@ -245,7 +248,10 @@ async def save_memory_route(request: Request) -> JSONResponse:
             namespace=namespace,
             occurred_at=body.get("occurred_at"),
             author=author,
+            allow_similar=allow_similar,
         )
+    except SimilarNotesError as exc:
+        return JSONResponse({"error": str(exc), "similar": exc.similar}, status_code=409)
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse(result)

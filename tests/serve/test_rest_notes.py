@@ -142,6 +142,7 @@ async def _fake_save_note(
     namespace="default",
     occurred_at=None,
     author=None,
+    allow_similar=False,
 ):
     return {
         "id": "note:aaaaaaaaaaaaaaaa",

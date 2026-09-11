@@ -58,7 +58,9 @@ bug with its known fix, a non-obvious environment fact, an approach that failed 
 The status of a PR or issue, progress updates, and descriptions of what a file does are
 none of those — git and search_code already answer them, and stale copies only dilute
 retrieval. When a note goes out of date, supersede it rather than adding a second note
-that contradicts it.
+that contradicts it. A save that lands next to a near-identical active note is refused
+with the neighbours listed; supersede the one it replaces, or pass allow_similar when it
+is a genuinely different fact.
 
 Work knowledge belongs in the key's home namespace. Personal context — schedule,
 relationships, private preferences — belongs in a private namespace, never the shared
@@ -374,6 +376,7 @@ async def save_memory(
     tags: list[str],
     kind: str = "note",
     supersedes: str | None = None,
+    allow_similar: bool = False,
     namespace: str | None = None,
     occurred_at: str | None = None,
     ctx: Context | None = None,
@@ -390,7 +393,10 @@ async def save_memory(
     `kind` is "note" (default), "decision", or "episode" (a 1-3 sentence
     past-tense record of one conversation session). `tags` is required; the
     first tag names the subject, usually the repository or domain, so a later
-    search can narrow to it. `supersedes` archives an older note by id.
+    search can narrow to it. `supersedes` archives an older note by id. A note that lands
+    next to active notes saying nearly the same thing is refused and the error lists them;
+    call again with `supersedes` naming the one it replaces, or with `allow_similar=True`
+    when it is a genuinely different fact.
 
     `author` names the agent saving this note, e.g. claude-code or natsume; it
     must be in the calling key's author allowlist, and is stored with the note
@@ -412,6 +418,7 @@ async def save_memory(
         "kind": kind,
         "tags": tags,
         "supersedes": supersedes,
+        "allow_similar": allow_similar,
     }
     if namespace is not None:
         body["namespace"] = namespace
@@ -422,7 +429,7 @@ async def save_memory(
         "/save_memory",
         json=body,
         headers=_auth_headers(ctx),
-        expect_errors=frozenset({400, 401, 403}),
+        expect_errors=frozenset({400, 401, 403, 409}),
     )
 
 
