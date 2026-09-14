@@ -28,10 +28,17 @@ services:
       COCOINDEX_DB: /data/cocoindex_state
       EMB_URL: ${EMB_URL}
       RERANK_URL: ${RERANK_URL}
-      LLM_URL: ${LLM_URL}
       EMB_MODEL: ${EMB_MODEL}
       RERANK_MODEL: ${RERANK_MODEL}
-      LLM_MODEL: ${LLM_MODEL}
+      ZAI_API_KEY: ${ZAI_API_KEY}
+      ZAI_BASE_URL: ${ZAI_BASE_URL}
+      ZAI_MODEL: ${ZAI_MODEL}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY}
+      CLAUDE_MODEL: ${CLAUDE_MODEL}
+      VLLM_URL: ${VLLM_URL}
+      VLLM_MODEL: ${VLLM_MODEL}
       REPO_CACHE: /data/repos_cache
       INGEST_SPOOL: /data/ingest-spool
     # ponytail: repo clones and the CocoIndex ledger live here; losing either

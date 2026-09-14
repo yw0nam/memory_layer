@@ -17,7 +17,6 @@ from memory_base.retrieval import search as search_mod
 @pytest.mark.parametrize(
     "name, action",
     [
-        ("LLM_URL", lambda: config.llm_client()),
         ("EMB_URL", lambda: config.VllmEmbedder()),
         (
             "RERANK_URL",
@@ -28,7 +27,6 @@ from memory_base.retrieval import search as search_mod
             ),
         ),
         ("DB_URL", lambda: config.db_url()),
-        ("LLM_MODEL", lambda: config.llm_model()),
         ("EMB_MODEL", lambda: config.emb_model()),
         ("RERANK_MODEL", lambda: config.rerank_model()),
     ],

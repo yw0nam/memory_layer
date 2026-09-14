@@ -369,7 +369,7 @@ def test_markdown_ingest_calls_no_llm_and_writes_doc_rows_with_caller_tags(monke
     async def converted(path):
         return document.ConversionResult("Useful document prose. " * 40, "markitdown:0.1.2")
 
-    def forbidden_llm():
+    def forbidden_llm(*args, **kwargs):
         raise AssertionError("document ingest must not call the LLM")
 
     async def embed(rows):
@@ -382,7 +382,7 @@ def test_markdown_ingest_calls_no_llm_and_writes_doc_rows_with_caller_tags(monke
 
     monkeypatch.setattr(ingest_api, "_existing_document_state", no_existing)
     monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
-    monkeypatch.setattr(enrich, "llm_client", forbidden_llm)
+    monkeypatch.setattr(enrich, "chat_json", forbidden_llm)
     monkeypatch.setattr(ingest_api, "_embed_rows", embed)
     monkeypatch.setattr(ingest_api, "replace_document_rows", write)
     job = _job(tags=["zx bank", "policy"])

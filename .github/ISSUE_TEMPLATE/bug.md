@@ -21,4 +21,4 @@ labels: ["bug"]
 ## Environment
 - Command / entry point (CLI, MCP tool, CocoIndex run):
 - `docker compose ps` (db / mcp status):
-- vLLM endpoints reachable (`LLM_URL` / `EMB_URL` / `RERANK_URL`):
+- vLLM endpoints reachable (`VLLM_URL` / `EMB_URL` / `RERANK_URL`):

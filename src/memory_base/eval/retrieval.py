@@ -20,6 +20,7 @@ import asyncpg
 
 from memory_base.core import schema as schema_module
 from memory_base.core.config import db_url, emb_model, rerank_model
+from memory_base.core.llm import resolve_llm_provider
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval import search as search_module
 from memory_base.serve import ingest_api
@@ -28,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "eval_docs"
 LABELS_PATH = REPO_ROOT / "tests" / "fixtures" / "retrieval_eval.jsonl"
 RELEVANT_ID_RE = re.compile(r"^doc:[a-z0-9][a-z0-9._-]{0,120}:(?:[0-9]+|card:[0-9]+)$")
-REQUIRED_SERVICE_ENV = ("LLM_URL", "EMB_URL", "RERANK_URL")
+REQUIRED_SERVICE_ENV = ("EMB_URL", "RERANK_URL")
 
 
 @dataclass(frozen=True)
@@ -237,6 +238,7 @@ async def run_evaluation() -> None:
     missing_env = [name for name in REQUIRED_SERVICE_ENV if not os.getenv(name)]
     if missing_env:
         raise RuntimeError("missing required service configuration: " + ", ".join(missing_env))
+    resolve_llm_provider(os.environ)
 
     labels = load_labels()
     schema_name = f"memory_eval_{os.getpid()}_{uuid.uuid4().hex[:12]}"
@@ -281,7 +283,7 @@ def main() -> None:
         asyncio.run(run_evaluation())
     except Exception as exc:
         print(f"Evaluation unavailable: {exc}")
-        print("Report NOT RUN (DB and configured vLLM services are required)")
+        print("Report NOT RUN (DB and the configured model services are required)")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from starlette.routing import Route
 
 from memory_base.core import db
 from memory_base.core.config import require_env
+from memory_base.core.llm import resolve_llm_provider
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval.search import Hit
 from memory_base.retrieval.search import UpstreamUnavailable
@@ -78,9 +80,12 @@ async def db_healthy() -> bool:
 
 async def _models_endpoint_healthy(env_var: str) -> bool:
     """Return whether the vLLM server's /models path answers 2xx, without running inference."""
-    base_url = require_env(env_var).rstrip("/")
+    return await _models_endpoint_healthy_url(require_env(env_var))
+
+
+async def _models_endpoint_healthy_url(base_url: str) -> bool:
     async with httpx.AsyncClient(timeout=HEALTH_PROBE_TIMEOUT_SECONDS) as client:
-        response = await client.get(f"{base_url}/models")
+        response = await client.get(f"{base_url.rstrip('/')}/models")
     return 200 <= response.status_code < 300
 
 
@@ -95,8 +100,11 @@ async def rerank_healthy() -> bool:
 
 
 async def llm_healthy() -> bool:
-    """Return whether the LLM endpoint (LLM_URL) is reachable."""
-    return await _models_endpoint_healthy("LLM_URL")
+    """Hosted chat APIs need no probe; the vLLM fallback is probed at /models."""
+    provider = resolve_llm_provider(os.environ)
+    if provider.name != "vllm":
+        return True
+    return await _models_endpoint_healthy_url(provider.base_url)
 
 
 async def _probe(check: Callable[[], Awaitable[bool]]) -> bool:
