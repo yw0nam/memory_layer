@@ -10,6 +10,7 @@ import pytest
 
 from memory_base.adapters.document import chunk_markdown, read_csv_sample
 from memory_base.eval import retrieval
+from memory_base.retrieval import search as search_module
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 EVAL_DOCS = FIXTURES / "eval_docs"
@@ -117,6 +118,33 @@ def test_markdown_fixtures_include_varied_headings_sizes_and_multilingual_contex
     assert non_ascii == [False, True, False]
 
 
+def test_classify_query_shape_prefers_cron_tick_markers():
+    assert (
+        retrieval.classify_query_shape("MONITOR CHANGE DETECTED for scheduled cron job drift")
+        == "cron_desire_tick"
+    )
+    assert retrieval.classify_query_shape("check DESIRE_STATE_DIR for drift") == "cron_desire_tick"
+
+
+def test_classify_query_shape_detects_other_cron_lines():
+    assert retrieval.classify_query_shape("Our scheduled cron job failed overnight") == "cron_other"
+    assert retrieval.classify_query_shape("SCHEDULED CRON JOB ran twice") == "cron_other"
+
+
+def test_classify_query_shape_keyword_needs_ascii_and_brevity():
+    assert retrieval.classify_query_shape("redis connection pool size") == "keyword"
+    assert retrieval.classify_query_shape(" ".join(["token"] * 13)) == "free_text"
+    assert (
+        retrieval.classify_query_shape("postgres 데이터는 날아간거같은데 왜 그런지 확인해봐")
+        == "free_text"
+    )
+
+
+def test_zero_hit_counter_counts_queries_without_any_hits():
+    assert retrieval.count_zero_hit_results([["a"], [], [], ["b"]]) == 2
+    assert retrieval.count_zero_hit_results([]) == 0
+
+
 def test_main_reports_unavailable_prerequisites_without_raising(monkeypatch, capsys):
     async def unavailable():
         raise RuntimeError("service offline")
@@ -186,3 +214,38 @@ def test_evaluate_mode_threads_schema_to_search(monkeypatch):
     asyncio.run(eval_module._evaluate_mode([label], set(), "scratch_test_schema"))
 
     assert captured["schema"] == "scratch_test_schema"
+
+
+def test_search_with_retry_pauses_then_retries_after_an_upstream_stall(monkeypatch):
+    calls = []
+    sleeps = []
+
+    async def flaky_search(query, **kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            raise search_module.UpstreamUnavailable("reranking")
+        return ["hit"]
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(search_module, "search", flaky_search)
+    monkeypatch.setattr(retrieval.asyncio, "sleep", fake_sleep)
+
+    assert asyncio.run(retrieval._search_with_retry("q", source="memory")) == ["hit"]
+    assert len(calls) == 3
+    assert sleeps == [10.0, 20.0]
+
+
+def test_search_with_retry_gives_up_after_the_last_attempt(monkeypatch):
+    async def always_down(query, **kwargs):
+        raise search_module.UpstreamUnavailable("reranking")
+
+    async def fake_sleep(seconds):
+        pass
+
+    monkeypatch.setattr(search_module, "search", always_down)
+    monkeypatch.setattr(retrieval.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(search_module.UpstreamUnavailable):
+        asyncio.run(retrieval._search_with_retry("q", source="memory"))
