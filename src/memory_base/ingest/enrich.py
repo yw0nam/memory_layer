@@ -5,20 +5,30 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
-import json
 import re
 from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
 
-from memory_base.core.config import SERVICE_TIMEOUT_SECONDS, llm_client, llm_model
+from memory_base.core.config import SERVICE_TIMEOUT_SECONDS
+from memory_base.core.llm import chat_json
 
 _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9 -]{1,40}$")
 
 
 class EnrichmentError(RuntimeError):
     """Raised when both enrichment attempts fail validation."""
+
+
+_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string", "minLength": 1},
+        "tags": {"type": "array", "items": {"type": "string"}, "minItems": 3, "maxItems": 7},
+    },
+    "required": ["summary", "tags"],
+}
 
 
 def normalize_enrichment_tags(value: Any) -> list[str]:
@@ -72,16 +82,9 @@ async def _json_call(
             await _notify_retry(on_retry)
         try:
             async with semaphore or contextlib.nullcontext():
-                response = await asyncio.wait_for(
-                    llm_client().chat.completions.create(
-                        model=llm_model(),
-                        messages=messages,
-                        response_format={"type": "json_object"},
-                    ),
-                    timeout=SERVICE_TIMEOUT_SECONDS,
+                payload = await chat_json(
+                    messages, _SUMMARY_SCHEMA, timeout=SERVICE_TIMEOUT_SECONDS
                 )
-            content = response.choices[0].message.content
-            payload = json.loads(content)
             parsed = parser(payload)
             if parsed is not None:
                 return parsed

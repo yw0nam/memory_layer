@@ -4,8 +4,12 @@
 
 | variable | purpose |
 |---|---|
-| `LLM_URL`, `EMB_URL`, `RERANK_URL` | vLLM OpenAI-compatible endpoints |
-| `LLM_MODEL`, `EMB_MODEL`, `RERANK_MODEL` | model names |
+| `ZAI_API_KEY`, `OPENAI_API_KEY`, `CLAUDE_API_KEY` | chat API keys; the first non-empty one in the order zai → openai → claude selects the chat provider |
+| `ZAI_BASE_URL` | z.ai OpenAI-compatible chat endpoint (default `https://api.z.ai/api/coding/paas/v4`) |
+| `ZAI_MODEL`, `OPENAI_MODEL`, `CLAUDE_MODEL` | chat model names (defaults `glm-5.3-flash` / `gpt-5.6-luna` / `claude-haiku-4-5`) |
+| `VLLM_URL`, `VLLM_MODEL` | vLLM chat endpoint used when no API key is set; required only in that case |
+| `EMB_URL`, `RERANK_URL` | vLLM OpenAI-compatible endpoints for embedding and rerank |
+| `EMB_MODEL`, `RERANK_MODEL` | embedding and rerank model names |
 | `DB_URL` | Postgres connection string |
 | `DB_POOL_MIN`, `DB_POOL_MAX` | asyncpg pool size bounds (default `1` / `10`) |
 | `DB_POOL_ACQUIRE_TIMEOUT` | seconds to wait for a pooled connection before failing (default `30`) |

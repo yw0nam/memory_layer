@@ -201,10 +201,12 @@ The MCP server needs the same header: over streamable HTTP it forwards the calle
 
 ## Configuration
 
-`.env` (gitignored) holds every endpoint and credential. Required to boot:
-`LLM_URL`/`EMB_URL`/`RERANK_URL` and their model names, `DB_URL`, `POSTGRES_PASSWORD`,
-`TABLES_QUERY_PASSWORD`, and `DATA_ROOT`. The full variable reference, optional tuning
-knobs, and private-repository credentials are documented in
+`.env` (gitignored) holds every endpoint and credential. Required to boot: `DB_URL`,
+`POSTGRES_PASSWORD`, `TABLES_QUERY_PASSWORD`, `DATA_ROOT`, and the embedding/rerank vLLM
+endpoints (`EMB_URL`/`EMB_MODEL`, `RERANK_URL`/`RERANK_MODEL`). The chat model is chosen by
+the first non-empty API key (`ZAI_API_KEY`, `OPENAI_API_KEY`, `CLAUDE_API_KEY`), falling back
+to the configured vLLM endpoint (`VLLM_URL`/`VLLM_MODEL`) when none is set. The full variable
+reference, optional tuning knobs, and private-repository credentials are documented in
 [docs/configuration.md](docs/configuration.md).
 
 ## Development

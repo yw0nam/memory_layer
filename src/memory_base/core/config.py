@@ -1,4 +1,4 @@
-"""Shared config + vLLM (OpenAI-compatible) clients for LLM / embedding / rerank."""
+"""Shared config + vLLM (OpenAI-compatible) clients for embedding / rerank."""
 
 from __future__ import annotations
 
@@ -38,20 +38,12 @@ def db_url() -> str:
     return require_env("DB_URL")
 
 
-def llm_model() -> str:
-    return require_env("LLM_MODEL")
-
-
 def emb_model() -> str:
     return require_env("EMB_MODEL")
 
 
 def rerank_model() -> str:
     return require_env("RERANK_MODEL")
-
-
-def llm_client() -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=require_env("LLM_URL"), api_key="EMPTY")
 
 
 class VllmEmbedder:
