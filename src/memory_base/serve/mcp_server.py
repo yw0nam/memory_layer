@@ -43,8 +43,7 @@ API_KEY_HEADER = "x-api-key"
 
 # Served in the initialize response, so it is stated once per client session:
 # the store's invariants only. Per-consumer usage belongs to the consumer.
-# The write-policy paragraphs live once in serve/notes.py, which also uses
-# them as the content gate's judging prompt.
+# The write policy lives in serve/notes.py, where it also prompts the content gate.
 _SERVER_INSTRUCTIONS_OPENING = """\
 memory-base holds only distilled knowledge, in three lanes: notes (why something was
 decided), code (indexed repositories), and table rows (numbers, read with SQL).
@@ -57,7 +56,21 @@ over the rows, and search never returns the rows themselves.
 
 """
 
-SERVER_INSTRUCTIONS = _SERVER_INSTRUCTIONS_OPENING + WRITE_POLICY
+_SERVER_INSTRUCTIONS_CLOSING = """\
+Work knowledge belongs in the key's home namespace. Personal context — schedule,
+relationships, private preferences — belongs in a private namespace, never the shared
+one. A note's first tag names its subject, usually the repository or domain it belongs
+to, so that a later search can narrow to it.
+
+Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly
+coincides; read both sides, then either merge them into one note with
+save_memory(supersedes=...) or drop one with archive_notes. Every write and archive names
+its author. delete_notes is for rows that must never resurface; archiving is otherwise
+always preferred."""
+
+SERVER_INSTRUCTIONS = "\n\n".join(
+    (_SERVER_INSTRUCTIONS_OPENING.rstrip("\n"), WRITE_POLICY, _SERVER_INSTRUCTIONS_CLOSING)
+)
 
 
 def resolve_transport_security(

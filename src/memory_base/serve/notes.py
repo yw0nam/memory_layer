@@ -13,7 +13,7 @@ from typing import Any
 from loguru import logger
 
 from memory_base.core import db
-from memory_base.core.config import PG_SCHEMA, QUERY_TIMEOUT_SECONDS, VllmEmbedder, embed_text
+from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.llm import chat_json
 from memory_base.core.schema import ensure_schema_once
 from memory_base.retrieval.search import (
@@ -38,20 +38,10 @@ that contradicts it. A save that lands next to a near-identical active note is r
 with the neighbours listed; supersede the one it replaces, or pass allow_similar when it
 is a genuinely different fact. A note whose content is a restatement of a PR, issue, or
 commit, a progress update, or a description of what a file does is refused with the
-reason; pass allow_restatement only when it records a durable fact that merely cites one.
-
-Work knowledge belongs in the key's home namespace. Personal context — schedule,
-relationships, private preferences — belongs in a private namespace, never the shared
-one. A note's first tag names its subject, usually the repository or domain it belongs
-to, so that a later search can narrow to it.
-
-Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly
-coincides; read both sides, then either merge them into one note with
-save_memory(supersedes=...) or drop one with archive_notes. Every write and archive names
-its author. delete_notes is for rows that must never resurface; archiving is otherwise
-always preferred."""
+reason; pass allow_restatement only when it records a durable fact that merely cites one."""
 
 NOTE_MAX_CHARS = 4000
+NOTE_GATE_TIMEOUT_SECONDS = 20.0
 NOTE_KINDS = ("note", "decision", "episode")
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
 LIST_NOTES_DEFAULT_LIMIT = 50
@@ -112,7 +102,7 @@ async def judge_note_content(content: str, kind: str) -> ContentVerdict:
         {"role": "system", "content": WRITE_POLICY + _JUDGE_INSTRUCTION},
         {"role": "user", "content": f"kind: {kind}\n\n{content}"},
     ]
-    verdict = await chat_json(messages, _VERDICT_SCHEMA, timeout=QUERY_TIMEOUT_SECONDS)
+    verdict = await chat_json(messages, _VERDICT_SCHEMA, timeout=NOTE_GATE_TIMEOUT_SECONDS)
     return ContentVerdict(accepted=verdict["accepted"], reason=verdict["reason"])
 
 

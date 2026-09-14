@@ -180,3 +180,25 @@ def test_chat_json_enforces_the_caller_timeout(monkeypatch):
 
     with pytest.raises(asyncio.TimeoutError):
         asyncio.run(llm.chat_json([{"role": "user", "content": "hi"}], {}, timeout=0.01))
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected"),
+    [
+        (
+            llm.LlmProvider(name="zai", model="glm-5.3-flash", api_key="k", base_url="https://z"),
+            {"thinking": {"type": "disabled"}},
+        ),
+        (_vllm(), None),
+    ],
+)
+def test_openai_compatible_branch_disables_glm_thinking_only_on_zai(
+    monkeypatch, provider, expected
+):
+    completions = _FakeCompletions('{"ok": true}')
+    _patch_openai(monkeypatch, completions)
+    monkeypatch.setattr(llm, "resolve_llm_provider", lambda env: provider)
+
+    asyncio.run(llm.chat_json([{"role": "user", "content": "hi"}], {"type": "object"}, timeout=5))
+
+    assert completions.kwargs["extra_body"] == expected

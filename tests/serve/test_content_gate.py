@@ -23,10 +23,10 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.core.config import QUERY_TIMEOUT_SECONDS
 from memory_base.serve import api, mcp_server, notes
 from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
 from memory_base.serve.notes import (
+    NOTE_GATE_TIMEOUT_SECONDS,
     WRITE_POLICY,
     ContentVerdict,
     LowSignalNoteError,
@@ -66,7 +66,7 @@ def test_judge_builds_the_prompt_from_the_write_policy_and_parses_the_verdict(mo
         },
         "required": ["accepted", "reason"],
     }
-    assert captured["timeout"] == QUERY_TIMEOUT_SECONDS
+    assert captured["timeout"] == NOTE_GATE_TIMEOUT_SECONDS
 
 
 # ---- save_note: the gate -----------------------------------------------------
@@ -278,6 +278,14 @@ def test_mcp_save_memory_forwards_allow_restatement(monkeypatch):
 
 def test_server_instructions_embed_the_write_policy_verbatim():
     assert WRITE_POLICY in SERVER_INSTRUCTIONS
+    assert "Curate rarely." in SERVER_INSTRUCTIONS
+    assert "\n\n\n" not in SERVER_INSTRUCTIONS
+
+
+def test_judge_prompt_carries_only_the_write_policy_not_namespace_or_curation_rules():
+    assert "Write rarely." in WRITE_POLICY
+    assert "private namespace" not in WRITE_POLICY
+    assert "Curate rarely." not in WRITE_POLICY
 
 
 def test_instructions_state_the_restatement_refusal():

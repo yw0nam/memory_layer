@@ -91,6 +91,8 @@ async def _openai_json(
         model=provider.model,
         messages=_with_schema_prompt(messages, schema),
         response_format={"type": "json_object"},
+        # GLM reasons by default; JSON classification gains nothing from it and waits 3-10x longer.
+        extra_body={"thinking": {"type": "disabled"}} if provider.name == "zai" else None,
     )
     return json.loads(response.choices[0].message.content)
 
