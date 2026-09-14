@@ -82,7 +82,21 @@ def test_every_stateful_service_persists_something():
 
 def test_api_receives_every_backend_endpoint_and_model_name():
     """Anything the container reads from the environment must be forwarded to it."""
-    for name in ("LLM_URL", "EMB_URL", "RERANK_URL", "LLM_MODEL", "EMB_MODEL", "RERANK_MODEL"):
+    for name in (
+        "ZAI_API_KEY",
+        "ZAI_BASE_URL",
+        "ZAI_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+        "CLAUDE_API_KEY",
+        "CLAUDE_MODEL",
+        "VLLM_URL",
+        "VLLM_MODEL",
+        "EMB_URL",
+        "EMB_MODEL",
+        "RERANK_URL",
+        "RERANK_MODEL",
+    ):
         assert API["environment"][name] == f"${{{name}}}"
 
 

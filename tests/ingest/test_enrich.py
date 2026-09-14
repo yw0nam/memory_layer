@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from loguru import logger as loguru_logger
 
+from memory_base.core import llm as llm_module
 from memory_base.ingest import enrich
 
 
@@ -28,6 +29,10 @@ class FakeCompletions:
 def _client(responses):
     completions = FakeCompletions(responses)
     return SimpleNamespace(chat=SimpleNamespace(completions=completions)), completions
+
+
+def _fake_chat_client(monkeypatch, fake):
+    monkeypatch.setattr(llm_module, "_openai_client", lambda provider: fake)
 
 
 @pytest.mark.parametrize(
@@ -57,7 +62,7 @@ def test_summary_enrichment_retries_empty_summary(monkeypatch):
             json.dumps({"summary": "An English table card.", "tags": ["table"]}),
         ]
     )
-    monkeypatch.setattr(enrich, "llm_client", lambda: fake)
+    _fake_chat_client(monkeypatch, fake)
     result = asyncio.run(enrich.summarize_and_tag("text", "context"))
     assert result["summary"] == "An English table card."
     assert completions.calls == 2
@@ -73,14 +78,14 @@ def test_summary_enrichment_retries_empty_summary(monkeypatch):
 )
 def test_summary_enrichment_persistent_failure_is_fail_closed(monkeypatch, responses):
     fake, _ = _client(responses)
-    monkeypatch.setattr(enrich, "llm_client", lambda: fake)
+    _fake_chat_client(monkeypatch, fake)
     with pytest.raises(enrich.EnrichmentError, match="failed after retry"):
         asyncio.run(enrich.summarize_and_tag("text", "context"))
 
 
 def test_each_failed_attempt_logs_debug_record_with_exception(monkeypatch):
     fake, _ = _client([RuntimeError("down"), RuntimeError("still down")])
-    monkeypatch.setattr(enrich, "llm_client", lambda: fake)
+    _fake_chat_client(monkeypatch, fake)
     records = []
     sink_id = loguru_logger.add(records.append, level="DEBUG", format="{level}|{message}")
     try:

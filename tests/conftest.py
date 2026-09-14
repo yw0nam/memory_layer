@@ -10,8 +10,10 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def model_names(monkeypatch):
-    """Tests that fake the backends still need the names to resolve; real ones win."""
-    for name in ("LLM_MODEL", "EMB_MODEL", "RERANK_MODEL"):
+    """Tests that fake the backends still need the endpoints and names to resolve; real ones win."""
+    for name in ("VLLM_URL", "EMB_URL", "RERANK_URL"):
+        monkeypatch.setenv(name, os.getenv(name) or "http://vllm.test")
+    for name in ("VLLM_MODEL", "EMB_MODEL", "RERANK_MODEL"):
         monkeypatch.setenv(name, os.getenv(name) or "test-model")
 
 
