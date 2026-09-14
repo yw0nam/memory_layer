@@ -1,4 +1,5 @@
-"""Reproducible document retrieval evaluation."""
+"""Reproducible retrieval evaluation: fixture corpora in a scratch schema and
+replay of labeled real queries against the live schema."""
 
 from __future__ import annotations
 
@@ -7,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -19,7 +21,7 @@ from pathlib import Path
 import asyncpg
 
 from memory_base.core import schema as schema_module
-from memory_base.core.config import db_url, emb_model, rerank_model
+from memory_base.core.config import PG_SCHEMA, db_url, emb_model, rerank_model
 from memory_base.core.llm import resolve_llm_provider
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval import search as search_module
@@ -28,8 +30,11 @@ from memory_base.serve import ingest_api
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "eval_docs"
 LABELS_PATH = REPO_ROOT / "tests" / "fixtures" / "retrieval_eval.jsonl"
+NOTES_LABELS_PATH = REPO_ROOT / "tests" / "fixtures" / "retrieval_eval_notes.jsonl"
 RELEVANT_ID_RE = re.compile(r"^doc:[a-z0-9][a-z0-9._-]{0,120}:(?:[0-9]+|card:[0-9]+)$")
 REQUIRED_SERVICE_ENV = ("EMB_URL", "RERANK_URL")
+SEARCH_RETRY_ATTEMPTS = 3
+SEARCH_RETRY_BACKOFF_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
@@ -113,6 +118,22 @@ def aggregate_metrics(results: Sequence[QueryMetrics]) -> dict[str, MetricSummar
         )
         for query_class, values in grouped.items()
     }
+
+
+def classify_query_shape(query: str) -> str:
+    """Classify a logged query as a cron tick, other cron line, keyword, or free text."""
+    if "MONITOR CHANGE DETECTED" in query or "DESIRE_STATE_DIR" in query:
+        return "cron_desire_tick"
+    if "scheduled cron job" in query.lower():
+        return "cron_other"
+    if query.isascii() and len(query.split()) <= 12:
+        return "keyword"
+    return "free_text"
+
+
+def count_zero_hit_results(retrieved_ids: Sequence[Sequence[str]]) -> int:
+    """Count queries whose replay returned no hits under the applied score floor."""
+    return sum(1 for ids in retrieved_ids if not ids)
 
 
 def load_labels(path: Path = LABELS_PATH) -> list[EvalLabel]:
@@ -199,6 +220,21 @@ async def _ingest_fixture(path: Path, schema: str) -> ingest_api.IngestJob:
         temp_path.unlink(missing_ok=True)
 
 
+def _hit_ids(hits: Sequence[search_module.Hit]) -> list[str]:
+    return [row_id for hit in hits if isinstance((row_id := hit.meta.get("id")), str)]
+
+
+async def _search_with_retry(query: str, **kwargs):
+    """Call search(), pausing and retrying when the rerank or embedding endpoint stalls."""
+    for attempt in range(1, SEARCH_RETRY_ATTEMPTS + 1):
+        try:
+            return await search_module.search(query, **kwargs)
+        except search_module.UpstreamUnavailable:
+            if attempt == SEARCH_RETRY_ATTEMPTS:
+                raise
+            await asyncio.sleep(SEARCH_RETRY_BACKOFF_SECONDS * attempt)
+
+
 async def _evaluate_mode(
     labels: Sequence[EvalLabel],
     corpus_ids: Collection[str],
@@ -206,14 +242,8 @@ async def _evaluate_mode(
 ) -> list[QueryMetrics]:
     results: list[QueryMetrics] = []
     for index, label in enumerate(labels, start=1):
-        hits = await search_module.search(
-            label.query,
-            source="memory",
-            rerank=True,
-            schema=schema,
-        )
-        retrieved_ids = [row_id for hit in hits if isinstance((row_id := hit.meta.get("id")), str)]
-        results.append(score_query(label, retrieved_ids, corpus_ids))
+        hits = await _search_with_retry(label.query, source="memory", rerank=True, schema=schema)
+        results.append(score_query(label, _hit_ids(hits), corpus_ids))
         print(f"{index:02d}/{len(labels):02d} {label.query_class}")
     return results
 
@@ -276,11 +306,42 @@ async def run_evaluation() -> None:
                     await cleanup_conn.close()
 
 
+async def run_notes_replay() -> None:
+    """Replay labeled note queries against the live schema with the production floor."""
+    print(f"Models: embedding={emb_model()} rerank={rerank_model()}")
+    missing_env = [name for name in REQUIRED_SERVICE_ENV if not os.getenv(name)]
+    if missing_env:
+        raise RuntimeError("missing required service configuration: " + ", ".join(missing_env))
+
+    labels = load_labels(NOTES_LABELS_PATH)
+    conn = await asyncpg.connect(db_url(), timeout=5)
+    try:
+        rows = await conn.fetch(
+            f'SELECT id FROM "{PG_SCHEMA}".memory_chunks WHERE archived_at IS NULL'
+        )
+    finally:
+        await conn.close()
+    corpus_ids = {row["id"] for row in rows}
+
+    results: list[QueryMetrics] = []
+    retrieved_per_query: list[list[str]] = []
+    for index, label in enumerate(labels, start=1):
+        hits = await _search_with_retry(label.query, source="memory", rerank=True)
+        retrieved_ids = _hit_ids(hits)
+        retrieved_per_query.append(retrieved_ids)
+        results.append(score_query(label, retrieved_ids, corpus_ids))
+        print(f"{index:02d}/{len(labels):02d} {label.query_class}")
+    _print_report(results)
+    zero_hit = count_zero_hit_results(retrieved_per_query)
+    print(f"Zero-hit queries under the production floor: {zero_hit}/{len(labels)}")
+
+
 def main() -> None:
     """Run the report without making environment availability a process gate."""
     setup_logging()
+    notes = "--notes" in sys.argv[1:]
     try:
-        asyncio.run(run_evaluation())
+        asyncio.run(run_notes_replay() if notes else run_evaluation())
     except Exception as exc:
         print(f"Evaluation unavailable: {exc}")
         print("Report NOT RUN (DB and the configured model services are required)")

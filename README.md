@@ -215,7 +215,8 @@ reference, optional tuning knobs, and private-repository credentials are documen
 uv run pytest                                        # integration tests skip without DB/vLLM
 uv run pytest -m "not integration"                   # what CI runs
 uv run ruff format --check . && uv run ruff check .
-uv run python -m memory_base.eval.retrieval          # retrieval eval report
+uv run python -m memory_base.eval.retrieval          # fixture retrieval eval report
+uv run python -m memory_base.eval.retrieval --notes  # labeled real-query replay against live memory
 ```
 
 Work happens in a git worktree and lands via PR; `main` requires a PR and green CI (lint,

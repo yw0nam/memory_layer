@@ -10,6 +10,7 @@ import pytest
 
 from memory_base.adapters.document import chunk_markdown, read_csv_sample
 from memory_base.eval import retrieval
+from memory_base.retrieval import search as search_module
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 EVAL_DOCS = FIXTURES / "eval_docs"
@@ -213,3 +214,38 @@ def test_evaluate_mode_threads_schema_to_search(monkeypatch):
     asyncio.run(eval_module._evaluate_mode([label], set(), "scratch_test_schema"))
 
     assert captured["schema"] == "scratch_test_schema"
+
+
+def test_search_with_retry_pauses_then_retries_after_an_upstream_stall(monkeypatch):
+    calls = []
+    sleeps = []
+
+    async def flaky_search(query, **kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            raise search_module.UpstreamUnavailable("reranking")
+        return ["hit"]
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(search_module, "search", flaky_search)
+    monkeypatch.setattr(retrieval.asyncio, "sleep", fake_sleep)
+
+    assert asyncio.run(retrieval._search_with_retry("q", source="memory")) == ["hit"]
+    assert len(calls) == 3
+    assert sleeps == [10.0, 20.0]
+
+
+def test_search_with_retry_gives_up_after_the_last_attempt(monkeypatch):
+    async def always_down(query, **kwargs):
+        raise search_module.UpstreamUnavailable("reranking")
+
+    async def fake_sleep(seconds):
+        pass
+
+    monkeypatch.setattr(search_module, "search", always_down)
+    monkeypatch.setattr(retrieval.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(search_module.UpstreamUnavailable):
+        asyncio.run(retrieval._search_with_retry("q", source="memory"))
