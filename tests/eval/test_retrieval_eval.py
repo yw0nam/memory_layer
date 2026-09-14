@@ -117,6 +117,33 @@ def test_markdown_fixtures_include_varied_headings_sizes_and_multilingual_contex
     assert non_ascii == [False, True, False]
 
 
+def test_classify_query_shape_prefers_cron_tick_markers():
+    assert (
+        retrieval.classify_query_shape("MONITOR CHANGE DETECTED for scheduled cron job drift")
+        == "cron_desire_tick"
+    )
+    assert retrieval.classify_query_shape("check DESIRE_STATE_DIR for drift") == "cron_desire_tick"
+
+
+def test_classify_query_shape_detects_other_cron_lines():
+    assert retrieval.classify_query_shape("Our scheduled cron job failed overnight") == "cron_other"
+    assert retrieval.classify_query_shape("SCHEDULED CRON JOB ran twice") == "cron_other"
+
+
+def test_classify_query_shape_keyword_needs_ascii_and_brevity():
+    assert retrieval.classify_query_shape("redis connection pool size") == "keyword"
+    assert retrieval.classify_query_shape(" ".join(["token"] * 13)) == "free_text"
+    assert (
+        retrieval.classify_query_shape("postgres 데이터는 날아간거같은데 왜 그런지 확인해봐")
+        == "free_text"
+    )
+
+
+def test_zero_hit_counter_counts_queries_without_any_hits():
+    assert retrieval.count_zero_hit_results([["a"], [], [], ["b"]]) == 2
+    assert retrieval.count_zero_hit_results([]) == 0
+
+
 def test_main_reports_unavailable_prerequisites_without_raising(monkeypatch, capsys):
     async def unavailable():
         raise RuntimeError("service offline")
