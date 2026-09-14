@@ -40,7 +40,12 @@ from starlette.testclient import TestClient
 
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api, mcp_server
-from memory_base.serve.notes import SimilarNotesError, build_note_row, save_note
+from memory_base.serve.notes import (
+    ContentVerdict,
+    SimilarNotesError,
+    build_note_row,
+    save_note,
+)
 
 NOW = 1_700_000_000.0
 
@@ -65,6 +70,7 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         return {
             "id": "note:aaaaaaaaaaaaaaaa",
@@ -98,6 +104,7 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         captured["supersedes"] = supersedes
         return {
@@ -131,6 +138,7 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         captured["supersedes"] = supersedes
         return {
@@ -159,6 +167,7 @@ def test_save_memory_unknown_supersedes_id_400(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         raise ValueError(f"unknown supersedes id: {supersedes}")
 
@@ -187,6 +196,7 @@ def test_save_memory_similar_notes_error_409(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         raise SimilarNotesError(similar)
 
@@ -225,6 +235,7 @@ def test_save_memory_forwards_allow_similar_to_save_note(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         captured["allow_similar"] = allow_similar
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
@@ -295,6 +306,11 @@ def _patch_note_deps(monkeypatch, conn):
     monkeypatch.setattr(notes, "embed_text", fake_embed_text)
     monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
     monkeypatch.setattr(notes, "ensure_schema_once", noop)
+
+    async def accepted_judge(content, kind):
+        return ContentVerdict(accepted=True, reason="durable knowledge")
+
+    monkeypatch.setattr(notes, "judge_note_content", accepted_judge)
 
 
 def test_supersede_stamps_archived_by_with_the_new_notes_author(monkeypatch):
@@ -425,6 +441,7 @@ def test_mcp_save_memory_posts_supersedes_in_body(monkeypatch):
         "tags": None,
         "supersedes": "note:old0000000000",
         "allow_similar": False,
+        "allow_restatement": False,
     }
     assert result["superseded"] == "note:old0000000000"
 
@@ -454,6 +471,7 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
         "tags": ["test"],
         "supersedes": None,
         "allow_similar": False,
+        "allow_restatement": False,
     }
 
 

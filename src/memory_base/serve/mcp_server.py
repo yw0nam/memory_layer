@@ -34,6 +34,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
 from memory_base.adapters.document import extension_for
 from memory_base.core.logger import setup_logging
+from memory_base.serve.notes import WRITE_POLICY
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
@@ -42,7 +43,8 @@ API_KEY_HEADER = "x-api-key"
 
 # Served in the initialize response, so it is stated once per client session:
 # the store's invariants only. Per-consumer usage belongs to the consumer.
-SERVER_INSTRUCTIONS = """\
+# The write policy lives in serve/notes.py, where it also prompts the content gate.
+_SERVER_INSTRUCTIONS_OPENING = """\
 memory-base holds only distilled knowledge, in three lanes: notes (why something was
 decided), code (indexed repositories), and table rows (numbers, read with SQL).
 
@@ -52,16 +54,9 @@ search_code spans every indexed repository, not only the one in front of you. Qu
 about numbers are computed, not retrieved: search finds the card, query_table computes
 over the rows, and search never returns the rows themselves.
 
-Write rarely. A note earns its place when it captures what the next session would
-otherwise have to rediscover: a decision and the alternatives it rejected, a reproduced
-bug with its known fix, a non-obvious environment fact, an approach that failed and why.
-The status of a PR or issue, progress updates, and descriptions of what a file does are
-none of those — git and search_code already answer them, and stale copies only dilute
-retrieval. When a note goes out of date, supersede it rather than adding a second note
-that contradicts it. A save that lands next to a near-identical active note is refused
-with the neighbours listed; supersede the one it replaces, or pass allow_similar when it
-is a genuinely different fact.
+"""
 
+_SERVER_INSTRUCTIONS_CLOSING = """\
 Work knowledge belongs in the key's home namespace. Personal context — schedule,
 relationships, private preferences — belongs in a private namespace, never the shared
 one. A note's first tag names its subject, usually the repository or domain it belongs
@@ -72,6 +67,10 @@ coincides; read both sides, then either merge them into one note with
 save_memory(supersedes=...) or drop one with archive_notes. Every write and archive names
 its author. delete_notes is for rows that must never resurface; archiving is otherwise
 always preferred."""
+
+SERVER_INSTRUCTIONS = "\n\n".join(
+    (_SERVER_INSTRUCTIONS_OPENING.rstrip("\n"), WRITE_POLICY, _SERVER_INSTRUCTIONS_CLOSING)
+)
 
 
 def resolve_transport_security(
@@ -377,6 +376,7 @@ async def save_memory(
     kind: str = "note",
     supersedes: str | None = None,
     allow_similar: bool = False,
+    allow_restatement: bool = False,
     namespace: str | None = None,
     occurred_at: str | None = None,
     ctx: Context | None = None,
@@ -396,7 +396,10 @@ async def save_memory(
     search can narrow to it. `supersedes` archives an older note by id. A note that lands
     next to active notes saying nearly the same thing is refused and the error lists them;
     call again with `supersedes` naming the one it replaces, or with `allow_similar=True`
-    when it is a genuinely different fact.
+    when it is a genuinely different fact. A note whose content is a restatement of a PR,
+    issue, or commit, a progress update, or a description of what a file does is refused
+    with the reason; pass `allow_restatement=True` only when it records a durable fact
+    that merely cites one.
 
     `author` names the agent saving this note, e.g. claude-code or natsume; it
     must be in the calling key's author allowlist, and is stored with the note
@@ -419,6 +422,7 @@ async def save_memory(
         "tags": tags,
         "supersedes": supersedes,
         "allow_similar": allow_similar,
+        "allow_restatement": allow_restatement,
     }
     if namespace is not None:
         body["namespace"] = namespace

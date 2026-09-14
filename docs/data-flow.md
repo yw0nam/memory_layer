@@ -36,7 +36,13 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
                memory.doc_rows — tabular rows, SQL-only
 ```
 
-Notes are stored exactly as written — the server never summarizes. A note landing next to
+Notes are stored exactly as written — the server never summarizes. Before embedding,
+every non-episode note passes the content gate: the chat model judges the text against
+the write policy, and a note it finds to be an artefact restatement, progress update,
+file description, or session narration is refused with HTTP 409 and the reason;
+`allow_restatement` overrides the refusal and stamps `metadata.content_gate =
+"overridden"`, while a judge failure saves the note stamped `content_gate =
+"unavailable"`. A note landing next to
 active notes above `NOTE_SIMILAR_THRESHOLD` cosine is refused with HTTP 409 listing them,
 unless `supersedes` names one of them or `allow_similar` is set; an accepted override
 records the neighbours' ids in `metadata.similar_ack`. The response carries `similar[]`
