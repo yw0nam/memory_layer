@@ -37,9 +37,10 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
 ```
 
 Notes are stored exactly as written — the server never summarizes. Before embedding,
-every non-episode note passes the content gate: the chat model judges the text against
-the write policy, and a note it finds to be an artefact restatement, progress update,
-file description, or session narration is refused with HTTP 409 and the reason;
+every non-episode note passes the content gate: the chat model judges the text on one
+criterion — does it record something a future session could not recover from the systems
+of record and would need, or is it already answered there or bound to the moment it was
+written — and a note that fails is refused with HTTP 409 and the reason;
 `allow_restatement` overrides the refusal and stamps `metadata.content_gate =
 "overridden"`, while a judge failure saves the note stamped `content_gate =
 "unavailable"`. A note landing next to

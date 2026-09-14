@@ -27,8 +27,8 @@ from memory_base.serve import api, mcp_server, notes
 from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
 from memory_base.serve.notes import (
     NOTE_GATE_TIMEOUT_SECONDS,
-    WRITE_POLICY,
     ContentVerdict,
+    JUDGE_PROMPT,
     LowSignalNoteError,
     judge_note_content,
     save_note,
@@ -54,8 +54,7 @@ def test_judge_builds_the_prompt_from_the_write_policy_and_parses_the_verdict(mo
     assert verdict == ContentVerdict(accepted=False, reason="a progress update on the migration")
     system, user = captured["messages"][0], captured["messages"][-1]
     assert system["role"] == "system"
-    assert WRITE_POLICY in system["content"]
-    assert "progress update" in system["content"]
+    assert system["content"] == JUDGE_PROMPT
     assert user["role"] == "user"
     assert "migrated the parser today" in user["content"]
     assert captured["schema"] == {
@@ -276,17 +275,13 @@ def test_mcp_save_memory_forwards_allow_restatement(monkeypatch):
 # ---- instructions ----------------------------------------------------------------
 
 
-def test_server_instructions_embed_the_write_policy_verbatim():
-    assert WRITE_POLICY in SERVER_INSTRUCTIONS
-    assert "Curate rarely." in SERVER_INSTRUCTIONS
+def test_server_instructions_state_the_write_policy_and_the_override():
+    assert "Write rarely." in SERVER_INSTRUCTIONS
+    assert "allow_restatement" in SERVER_INSTRUCTIONS
     assert "\n\n\n" not in SERVER_INSTRUCTIONS
 
 
-def test_judge_prompt_carries_only_the_write_policy_not_namespace_or_curation_rules():
-    assert "Write rarely." in WRITE_POLICY
-    assert "private namespace" not in WRITE_POLICY
-    assert "Curate rarely." not in WRITE_POLICY
-
-
-def test_instructions_state_the_restatement_refusal():
-    assert "allow_restatement" in SERVER_INSTRUCTIONS
+def test_judge_prompt_states_one_general_criterion_without_domain_anchors():
+    assert "provenance" in JUDGE_PROMPT
+    for anchor in ("PR", "commit", "namespace", "file does", "session that produced"):
+        assert anchor not in JUDGE_PROMPT

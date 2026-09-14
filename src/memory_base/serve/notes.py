@@ -27,18 +27,6 @@ from memory_base.serve import namespaces
 from memory_base.serve.http import TEXT_LIMIT
 from memory_base.serve.namespaces import DEFAULT_NAMESPACE
 
-WRITE_POLICY = """\
-Write rarely. A note earns its place when it captures what the next session would
-otherwise have to rediscover: a decision and the alternatives it rejected, a reproduced
-bug with its known fix, a non-obvious environment fact, an approach that failed and why.
-The status of a PR or issue, progress updates, and descriptions of what a file does are
-none of those — git and search_code already answer them, and stale copies only dilute
-retrieval. When a note goes out of date, supersede it rather than adding a second note
-that contradicts it. A save that lands next to a near-identical active note is refused
-with the neighbours listed; supersede the one it replaces, or pass allow_similar when it
-is a genuinely different fact. A note whose content is a restatement of a PR, issue, or
-commit, a progress update, or a description of what a file does is refused with the
-reason; pass allow_restatement only when it records a durable fact that merely cites one."""
 
 NOTE_MAX_CHARS = 4000
 NOTE_GATE_TIMEOUT_SECONDS = 20.0
@@ -68,8 +56,8 @@ class LowSignalNoteError(ValueError):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(
-            f"Refused: {reason} If this records a durable fact that merely cites a PR, "
-            "issue, or commit, call again with allow_restatement=true."
+            f"Refused: {reason} If it does record something a future session could not "
+            "recover from anywhere else, call again with allow_restatement=true."
         )
 
 
@@ -87,19 +75,25 @@ _VERDICT_SCHEMA = {
     "required": ["accepted", "reason"],
 }
 
-_JUDGE_INSTRUCTION = (
-    "\n\nJudge the note below against this policy: accept it only when it is durable "
-    "knowledge a future session would otherwise have to rediscover, and refuse it when it "
-    "is a restatement of a PR, issue, or commit, a progress update, a description of what "
-    "a file does, or a narration of the session that produced it. State the deciding "
-    "reason in one sentence."
-)
+JUDGE_PROMPT = """\
+You decide whether a note belongs in a long-term memory store that later sessions read.
+The test is provenance, not usefulness. Accept a note only when what it records exists
+nowhere else — a conclusion and what it ruled out, a constraint or preference someone
+stated, an observed fact about the environment, a lesson from something that failed — and
+a future reader would need it in order to act well. Refuse a note that reports what a
+record held elsewhere says — its contents, scope, changes, or status — however detailed
+the report: that record is the source and the note is a copy. Version control, the
+tracker, the filesystem, and the running system are such records. Refuse what is bound to
+the moment it was written: progress, status, a narration of what was done. A copy that
+also carries something its source does not state still fails; that part belongs in a note
+of its own. Judge the content alone; where the note is stored, whom it concerns, and what
+domain it comes from are not your concern. State the deciding reason in one sentence."""
 
 
 async def judge_note_content(content: str, kind: str) -> ContentVerdict:
-    """Ask the chat model whether a note's content is durable knowledge under WRITE_POLICY."""
+    """Ask the chat model whether a note's content is worth keeping across sessions."""
     messages = [
-        {"role": "system", "content": WRITE_POLICY + _JUDGE_INSTRUCTION},
+        {"role": "system", "content": JUDGE_PROMPT},
         {"role": "user", "content": f"kind: {kind}\n\n{content}"},
     ]
     verdict = await chat_json(messages, _VERDICT_SCHEMA, timeout=NOTE_GATE_TIMEOUT_SECONDS)
