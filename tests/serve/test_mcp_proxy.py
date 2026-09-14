@@ -427,6 +427,7 @@ def test_save_memory_posts_to_save_memory_and_returns_body(monkeypatch):
         "tags": ["infra"],
         "supersedes": None,
         "allow_similar": False,
+        "allow_restatement": False,
     }
     assert result == {"id": "note:abc", "kind": "note", "stored": True}
 

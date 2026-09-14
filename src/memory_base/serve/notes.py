@@ -6,11 +6,15 @@ import hashlib
 import json
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from loguru import logger
+
 from memory_base.core import db
-from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
+from memory_base.core.config import PG_SCHEMA, QUERY_TIMEOUT_SECONDS, VllmEmbedder, embed_text
+from memory_base.core.llm import chat_json
 from memory_base.core.schema import ensure_schema_once
 from memory_base.retrieval.search import (
     history_predicates,
@@ -22,6 +26,30 @@ from memory_base.retrieval.search import (
 from memory_base.serve import namespaces
 from memory_base.serve.http import TEXT_LIMIT
 from memory_base.serve.namespaces import DEFAULT_NAMESPACE
+
+WRITE_POLICY = """\
+Write rarely. A note earns its place when it captures what the next session would
+otherwise have to rediscover: a decision and the alternatives it rejected, a reproduced
+bug with its known fix, a non-obvious environment fact, an approach that failed and why.
+The status of a PR or issue, progress updates, and descriptions of what a file does are
+none of those — git and search_code already answer them, and stale copies only dilute
+retrieval. When a note goes out of date, supersede it rather than adding a second note
+that contradicts it. A save that lands next to a near-identical active note is refused
+with the neighbours listed; supersede the one it replaces, or pass allow_similar when it
+is a genuinely different fact. A note whose content is a restatement of a PR, issue, or
+commit, a progress update, or a description of what a file does is refused with the
+reason; pass allow_restatement only when it records a durable fact that merely cites one.
+
+Work knowledge belongs in the key's home namespace. Personal context — schedule,
+relationships, private preferences — belongs in a private namespace, never the shared
+one. A note's first tag names its subject, usually the repository or domain it belongs
+to, so that a later search can narrow to it.
+
+Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly
+coincides; read both sides, then either merge them into one note with
+save_memory(supersedes=...) or drop one with archive_notes. Every write and archive names
+its author. delete_notes is for rows that must never resurface; archiving is otherwise
+always preferred."""
 
 NOTE_MAX_CHARS = 4000
 NOTE_KINDS = ("note", "decision", "episode")
@@ -42,6 +70,67 @@ class SimilarNotesError(ValueError):
             "is archived. Only if it records a genuinely different fact, call again with "
             f"allow_similar=true.\n{listing}"
         )
+
+
+class LowSignalNoteError(ValueError):
+    """The content gate judged a note's content not worth storing."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(
+            f"Refused: {reason} If this records a durable fact that merely cites a PR, "
+            "issue, or commit, call again with allow_restatement=true."
+        )
+
+
+@dataclass(frozen=True)
+class ContentVerdict:
+    """The chat model's judgement of one note's content."""
+
+    accepted: bool
+    reason: str
+
+
+_VERDICT_SCHEMA = {
+    "type": "object",
+    "properties": {"accepted": {"type": "boolean"}, "reason": {"type": "string"}},
+    "required": ["accepted", "reason"],
+}
+
+_JUDGE_INSTRUCTION = (
+    "\n\nJudge the note below against this policy: accept it only when it is durable "
+    "knowledge a future session would otherwise have to rediscover, and refuse it when it "
+    "is a restatement of a PR, issue, or commit, a progress update, a description of what "
+    "a file does, or a narration of the session that produced it. State the deciding "
+    "reason in one sentence."
+)
+
+
+async def judge_note_content(content: str, kind: str) -> ContentVerdict:
+    """Ask the chat model whether a note's content is durable knowledge under WRITE_POLICY."""
+    messages = [
+        {"role": "system", "content": WRITE_POLICY + _JUDGE_INSTRUCTION},
+        {"role": "user", "content": f"kind: {kind}\n\n{content}"},
+    ]
+    verdict = await chat_json(messages, _VERDICT_SCHEMA, timeout=QUERY_TIMEOUT_SECONDS)
+    return ContentVerdict(accepted=verdict["accepted"], reason=verdict["reason"])
+
+
+async def _content_gate(row: dict[str, Any], allow_restatement: bool) -> None:
+    """Refuse a low-signal note before it costs an embedding call; fail open."""
+    if row["kind"] == "episode":
+        return
+    if allow_restatement:
+        row["metadata"]["content_gate"] = "overridden"
+        return
+    try:
+        verdict = await judge_note_content(row["raw"], row["kind"])
+    except Exception as exc:
+        logger.warning("content gate unavailable, saving anyway: {}", exc)
+        row["metadata"]["content_gate"] = "unavailable"
+        return
+    if not verdict.accepted:
+        raise LowSignalNoteError(verdict.reason)
 
 
 def build_note_row(
@@ -99,6 +188,7 @@ async def save_note(
     occurred_at: str | None = None,
     author: str | None = None,
     allow_similar: bool = False,
+    allow_restatement: bool = False,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory.
 
@@ -110,6 +200,7 @@ async def save_note(
     if ts > now:
         raise ValueError("occurred_at must not be in the future")
     row = build_note_row(content, kind, tags, ts, namespace, author)
+    await _content_gate(row, allow_restatement)
     embedding = await embed_text(VllmEmbedder(), row["raw"])
     async with db.acquire() as conn:
         await ensure_schema_once(conn)

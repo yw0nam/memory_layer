@@ -19,7 +19,7 @@ from starlette.testclient import TestClient
 
 from memory_base.serve import api, notes
 from memory_base.serve.mcp_server import save_memory
-from memory_base.serve.notes import build_note_row, save_note
+from memory_base.serve.notes import ContentVerdict, build_note_row, save_note
 
 NOW = 1_700_000_000.0  # 2023-11-14T22:13:20Z
 
@@ -90,6 +90,11 @@ def _patch_note_deps(monkeypatch, conn):
     monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
     monkeypatch.setattr(notes, "ensure_schema_once", _noop)
 
+    async def accepted_judge(content, kind):
+        return ContentVerdict(accepted=True, reason="durable knowledge")
+
+    monkeypatch.setattr(notes, "judge_note_content", accepted_judge)
+
 
 def test_occurred_at_sets_stored_timestamp(monkeypatch):
     conn = FakeConnection()
@@ -154,6 +159,7 @@ def test_save_memory_forwards_occurred_at_to_save_note(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         captured["occurred_at"] = occurred_at
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
@@ -180,6 +186,7 @@ def test_save_memory_omitted_occurred_at_forwards_none(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         captured["occurred_at"] = occurred_at
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
@@ -209,6 +216,7 @@ def test_save_memory_malformed_occurred_at_400(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         raise ValueError(f"invalid ISO 8601 timestamp: {occurred_at!r}")
 
@@ -232,6 +240,7 @@ def test_save_memory_future_occurred_at_400(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         raise ValueError("occurred_at must not be in the future")
 
@@ -257,6 +266,7 @@ def test_save_memory_episode_kind_delegates_to_save_note(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        allow_restatement=False,
     ):
         captured["kind"] = kind
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
