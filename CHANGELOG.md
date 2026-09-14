@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.0] - 2026-09-14
+
+### Added
+- refuse a near-duplicate note unless it supersedes or acknowledges its neighbours (#209)
+- require tags on every saved note (#208)
+- drop the whole client-injected context block from prefetch queries (#206)
+- record the filters that narrowed each logged search (#205)
+- remove the recency episode digest from the Hermes plugin (#202)
+- memory lifecycle tools over MCP with note authorship (#201)
+- quiet health-check and MCP ping noise in serving logs (#196)
+- fail the query path fast with an explicit unavailable message when a vLLM endpoint is down (#191)
+- default the prefetch hook env file to ~/.config/memory-base/env (#189)
+- claude code prefetch hook that injects memory into sessions (#188)
+- strip client_context boilerplate from the hermes prefetch query (#186)
+- let config api_key override the env var for memory_base provider (#184)
+- hermes memory provider integration under integrations/hermes (#183)
+- episode notes, occurred_at backdating, and admin notes move (#182)
+- restart services after reboot and add a database backup script (#178)
+- since/until search bounds and a query-less notes listing (#179)
+
+### Fixed
+- keep buffered retrieval access when a flush fails, document MCP transport vars, pin CI actions (#197)
+- clear the access-log buffer around every test (#195)
+
 ## [0.3.0] - 2026-08-18
 
 ### Added
