@@ -42,6 +42,7 @@ class EvalLabel:
     query: str
     query_class: str
     relevant_ids: tuple[str, ...]
+    expect_empty: bool = False
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,16 @@ class QueryMetrics:
     recall_at_5: float
     mrr_at_10: float
     missing_relevant_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class NotesReplayReport:
+    """A notes replay split into scored labels, expect-empty checks, and decayed ones."""
+
+    results: list[QueryMetrics]
+    expect_empty_passed: int
+    expect_empty_total: int
+    decayed: int
 
 
 @dataclass(frozen=True)
@@ -102,6 +113,38 @@ def score_query(
     )
 
 
+def score_notes_replay(
+    labels: Sequence[EvalLabel],
+    retrieved_per_query: Sequence[Sequence[str]],
+    corpus_ids: Collection[str],
+) -> NotesReplayReport:
+    """Score a live-corpus replay, where an answer archived since labelling is not a miss.
+
+    A label whose answers have all been archived has no ground truth left and is set
+    aside rather than scored zero; an expect-empty label passes by retrieving nothing.
+    """
+    corpus = set(corpus_ids)
+    results: list[QueryMetrics] = []
+    expect_empty_passed = expect_empty_total = decayed = 0
+    for label, retrieved_ids in zip(labels, retrieved_per_query, strict=True):
+        if label.expect_empty:
+            expect_empty_total += 1
+            expect_empty_passed += not retrieved_ids
+            continue
+        present = tuple(row_id for row_id in label.relevant_ids if row_id in corpus)
+        if not present:
+            decayed += 1
+            continue
+        results.append(
+            QueryMetrics(
+                query_class=label.query_class,
+                recall_at_5=recall_at_k(retrieved_ids, present, k=5),
+                mrr_at_10=reciprocal_rank_at_k(retrieved_ids, present, k=10),
+            )
+        )
+    return NotesReplayReport(results, expect_empty_passed, expect_empty_total, decayed)
+
+
 def aggregate_metrics(results: Sequence[QueryMetrics]) -> dict[str, MetricSummary]:
     """Average query metrics by class and across the complete evaluation."""
     grouped: defaultdict[str, list[QueryMetrics]] = defaultdict(list)
@@ -148,6 +191,7 @@ def load_labels(path: Path = LABELS_PATH) -> list[EvalLabel]:
                 query = payload["query"]
                 query_class = payload["query_class"]
                 relevant_ids = payload["relevant_ids"]
+                expect_empty = bool(payload.get("expect_empty", False))
             except (KeyError, TypeError) as exc:
                 raise ValueError(f"invalid eval label on line {line_number}") from exc
             if (
@@ -156,11 +200,12 @@ def load_labels(path: Path = LABELS_PATH) -> list[EvalLabel]:
                 or not isinstance(query_class, str)
                 or not query_class.strip()
                 or not isinstance(relevant_ids, list)
-                or not relevant_ids
+                or not (relevant_ids or expect_empty)
                 or any(not isinstance(row_id, str) for row_id in relevant_ids)
+                or (expect_empty and relevant_ids)
             ):
                 raise ValueError(f"invalid eval label on line {line_number}")
-            labels.append(EvalLabel(query, query_class, tuple(relevant_ids)))
+            labels.append(EvalLabel(query, query_class, tuple(relevant_ids), expect_empty))
     return labels
 
 
@@ -323,15 +368,18 @@ async def run_notes_replay() -> None:
         await conn.close()
     corpus_ids = {row["id"] for row in rows}
 
-    results: list[QueryMetrics] = []
     retrieved_per_query: list[list[str]] = []
     for index, label in enumerate(labels, start=1):
         hits = await _search_with_retry(label.query, source="memory", rerank=True)
-        retrieved_ids = _hit_ids(hits)
-        retrieved_per_query.append(retrieved_ids)
-        results.append(score_query(label, retrieved_ids, corpus_ids))
+        retrieved_per_query.append(_hit_ids(hits))
         print(f"{index:02d}/{len(labels):02d} {label.query_class}")
-    _print_report(results)
+    report = score_notes_replay(labels, retrieved_per_query, corpus_ids)
+    _print_report(report.results)
+    print(
+        f"Expect-empty labels returning nothing: "
+        f"{report.expect_empty_passed}/{report.expect_empty_total}"
+    )
+    print(f"Labels set aside, every answer archived since labelling: {report.decayed}")
     zero_hit = count_zero_hit_results(retrieved_per_query)
     print(f"Zero-hit queries under the production floor: {zero_hit}/{len(labels)}")
 
