@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0] - 2026-09-21
+
+### Added
+- skip the prefetch search for a desire-tick turn (#217)
+- judge an episode on provenance alone instead of exempting it from the gate (#216)
+- build and score a labeled replay set of real memory queries (#212)
+- refuse a note whose content restates a tracker artefact or reports progress (#211)
+- select the LLM chat provider from API keys in .env (#210)
+
+### Fixed
+- keep an answer archived since labelling out of the notes replay's score (#220)
+- judge a note by provenance instead of the write policy's examples (#214)
+
 ## [0.4.0] - 2026-09-14
 
 ### Added
