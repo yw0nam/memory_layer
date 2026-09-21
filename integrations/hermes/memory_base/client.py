@@ -19,6 +19,7 @@ PREFETCH_CHAR_BUDGET = 2000
 DEFAULT_API_KEY_ENV = "MEMORY_BASE_API_KEY"
 
 _CLIENT_CONTEXT_BLOCK = re.compile(r"<client_context>\n?.*?</client_context>\s*", re.DOTALL)
+_DESIRE_TICK_MARKERS = ("MONITOR CHANGE DETECTED", "DESIRE_STATE_DIR")
 
 
 @dataclass
@@ -76,7 +77,12 @@ def clean_prefetch_query(text: str) -> str:
     the turn's subject, so none of it belongs in the query. Which fields the
     block holds is the client's business and changes without notice, so the
     whole block goes; a turn left with nothing skips the search.
+
+    A desire tick is dropped whole. It names the prompt file that already tells
+    it how to act, so a search over it returns a copy of that file at best.
     """
+    if any(marker in text for marker in _DESIRE_TICK_MARKERS):
+        return ""
     return _CLIENT_CONTEXT_BLOCK.sub("", text).strip()
 
 

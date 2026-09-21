@@ -11,6 +11,9 @@ every injected note matched the turn's query at `min_score`.
   the client's own and change without notice, and their wording matches notes about
   that machinery instead of the turn's subject. A turn holding nothing else skips the
   search.
+- **A desire tick is not searched.** A turn carrying `MONITOR CHANGE DETECTED` or
+  `DESIRE_STATE_DIR` names the prompt file that already tells it how to act, so a
+  search over it returns a copy of that file at best; the turn is dropped whole.
 
 The provider never registers tools — the MCP server already exposes `search`/`search_memory`/
 `save_memory` for on-demand recall.
