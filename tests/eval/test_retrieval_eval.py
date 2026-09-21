@@ -249,3 +249,58 @@ def test_search_with_retry_gives_up_after_the_last_attempt(monkeypatch):
 
     with pytest.raises(search_module.UpstreamUnavailable):
         asyncio.run(retrieval._search_with_retry("q", source="memory"))
+
+
+# ---- notes replay: archived answers and expect-empty labels ---------------------
+
+
+def test_load_labels_accepts_an_expect_empty_label(tmp_path):
+    path = tmp_path / "labels.jsonl"
+    path.write_text(
+        '{"query": "nothing should match", "query_class": "keyword", '
+        '"relevant_ids": [], "expect_empty": true}\n',
+        encoding="utf-8",
+    )
+    (label,) = retrieval.load_labels(path)
+    assert label.expect_empty is True
+    assert label.relevant_ids == ()
+
+
+def test_load_labels_still_rejects_empty_relevant_ids_without_the_flag(tmp_path):
+    path = tmp_path / "labels.jsonl"
+    path.write_text(
+        '{"query": "q", "query_class": "keyword", "relevant_ids": []}\n', encoding="utf-8"
+    )
+    with pytest.raises(ValueError):
+        retrieval.load_labels(path)
+
+
+def test_notes_replay_drops_an_archived_answer_from_the_denominator():
+    label = retrieval.EvalLabel(
+        query="find both",
+        query_class="keyword",
+        relevant_ids=("note:a", "note:archived"),
+    )
+    report = retrieval.score_notes_replay([label], [["note:a"]], {"note:a"})
+    assert report.results[0].recall_at_5 == 1.0
+    assert report.decayed == 0
+
+
+def test_notes_replay_sets_aside_a_label_whose_answers_are_all_archived():
+    label = retrieval.EvalLabel(
+        query="answers all gone", query_class="keyword", relevant_ids=("note:gone",)
+    )
+    report = retrieval.score_notes_replay([label], [["note:other"]], {"note:other"})
+    assert report.results == []
+    assert report.decayed == 1
+
+
+def test_notes_replay_scores_an_expect_empty_label_by_returning_nothing():
+    label = retrieval.EvalLabel(
+        query="correctly empty", query_class="keyword", relevant_ids=(), expect_empty=True
+    )
+    passed = retrieval.score_notes_replay([label], [[]], set())
+    failed = retrieval.score_notes_replay([label], [["note:noise"]], {"note:noise"})
+    assert (passed.expect_empty_passed, passed.expect_empty_total) == (1, 1)
+    assert (failed.expect_empty_passed, failed.expect_empty_total) == (0, 1)
+    assert passed.results == [] and failed.results == []
