@@ -87,7 +87,11 @@ tracker, the filesystem, and the running system are such records. Refuse what is
 the moment it was written: progress, status, a narration of what was done. A copy that
 also carries something its source does not state still fails; that part belongs in a note
 of its own. Judge the content alone; where the note is stored, whom it concerns, and what
-domain it comes from are not your concern. State the deciding reason in one sentence."""
+domain it comes from are not your concern. An episode is the one kind that records a
+dated event, so being bound to its moment is never itself a reason to refuse one: judge an
+episode on provenance alone, accepting an event someone lived through and refusing one a
+tracker, version control, or the filesystem already records. State the deciding reason in
+one sentence."""
 
 
 async def judge_note_content(content: str, kind: str) -> ContentVerdict:
@@ -102,8 +106,6 @@ async def judge_note_content(content: str, kind: str) -> ContentVerdict:
 
 async def _content_gate(row: dict[str, Any], allow_restatement: bool) -> None:
     """Refuse a low-signal note before it costs an embedding call; fail open."""
-    if row["kind"] == "episode":
-        return
     if allow_restatement:
         row["metadata"]["content_gate"] = "overridden"
         return
