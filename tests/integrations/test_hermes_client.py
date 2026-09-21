@@ -246,3 +246,37 @@ def test_build_prefetch_skips_search_when_query_cleans_to_empty():
     client = _client(handler)
     raw = "<client_context>\ntime: now\ntrigger: screen\n</client_context>"
     assert client.build_prefetch(raw) == ""
+
+
+# ---- desire-tick shape ----------------------------------------------------------
+
+
+RAW_DESIRE_TICK = (
+    "[IMPORTANT: You are running as a scheduled cron job.]\n"
+    "MONITOR CHANGE DETECTED\n"
+    "Follow the instructions in /abs/integrations/hermes/desire/prompts/tick.md. "
+    "The configured environment is HERMES_PROFILE=natsume2, "
+    "DESIRE_STATE_DIR=/home/user/.hermes/profiles/natsume2/desire."
+)
+
+
+def test_clean_prefetch_query_drops_a_monitor_change_turn():
+    assert clean_prefetch_query(RAW_DESIRE_TICK) == ""
+
+
+def test_clean_prefetch_query_drops_a_turn_naming_the_desire_state_dir():
+    raw = "Follow tick.md. DESIRE_STATE_DIR=/home/user/.hermes/profiles/x/desire."
+    assert clean_prefetch_query(raw) == ""
+
+
+def test_clean_prefetch_query_keeps_a_turn_that_merely_mentions_monitoring():
+    raw = "how does the monitor decide a desire state change?"
+    assert clean_prefetch_query(raw) == raw
+
+
+def test_build_prefetch_skips_search_for_a_desire_tick():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no search request expected")
+
+    client = _client(handler)
+    assert client.build_prefetch(RAW_DESIRE_TICK) == ""
