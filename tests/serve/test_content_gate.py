@@ -1,10 +1,12 @@
 """Contract tests for the save_memory content gate (red-first).
 
-Before embedding, every non-episode note is judged against the write policy by
-the chat model: an artefact restatement, progress update, file description, or
-session narration raises ``LowSignalNoteError`` unless ``allow_restatement``
-overrides the gate (stamped ``content_gate: "overridden"``); a judge failure
-saves the note stamped ``content_gate: "unavailable"`` (fail-open).
+Before embedding, every note is judged against the write policy by the chat
+model: an artefact restatement, progress update, file description, or session
+narration raises ``LowSignalNoteError`` unless ``allow_restatement`` overrides
+the gate (stamped ``content_gate: "overridden"``); a judge failure saves the
+note stamped ``content_gate: "unavailable"`` (fail-open). An episode is judged
+on provenance alone, so a dated personal event passes and a dated restatement
+of a tracker artefact does not.
 
 Pure/unit sections follow tests/serve/test_rest_notes.py's FakeConnection
 pattern: no DB/network involved.
@@ -142,18 +144,33 @@ def test_save_note_refused_note_neither_embeds_nor_inserts(monkeypatch):
     assert conn.insert_args is None
 
 
-def test_episode_kind_never_calls_the_judge(monkeypatch):
+def test_episode_kind_is_judged_with_its_kind(monkeypatch):
     conn = FakeConnection()
-    _patch_note_deps(monkeypatch, conn)
+    seen = {}
 
-    async def explosive_judge(content, kind):
-        raise AssertionError("the judge must not run for episodes")
+    async def recording_judge(content, kind):
+        seen["kind"] = kind
+        return ContentVerdict(accepted=True, reason="a dated personal event")
 
-    monkeypatch.setattr(notes, "judge_note_content", explosive_judge)
+    _patch_note_deps(monkeypatch, conn, judge=recording_judge)
     result = asyncio.run(
         save_note("met to walk through the roadmap", tags=["test"], kind="episode")
     )
+    assert seen["kind"] == "episode"
     assert result["stored"] is True
+
+
+def test_episode_restating_an_artefact_is_refused(monkeypatch):
+    conn = FakeConnection()
+
+    async def refusing_judge(content, kind):
+        return ContentVerdict(accepted=False, reason="the tracker already records this")
+
+    _patch_note_deps(monkeypatch, conn, judge=refusing_judge)
+    with pytest.raises(LowSignalNoteError):
+        asyncio.run(save_note("PR #1010 merged today", tags=["test"], kind="episode"))
+    assert conn.embeds == []
+    assert conn.insert_args is None
 
 
 def test_allow_restatement_skips_the_judge_and_stamps_overridden(monkeypatch):
