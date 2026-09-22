@@ -296,8 +296,12 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
 
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
-    monkeypatch.setattr(messages, "terminal_messages", lambda namespaces=None: terminal)
     monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
+
+    async def fake_terminal_messages(namespaces=None):
+        return list(terminal)
+
+    monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
     response = client.post("/admin/archive", json={})
     assert response.status_code == 200
     assert response.json() == {"notes_to_archive": candidates, "messages_to_delete": terminal}
@@ -326,7 +330,11 @@ def test_admin_archive_confirm_archives_notes_and_deletes_terminal_messages(monk
 
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
-    monkeypatch.setattr(messages, "terminal_messages", lambda namespaces=None: [])
+
+    async def fake_terminal_messages(namespaces=None):
+        return []
+
+    monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
     monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
     response = client.post("/admin/archive", json={"confirm": True})
     assert response.status_code == 200
@@ -365,11 +373,15 @@ def test_admin_archive_with_ids_previews_those_rows(monkeypatch):
 def test_admin_archive_with_ids_confirm_stamps_the_author(monkeypatch):
     captured = {}
 
+    async def fake_rows_by_ids(ids, namespaces=None):
+        return [{"id": i} for i in ids]
+
     async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
         captured["ids"] = ids
         captured["archived_by"] = archived_by
         return len(ids)
 
+    monkeypatch.setattr(admin, "rows_by_ids", fake_rows_by_ids)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
     response = client.post(
         "/admin/archive",

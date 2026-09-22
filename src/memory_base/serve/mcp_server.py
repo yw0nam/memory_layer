@@ -43,8 +43,10 @@ API_KEY_HEADER = "x-api-key"
 # Served in the initialize response, so it is stated once per client session:
 # the store's invariants only. Per-consumer usage belongs to the consumer.
 _SERVER_INSTRUCTIONS_OPENING = """\
-memory-base holds only distilled knowledge, in three lanes: notes (why something was
-decided), code (indexed repositories), and table rows (numbers, read with SQL).
+memory-base holds distilled knowledge in three lanes — notes (why something was
+decided), code (indexed repositories), and table rows (numbers, read with SQL) — plus
+an addressed message lane for one-time signals between sessions (never embedded, never
+searched).
 
 Read first. Before starting a task or answering from recall, search_memory for earlier
 decisions on the subject — arriving without them is this server's most common misuse.
@@ -67,6 +69,21 @@ is a genuinely different fact. A note whose content is a restatement of a PR, is
 commit, a progress update, or a description of what a file does is refused with the
 reason; pass allow_restatement only when it records a durable fact that merely cites one."""
 
+_MESSAGE_LANE = """\
+Messages are an addressed, one-time signal lane beside the notes: never embedded, never
+searchable, read only by claiming. At the start of a session, list_messages for your
+namespaces and claim_message each one you act on — a claim is exclusive, and it fires
+only when called, never automatically from a prefetch hook. send_message takes two
+shapes: a general message (status "info", no scope) addressed to a namespace, or — with
+a scope repo:<origin> or project:<organization>/<project> — a handoff, the latest
+snapshot of a work state statused in_progress, blocked, or completed. Whoever next works
+in that scope claims it; a new snapshot supersedes the pending one, and a completed
+handoff remains the delivered record of that state. Keep the lanes straight: a note is
+durable knowledge and records why something was decided; a message is operational state
+and expires. The note content gate does not apply to messages — that is what makes them
+the right carrier for progress signals the gate refuses, and the wrong place for
+anything meant to outlive the week."""
+
 _SERVER_INSTRUCTIONS_CLOSING = """\
 Work knowledge belongs in the key's home namespace. Personal context — schedule,
 relationships, private preferences — belongs in a private namespace, never the shared
@@ -80,7 +97,12 @@ its author. delete_notes is for rows that must never resurface; archiving is oth
 always preferred."""
 
 SERVER_INSTRUCTIONS = "\n\n".join(
-    (_SERVER_INSTRUCTIONS_OPENING.rstrip("\n"), _WRITE_POLICY, _SERVER_INSTRUCTIONS_CLOSING)
+    (
+        _SERVER_INSTRUCTIONS_OPENING.rstrip("\n"),
+        _WRITE_POLICY,
+        _MESSAGE_LANE,
+        _SERVER_INSTRUCTIONS_CLOSING,
+    )
 )
 
 
@@ -449,6 +471,149 @@ async def save_memory(
 
 
 LIFECYCLE_ERRORS = frozenset({400, 401, 403, 404})
+
+
+@mcp.tool()
+async def send_message(
+    subject: str,
+    result: str,
+    author: str,
+    status: str = "info",
+    next_step: str | None = None,
+    verification: dict[str, str] | None = None,
+    refs: list[str] | None = None,
+    scope: str | None = None,
+    namespace: str | None = None,
+    idempotency_key: str | None = None,
+    expires_at: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Send an addressed, one-time signal that is never embedded or searchable.
+
+    Without `scope` this is a general message for a namespace: `status` must be
+    "info", and `next_step`/`verification` stay null unless there is something
+    to act on. With a portable `scope` (`repo:<origin>` or
+    `project:<organization>/<project>`) this is a handoff: the latest snapshot
+    of a work state, `status` "in_progress", "blocked", or "completed";
+    "in_progress" and "blocked" require a nonblank `next_step`, "completed"
+    requires none. A new snapshot supersedes the pending one for the same
+    subject, and any sender who can access the namespace may publish it.
+
+    `verification`, when given, is exactly {command, status, result} with
+    status "passed", "failed", or "not_run". `refs` holds at most 10 absolute
+    https URLs; localhost, private/loopback IP literals, and file URLs are
+    rejected. `author` must be in the calling key's author allowlist.
+    `idempotency_key` (max 128 chars) replays an identical send instead of
+    duplicating it. `expires_at` is an ISO 8601 datetime at most 30 days out;
+    messages otherwise expire after 7 days. `subject` must be in English.
+    """
+    body: dict[str, Any] = {
+        "subject": subject,
+        "result": result,
+        "author": author,
+        "status": status,
+    }
+    if next_step is not None:
+        body["next"] = next_step
+    if verification is not None:
+        body["verification"] = verification
+    if refs is not None:
+        body["refs"] = refs
+    if scope is not None:
+        body["scope"] = scope
+    if namespace is not None:
+        body["namespace"] = namespace
+    if idempotency_key is not None:
+        body["idempotency_key"] = idempotency_key
+    if expires_at is not None:
+        body["expires_at"] = expires_at
+    return await _call(
+        "POST",
+        "/messages",
+        json=body,
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403, 409}),
+    )
+
+
+@mcp.tool()
+async def list_messages(
+    namespace: str | None = None,
+    purpose: str | None = None,
+    scope: str | None = None,
+    subject: str | None = None,
+    limit: int | None = None,
+    ctx: Context | None = None,
+) -> list[dict[str, Any]]:
+    """List pending, unexpired messages addressed to the caller's namespaces.
+
+    No query and no embedding call: messages are read by address, never by
+    similarity, and never appear in search results. Returns newest-first rows
+    with id, namespace, purpose, scope, subject, status (the report state:
+    info, in_progress, blocked, or completed), delivery, author, created_at,
+    expires_at, and the canonical Markdown content.
+
+    `purpose` is "message" or "handoff"; `scope` is the portable scope the
+    message was sent with; `subject` matches after the same normalization the
+    server applies on send (any spelling variant of the subject finds it).
+    `namespace` narrows to one namespace the caller's API key can access;
+    omitted, it covers every accessible namespace. `limit` defaults to 50,
+    max 100.
+    """
+    params: list[tuple[str, str]] = []
+    if namespace is not None:
+        params.append(("namespace", namespace))
+    if purpose is not None:
+        params.append(("purpose", purpose))
+    if scope is not None:
+        params.append(("scope", scope))
+    if subject is not None:
+        params.append(("subject", subject))
+    if limit is not None:
+        params.append(("limit", str(limit)))
+    return await _call(
+        "GET",
+        "/messages",
+        params=params,
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403}),
+    )
+
+
+@mcp.tool()
+async def claim_message(message_id: str, ctx: Context | None = None) -> dict[str, Any]:
+    """Claim a pending message so no other reader receives it.
+
+    Claiming is exclusive and immediate: exactly one claim of a message
+    succeeds; a second claim of the same id is refused. Call this at the start
+    of a session for each message from list_messages you are about to act on.
+    The returned row keeps its original report `status`; `delivery` becomes
+    "claimed". An unknown id, or one outside the caller's namespaces, gets a
+    404; an already-claimed, cancelled, superseded, or expired id gets a 409.
+    """
+    return await _call(
+        "POST",
+        f"/messages/{message_id}/claim",
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403, 404, 409}),
+    )
+
+
+@mcp.tool()
+async def cancel_message(message_id: str, ctx: Context | None = None) -> dict[str, Any]:
+    """Withdraw a pending message the sender no longer wants delivered.
+
+    A sender can cancel its own pending messages; an admin key can cancel any
+    accessible pending message. The row keeps its report `status`; `delivery`
+    becomes "cancelled". Unknown, unauthorized, or no-longer-pending ids get
+    404/409.
+    """
+    return await _call(
+        "DELETE",
+        f"/messages/{message_id}",
+        headers=_auth_headers(ctx),
+        expect_errors=frozenset({400, 401, 403, 404, 409}),
+    )
 
 
 @mcp.tool()

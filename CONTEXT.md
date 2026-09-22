@@ -38,6 +38,24 @@ through the SQL query lane. Never embedded, never returned by search — the car
 found, the rows are computed over.
 _Avoid_: table chunks, row chunks, records
 
+**Message**:
+An agent-authored, addressed one-time signal, stored as canonical Markdown in `messages`
+and read by claiming — never embedded, never returned by search. Operational state with
+a report status (`info`), distinct from a note's durable knowledge.
+_Avoid_: notification, inbox item, chat message
+
+**Handoff**:
+A message snapshotting the state of a stretch of work, addressed to a portable scope
+(`repo:<origin>` or `project:<organization>/<project>`) instead of a namespace. Carries
+a report status (`in_progress`, `blocked`, or `completed`); a new snapshot of the same
+subject supersedes the pending one.
+_Avoid_: session summary, progress note, status report
+
+**Claim**:
+The at-most-once delivery of a pending message: exactly one claimer wins, and the
+loser is refused. Terminal — a claimed message is never delivered again.
+_Avoid_: pop, read receipt, acknowledge
+
 **Creator**:
 The key label that first ingested a document or repo. Fixed at first ingest; the only
 non-admin identity allowed to overwrite or delete it.
