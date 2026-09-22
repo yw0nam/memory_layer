@@ -266,6 +266,10 @@ acts only with `{"confirm": true}`, and each is reachable over MCP as
 Namespace deletion counts messages as content: a namespace with messages — pending or
 terminal — cannot be unregistered until a purge removes them.
 
+Retirement is manual: no scheduler runs in-process, so terminal rows survive until a
+caller runs the `/admin/archive` preview and confirm pass. A deployment that wants it
+periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
+
 ## Storage
 
 `memory.memory_chunks` — one table for every non-code source.
