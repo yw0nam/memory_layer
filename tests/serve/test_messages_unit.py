@@ -94,6 +94,24 @@ def test_scope_rejects_non_url_repo_origin():
             messages.normalize_scope(bad)
 
 
+def test_scope_rejects_local_checkout_paths():
+    for bad in (
+        "repo:C:\\Users\\me\\repo",
+        "repo:C:/Users/me/repo",
+        "repo:../checkout",
+        "repo:./checkout",
+        "repo:localhost/org/repo",
+    ):
+        with pytest.raises(ValueError):
+            messages.normalize_scope(bad)
+
+
+def test_scope_preserves_repository_path_case_on_a_dotted_host():
+    assert messages.normalize_scope("repo:Git.Example.COM/Org/Repo") == (
+        "repo:git.example.com/Org/Repo"
+    )
+
+
 def _reload_with_ttl_env(monkeypatch, value):
     import importlib
 
