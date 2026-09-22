@@ -332,7 +332,7 @@ def test_concurrent_same_key_handoff_sends_leave_exactly_one_pending():
             try:
                 return await conn.fetch(
                     f"""
-                    SELECT superseded_at FROM "{PG_SCHEMA}".messages
+                    SELECT superseded_at, created_at FROM "{PG_SCHEMA}".messages
                     WHERE subject = $1
                     """,
                     subject,
@@ -342,6 +342,9 @@ def test_concurrent_same_key_handoff_sends_leave_exactly_one_pending():
 
         rows = asyncio.run(_statuses())
         assert sum(row["superseded_at"] is not None for row in rows) == 3
+        # The survivor is the newest: created_at is stamped per statement, not
+        # at the transaction start each sender was queued behind.
+        assert listed[0]["created_at"] == max(row["created_at"] for row in rows).isoformat()
     finally:
         asyncio.run(_cleanup(marker))
 

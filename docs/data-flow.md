@@ -259,7 +259,9 @@ and `metadata.archived_by`. `POST /admin/archive` archives the rows named by `id
 the cold ones when `ids` is omitted; the no-ids preview distinguishes
 `notes_to_archive` from `messages_to_delete`, and the confirm pass archives the notes
 and deletes claimed, cancelled, superseded, and expired messages, which also releases
-their idempotency keys. Every mutating admin route previews by default and
+their idempotency keys. Archiving a note is reversible and deleting a message is not,
+so a member key drives only the note half: the message half is empty for it, and an
+admin key purges. Every mutating admin route previews by default and
 acts only with `{"confirm": true}`, and each is reachable over MCP as
 `list_memory_duplicates`, `archive_notes`, `restore_notes`, and `delete_notes`.
 

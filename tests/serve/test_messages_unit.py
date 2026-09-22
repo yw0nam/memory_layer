@@ -94,6 +94,17 @@ def test_scope_rejects_non_url_repo_origin():
             messages.normalize_scope(bad)
 
 
+def test_scope_strips_query_and_fragment_from_a_bare_origin():
+    assert messages.normalize_scope("repo:github.com/org/repo?x=1#frag") == (
+        "repo:github.com/org/repo"
+    )
+
+
+def test_scope_rejects_an_unbounded_origin():
+    with pytest.raises(ValueError):
+        messages.normalize_scope("repo:github.com/" + "a" * 600)
+
+
 def test_scope_rejects_local_checkout_paths():
     for bad in (
         "repo:C:\\Users\\me\\repo",

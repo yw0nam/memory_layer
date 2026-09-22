@@ -96,7 +96,7 @@ trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
 | `POST` | `/admin/notes/delete` | preview, or delete with `confirm` |
 | `GET` | `/admin/duplicates` | near-duplicate pairs above `threshold` |
-| `POST` | `/admin/archive` | preview cold notes (`notes_to_archive`) and terminal messages (`messages_to_delete`), then archive the notes and delete the messages with `confirm`; `ids` selects agent-note rows only and requires an `author`, stamped on every row archived |
+| `POST` | `/admin/archive` | preview cold notes (`notes_to_archive`) and terminal messages (`messages_to_delete`), then archive the notes and delete the messages with `confirm`; message deletion is permanent, so only an admin key sees or purges that half; `ids` selects rows in the caller's scope and requires an `author`, stamped on every row archived |
 | `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author |
 
 Filters are bound to the source they belong to: `kind`, `tags`, `author`, and

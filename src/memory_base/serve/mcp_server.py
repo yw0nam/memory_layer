@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from typing import Any, Mapping
 
 import httpx
@@ -473,6 +474,14 @@ async def save_memory(
 LIFECYCLE_ERRORS = frozenset({400, 401, 403, 404})
 
 
+def _message_uuid(message_id: Any) -> str:
+    """Ids come from other senders' rows, so never interpolate one unparsed."""
+    try:
+        return str(uuid.UUID(str(message_id)))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError(f"message_id must be a UUID: {message_id!r}") from None
+
+
 @mcp.tool()
 async def send_message(
     subject: str,
@@ -593,7 +602,7 @@ async def claim_message(message_id: str, ctx: Context | None = None) -> dict[str
     """
     return await _call(
         "POST",
-        f"/messages/{message_id}/claim",
+        f"/messages/{_message_uuid(message_id)}/claim",
         headers=_auth_headers(ctx),
         expect_errors=frozenset({400, 401, 403, 404, 409}),
     )
@@ -610,7 +619,7 @@ async def cancel_message(message_id: str, ctx: Context | None = None) -> dict[st
     """
     return await _call(
         "DELETE",
-        f"/messages/{message_id}",
+        f"/messages/{_message_uuid(message_id)}",
         headers=_auth_headers(ctx),
         expect_errors=frozenset({400, 401, 403, 404, 409}),
     )

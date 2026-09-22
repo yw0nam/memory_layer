@@ -31,8 +31,9 @@ Endpoint contract pinned by these tests:
     and ``messages.terminal_messages(namespaces=<scope>)``, then archives the
     note candidates and deletes the terminal messages;
     response ``{"archived": <count>, "deleted": <count>}``.
-  - with ``ids``: only agent-note rows are touched; ``messages_to_delete`` is
-    always ``[]`` and ``deleted`` is always 0.
+  - with ``ids``: only rows in the caller's scope are touched;
+    ``messages_to_delete`` is always ``[]`` and ``deleted`` is always 0.
+  - a non-admin key never sees or deletes the message half.
 - ``POST /admin/restore {"ids": [...], "confirm": bool}``
   - confirm missing/false (dry-run): calls
     ``admin.rows_by_ids(ids, namespaces=<scope>)``; response

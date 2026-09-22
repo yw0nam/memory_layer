@@ -402,8 +402,6 @@ async def messages_list_route(request: Request) -> JSONResponse:
             subject=params.get("subject") or None,
             limit=limit,
         )
-    except messages.MessageConflict as exc:
-        return error(str(exc), 409)
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse(rows)
@@ -517,8 +515,9 @@ async def admin_archive_route(request: Request) -> JSONResponse:
     """Preview or archive cold notes and delete terminal messages, in scope.
 
     The preview distinguishes the two halves: notes_to_archive and
-    messages_to_delete (claimed, cancelled, superseded, or expired). An ids
-    call selects agent-note rows only and never deletes messages.
+    messages_to_delete (claimed, cancelled, superseded, or expired). Deleting a
+    message is permanent, so only an admin key sees or purges that half; an ids
+    call selects rows in the caller's scope and never touches messages.
     """
     key = request.state.key
     try:
@@ -543,18 +542,18 @@ async def admin_archive_route(request: Request) -> JSONResponse:
     if ids is not None:
         rows = await admin.rows_by_ids(ids, namespaces=scope)
         if {row["id"] for row in rows} != set(ids):
-            return error("ids must refer only to agent_note rows")
+            return error("ids must refer only to rows in the caller's scope")
         if body.get("confirm") is True:
             archived = await admin.archive_rows(ids, now, namespaces=scope, archived_by=author)
             return JSONResponse({"archived": archived, "deleted": 0})
         return JSONResponse({"notes_to_archive": rows, "messages_to_delete": []})
     candidates = await admin.archive_candidates(now, namespaces=scope)
-    terminal = await messages.terminal_messages(scope)
+    terminal = await messages.terminal_messages(scope) if key.is_admin else []
     if body.get("confirm") is True:
         archived = await admin.archive_rows(
             [row["id"] for row in candidates], now, namespaces=scope, archived_by=author
         )
-        deleted = await messages.delete_terminal_messages(scope)
+        deleted = await messages.delete_terminal_messages(scope) if key.is_admin else 0
         return JSONResponse({"archived": archived, "deleted": deleted})
     return JSONResponse({"notes_to_archive": candidates, "messages_to_delete": terminal})
 

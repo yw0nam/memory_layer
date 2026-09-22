@@ -38,6 +38,7 @@ LIST_MESSAGES_DEFAULT_LIMIT = 50
 LIST_MESSAGES_MAX_LIMIT = 100
 MAX_REFS = 10
 IDEMPOTENCY_KEY_MAX_CHARS = 128
+SCOPE_MAX_CHARS = 512
 GENERAL_STATUSES = ("info",)
 HANDOFF_STATUSES = ("in_progress", "blocked", "completed")
 VERIFICATION_STATUSES = ("passed", "failed", "not_run")
@@ -47,8 +48,7 @@ _SCP_ORIGIN_RE = re.compile(r"(?:(?P<user>[^:@]+)@)?(?P<host>[^:/]+):(?P<path>.+
 _ORIGIN_HOST_RE = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
 _PUBLIC_COLUMNS = (
-    "id, namespace, purpose, scope, subject, status, author, "
-    "created_at, expires_at, content, claimed_at, cancelled_at, superseded_at"
+    "id, namespace, purpose, scope, subject, status, author, created_at, expires_at, content"
 )
 
 
@@ -105,15 +105,18 @@ def normalize_scope(scope: Any) -> str:
             host, path = scp["host"], scp["path"]
         else:
             host, _, path = origin.partition("/")
+            path = path.split("?", 1)[0].split("#", 1)[0]
         if not _ORIGIN_HOST_RE.fullmatch(host):
             raise ValueError(f"repo scope origin must name a remote host, not {host!r}")
         path = "/" + path.strip("/")
-        path = path.rstrip("/")
         if path.endswith(".git"):
             path = path[: -len(".git")]
         if not path.strip("/"):
             raise ValueError("repo scope origin must include a repository path")
-        return f"repo:{host.lower()}{path}"
+        normalized = f"repo:{host.lower()}{path}"
+        if len(normalized) > SCOPE_MAX_CHARS:
+            raise ValueError(f"scope must be at most {SCOPE_MAX_CHARS} chars")
+        return normalized
     if scope.startswith("project:"):
         rest = scope[len("project:") :]
         segments = rest.split("/")
@@ -379,8 +382,10 @@ async def send_message(
                         f"""
                         INSERT INTO "{PG_SCHEMA}".messages
                           (id, namespace, purpose, scope, subject, subject_key, status,
-                           content, author, sender_key, idempotency_key, expires_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                           content, author, sender_key, idempotency_key, expires_at,
+                           created_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                                clock_timestamp())
                         RETURNING {_PUBLIC_COLUMNS}
                         """,
                         uuid.uuid4(),
