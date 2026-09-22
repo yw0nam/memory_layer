@@ -83,10 +83,50 @@ def test_scope_rejects_repo_origin_with_credentials():
         messages.normalize_scope("repo:user@github.com:org/repo")
 
 
+def test_scope_rejects_raw_http_origin():
+    with pytest.raises(ValueError):
+        messages.normalize_scope("repo:http://github.com/org/repo")
+
+
 def test_scope_rejects_non_url_repo_origin():
     for bad in ("repo:/home/user/checkout", "repo:not a url"):
         with pytest.raises(ValueError):
             messages.normalize_scope(bad)
+
+
+def _reload_with_ttl_env(monkeypatch, value):
+    import importlib
+
+    if value is None:
+        monkeypatch.delenv("MESSAGE_TTL_DAYS", raising=False)
+    else:
+        monkeypatch.setenv("MESSAGE_TTL_DAYS", value)
+    return importlib.reload(messages)
+
+
+def test_configured_default_ttl_above_thirty_days_is_refused_at_boot(monkeypatch):
+    try:
+        with pytest.raises(RuntimeError, match="MESSAGE_TTL_DAYS"):
+            _reload_with_ttl_env(monkeypatch, "31")
+    finally:
+        _reload_with_ttl_env(monkeypatch, None)
+    assert messages.MESSAGE_TTL_DAYS == 7
+
+
+def test_configured_default_ttl_below_one_is_refused_at_boot(monkeypatch):
+    try:
+        with pytest.raises(RuntimeError, match="MESSAGE_TTL_DAYS"):
+            _reload_with_ttl_env(monkeypatch, "0")
+    finally:
+        _reload_with_ttl_env(monkeypatch, None)
+
+
+def test_configured_default_ttl_of_thirty_days_loads(monkeypatch):
+    try:
+        reloaded = _reload_with_ttl_env(monkeypatch, "30")
+        assert reloaded.MESSAGE_TTL_DAYS == 30
+    finally:
+        _reload_with_ttl_env(monkeypatch, None)
 
 
 def test_scope_accepts_explicit_project_form_and_lowercases():

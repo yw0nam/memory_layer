@@ -70,6 +70,35 @@ def test_claim_and_cancel_take_the_message_id():
     assert "message_id" in tools["cancel_message"].inputSchema["required"]
 
 
+def test_tool_docs_do_not_claim_a_public_delivery_field():
+    tools = _tools()
+    for name in ("send_message", "list_messages", "claim_message", "cancel_message"):
+        assert "delivery" not in tools[name].description, name
+
+
+def test_send_message_doc_does_not_claim_english_subjects():
+    tools = _tools()
+    assert "English" not in tools["send_message"].description
+
+
+def test_list_messages_doc_lists_the_exact_public_fields():
+    tools = _tools()
+    description = tools["list_messages"].description
+    for field in (
+        "id",
+        "namespace",
+        "purpose",
+        "scope",
+        "subject",
+        "status",
+        "author",
+        "created_at",
+        "expires_at",
+        "content",
+    ):
+        assert field in description, field
+
+
 # ---- send_message ----------------------------------------------------------------
 
 

@@ -286,6 +286,98 @@ def test_concurrent_double_claim_exactly_one_wins():
         asyncio.run(_cleanup(marker))
 
 
+def test_concurrent_same_key_handoff_sends_leave_exactly_one_pending():
+    """Two simultaneous sends of one snapshot chain: exactly one stays pending.
+
+    The send path must serialize same-(namespace, scope, subject_key) inserts
+    in the database, or two interleaved transactions can each insert and each
+    fail to see the other's uncommitted row, leaving two pending snapshots.
+    """
+    marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
+    subject = f"{marker} serialized chain"
+    try:
+
+        async def _run():
+            sends = [
+                messages.send_message(
+                    IDENTITY,
+                    namespace="default",
+                    author="claude-code",
+                    subject=subject,
+                    status="in_progress",
+                    result="snapshot",
+                    next_text="carry on",
+                    scope="repo:github.com/o/r",
+                )
+                for _ in range(4)
+            ]
+            return await asyncio.gather(*sends, return_exceptions=True)
+
+        results = asyncio.run(_run())
+        assert [r for r in results if isinstance(r, Exception)] == []
+        assert len({row["id"] for row, _ in results}) == 4
+
+        listed = client.get(
+            "/messages",
+            params={"purpose": "handoff", "scope": "repo:github.com/o/r", "subject": subject},
+        ).json()
+        assert len(listed) == 1
+
+        async def _statuses():
+            conn = await asyncpg.connect(db_url())
+            try:
+                return await conn.fetch(
+                    f"""
+                    SELECT superseded_at FROM "{PG_SCHEMA}".messages
+                    WHERE subject = $1
+                    """,
+                    subject,
+                )
+            finally:
+                await conn.close()
+
+        rows = asyncio.run(_statuses())
+        assert sum(row["superseded_at"] is not None for row in rows) == 3
+    finally:
+        asyncio.run(_cleanup(marker))
+
+
+def test_unrelated_subjects_send_concurrently_without_blocking():
+    marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
+    try:
+
+        async def _run():
+            sends = [
+                messages.send_message(
+                    IDENTITY,
+                    namespace="default",
+                    author="claude-code",
+                    subject=f"{marker} lane {i}",
+                    status="in_progress",
+                    result="snapshot",
+                    next_text="carry on",
+                    scope="repo:github.com/o/r",
+                )
+                for i in range(3)
+            ]
+            return await asyncio.gather(*sends, return_exceptions=True)
+
+        results = asyncio.run(_run())
+        assert [r for r in results if isinstance(r, Exception)] == []
+
+        # The subject filter matches exact subject keys: every lane stays pending.
+        pending = [
+            client.get(
+                "/messages",
+                params={"purpose": "handoff", "subject": f"{marker} lane {i}"},
+            ).json()
+            for i in range(3)
+        ]
+        assert all(len(rows) == 1 for rows in pending)
+    finally:
+        asyncio.run(_cleanup(marker))
+
+
 def test_claim_and_cancel_race_admit_exactly_one_winner():
     marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
     try:
