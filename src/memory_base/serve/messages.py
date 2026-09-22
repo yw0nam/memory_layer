@@ -341,8 +341,7 @@ async def send_message(
         async with conn.transaction():
             await namespaces.require_registered(conn, namespace)
             if purpose == "handoff":
-                # ponytail: one hashed lock per snapshot chain; a collision only
-                # serializes two unrelated chains, so no second key column.
+                # ponytail: one hashed lock per chain; a collision only over-serializes.
                 await conn.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     f"{namespace}\x1f{scope}\x1f{subject_key}",
