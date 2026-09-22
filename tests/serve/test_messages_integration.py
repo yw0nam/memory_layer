@@ -87,6 +87,9 @@ def _member_client(monkeypatch, label, allowed):
     )
 
     async def fake_authenticate_request(plaintext_key):
+        # The admin test-key keeps working alongside the member key.
+        if plaintext_key == "test-key":
+            return IDENTITY
         return identity if plaintext_key == "member-key" else None
 
     monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
@@ -305,7 +308,7 @@ def test_claim_and_cancel_race_admit_exactly_one_winner():
         assert isinstance(refused, messages.MessageConflict)
         winner = claim if claim_won else cancel
         assert isinstance(winner, dict)
-        assert winner["status"] == "in_progress"
+        assert winner["status"] == "info"
     finally:
         asyncio.run(_cleanup(marker))
 
@@ -690,10 +693,10 @@ def test_multiline_verification_command_is_rendered_line_by_line():
         )
         assert response.status_code == 201
         lines = response.json()["content"].splitlines()
-        assert "> uv run pytest tests/auth" in lines
+        assert "> Status: passed" in lines
+        assert "> Command: uv run pytest tests/auth" in lines
         assert "> -v" in lines
-        assert "> passed" in lines
-        assert "> 12 green" in lines
+        assert "> Result: 12 green" in lines
     finally:
         asyncio.run(_cleanup(marker))
 
