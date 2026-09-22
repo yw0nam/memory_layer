@@ -19,6 +19,7 @@ import asyncpg
 import pytest
 from starlette.testclient import TestClient
 
+from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
 from memory_base.serve import api, auth, messages, notes
@@ -298,6 +299,9 @@ def test_concurrent_same_key_handoff_sends_leave_exactly_one_pending():
     try:
 
         async def _run():
+            # Bind the pool to this loop before the gather; db's lock rejects
+            # cross-loop contention.
+            await db.get_pool()
             sends = [
                 messages.send_message(
                     IDENTITY,
@@ -347,6 +351,9 @@ def test_unrelated_subjects_send_concurrently_without_blocking():
     try:
 
         async def _run():
+            # Bind the pool to this loop before the gather; db's lock rejects
+            # cross-loop contention.
+            await db.get_pool()
             sends = [
                 messages.send_message(
                     IDENTITY,

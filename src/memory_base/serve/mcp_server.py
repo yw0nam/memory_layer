@@ -505,7 +505,7 @@ async def send_message(
     rejected. `author` must be in the calling key's author allowlist.
     `idempotency_key` (max 128 chars) replays an identical send instead of
     duplicating it. `expires_at` is an ISO 8601 datetime at most 30 days out;
-    messages otherwise expire after 7 days. `subject` must be in English.
+    messages otherwise expire after the server's configured default TTL.
     """
     body: dict[str, Any] = {
         "subject": subject,
@@ -549,9 +549,9 @@ async def list_messages(
 
     No query and no embedding call: messages are read by address, never by
     similarity, and never appear in search results. Returns newest-first rows
-    with id, namespace, purpose, scope, subject, status (the report state:
-    info, in_progress, blocked, or completed), delivery, author, created_at,
-    expires_at, and the canonical Markdown content.
+    with exactly id, namespace, purpose, scope, subject, status (the report
+    state: info, in_progress, blocked, or completed), author, created_at,
+    expires_at, and content — the canonical Markdown.
 
     `purpose` is "message" or "handoff"; `scope` is the portable scope the
     message was sent with; `subject` matches after the same normalization the
@@ -587,9 +587,9 @@ async def claim_message(message_id: str, ctx: Context | None = None) -> dict[str
     Claiming is exclusive and immediate: exactly one claim of a message
     succeeds; a second claim of the same id is refused. Call this at the start
     of a session for each message from list_messages you are about to act on.
-    The returned row keeps its original report `status`; `delivery` becomes
-    "claimed". An unknown id, or one outside the caller's namespaces, gets a
-    404; an already-claimed, cancelled, superseded, or expired id gets a 409.
+    A 200 is the claim; the returned row keeps its original report `status`.
+    An unknown id, or one outside the caller's namespaces, gets a 404; an
+    already-claimed, cancelled, superseded, or expired id gets a 409.
     """
     return await _call(
         "POST",
@@ -604,9 +604,9 @@ async def cancel_message(message_id: str, ctx: Context | None = None) -> dict[st
     """Withdraw a pending message the sender no longer wants delivered.
 
     A sender can cancel its own pending messages; an admin key can cancel any
-    accessible pending message. The row keeps its report `status`; `delivery`
-    becomes "cancelled". Unknown, unauthorized, or no-longer-pending ids get
-    404/409.
+    accessible pending message. A 200 is the cancellation; the returned row
+    keeps its report `status`. Unknown, unauthorized, or no-longer-pending ids
+    get 404/409.
     """
     return await _call(
         "DELETE",

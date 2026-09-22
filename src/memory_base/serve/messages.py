@@ -27,8 +27,12 @@ from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.serve import namespaces
 
-MESSAGE_TTL_DAYS = int(os.getenv("MESSAGE_TTL_DAYS", "7"))
 MESSAGE_MAX_TTL_DAYS = 30
+MESSAGE_TTL_DAYS = int(os.getenv("MESSAGE_TTL_DAYS", "7"))
+if not 1 <= MESSAGE_TTL_DAYS <= MESSAGE_MAX_TTL_DAYS:
+    raise RuntimeError(
+        f"MESSAGE_TTL_DAYS must be 1..{MESSAGE_MAX_TTL_DAYS}, got {MESSAGE_TTL_DAYS}"
+    )
 MESSAGE_MAX_CONTENT_BYTES = 4096
 LIST_MESSAGES_DEFAULT_LIMIT = 50
 LIST_MESSAGES_MAX_LIMIT = 100
@@ -40,6 +44,7 @@ VERIFICATION_STATUSES = ("passed", "failed", "not_run")
 
 _PROJECT_SEGMENT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _SCP_ORIGIN_RE = re.compile(r"(?:(?P<user>[^:@]+)@)?(?P<host>[^:/]+):(?P<path>.+)")
+_ORIGIN_HOST_RE = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
 _PUBLIC_COLUMNS = (
     "id, namespace, purpose, scope, subject, status, author, "
@@ -74,8 +79,9 @@ def normalize_scope(scope: Any) -> str:
     """Validate a portable scope: repo:<normalized-origin> or project:<org>/<proj>.
 
     Canonical repo scopes (`repo:github.com/org/repo`) round-trip unchanged;
-    raw https and scp-style SSH origins additionally normalize onto that form.
-    The hostname is lowercased; repository path case is preserved.
+    https and scp-style SSH origins additionally normalize onto that form. The
+    hostname is lowercased; repository path case is preserved. A local checkout
+    is not portable, so the host must be a dotted public hostname.
     """
     if not isinstance(scope, str) or not scope.strip():
         raise ValueError("scope must be repo:<origin> or project:<organization>/<project>")
@@ -86,10 +92,8 @@ def normalize_scope(scope: Any) -> str:
             raise ValueError("repo scope origin must not contain whitespace")
         if "://" in origin:
             parts = urlsplit(origin)
-            if parts.scheme not in ("https", "http") or not parts.hostname:
-                raise ValueError(
-                    "repo scope origin must be an http(s) URL, scp origin, or host/path"
-                )
+            if parts.scheme != "https" or not parts.hostname:
+                raise ValueError("repo scope origin must be an https URL, scp origin, or host/path")
             if parts.username is not None or parts.password is not None:
                 raise ValueError("repo scope origin must not embed credentials")
             if parts.port is not None:
@@ -101,8 +105,8 @@ def normalize_scope(scope: Any) -> str:
             host, path = scp["host"], scp["path"]
         else:
             host, _, path = origin.partition("/")
-            if not host:
-                raise ValueError("repo scope origin must include a host")
+        if not _ORIGIN_HOST_RE.fullmatch(host):
+            raise ValueError(f"repo scope origin must name a remote host, not {host!r}")
         path = "/" + path.strip("/")
         path = path.rstrip("/")
         if path.endswith(".git"):
@@ -336,6 +340,13 @@ async def send_message(
         await ensure_schema_once(conn)
         async with conn.transaction():
             await namespaces.require_registered(conn, namespace)
+            if purpose == "handoff":
+                # ponytail: one hashed lock per snapshot chain; a collision only
+                # serializes two unrelated chains, so no second key column.
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    f"{namespace}\x1f{scope}\x1f{subject_key}",
+                )
             if idem is not None:
                 existing = await conn.fetchrow(
                     f"""
