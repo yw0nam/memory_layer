@@ -224,6 +224,7 @@ def test_delete_non_empty_namespace_conflict(monkeypatch):
     emptiness_query = conn.queries[-1][0]
     assert "memory_chunks" in emptiness_query
     assert "doc_rows" in emptiness_query
+    assert "messages" in emptiness_query
 
 
 def test_delete_namespace_treats_table_rows_as_content(monkeypatch):
@@ -234,6 +235,16 @@ def test_delete_namespace_treats_table_rows_as_content(monkeypatch):
         asyncio.run(namespaces.delete_namespace("team-a"))
 
     assert "doc_rows" in conn.queries[-1][0]
+
+
+def test_delete_namespace_treats_messages_as_content(monkeypatch):
+    conn = FakeConnection(fetchval_results=[True, True])
+    _patch_acquire(monkeypatch, conn)
+
+    with pytest.raises(namespaces.NamespaceNotEmptyError):
+        asyncio.run(namespaces.delete_namespace("team-a"))
+
+    assert "messages" in conn.queries[-1][0]
 
 
 def test_delete_empty_namespace_succeeds(monkeypatch):

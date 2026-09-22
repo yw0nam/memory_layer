@@ -23,12 +23,16 @@ Endpoint contract pinned by these tests:
   response ``{"pairs": <that list>}``. Non-numeric ``threshold`` -> 400.
 - ``POST /admin/archive {"confirm": bool}``
   - confirm missing/false (dry-run): calls
-    ``admin.archive_candidates(now, namespaces=<scope>)``; response
-    ``{"candidates": <that list>}``; ``admin.archive_rows`` is NOT called.
+    ``admin.archive_candidates(now, namespaces=<scope>)`` and
+    ``messages.terminal_messages(namespaces=<scope>)``; response
+    ``{"notes_to_archive": <that list>, "messages_to_delete": <terminal messages>}``;
+    neither ``admin.archive_rows`` nor ``messages.delete_terminal_messages`` is called.
   - confirm true: calls ``admin.archive_candidates(now, namespaces=<scope>)``
-    to get candidates, then
-    ``admin.archive_rows(<candidate ids>, now, namespaces=<scope>) -> int``;
-    response ``{"archived": <count>}``.
+    and ``messages.terminal_messages(namespaces=<scope>)``, then archives the
+    note candidates and deletes the terminal messages;
+    response ``{"archived": <count>, "deleted": <count>}``.
+  - with ``ids``: only agent-note rows are touched; ``messages_to_delete`` is
+    always ``[]`` and ``deleted`` is always 0.
 - ``POST /admin/restore {"ids": [...], "confirm": bool}``
   - confirm missing/false (dry-run): calls
     ``admin.rows_by_ids(ids, namespaces=<scope>)``; response
@@ -53,7 +57,7 @@ import asyncio
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import admin, api
+from memory_base.serve import admin, api, messages
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -259,9 +263,23 @@ def test_duplicate_pairs_carry_each_sides_author(monkeypatch):
 # ---- POST /admin/archive -----------------------------------------------------
 
 
+def _patch_message_purge(monkeypatch, terminal=(), deleted=0):
+    """Stub the message-lane half of POST /admin/archive (no DB in unit tests)."""
+
+    async def fake_terminal_messages(namespaces=None):
+        return list(terminal)
+
+    async def fake_delete_terminal_messages(namespaces=None):
+        return deleted
+
+    monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
+    monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
+
+
 def test_admin_archive_dry_run_by_default(monkeypatch):
-    calls = {"archive_candidates": 0, "archive_rows": None}
+    calls = {"archive_candidates": 0, "archive_rows": None, "delete_terminal": 0}
     candidates = [{"id": "note:old", "kind": "agent_note", "hit_count": 0, "last_hit_at": None}]
+    terminal = [{"id": "5f0d9d44-9a9d-4f0e-b7f6-6fa1e2b3c4d5", "status": "claimed"}]
 
     async def fake_archive_candidates(now, namespaces=None):
         calls["archive_candidates"] += 1
@@ -272,16 +290,23 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
         calls["archive_rows"] = (ids, now)
         return len(ids)
 
+    async def fake_delete_terminal_messages(namespaces=None):
+        calls["delete_terminal"] += 1
+        return 1
+
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    monkeypatch.setattr(messages, "terminal_messages", lambda namespaces=None: terminal)
+    monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
     response = client.post("/admin/archive", json={})
     assert response.status_code == 200
-    assert response.json() == {"candidates": candidates}
+    assert response.json() == {"notes_to_archive": candidates, "messages_to_delete": terminal}
     assert calls["archive_candidates"] == 1
     assert calls["archive_rows"] is None
+    assert calls["delete_terminal"] == 0
 
 
-def test_admin_archive_confirm_true_archives_exactly_candidate_ids(monkeypatch):
+def test_admin_archive_confirm_archives_notes_and_deletes_terminal_messages(monkeypatch):
     calls = {}
     candidates = [
         {"id": "note:old1", "kind": "agent_note", "hit_count": 0, "last_hit_at": None},
@@ -295,12 +320,19 @@ def test_admin_archive_confirm_true_archives_exactly_candidate_ids(monkeypatch):
         calls["ids"] = ids
         return len(ids)
 
+    async def fake_delete_terminal_messages(namespaces=None):
+        calls["deleted"] = True
+        return 3
+
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    monkeypatch.setattr(messages, "terminal_messages", lambda namespaces=None: [])
+    monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
     response = client.post("/admin/archive", json={"confirm": True})
     assert response.status_code == 200
-    assert response.json() == {"archived": 2}
+    assert response.json() == {"archived": 2, "deleted": 3}
     assert calls["ids"] == ["note:old1", "note:old2"]
+    assert calls["deleted"] is True
 
 
 def test_admin_archive_with_ids_previews_those_rows(monkeypatch):
@@ -324,7 +356,7 @@ def test_admin_archive_with_ids_previews_those_rows(monkeypatch):
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
     response = client.post("/admin/archive", json={"ids": ["note:a"], "author": "natsume"})
     assert response.status_code == 200
-    assert response.json() == {"rows": rows}
+    assert response.json() == {"notes_to_archive": rows, "messages_to_delete": []}
     assert calls["rows_by_ids"] == ["note:a"]
     assert calls["archive_rows"] is None
     assert calls["archive_candidates"] == 0
@@ -344,7 +376,7 @@ def test_admin_archive_with_ids_confirm_stamps_the_author(monkeypatch):
         json={"ids": ["note:a", "note:b"], "author": "natsume", "confirm": True},
     )
     assert response.status_code == 200
-    assert response.json() == {"archived": 2}
+    assert response.json() == {"archived": 2, "deleted": 0}
     assert captured == {"ids": ["note:a", "note:b"], "archived_by": "natsume"}
 
 
@@ -393,6 +425,7 @@ def test_admin_archive_cold_candidates_stamp_a_given_author(monkeypatch):
 
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    _patch_message_purge(monkeypatch)
     response = client.post("/admin/archive", json={"author": "natsume", "confirm": True})
     assert response.status_code == 200
     assert captured["archived_by"] == "natsume"
@@ -411,6 +444,7 @@ def test_admin_archive_without_ids_or_author_stamps_nothing(monkeypatch):
 
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    _patch_message_purge(monkeypatch)
     response = client.post("/admin/archive", json={"confirm": True})
     assert response.status_code == 200
     assert captured["archived_by"] is None

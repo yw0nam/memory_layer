@@ -131,4 +131,8 @@ def test_mcp_server_registers_expected_tools():
         "archive_notes",
         "restore_notes",
         "delete_notes",
+        "send_message",
+        "list_messages",
+        "claim_message",
+        "cancel_message",
     }
