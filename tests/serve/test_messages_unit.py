@@ -441,7 +441,6 @@ def test_public_row_exposes_only_the_contracted_fields():
         "scope",
         "subject",
         "status",
-        "delivery",
         "author",
         "created_at",
         "expires_at",
@@ -454,28 +453,12 @@ def test_public_row_exposes_only_the_contracted_fields():
     assert public["expires_at"] == row["expires_at"].isoformat()
 
 
-@pytest.mark.parametrize(
-    ("overrides", "delivery"),
-    [
-        ({}, "pending"),
-        ({"claimed_at": datetime.now(timezone.utc)}, "claimed"),
-        ({"cancelled_at": datetime.now(timezone.utc)}, "cancelled"),
-        ({"superseded_at": datetime.now(timezone.utc)}, "superseded"),
-        ({"expires_at": datetime.now(timezone.utc) - timedelta(minutes=1)}, "expired"),
-        # A delivered row stays delivered even once its expiry has passed.
-        (
-            {
-                "claimed_at": datetime.now(timezone.utc) - timedelta(days=2),
-                "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1),
-            },
-            "claimed",
-        ),
-    ],
-)
-def test_delivery_is_derived_and_status_stays_the_report_status(overrides, delivery):
-    public = messages.public_row(_stored_row(**overrides))
-    assert public["status"] == "info"
-    assert public["delivery"] == delivery
+def test_public_row_keeps_the_report_status_and_hides_lifecycle_timestamps():
+    claimed = _stored_row(claimed_at=datetime.now(timezone.utc))
+    assert messages.public_row(claimed)["status"] == "info"
+    assert "claimed_at" not in messages.public_row(claimed)
+    assert "cancelled_at" not in messages.public_row(claimed)
+    assert "superseded_at" not in messages.public_row(claimed)
 
 
 # ---- next rules -----------------------------------------------------------------

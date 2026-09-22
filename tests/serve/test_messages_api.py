@@ -21,7 +21,6 @@ ROW = {
     "scope": None,
     "subject": "Re-seed the staging DB",
     "status": "info",
-    "delivery": "pending",
     "author": "claude-code",
     "created_at": "2026-02-03T10:00:00+00:00",
     "expires_at": "2026-02-10T10:00:00+00:00",
@@ -262,14 +261,12 @@ def test_claim_returns_the_row_with_its_original_report_status(monkeypatch):
 
     async def fake_claim(message_id, key, connection=None):
         captured["id"] = message_id
-        return dict(ROW, delivery="claimed")
+        return dict(ROW)
 
     monkeypatch.setattr(messages, "claim_message", fake_claim)
     response = client.post(f"/messages/{ROW['id']}/claim")
     assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "info"
-    assert body["delivery"] == "claimed"
+    assert response.json()["status"] == "info"
     assert str(captured["id"]) == ROW["id"]
 
 
@@ -298,19 +295,17 @@ def test_claim_stale_or_terminal_409(monkeypatch):
 # ---- DELETE /messages/{id} ------------------------------------------------------------
 
 
-def test_cancel_returns_the_row_marked_cancelled_in_delivery_only(monkeypatch):
+def test_cancel_returns_the_row_with_its_original_report_status(monkeypatch):
     captured = {}
 
     async def fake_cancel(message_id, key, connection=None):
         captured["id"] = message_id
-        return dict(ROW, delivery="cancelled")
+        return dict(ROW)
 
     monkeypatch.setattr(messages, "cancel_message", fake_cancel)
     response = client.delete(f"/messages/{ROW['id']}")
     assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "info"
-    assert body["delivery"] == "cancelled"
+    assert response.json()["status"] == "info"
     assert str(captured["id"]) == ROW["id"]
 
 

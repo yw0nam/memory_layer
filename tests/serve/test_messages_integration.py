@@ -195,7 +195,6 @@ def test_send_stores_rendered_content_without_touching_the_note_path(monkeypatch
         row = response.json()
         assert row["purpose"] == "message"
         assert row["status"] == "info"
-        assert row["delivery"] == "pending"
         assert row["scope"] is None
         assert set(row) == {
             "id",
@@ -204,7 +203,6 @@ def test_send_stores_rendered_content_without_touching_the_note_path(monkeypatch
             "scope",
             "subject",
             "status",
-            "delivery",
             "author",
             "created_at",
             "expires_at",
@@ -307,8 +305,7 @@ def test_claim_and_cancel_race_admit_exactly_one_winner():
         assert isinstance(refused, messages.MessageConflict)
         winner = claim if claim_won else cancel
         assert isinstance(winner, dict)
-        assert winner["delivery"] == ("claimed" if claim_won else "cancelled")
-        assert winner["status"] == "info"
+        assert winner["status"] == "in_progress"
     finally:
         asyncio.run(_cleanup(marker))
 
@@ -336,8 +333,24 @@ def test_only_latest_pending_snapshot_is_claimable_and_stale_id_gets_409():
         assert stale.status_code == 409
         fresh = client.post(f"/messages/{second_id}/claim")
         assert fresh.status_code == 200
-        assert fresh.json()["delivery"] == "claimed"
         assert fresh.json()["status"] == "in_progress"
+
+        # The supersede UPDATE must not touch the newly inserted snapshot.
+        async def _timestamps():
+            conn = await asyncpg.connect(db_url())
+            try:
+                return await conn.fetchrow(
+                    f"""
+                    SELECT claimed_at, superseded_at
+                    FROM "{PG_SCHEMA}".messages WHERE id = $1
+                    """,
+                    uuid.UUID(second_id),
+                )
+            finally:
+                await conn.close()
+
+        fresh_timestamps = asyncio.run(_timestamps())
+        assert fresh_timestamps["superseded_at"] is None
     finally:
         asyncio.run(_cleanup(marker))
 
@@ -469,6 +482,16 @@ def test_general_message_never_supersedes_a_pending_handoff():
             params={"purpose": "handoff", "subject": subject},
         ).json()
         assert [row["id"] for row in listed] == [handoff_id]
+    finally:
+        asyncio.run(_cleanup(marker))
+
+
+def test_send_into_unregistered_namespace_is_refused():
+    marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
+    try:
+        response = _send(f"{marker} nowhere", namespace="no-such-namespace")
+        assert response.status_code == 400
+        assert client.get("/messages", params={"subject": f"{marker} nowhere"}).json() == []
     finally:
         asyncio.run(_cleanup(marker))
 

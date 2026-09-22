@@ -101,7 +101,6 @@ def test_claim_by_namespace_authorized_member_succeeds(monkeypatch):
     )
     _patch_acquire(monkeypatch, conn)
     row = asyncio.run(messages.claim_message(message_id, _identity()))
-    assert row["delivery"] == "claimed"
     assert row["status"] == "info"
 
 
@@ -136,7 +135,7 @@ def test_claim_admin_may_claim_any_accessible_namespace(monkeypatch):
     )
     _patch_acquire(monkeypatch, conn)
     row = asyncio.run(messages.claim_message(message_id, _identity(is_admin=True)))
-    assert row["delivery"] == "claimed"
+    assert row["status"] == "info"
 
 
 # ---- cancel authorization -------------------------------------------------------
@@ -150,7 +149,6 @@ def test_sender_may_cancel_own_pending(monkeypatch):
     )
     _patch_acquire(monkeypatch, conn)
     row = asyncio.run(messages.cancel_message(message_id, _identity(key_id="sender-key-hash")))
-    assert row["delivery"] == "cancelled"
     assert row["status"] == "info"
 
 
@@ -170,7 +168,20 @@ def test_admin_may_cancel_any_pending(monkeypatch):
     )
     _patch_acquire(monkeypatch, conn)
     row = asyncio.run(messages.cancel_message(message_id, _identity(is_admin=True)))
-    assert row["delivery"] == "cancelled"
+    assert row["status"] == "info"
+
+
+def test_sender_without_namespace_visibility_gets_404(monkeypatch):
+    """Visibility gates cancel before the sender check: no access, no cancel."""
+    message_id = uuid.uuid4()
+    conn = FakeConn(selects=[_row(id=message_id, namespace="team-b")])
+    _patch_acquire(monkeypatch, conn)
+    with pytest.raises(messages.MessageNotFound):
+        asyncio.run(
+            messages.cancel_message(
+                message_id, _identity(key_id="sender-key-hash", allowed=("default",))
+            )
+        )
 
 
 def test_cancel_non_pending_409(monkeypatch):
