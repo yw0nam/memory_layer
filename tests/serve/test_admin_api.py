@@ -57,7 +57,7 @@ import asyncio
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import admin, api, messages
+from memory_base.serve import admin, api, auth, messages
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -274,6 +274,61 @@ def _patch_message_purge(monkeypatch, terminal=(), deleted=0):
 
     monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
     monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
+
+
+def _member_key(monkeypatch):
+    """Re-stub the shared admin identity as an ordinary member key."""
+    identity = auth.KeyIdentity(
+        key_id="member-key-hash",
+        label="member",
+        home="default",
+        is_admin=False,
+        allowed=frozenset({"default", "shared"}),
+        authors=frozenset({"claude-code", "natsume"}),
+    )
+
+    async def fake_authenticate_request(plaintext_key):
+        return identity if plaintext_key == "test-key" else None
+
+    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
+
+
+def test_admin_archive_never_purges_messages_for_a_member_key(monkeypatch):
+    calls = {"delete_terminal": 0, "terminal": 0, "archived": None}
+
+    async def fake_archive_candidates(now, namespaces=None):
+        return [{"id": "note:old", "kind": "agent_note", "hit_count": 0, "last_hit_at": None}]
+
+    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+        calls["archived"] = ids
+        return len(ids)
+
+    async def fake_terminal_messages(namespaces=None):
+        calls["terminal"] += 1
+        return [{"id": "5f0d9d44-9a9d-4f0e-b7f6-6fa1e2b3c4d5", "status": "claimed"}]
+
+    async def fake_delete_terminal_messages(namespaces=None):
+        calls["delete_terminal"] += 1
+        return 7
+
+    monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
+    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
+    monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
+    _member_key(monkeypatch)
+
+    preview = client.post("/admin/archive", json={})
+    assert preview.json() == {
+        "notes_to_archive": [
+            {"id": "note:old", "kind": "agent_note", "hit_count": 0, "last_hit_at": None}
+        ],
+        "messages_to_delete": [],
+    }
+    confirmed = client.post("/admin/archive", json={"confirm": True, "author": "natsume"})
+    assert confirmed.json() == {"archived": 1, "deleted": 0}
+    assert calls["delete_terminal"] == 0
+    assert calls["terminal"] == 0
+    assert calls["archived"] == ["note:old"]
 
 
 def test_admin_archive_dry_run_by_default(monkeypatch):

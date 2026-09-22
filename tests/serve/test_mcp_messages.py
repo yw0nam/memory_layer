@@ -271,6 +271,20 @@ def test_cancel_message_deletes_by_id(monkeypatch):
     assert payload["status"] == "info"
 
 
+def test_claim_and_cancel_reject_a_non_uuid_message_id(monkeypatch):
+    """A traversal id must never be interpolated into the REST path."""
+
+    def handler(request):
+        raise AssertionError(f"no request expected, got {request.url}")
+
+    _patch_client(monkeypatch, handler)
+    for bad in ("../namespaces/default", "not-a-uuid", "5f0d9d44-9a9d-4f0e-b7f6-6fa1e2b3c4d5/x"):
+        with pytest.raises(ValueError, match="message_id"):
+            asyncio.run(mcp_server.claim_message(message_id=bad))
+        with pytest.raises(ValueError, match="message_id"):
+            asyncio.run(mcp_server.cancel_message(message_id=bad))
+
+
 def test_claim_message_surfaces_404_as_tool_error(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={"error": "no claimable message"})
