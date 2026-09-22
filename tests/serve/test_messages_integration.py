@@ -732,6 +732,55 @@ def test_namespace_deletion_waits_for_messages(monkeypatch):
         asyncio.run(_cleanup(subject, namespace=namespace))
 
 
+def test_a_member_owner_can_purge_and_unregister_its_own_namespace(monkeypatch):
+    """The owner of a private namespace must not be wedged by its own terminal rows."""
+    namespace = f"msg-it-{uuid.uuid4().hex[:8]}"
+    subject = f"zzmsg_{uuid.uuid4().hex[:8]} owned"
+    try:
+        member = _member_client(monkeypatch, "msgowner", {namespace, "default"})
+        created = member.post("/namespaces", json={"name": namespace, "visibility": "private"})
+        assert created.status_code == 201
+        sent = member.post(
+            "/messages",
+            json={
+                "subject": subject,
+                "status": "info",
+                "result": "r",
+                "author": "claude-code",
+                "namespace": namespace,
+            },
+        )
+        assert sent.status_code == 201
+        assert member.delete(f"/messages/{sent.json()['id']}").status_code == 200
+        assert member.delete(f"/namespaces/{namespace}").status_code == 409
+
+        purged = member.post("/admin/archive", json={"confirm": True, "author": "claude-code"})
+        assert purged.json()["deleted"] == 1
+        assert member.delete(f"/namespaces/{namespace}").status_code == 200
+    finally:
+        asyncio.run(_cleanup(subject, namespace=namespace))
+
+
+def test_a_member_purge_leaves_messages_it_does_not_own(monkeypatch):
+    """A member sees and purges only the namespaces it owns, not every namespace it reads."""
+    subject = f"zzmsg_{uuid.uuid4().hex[:8]} shared"
+    try:
+        sent = client.post("/messages", json=_send(subject))
+        assert sent.status_code == 201
+        assert client.delete(f"/messages/{sent.json()['id']}").status_code == 200
+
+        member = _member_client(monkeypatch, "msgoutsider", {"default"})
+        preview = member.post("/admin/archive", json={})
+        assert preview.json()["messages_to_delete"] == []
+        purged = member.post("/admin/archive", json={"confirm": True, "author": "claude-code"})
+        assert purged.json()["deleted"] == 0
+
+        remaining = client.post("/admin/archive", json={}).json()["messages_to_delete"]
+        assert any(row["subject"] == subject for row in remaining)
+    finally:
+        asyncio.run(_cleanup(subject))
+
+
 # ---- admin purge distinguishes the two halves ----------------------------------------------
 
 
