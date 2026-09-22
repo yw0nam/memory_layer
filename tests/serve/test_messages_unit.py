@@ -43,13 +43,25 @@ def test_subject_key_is_casefolded_normalized_subject():
 # ---- scope -------------------------------------------------------------------
 
 
-def test_scope_normalizes_repo_origin_to_lowercase_host_and_path():
+def test_scope_normalizes_repo_origin_hostname_only_preserving_path_case():
     assert messages.normalize_scope("repo:https://GitHub.com/Yw0nam/Memory-Base.git") == (
-        "repo:github.com/yw0nam/memory-base"
+        "repo:github.com/Yw0nam/Memory-Base"
     )
 
 
-def test_scope_repo_strips_trailing_slash_and_git_suffix():
+def test_scope_accepts_canonical_form_and_round_trips():
+    canonical = "repo:github.com/org/repo"
+    assert messages.normalize_scope(canonical) == canonical
+    for raw in (
+        "repo:https://GitHub.com/org/repo.git",
+        "repo:git@github.com:org/repo.git",
+        "repo:https://github.com/org/repo/",
+    ):
+        normalized = messages.normalize_scope(raw)
+        assert messages.normalize_scope(normalized) == normalized
+
+
+def test_scope_strips_trailing_slash_and_git_suffix():
     assert messages.normalize_scope("repo:https://github.com/org/repo/") == (
         "repo:github.com/org/repo"
     )
@@ -58,13 +70,21 @@ def test_scope_repo_strips_trailing_slash_and_git_suffix():
     )
 
 
+def test_scope_accepts_ssh_origin_and_normalizes_to_canonical():
+    assert messages.normalize_scope("repo:git@github.com:Org/Repo.git") == (
+        "repo:github.com/Org/Repo"
+    )
+
+
 def test_scope_rejects_repo_origin_with_credentials():
     with pytest.raises(ValueError):
         messages.normalize_scope("repo:https://user:token@github.com/org/repo")
+    with pytest.raises(ValueError):
+        messages.normalize_scope("repo:user@github.com:org/repo")
 
 
 def test_scope_rejects_non_url_repo_origin():
-    for bad in ("repo:/home/user/checkout", "repo:github.com:org/repo.git", "repo:not a url"):
+    for bad in ("repo:/home/user/checkout", "repo:not a url"):
         with pytest.raises(ValueError):
             messages.normalize_scope(bad)
 
@@ -234,14 +254,50 @@ def test_render_produces_canonical_markdown():
         "\n"
         "## Verification\n"
         "\n"
-        "> uv run pytest tests/auth\n"
-        "> passed\n"
-        "> 12 green\n"
+        "> Status: passed\n"
+        "> Command: uv run pytest tests/auth\n"
+        "> Result: 12 green\n"
         "\n"
         "## References\n"
         "\n"
-        "> https://github.com/org/repo/pull/1"
+        "- https://github.com/org/repo/pull/1"
     )
+
+
+def test_render_verification_uses_labeled_status_command_result_lines():
+    content = messages.render_content(
+        "S",
+        "blocked",
+        "r",
+        None,
+        {
+            "command": "uv run pytest tests/auth\n-v",
+            "status": "failed",
+            "result": "3 failed\nsee log",
+        },
+        None,
+    )
+    lines = content.splitlines()
+    assert "> Status: failed" in lines
+    assert "> Command: uv run pytest tests/auth" in lines
+    assert "> -v" in lines
+    assert "> Result: 3 failed" in lines
+    assert "> see log" in lines
+
+
+def test_render_references_are_markdown_list_items():
+    content = messages.render_content(
+        "S",
+        "info",
+        "r",
+        None,
+        None,
+        ["https://github.com/org/repo/pull/1", "https://example.com/notes"],
+    )
+    lines = content.splitlines()
+    assert "- https://github.com/org/repo/pull/1" in lines
+    assert "- https://example.com/notes" in lines
+    assert "## References" in lines
 
 
 def test_render_omits_absent_optional_sections():
@@ -352,7 +408,7 @@ def test_handoff_scope_requires_handoff_status():
 # ---- public row shape -------------------------------------------------------------
 
 
-def test_public_row_exposes_only_the_contracted_fields():
+def _stored_row(**overrides):
     now = datetime.now(timezone.utc)
     row = {
         "id": uuid.uuid4(),
@@ -361,17 +417,23 @@ def test_public_row_exposes_only_the_contracted_fields():
         "scope": None,
         "subject": "S",
         "subject_key": "s",
-        "status": "pending",
+        "status": "info",
         "content": "# S",
         "author": "claude-code",
         "sender_key": "sender-key-hash",
         "idempotency_key": "run-1",
         "created_at": now,
         "claimed_at": None,
-        "closed_at": None,
+        "cancelled_at": None,
+        "superseded_at": None,
         "expires_at": now + timedelta(days=1),
     }
-    public = messages.public_row(row)
+    row.update(overrides)
+    return row
+
+
+def test_public_row_exposes_only_the_contracted_fields():
+    public = messages.public_row(_stored_row())
     assert set(public) == {
         "id",
         "namespace",
@@ -379,14 +441,41 @@ def test_public_row_exposes_only_the_contracted_fields():
         "scope",
         "subject",
         "status",
+        "delivery",
         "author",
         "created_at",
         "expires_at",
         "content",
     }
+    row = _stored_row()
+    public = messages.public_row(row)
     assert public["id"] == str(row["id"])
-    assert public["created_at"] == now.isoformat()
-    assert public["expires_at"] == (now + timedelta(days=1)).isoformat()
+    assert public["created_at"] == row["created_at"].isoformat()
+    assert public["expires_at"] == row["expires_at"].isoformat()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "delivery"),
+    [
+        ({}, "pending"),
+        ({"claimed_at": datetime.now(timezone.utc)}, "claimed"),
+        ({"cancelled_at": datetime.now(timezone.utc)}, "cancelled"),
+        ({"superseded_at": datetime.now(timezone.utc)}, "superseded"),
+        ({"expires_at": datetime.now(timezone.utc) - timedelta(minutes=1)}, "expired"),
+        # A delivered row stays delivered even once its expiry has passed.
+        (
+            {
+                "claimed_at": datetime.now(timezone.utc) - timedelta(days=2),
+                "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1),
+            },
+            "claimed",
+        ),
+    ],
+)
+def test_delivery_is_derived_and_status_stays_the_report_status(overrides, delivery):
+    public = messages.public_row(_stored_row(**overrides))
+    assert public["status"] == "info"
+    assert public["delivery"] == delivery
 
 
 # ---- next rules -----------------------------------------------------------------

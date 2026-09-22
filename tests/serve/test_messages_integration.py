@@ -194,7 +194,8 @@ def test_send_stores_rendered_content_without_touching_the_note_path(monkeypatch
         assert response.status_code == 201
         row = response.json()
         assert row["purpose"] == "message"
-        assert row["status"] == "pending"
+        assert row["status"] == "info"
+        assert row["delivery"] == "pending"
         assert row["scope"] is None
         assert set(row) == {
             "id",
@@ -203,6 +204,7 @@ def test_send_stores_rendered_content_without_touching_the_note_path(monkeypatch
             "scope",
             "subject",
             "status",
+            "delivery",
             "author",
             "created_at",
             "expires_at",
@@ -228,8 +230,7 @@ def test_message_content_never_lands_in_any_searched_table():
                 f"%{needle}%",
             )
             counts["doc_rows"] = await conn.fetchval(
-                f'SELECT count(*) FROM "{PG_SCHEMA}".doc_rows '
-                "WHERE data::text LIKE $1",
+                f'SELECT count(*) FROM "{PG_SCHEMA}".doc_rows WHERE data::text LIKE $1',
                 f"%{needle}%",
             )
             counts["messages"] = await conn.fetchval(
@@ -270,16 +271,16 @@ def test_concurrent_double_claim_exactly_one_wins():
         assert len(refused) == 1
         assert isinstance(refused[0], messages.MessageConflict)
 
-        async def _status():
+        async def _claimed_at():
             conn = await asyncpg.connect(db_url())
             try:
                 return await conn.fetchval(
-                    f'SELECT status FROM "{PG_SCHEMA}".messages WHERE id = $1', message_id
+                    f'SELECT claimed_at FROM "{PG_SCHEMA}".messages WHERE id = $1', message_id
                 )
             finally:
                 await conn.close()
 
-        assert asyncio.run(_status()) == "claimed"
+        assert asyncio.run(_claimed_at()) is not None
     finally:
         asyncio.run(_cleanup(marker))
 
@@ -297,11 +298,17 @@ def test_claim_and_cancel_race_admit_exactly_one_winner():
                 return await asyncio.gather(claim, cancel, return_exceptions=True)
 
         claim, cancel = asyncio.run(_run())
-        assert (claim is not None) != (isinstance(cancel, Exception))
-        if claim is not None:
-            assert claim["status"] == "claimed"
-        else:
-            assert cancel["status"] == "cancelled"
+        # Exception instances are non-None, so winners are picked by type: the
+        # successful result is the dict, the loser is a MessageConflict.
+        claim_won = not isinstance(claim, Exception)
+        cancel_won = not isinstance(cancel, Exception)
+        assert claim_won != cancel_won
+        refused = cancel if claim_won else claim
+        assert isinstance(refused, messages.MessageConflict)
+        winner = claim if claim_won else cancel
+        assert isinstance(winner, dict)
+        assert winner["delivery"] == ("claimed" if claim_won else "cancelled")
+        assert winner["status"] == "info"
     finally:
         asyncio.run(_cleanup(marker))
 
@@ -329,7 +336,8 @@ def test_only_latest_pending_snapshot_is_claimable_and_stale_id_gets_409():
         assert stale.status_code == 409
         fresh = client.post(f"/messages/{second_id}/claim")
         assert fresh.status_code == 200
-        assert fresh.json()["status"] == "claimed"
+        assert fresh.json()["delivery"] == "claimed"
+        assert fresh.json()["status"] == "in_progress"
     finally:
         asyncio.run(_cleanup(marker))
 
@@ -366,17 +374,22 @@ def test_supersede_touches_only_pending_and_different_subjects_coexist():
         new = _send_handoff(subject)
         assert new.status_code == 201
 
-        async def _status_of(message_id):
+        async def _timestamps_of(message_id):
             conn = await asyncpg.connect(db_url())
             try:
-                return await conn.fetchval(
-                    f'SELECT status FROM "{PG_SCHEMA}".messages WHERE id = $1',
+                return await conn.fetchrow(
+                    f"""
+                    SELECT claimed_at, cancelled_at, superseded_at
+                    FROM "{PG_SCHEMA}".messages WHERE id = $1
+                    """,
                     uuid.UUID(message_id),
                 )
             finally:
                 await conn.close()
 
-        assert asyncio.run(_status_of(old_id)) == "claimed"
+        old_timestamps = asyncio.run(_timestamps_of(old_id))
+        assert old_timestamps["claimed_at"] is not None
+        assert old_timestamps["superseded_at"] is None
 
         # A different subject under the same scope coexists with the pending one.
         other = _send_handoff(f"{marker} other subject")

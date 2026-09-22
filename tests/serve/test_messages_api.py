@@ -8,7 +8,6 @@ label "test" and authors {claude-code, natsume}.
 
 from __future__ import annotations
 
-import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api, auth, messages
@@ -21,7 +20,8 @@ ROW = {
     "purpose": "message",
     "scope": None,
     "subject": "Re-seed the staging DB",
-    "status": "pending",
+    "status": "info",
+    "delivery": "pending",
     "author": "claude-code",
     "created_at": "2026-02-03T10:00:00+00:00",
     "expires_at": "2026-02-10T10:00:00+00:00",
@@ -257,17 +257,19 @@ def test_get_messages_member_requesting_outside_set_403(monkeypatch):
 # ---- POST /messages/{id}/claim ------------------------------------------------------
 
 
-def test_claim_returns_public_row(monkeypatch):
+def test_claim_returns_the_row_with_its_original_report_status(monkeypatch):
     captured = {}
 
     async def fake_claim(message_id, key, connection=None):
         captured["id"] = message_id
-        return dict(ROW, status="claimed")
+        return dict(ROW, delivery="claimed")
 
     monkeypatch.setattr(messages, "claim_message", fake_claim)
     response = client.post(f"/messages/{ROW['id']}/claim")
     assert response.status_code == 200
-    assert response.json()["status"] == "claimed"
+    body = response.json()
+    assert body["status"] == "info"
+    assert body["delivery"] == "claimed"
     assert str(captured["id"]) == ROW["id"]
 
 
@@ -296,17 +298,19 @@ def test_claim_stale_or_terminal_409(monkeypatch):
 # ---- DELETE /messages/{id} ------------------------------------------------------------
 
 
-def test_cancel_returns_public_row(monkeypatch):
+def test_cancel_returns_the_row_marked_cancelled_in_delivery_only(monkeypatch):
     captured = {}
 
     async def fake_cancel(message_id, key, connection=None):
         captured["id"] = message_id
-        return dict(ROW, status="cancelled")
+        return dict(ROW, delivery="cancelled")
 
     monkeypatch.setattr(messages, "cancel_message", fake_cancel)
     response = client.delete(f"/messages/{ROW['id']}")
     assert response.status_code == 200
-    assert response.json()["status"] == "cancelled"
+    body = response.json()
+    assert body["status"] == "info"
+    assert body["delivery"] == "cancelled"
     assert str(captured["id"]) == ROW["id"]
 
 

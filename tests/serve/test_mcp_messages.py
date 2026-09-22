@@ -46,7 +46,6 @@ def _call(tool_name, monkeypatch, handler, **arguments):
         return handler(request)
 
     _patch_client(monkeypatch, handler_wrapped)
-    tools = _tools()
 
     async def _run():
         from mcp.shared.memory import create_connected_server_and_client_session
@@ -85,7 +84,8 @@ def test_send_message_posts_report_fields(monkeypatch):
                 "purpose": "message",
                 "scope": None,
                 "subject": "s",
-                "status": "pending",
+                "status": "info",
+                "delivery": "pending",
                 "author": "claude-code",
                 "created_at": "2026-02-03T10:00:00+00:00",
                 "expires_at": "2026-02-10T10:00:00+00:00",
@@ -212,22 +212,26 @@ def test_list_messages_omits_unset_filters(monkeypatch):
 
 def test_claim_message_posts_to_claim_route(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"id": MESSAGE_ID, "status": "claimed"})
+        return httpx.Response(200, json={"id": MESSAGE_ID, "status": "info", "delivery": "claimed"})
 
     payload, calls = _call("claim_message", monkeypatch, handler, message_id=MESSAGE_ID)
     assert calls[0].method == "POST"
     assert calls[0].url.path == f"/messages/{MESSAGE_ID}/claim"
-    assert payload["status"] == "claimed"
+    assert payload["delivery"] == "claimed"
+    assert payload["status"] == "info"
 
 
 def test_cancel_message_deletes_by_id(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"id": MESSAGE_ID, "status": "cancelled"})
+        return httpx.Response(
+            200, json={"id": MESSAGE_ID, "status": "info", "delivery": "cancelled"}
+        )
 
     payload, calls = _call("cancel_message", monkeypatch, handler, message_id=MESSAGE_ID)
     assert calls[0].method == "DELETE"
     assert calls[0].url.path == f"/messages/{MESSAGE_ID}"
-    assert payload["status"] == "cancelled"
+    assert payload["delivery"] == "cancelled"
+    assert payload["status"] == "info"
 
 
 def test_claim_message_surfaces_404_as_tool_error(monkeypatch):

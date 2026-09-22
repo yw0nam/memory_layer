@@ -28,14 +28,15 @@ def _row(**overrides):
         "scope": None,
         "subject": "s",
         "subject_key": "s",
-        "status": "pending",
+        "status": "info",
         "content": "# S",
         "author": "claude-code",
         "sender_key": "sender-key-hash",
         "idempotency_key": None,
         "created_at": NOW,
         "claimed_at": None,
-        "closed_at": None,
+        "cancelled_at": None,
+        "superseded_at": None,
         "expires_at": NOW + timedelta(days=1),
     }
     row.update(overrides)
@@ -96,11 +97,12 @@ def test_claim_by_namespace_authorized_member_succeeds(monkeypatch):
     message_id = uuid.uuid4()
     conn = FakeConn(
         selects=[_row(id=message_id)],
-        updates=[_row(id=message_id, status="claimed", claimed_at=NOW)],
+        updates=[_row(id=message_id, claimed_at=NOW)],
     )
     _patch_acquire(monkeypatch, conn)
     row = asyncio.run(messages.claim_message(message_id, _identity()))
-    assert row["status"] == "claimed"
+    assert row["delivery"] == "claimed"
+    assert row["status"] == "info"
 
 
 def test_claim_out_of_scope_namespace_404(monkeypatch):
@@ -130,11 +132,11 @@ def test_claim_admin_may_claim_any_accessible_namespace(monkeypatch):
     message_id = uuid.uuid4()
     conn = FakeConn(
         selects=[_row(id=message_id, namespace="team-b")],
-        updates=[_row(id=message_id, status="claimed", claimed_at=NOW)],
+        updates=[_row(id=message_id, claimed_at=NOW)],
     )
     _patch_acquire(monkeypatch, conn)
     row = asyncio.run(messages.claim_message(message_id, _identity(is_admin=True)))
-    assert row["status"] == "claimed"
+    assert row["delivery"] == "claimed"
 
 
 # ---- cancel authorization -------------------------------------------------------
@@ -144,13 +146,12 @@ def test_sender_may_cancel_own_pending(monkeypatch):
     message_id = uuid.uuid4()
     conn = FakeConn(
         selects=[_row(id=message_id)],
-        updates=[_row(id=message_id, status="cancelled", closed_at=NOW)],
+        updates=[_row(id=message_id, cancelled_at=NOW)],
     )
     _patch_acquire(monkeypatch, conn)
-    row = asyncio.run(
-        messages.cancel_message(message_id, _identity(key_id="sender-key-hash"))
-    )
-    assert row["status"] == "cancelled"
+    row = asyncio.run(messages.cancel_message(message_id, _identity(key_id="sender-key-hash")))
+    assert row["delivery"] == "cancelled"
+    assert row["status"] == "info"
 
 
 def test_cancel_by_other_member_404(monkeypatch):
@@ -165,11 +166,11 @@ def test_admin_may_cancel_any_pending(monkeypatch):
     message_id = uuid.uuid4()
     conn = FakeConn(
         selects=[_row(id=message_id, sender_key="sender-key-hash")],
-        updates=[_row(id=message_id, status="cancelled", closed_at=NOW)],
+        updates=[_row(id=message_id, cancelled_at=NOW)],
     )
     _patch_acquire(monkeypatch, conn)
     row = asyncio.run(messages.cancel_message(message_id, _identity(is_admin=True)))
-    assert row["status"] == "cancelled"
+    assert row["delivery"] == "cancelled"
 
 
 def test_cancel_non_pending_409(monkeypatch):
