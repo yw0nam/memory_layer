@@ -148,7 +148,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           author text NOT NULL,
           sender_key text NOT NULL,
           idempotency_key text,
-          created_at timestamptz NOT NULL DEFAULT now(),
+          created_at timestamptz NOT NULL,
           claimed_at timestamptz,
           cancelled_at timestamptz,
           superseded_at timestamptz,
@@ -178,7 +178,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           label text NOT NULL,
           home text NOT NULL DEFAULT 'default',
           is_admin boolean NOT NULL DEFAULT false,
-          created_at timestamptz NOT NULL DEFAULT now(),
+          created_at timestamptz NOT NULL,
           revoked_at timestamptz
         );
         ALTER TABLE {schema}.api_keys
@@ -201,7 +201,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
             CHECK (status IN ('queued', 'running', 'succeeded', 'no_op', 'failed')),
           key_id text NOT NULL,
           key_label text NOT NULL,
-          created_at timestamptz NOT NULL DEFAULT now(),
+          created_at timestamptz NOT NULL,
           updated_at timestamptz NOT NULL DEFAULT now(),
           error text,
           namespace text,

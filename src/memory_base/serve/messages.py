@@ -105,7 +105,7 @@ def normalize_scope(scope: Any) -> str:
             host, path = scp["host"], scp["path"]
         else:
             host, _, path = origin.partition("/")
-            path = path.split("?", 1)[0].split("#", 1)[0]
+        path = path.split("?", 1)[0].split("#", 1)[0]
         if not _ORIGIN_HOST_RE.fullmatch(host):
             raise ValueError(f"repo scope origin must name a remote host, not {host!r}")
         path = "/" + path.strip("/")
@@ -113,17 +113,20 @@ def normalize_scope(scope: Any) -> str:
             path = path[: -len(".git")]
         if not path.strip("/"):
             raise ValueError("repo scope origin must include a repository path")
-        normalized = f"repo:{host.lower()}{path}"
-        if len(normalized) > SCOPE_MAX_CHARS:
-            raise ValueError(f"scope must be at most {SCOPE_MAX_CHARS} chars")
-        return normalized
+        return _capped(f"repo:{host.lower()}{path}")
     if scope.startswith("project:"):
         rest = scope[len("project:") :]
         segments = rest.split("/")
         if len(segments) != 2 or not all(_PROJECT_SEGMENT_RE.fullmatch(s) for s in segments):
             raise ValueError("project scope must be project:<organization>/<project>")
-        return f"project:{segments[0].lower()}/{segments[1].lower()}"
+        return _capped(f"project:{segments[0].lower()}/{segments[1].lower()}")
     raise ValueError("scope must be repo:<origin> or project:<organization>/<project>")
+
+
+def _capped(scope: str) -> str:
+    if len(scope) > SCOPE_MAX_CHARS:
+        raise ValueError(f"scope must be at most {SCOPE_MAX_CHARS} chars")
+    return scope
 
 
 def _validate_ref(ref: Any) -> str:
@@ -434,7 +437,7 @@ async def send_message(
                 await conn.execute(
                     f"""
                     UPDATE "{PG_SCHEMA}".messages
-                    SET superseded_at = now()
+                    SET superseded_at = clock_timestamp()
                     WHERE namespace = $1 AND purpose = 'handoff' AND scope = $2
                       AND subject_key = $3 AND id <> $4
                       AND claimed_at IS NULL AND cancelled_at IS NULL
@@ -542,7 +545,7 @@ async def claim_message(message_id: uuid.UUID, key, *, connection=None) -> dict[
         updated = await conn.fetchrow(
             f"""
             UPDATE "{PG_SCHEMA}".messages
-            SET claimed_at = now()
+            SET claimed_at = clock_timestamp()
             WHERE id = $1
               AND claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL
               AND expires_at > now()
@@ -575,7 +578,7 @@ async def cancel_message(message_id: uuid.UUID, key, *, connection=None) -> dict
         updated = await conn.fetchrow(
             f"""
             UPDATE "{PG_SCHEMA}".messages
-            SET cancelled_at = now()
+            SET cancelled_at = clock_timestamp()
             WHERE id = $1
               AND claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL
               AND expires_at > now()

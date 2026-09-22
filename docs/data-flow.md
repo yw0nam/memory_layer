@@ -260,10 +260,12 @@ the cold ones when `ids` is omitted; the no-ids preview distinguishes
 `notes_to_archive` from `messages_to_delete`, and the confirm pass archives the notes
 and deletes claimed, cancelled, superseded, and expired messages, which also releases
 their idempotency keys. Archiving a note is reversible and deleting a message is not,
-so a member key drives only the note half: the message half is empty for it, and an
-admin key purges. Every mutating admin route previews by default and
+so a member key purges the message half only in the namespaces it owns — enough to
+drain one before unregistering it, not enough to touch a shared namespace. An admin
+key purges everywhere. Every mutating admin route previews by default and
 acts only with `{"confirm": true}`, and each is reachable over MCP as
 `list_memory_duplicates`, `archive_notes`, `restore_notes`, and `delete_notes`.
+`archive_notes` always names ids, so the message purge is a REST-only call.
 
 Namespace deletion counts messages as content: a namespace with messages — pending or
 terminal — cannot be unregistered until a purge removes them.

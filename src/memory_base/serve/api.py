@@ -516,7 +516,8 @@ async def admin_archive_route(request: Request) -> JSONResponse:
 
     The preview distinguishes the two halves: notes_to_archive and
     messages_to_delete (claimed, cancelled, superseded, or expired). Deleting a
-    message is permanent, so only an admin key sees or purges that half; an ids
+    message is permanent, so a member key purges only the namespaces it owns —
+    enough to unregister one, not enough to drain a shared namespace. An ids
     call selects rows in the caller's scope and never touches messages.
     """
     key = request.state.key
@@ -548,12 +549,13 @@ async def admin_archive_route(request: Request) -> JSONResponse:
             return JSONResponse({"archived": archived, "deleted": 0})
         return JSONResponse({"notes_to_archive": rows, "messages_to_delete": []})
     candidates = await admin.archive_candidates(now, namespaces=scope)
-    terminal = await messages.terminal_messages(scope) if key.is_admin else []
+    message_scope = None if key.is_admin else await namespaces.owned_by(key.label)
+    terminal = await messages.terminal_messages(message_scope)
     if body.get("confirm") is True:
         archived = await admin.archive_rows(
             [row["id"] for row in candidates], now, namespaces=scope, archived_by=author
         )
-        deleted = await messages.delete_terminal_messages(scope) if key.is_admin else 0
+        deleted = await messages.delete_terminal_messages(message_scope)
         return JSONResponse({"archived": archived, "deleted": deleted})
     return JSONResponse({"notes_to_archive": candidates, "messages_to_delete": terminal})
 

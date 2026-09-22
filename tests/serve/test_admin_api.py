@@ -33,7 +33,7 @@ Endpoint contract pinned by these tests:
     response ``{"archived": <count>, "deleted": <count>}``.
   - with ``ids``: only rows in the caller's scope are touched;
     ``messages_to_delete`` is always ``[]`` and ``deleted`` is always 0.
-  - a non-admin key never sees or deletes the message half.
+  - a non-admin key sees and deletes only the message rows in namespaces it owns.
 - ``POST /admin/restore {"ids": [...], "confirm": bool}``
   - confirm missing/false (dry-run): calls
     ``admin.rows_by_ids(ids, namespaces=<scope>)``; response
@@ -58,7 +58,7 @@ import asyncio
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import admin, api, auth, messages
+from memory_base.serve import admin, api, auth, messages, namespaces
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -294,8 +294,8 @@ def _member_key(monkeypatch):
     monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
 
 
-def test_admin_archive_never_purges_messages_for_a_member_key(monkeypatch):
-    calls = {"delete_terminal": 0, "terminal": 0, "archived": None}
+def test_admin_archive_purges_only_the_namespaces_a_member_owns(monkeypatch):
+    calls = {"terminal": None, "deleted": None, "archived": None}
 
     async def fake_archive_candidates(now, namespaces=None):
         return [{"id": "note:old", "kind": "agent_note", "hit_count": 0, "last_hit_at": None}]
@@ -304,31 +304,30 @@ def test_admin_archive_never_purges_messages_for_a_member_key(monkeypatch):
         calls["archived"] = ids
         return len(ids)
 
+    async def fake_owned_by(label):
+        assert label == "member"
+        return ["mine"]
+
     async def fake_terminal_messages(namespaces=None):
-        calls["terminal"] += 1
+        calls["terminal"] = namespaces
         return [{"id": "5f0d9d44-9a9d-4f0e-b7f6-6fa1e2b3c4d5", "status": "claimed"}]
 
     async def fake_delete_terminal_messages(namespaces=None):
-        calls["delete_terminal"] += 1
-        return 7
+        calls["deleted"] = namespaces
+        return 1
 
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    monkeypatch.setattr(namespaces, "owned_by", fake_owned_by)
     monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
     monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
     _member_key(monkeypatch)
 
-    preview = client.post("/admin/archive", json={})
-    assert preview.json() == {
-        "notes_to_archive": [
-            {"id": "note:old", "kind": "agent_note", "hit_count": 0, "last_hit_at": None}
-        ],
-        "messages_to_delete": [],
-    }
     confirmed = client.post("/admin/archive", json={"confirm": True, "author": "natsume"})
-    assert confirmed.json() == {"archived": 1, "deleted": 0}
-    assert calls["delete_terminal"] == 0
-    assert calls["terminal"] == 0
+    assert confirmed.json() == {"archived": 1, "deleted": 1}
+    # "default" and "shared" are readable but unowned: neither half may touch them.
+    assert calls["terminal"] == ["mine"]
+    assert calls["deleted"] == ["mine"]
     assert calls["archived"] == ["note:old"]
 
 

@@ -765,7 +765,7 @@ def test_a_member_purge_leaves_messages_it_does_not_own(monkeypatch):
     """A member sees and purges only the namespaces it owns, not every namespace it reads."""
     subject = f"zzmsg_{uuid.uuid4().hex[:8]} shared"
     try:
-        sent = client.post("/messages", json=_send(subject))
+        sent = _send(subject)
         assert sent.status_code == 201
         assert client.delete(f"/messages/{sent.json()['id']}").status_code == 200
 

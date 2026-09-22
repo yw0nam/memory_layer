@@ -125,6 +125,16 @@ async def get_namespace(name: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def owned_by(label: str) -> list[str]:
+    """The namespaces this key label owns; the only ones it may purge messages from."""
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        rows = await conn.fetch(
+            f'SELECT name FROM "{PG_SCHEMA}".namespaces WHERE owner = $1 ORDER BY name', label
+        )
+    return [row["name"] for row in rows]
+
+
 async def delete_namespace(name: str) -> None:
     """Unregister a namespace; refuses the reserved default, unknown, or non-empty ones."""
     if name == DEFAULT_NAMESPACE:
