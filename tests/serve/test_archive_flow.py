@@ -36,22 +36,6 @@ from memory_base.serve import admin, api
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 
-def _db_reachable() -> bool:
-    async def _check() -> None:
-        conn = await asyncpg.connect(db_url(), timeout=5)
-        await conn.close()
-
-    try:
-        asyncio.run(_check())
-        return True
-    except Exception:
-        return False
-
-
-_DB = _db_reachable()
-requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
-
-
 def _random_vec(seed: int) -> str:
     return vector_literal(np.random.default_rng(seed).normal(size=EMB_DIM))
 
@@ -128,7 +112,6 @@ async def _archived_at(row_id: str):
 
 
 @pytest.mark.integration
-@requires_db
 def test_full_archive_and_note_lifecycle():
     now_real = time.time()
     token = f"zzzarchiveflow{int(now_real)}"
@@ -281,7 +264,6 @@ def test_full_archive_and_note_lifecycle():
 
 
 @pytest.mark.integration
-@requires_db
 def test_duplicates_keep_pair_found_only_from_larger_id_direction():
     token = time.time_ns()
     smaller_id = f"duplicate-recall-a-{token}"

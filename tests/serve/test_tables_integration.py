@@ -26,21 +26,6 @@ SUMMARY = "SQL lane integration grouped values table marker."
 ROW_SECRET = "row-secret-never-embedded"
 
 
-def _db_reachable() -> bool:
-    async def check():
-        conn = await asyncpg.connect(db_url(), timeout=5)
-        await conn.close()
-
-    try:
-        asyncio.run(check())
-        return True
-    except Exception:
-        return False
-
-
-if not _db_reachable():
-    pytest.skip("DB is not configured or not reachable", allow_module_level=True)
-
 pytestmark = pytest.mark.integration
 
 

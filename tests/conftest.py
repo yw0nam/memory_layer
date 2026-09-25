@@ -1,11 +1,156 @@
-"""Shared fixtures for the test suite."""
+"""Shared fixtures for the test suite.
+
+No test reaches the deployment database. Unit tests see an unreachable DB_URL;
+integration tests get a throwaway Postgres container that this session starts on
+tmpfs and removes at the end, and every on-disk path points at a session tempdir.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import os
+import secrets
+import shutil
+import subprocess
+import tempfile
+import time
+from pathlib import Path
 
 import httpx
 import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+LIVE_LABEL = "memory-base-live-test"
+OFFLINE_DB_URL = "postgresql://offline:offline@127.0.0.1:9/offline"
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _remove_orphaned_state_dirs() -> None:
+    """A killed session cannot remove its tempdir; the next one does."""
+    for path in Path(tempfile.gettempdir()).glob("memory-base-tests-*"):
+        pid = path.name.split("-")[3]
+        if pid.isdigit() and not _alive(int(pid)):
+            shutil.rmtree(path, ignore_errors=True)
+
+
+_remove_orphaned_state_dirs()
+# Set before any memory_base import: these paths are read at module import time.
+_STATE_DIR = Path(tempfile.mkdtemp(prefix=f"memory-base-tests-{os.getpid()}-"))
+os.environ["DB_URL"] = OFFLINE_DB_URL
+os.environ["INGEST_SPOOL"] = str(_STATE_DIR / "ingest-spool")
+os.environ["REPO_CACHE"] = str(_STATE_DIR / "repos-cache")
+os.environ["LOG_DIR"] = str(_STATE_DIR / "logs")
+os.environ["COCOINDEX_DB"] = str(_STATE_DIR / "cocoindex")
+
+
+_live_container: str | None = None
+
+
+def _docker(*args: str) -> str:
+    return subprocess.run(
+        ["docker", *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _remove_orphaned_live_databases() -> None:
+    """A killed session cannot tear down its container; the next one does."""
+    listing = _docker(
+        "ps", "-a", "--filter", f"label={LIVE_LABEL}", "--format", '{{.ID}} {{.Label "pid"}}'
+    )
+    for line in listing.splitlines():
+        container, _, pid = line.partition(" ")
+        if not pid.isdigit() or not _alive(int(pid)):
+            _docker("rm", "-f", container)
+
+
+def _prepare_schema(url: str, deadline_seconds: float = 90) -> None:
+    """Wait for the fresh server to accept connections, then create the schema."""
+    import asyncpg
+
+    from memory_base.core.schema import ensure_schema
+
+    async def _connect_and_prepare() -> None:
+        conn = await asyncpg.connect(url, timeout=3)
+        try:
+            await ensure_schema(conn)
+        finally:
+            await conn.close()
+
+    deadline = time.monotonic() + deadline_seconds
+    while True:
+        try:
+            asyncio.run(_connect_and_prepare())
+            return
+        except (OSError, asyncpg.CannotConnectNowError, asyncpg.ConnectionDoesNotExistError):
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.5)
+
+
+def _start_live_database() -> None:
+    """A fresh Postgres from db.Dockerfile on tmpfs, private to this session."""
+    global _live_container
+    _remove_orphaned_live_databases()
+    image = _docker("build", "-q", "-f", str(ROOT / "db.Dockerfile"), str(ROOT))
+    password = secrets.token_hex(16)
+    _live_container = _docker(
+        "run", "-d", "--rm",
+        "--label", LIVE_LABEL, "--label", f"pid={os.getpid()}",
+        "--tmpfs", "/var/lib/postgresql/data",
+        "-e", "POSTGRES_USER=memory", "-e", f"POSTGRES_PASSWORD={password}",
+        "-e", "POSTGRES_DB=memory_base",
+        "-p", "127.0.0.1::5432",
+        image, "postgres", "-c", "shared_preload_libraries=pg_textsearch",
+    )  # fmt: skip
+    port = _docker("port", _live_container, "5432/tcp").splitlines()[0].rsplit(":", 1)[1]
+    url = f"postgresql://memory:{password}@127.0.0.1:{port}/memory_base"
+    os.environ["DB_URL"] = url
+    os.environ["TABLES_QUERY_PASSWORD"] = secrets.token_hex(16)
+    _prepare_schema(url)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    """Start the throwaway database only when an integration test survived selection."""
+    live = [item for item in items if item.get_closest_marker("integration") is not None]
+    if not live:
+        return
+    if shutil.which("docker") is None:
+        skip = pytest.mark.skip(reason="integration tests need docker for their database")
+        for item in live:
+            item.add_marker(skip)
+        return
+    _start_live_database()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if _live_container is not None:
+        _docker("rm", "-f", _live_container)
+    shutil.rmtree(_STATE_DIR, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def only_integration_tests_reach_the_database(request, monkeypatch):
+    """Unit tests see an unreachable DB_URL; integration tests get the chat-model gate pinned open."""
+    if request.node.get_closest_marker("integration") is None:
+        monkeypatch.setenv("DB_URL", OFFLINE_DB_URL)
+        return
+
+    from memory_base.serve import notes
+
+    async def accept(content, kind):
+        return notes.ContentVerdict(accepted=True, reason="integration tests pin the gate open")
+
+    monkeypatch.setattr(notes, "judge_note_content", accept)
 
 
 @pytest.fixture(autouse=True)

@@ -36,22 +36,6 @@ def client():
         yield c
 
 
-def _db_reachable() -> bool:
-    async def _check() -> None:
-        conn = await asyncpg.connect(db_url(), timeout=5)
-        await conn.close()
-
-    try:
-        asyncio.run(_check())
-        return True
-    except Exception:
-        return False
-
-
-_DB = _db_reachable()
-requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
-
-
 async def _delete_note(note_id: str) -> None:
     conn = await asyncpg.connect(db_url())
     try:
@@ -98,7 +82,6 @@ async def _delete_retrieval_log(query_text: str) -> None:
 
 
 @pytest.mark.integration
-@requires_db
 def test_flush_removes_rows_older_than_retention():
     old_query = f"retention-old-{time.time_ns()}"
     new_query = f"retention-new-{time.time_ns()}"
@@ -159,7 +142,6 @@ async def _fetch_chunks_by_ids(ids: list[str]):
 
 
 @pytest.mark.integration
-@requires_db
 def test_search_logs_retrieval_and_bumps_hit_columns_after_flush(client):
     """Every returned hit is logged and its memory_chunks row is bumped on flush.
 
@@ -200,7 +182,6 @@ def test_search_logs_retrieval_and_bumps_hit_columns_after_flush(client):
 
 
 @pytest.mark.integration
-@requires_db
 def test_search_logs_the_filters_that_narrowed_it(client):
     """An empty result is only attributable if the log says what narrowed the search."""
     content = "access-log filter pin: zzzfilterpin unique retrieval marker"
@@ -245,7 +226,6 @@ async def _fetch_logged_hit_counts(query_text: str, note_id: str) -> int:
 
 
 @pytest.mark.integration
-@requires_db
 def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
     """Two searches collapse into one batched bump that /admin/notes reports."""
     content = "access-log integration pin: zzzflushpin buffered counter advance marker"
@@ -281,7 +261,6 @@ def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
 
 
 @pytest.mark.integration
-@requires_db
 def test_save_memory_endpoint_roundtrip_and_dedup(client):
     content = "access-log integration pin: save_memory REST endpoint roundtrip dedup check"
     note_id = build_note_row(content, "note", ["test"], NOW)["id"]
@@ -319,7 +298,6 @@ def test_save_memory_endpoint_roundtrip_and_dedup(client):
 
 
 @pytest.mark.integration
-@requires_db
 def test_ensure_schema_idempotent_and_adds_access_log_objects():
     async def _run():
         conn = await asyncpg.connect(db_url())

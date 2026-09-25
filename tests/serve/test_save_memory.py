@@ -144,22 +144,6 @@ def test_malformed_tags_rejected(tags):
 # ---- integration: real DB + embedder --------------------------------------
 
 
-def _db_reachable() -> bool:
-    async def _check() -> None:
-        conn = await asyncpg.connect(db_url(), timeout=5)
-        await conn.close()
-
-    try:
-        asyncio.run(_check())
-        return True
-    except Exception:
-        return False
-
-
-_DB = _db_reachable()
-requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
-
-
 async def _delete(note_id: str) -> None:
     conn = await asyncpg.connect(db_url())
     try:
@@ -189,7 +173,6 @@ async def _count(note_id: str) -> int:
 
 
 @pytest.mark.integration
-@requires_db
 def test_save_memory_stores_row_in_db(rest_in_process):
     content = "save_memory integration: notes are stored without LLM distillation"
     note_id = build_note_row(content, "note", ["test"], NOW)["id"]
@@ -213,7 +196,6 @@ def test_save_memory_stores_row_in_db(rest_in_process):
 
 
 @pytest.mark.integration
-@requires_db
 def test_save_memory_duplicate_is_noop(rest_in_process):
     content = "save_memory integration: re-saving identical content is idempotent"
     note_id = build_note_row(content, "note", ["test"], NOW)["id"]
@@ -229,7 +211,6 @@ def test_save_memory_duplicate_is_noop(rest_in_process):
 
 
 @pytest.mark.integration
-@requires_db
 def test_saved_note_found_by_search(rest_in_process):
     content = "save_memory integration: pgvector halfvec powers hybrid retrieval search"
     note_id = build_note_row(content, "note", ["test"], NOW)["id"]
@@ -243,7 +224,6 @@ def test_saved_note_found_by_search(rest_in_process):
 
 
 @pytest.mark.integration
-@requires_db
 def test_same_content_two_namespaces_are_independent_rows():
     """Regression: identical content saved into two namespaces must not collide
     on id and silently no-op the second namespace's save (issue #81 review)."""
