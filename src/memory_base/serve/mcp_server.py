@@ -33,6 +33,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
 from memory_base.adapters.document import extension_for
+from memory_base.core.config import SERVICE_TIMEOUT_SECONDS
 from memory_base.core.logger import setup_logging
 
 DEFAULT_HOST = "0.0.0.0"
@@ -104,35 +105,41 @@ mcp = FastMCP(
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(base_url=REST_URL)
+    # Outlasts every backend ceiling, so the backend's own error arrives before this gives up.
+    return httpx.AsyncClient(base_url=REST_URL, timeout=SERVICE_TIMEOUT_SECONDS)
 
 
-def _raise_backend_error(response: httpx.Response) -> None:
+def _raise_backend_error(response: httpx.Response, call: str) -> None:
     try:
         message = response.json()["error"]
     except (ValueError, KeyError, TypeError):
-        message = f"backend returned {response.status_code}"
+        body = response.text.strip()[:500]
+        message = f"{call} failed: backend returned {response.status_code} {response.reason_phrase}"
+        if body:
+            message += f": {body}"
     raise ValueError(message)
 
 
-async def _call(
-    method: str,
-    path: str,
-    *,
-    expect_errors: frozenset[int] = frozenset({401, 403}),
-    **kwargs: Any,
-) -> Any:
+async def _call(method: str, path: str, **kwargs: Any) -> Any:
     """Issue a REST call and return the decoded JSON body.
 
-    Statuses in `expect_errors` raise via `_raise_backend_error` (backend
-    error payload); any other non-2xx raises through `raise_for_status`.
+    Any failure raises ValueError with its reason: the backend's `error` payload
+    for a non-2xx status, or which call timed out or could not reach the backend.
     """
-    async with _client() as client:
-        response = await client.request(method, path, **kwargs)
-        if response.status_code in expect_errors:
-            _raise_backend_error(response)
-        response.raise_for_status()
-        return response.json()
+    call = f"{method} {path}"
+    try:
+        async with _client() as client:
+            response = await client.request(method, path, **kwargs)
+    except httpx.TimeoutException as exc:
+        raise ValueError(f"{call} timed out waiting for the REST backend at {REST_URL}") from exc
+    except httpx.TransportError as exc:
+        reason = str(exc) or type(exc).__name__
+        raise ValueError(
+            f"{call} failed: REST backend at {REST_URL} is unreachable ({reason})"
+        ) from exc
+    if not response.is_success:
+        _raise_backend_error(response, call)
+    return response.json()
 
 
 def _api_key(ctx: "Context | None") -> str | None:
@@ -194,7 +201,6 @@ async def _search(
         "/search",
         json=body,
         headers=_auth_headers(ctx),
-        expect_errors=frozenset({400, 401, 403, 503}),
     )
 
 
@@ -375,7 +381,6 @@ async def list_notes(
         "/notes",
         params=params,
         headers=_auth_headers(ctx),
-        expect_errors=frozenset({400, 401, 403}),
     )
 
 
@@ -444,11 +449,7 @@ async def save_memory(
         "/save_memory",
         json=body,
         headers=_auth_headers(ctx),
-        expect_errors=frozenset({400, 401, 403, 409}),
     )
-
-
-LIFECYCLE_ERRORS = frozenset({400, 401, 403, 404})
 
 
 @mcp.tool()
@@ -478,7 +479,6 @@ async def list_memory_duplicates(
         "/admin/duplicates",
         params=params,
         headers=_auth_headers(ctx),
-        expect_errors=LIFECYCLE_ERRORS,
     )
 
 
@@ -503,7 +503,6 @@ async def archive_notes(
         "/admin/archive",
         json=body,
         headers=_auth_headers(ctx),
-        expect_errors=LIFECYCLE_ERRORS,
     )
 
 
@@ -526,7 +525,6 @@ async def restore_notes(
         "/admin/restore",
         json=body,
         headers=_auth_headers(ctx),
-        expect_errors=LIFECYCLE_ERRORS,
     )
 
 
@@ -550,7 +548,6 @@ async def delete_notes(
         "/admin/notes/delete",
         json=body,
         headers=_auth_headers(ctx),
-        expect_errors=LIFECYCLE_ERRORS,
     )
 
 
@@ -577,7 +574,6 @@ async def query_table(
         "/tables/query",
         json=body,
         headers=_auth_headers(ctx),
-        expect_errors=frozenset({400, 401, 403, 408, 413}),
     )
 
 
@@ -625,7 +621,6 @@ async def ingest_document(
         data=data,
         files={"file": (filename, content.encode("utf-8"))},
         headers=_auth_headers(ctx),
-        expect_errors=frozenset({400, 401, 403, 413, 415, 429}),
     )
     return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
@@ -648,7 +643,6 @@ async def remove_document(
         f"/ingest/documents/{document_id}",
         params=params,
         headers=_auth_headers(ctx),
-        expect_errors=frozenset({400, 401, 403, 404}),
     )
 
 
@@ -678,7 +672,6 @@ async def ingest_repo(
         "/repos",
         json=body,
         headers=_auth_headers(ctx),
-        expect_errors=frozenset({400, 401, 403, 429}),
     )
     return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
@@ -696,7 +689,6 @@ async def remove_repo(name: str, ctx: Context | None = None) -> dict[str, Any]:
         "DELETE",
         f"/repos/{name}",
         headers=_auth_headers(ctx),
-        expect_errors=frozenset({400, 401, 403, 404, 429}),
     )
     return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
