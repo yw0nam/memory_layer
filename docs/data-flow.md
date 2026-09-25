@@ -228,7 +228,7 @@ and a `limit` (default 50, max 100). No query, no embedding call, no access to
 
 Delivery is at-most-once. `POST /messages/{id}/claim` is a single conditional UPDATE
 on the lifecycle timestamps (`claimed_at IS NULL AND cancelled_at IS NULL AND
-superseded_at IS NULL AND expires_at > now()`), so two concurrent claims are decided by
+superseded_at IS NULL AND expires_at > clock_timestamp()`), so two concurrent claims are decided by
 database commit order: exactly one returns the row, the other gets 409. There is no
 lease, ack, or re-read. `DELETE /messages/{id}` cancels a pending message — the
 sender's own, or any accessible one for an admin key. Terminal rows are invisible to

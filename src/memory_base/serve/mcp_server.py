@@ -73,7 +73,7 @@ reason; pass allow_restatement only when it records a durable fact that merely c
 
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
-searchable, read only by claiming. At the start of a session, list_messages for your
+searchable, listed while pending and consumed by claiming. At the start of a session, list_messages for your
 namespaces and claim_message each one you act on — a claim is exclusive, and it fires
 only when called, never automatically from a prefetch hook. send_message takes two
 shapes: a general message (status "info", no scope) addressed to a namespace, or — with

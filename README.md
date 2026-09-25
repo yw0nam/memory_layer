@@ -10,7 +10,8 @@ chunked by tree-sitter. Raw transcripts and raw files are never embedded. Tabula
 documents keep their data rows as structured, never-embedded rows behind a read-only
 SQL interface, so questions about the numbers are computed rather than retrieved.
 Agent-authored messages — one-time signals and handoff snapshots — are stored as
-canonical Markdown, never embedded, and read by claiming instead of search.
+canonical Markdown, never embedded, listed while pending and consumed by claiming
+instead of search.
 
 ## Architecture
 
