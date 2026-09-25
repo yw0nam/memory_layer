@@ -549,14 +549,14 @@ async def admin_archive_route(request: Request) -> JSONResponse:
             return JSONResponse({"archived": archived, "deleted": 0})
         return JSONResponse({"notes_to_archive": rows, "messages_to_delete": []})
     candidates = await admin.archive_candidates(now, namespaces=scope)
-    message_scope = None if key.is_admin else await namespaces.owned_by(key.label)
-    terminal = await messages.terminal_messages(message_scope)
+    owner = None if key.is_admin else key.label
     if body.get("confirm") is True:
         archived = await admin.archive_rows(
             [row["id"] for row in candidates], now, namespaces=scope, archived_by=author
         )
-        deleted = await messages.delete_terminal_messages(message_scope)
+        deleted = await messages.delete_terminal_messages(owner)
         return JSONResponse({"archived": archived, "deleted": deleted})
+    terminal = await messages.terminal_messages(owner)
     return JSONResponse({"notes_to_archive": candidates, "messages_to_delete": terminal})
 
 

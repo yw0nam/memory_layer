@@ -58,7 +58,7 @@ import asyncio
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import admin, api, auth, messages, namespaces
+from memory_base.serve import admin, api, auth, messages
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 

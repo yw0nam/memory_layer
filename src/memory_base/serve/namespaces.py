@@ -50,8 +50,10 @@ async def _exists_in_conn(conn: Any, name: str) -> bool:
 
 
 async def require_registered(conn: Any, name: str) -> None:
-    """Raise NamespaceError unless name is registered; reuses the caller's connection."""
-    if not await _exists_in_conn(conn, name):
+    """Raise NamespaceError unless name is registered; holds it against deletion until commit."""
+    if not await conn.fetchval(
+        f'SELECT 1 FROM "{PG_SCHEMA}".namespaces WHERE name = $1 FOR SHARE', name
+    ):
         raise NamespaceError(f"unregistered namespace: {name}")
 
 
@@ -125,16 +127,6 @@ async def get_namespace(name: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-async def owned_by(label: str) -> list[str]:
-    """The namespaces this key label owns; the only ones it may purge messages from."""
-    async with db.acquire() as conn:
-        await ensure_schema_once(conn)
-        rows = await conn.fetch(
-            f'SELECT name FROM "{PG_SCHEMA}".namespaces WHERE owner = $1 ORDER BY name', label
-        )
-    return [row["name"] for row in rows]
-
-
 async def delete_namespace(name: str) -> None:
     """Unregister a namespace; refuses the reserved default, unknown, or non-empty ones."""
     if name == DEFAULT_NAMESPACE:
@@ -142,7 +134,10 @@ async def delete_namespace(name: str) -> None:
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
-            if not await _exists_in_conn(conn, name):
+            # Waits out every writer holding the row, so the emptiness check sees their rows.
+            if not await conn.fetchval(
+                f'SELECT 1 FROM "{PG_SCHEMA}".namespaces WHERE name = $1 FOR UPDATE', name
+            ):
                 raise NamespaceNotFoundError(f"unknown namespace: {name}")
             has_rows = await conn.fetchval(
                 f"""

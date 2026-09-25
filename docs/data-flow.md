@@ -76,7 +76,9 @@ Messages are stored exactly as the renderer produced them — the server never
 summarizes, embeds, or gates them. A send without a scope is a general message
 (`status: "info"`) for one namespace; a send with a portable scope is a handoff
 snapshot (`status: "in_progress"`, `"blocked"`, or `"completed"`), and any sender who
-can access the namespace may publish the next snapshot of a subject. Verification is
+can access the namespace may publish the next snapshot of a subject. A `repo:` scope
+names a remote host, so local paths, localhost, and private/loopback/link-local IP
+literals are refused as not portable. Verification is
 exactly `{command, status, result}` with `passed|failed|not_run`; refs are at most 10
 absolute https URLs, with credentials, localhost, private/loopback/link-local IP
 literals, and local paths rejected without fetching. An optional `idempotency_key`

@@ -106,7 +106,7 @@ def normalize_scope(scope: Any) -> str:
         else:
             host, _, path = origin.partition("/")
         path = path.split("?", 1)[0].split("#", 1)[0]
-        if not _ORIGIN_HOST_RE.fullmatch(host):
+        if not _ORIGIN_HOST_RE.fullmatch(host) or _is_local_host(host):
             raise ValueError(f"repo scope origin must name a remote host, not {host!r}")
         path = "/" + path.strip("/")
         if path.endswith(".git"):
@@ -129,6 +129,17 @@ def _capped(scope: str) -> str:
     return scope
 
 
+def _is_local_host(host: str) -> bool:
+    host = host.lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private or address.is_link_local
+
+
 def _validate_ref(ref: Any) -> str:
     if not isinstance(ref, str) or not ref.strip():
         raise ValueError("each ref must be an absolute https URL")
@@ -143,15 +154,8 @@ def _validate_ref(ref: Any) -> str:
     host = parts.hostname
     if host is None:
         raise ValueError(f"ref must include a host: {ref!r}")
-    if host == "localhost" or host.endswith(".localhost"):
-        raise ValueError(f"ref must not point at localhost: {ref!r}")
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        pass
-    else:
-        if address.is_loopback or address.is_private or address.is_link_local:
-            raise ValueError(f"ref must not point at a local address: {ref!r}")
+    if _is_local_host(host):
+        raise ValueError(f"ref must not point at a local address: {ref!r}")
     return ref
 
 
@@ -548,7 +552,7 @@ async def claim_message(message_id: uuid.UUID, key, *, connection=None) -> dict[
             SET claimed_at = clock_timestamp()
             WHERE id = $1
               AND claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL
-              AND expires_at > now()
+              AND expires_at > clock_timestamp()
             RETURNING {_PUBLIC_COLUMNS}
             """,
             message_id,
@@ -581,7 +585,7 @@ async def cancel_message(message_id: uuid.UUID, key, *, connection=None) -> dict
             SET cancelled_at = clock_timestamp()
             WHERE id = $1
               AND claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL
-              AND expires_at > now()
+              AND expires_at > clock_timestamp()
             RETURNING {_PUBLIC_COLUMNS}
             """,
             message_id,
@@ -603,13 +607,19 @@ _TERMINAL_PREDICATE = (
 )
 
 
-async def terminal_messages(namespaces: list[str] | None = None) -> list[dict[str, Any]]:
+def _owner_filter(owner: str | None) -> tuple[str, list[Any]]:
+    """Scope a purge to the namespaces owner holds at execution time; None means all."""
+    if owner is None:
+        return "", []
+    return (
+        f' AND namespace IN (SELECT name FROM "{PG_SCHEMA}".namespaces WHERE owner = $1)',
+        [owner],
+    )
+
+
+async def terminal_messages(owner: str | None = None) -> list[dict[str, Any]]:
     """Claimed, cancelled, superseded, or expired messages, for the purge preview."""
-    args: list[Any] = []
-    scope_sql = ""
-    if namespaces is not None:
-        args.append(namespaces)
-        scope_sql = f" AND namespace = ANY(${len(args)}::text[])"
+    scope_sql, args = _owner_filter(owner)
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         rows = await conn.fetch(
@@ -624,13 +634,9 @@ async def terminal_messages(namespaces: list[str] | None = None) -> list[dict[st
     return [public_row(row) for row in rows]
 
 
-async def delete_terminal_messages(namespaces: list[str] | None = None) -> int:
+async def delete_terminal_messages(owner: str | None = None) -> int:
     """Delete claimed/cancelled/superseded/expired messages; releasing idempotency keys."""
-    args: list[Any] = []
-    scope_sql = ""
-    if namespaces is not None:
-        args.append(namespaces)
-        scope_sql = f" AND namespace = ANY(${len(args)}::text[])"
+    scope_sql, args = _owner_filter(owner)
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         status = await conn.execute(

@@ -39,8 +39,8 @@ found, the rows are computed over.
 _Avoid_: table chunks, row chunks, records
 
 **Message**:
-An agent-authored, addressed one-time signal, stored as canonical Markdown in `messages`
-and read by claiming — never embedded, never returned by search. Operational state with
+An agent-authored, addressed one-time signal, stored as canonical Markdown in `messages`,
+listed while pending and consumed by claiming — never embedded, never returned by search. Operational state with
 a report status (`info`), distinct from a note's durable knowledge.
 _Avoid_: notification, inbox item, chat message
 
