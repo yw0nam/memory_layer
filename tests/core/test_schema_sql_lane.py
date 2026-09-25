@@ -43,6 +43,19 @@ def test_ensure_schema_adds_the_api_key_author_allowlist(monkeypatch):
     assert "ADD COLUMN IF NOT EXISTS authors text[] NOT NULL DEFAULT '{}'" in sql
 
 
+def test_api_keys_and_jobs_stamp_their_own_created_at(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    sql = "\n".join(conn.queries)
+    for table in ("api_keys", "jobs"):
+        body = sql.split(f'CREATE TABLE IF NOT EXISTS "scratch_schema".{table} (', 1)[1]
+        body = body.split(");", 1)[0]
+        assert "created_at timestamptz NOT NULL DEFAULT now()" in body, table
+
+
 def test_production_schema_self_heals_query_role_and_hardens_function_acls(
     monkeypatch,
 ):

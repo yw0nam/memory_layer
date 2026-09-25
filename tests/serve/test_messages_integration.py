@@ -22,7 +22,7 @@ from starlette.testclient import TestClient
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
-from memory_base.serve import api, auth, messages, notes
+from memory_base.serve import api, auth, messages, namespaces, notes
 
 pytestmark = pytest.mark.integration
 
@@ -730,6 +730,64 @@ def test_namespace_deletion_waits_for_messages(monkeypatch):
         assert client.delete(f"/namespaces/{namespace}").status_code == 200
     finally:
         asyncio.run(_cleanup(subject, namespace=namespace))
+
+
+def test_namespace_deletion_racing_a_send_never_leaves_an_orphan_message():
+    namespace = f"msg-it-{uuid.uuid4().hex[:8]}"
+    subject = f"zzmsg_{uuid.uuid4().hex[:8]} racing delete"
+    try:
+        assert client.post("/namespaces", json={"name": namespace}).status_code == 201
+
+        async def _run():
+            await db.get_pool()
+            async with connections(1) as (sender,):
+                async with sender.transaction():
+                    await namespaces.require_registered(sender, namespace)
+                    deletion = asyncio.create_task(namespaces.delete_namespace(namespace))
+                    await asyncio.sleep(0.3)
+                    await sender.execute(
+                        f"""
+                        INSERT INTO "{PG_SCHEMA}".messages
+                          (id, namespace, purpose, subject, subject_key, status, content,
+                           author, sender_key, created_at, expires_at)
+                        VALUES ($1, $2, 'message', $3, $3, 'info', 'c', 'claude-code', 'k',
+                                clock_timestamp(), clock_timestamp() + interval '1 day')
+                        """,
+                        uuid.uuid4(),
+                        namespace,
+                        subject,
+                    )
+                return await asyncio.gather(deletion, return_exceptions=True)
+
+        (outcome,) = asyncio.run(_run())
+        assert isinstance(outcome, namespaces.NamespaceNotEmptyError)
+    finally:
+        asyncio.run(_cleanup(subject, namespace=namespace))
+
+
+def test_a_claim_waiting_on_a_row_lock_past_expiry_is_refused():
+    marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
+    try:
+        message_id = uuid.UUID(_send(f"{marker} expiring under lock").json()["id"])
+
+        async def _run():
+            async with connections(2) as (locker, claimer):
+                async with locker.transaction():
+                    await locker.execute(
+                        f'UPDATE "{PG_SCHEMA}".messages '
+                        "SET expires_at = clock_timestamp() + interval '1 second' WHERE id = $1",
+                        message_id,
+                    )
+                    claim = asyncio.create_task(
+                        messages.claim_message(message_id, IDENTITY, connection=claimer)
+                    )
+                    await asyncio.sleep(1.5)
+                return await asyncio.gather(claim, return_exceptions=True)
+
+        (outcome,) = asyncio.run(_run())
+        assert isinstance(outcome, messages.MessageConflict)
+    finally:
+        asyncio.run(_cleanup(marker))
 
 
 def test_a_member_owner_can_purge_and_unregister_its_own_namespace(monkeypatch):

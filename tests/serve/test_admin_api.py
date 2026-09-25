@@ -24,12 +24,12 @@ Endpoint contract pinned by these tests:
 - ``POST /admin/archive {"confirm": bool}``
   - confirm missing/false (dry-run): calls
     ``admin.archive_candidates(now, namespaces=<scope>)`` and
-    ``messages.terminal_messages(namespaces=<scope>)``; response
+    ``messages.terminal_messages(owner=<member label, or None for an admin>)``; response
     ``{"notes_to_archive": <that list>, "messages_to_delete": <terminal messages>}``;
     neither ``admin.archive_rows`` nor ``messages.delete_terminal_messages`` is called.
-  - confirm true: calls ``admin.archive_candidates(now, namespaces=<scope>)``
-    and ``messages.terminal_messages(namespaces=<scope>)``, then archives the
-    note candidates and deletes the terminal messages;
+  - confirm true: calls ``admin.archive_candidates(now, namespaces=<scope>)``,
+    archives the note candidates, and calls
+    ``messages.delete_terminal_messages(owner=...)`` without loading the preview;
     response ``{"archived": <count>, "deleted": <count>}``.
   - with ``ids``: only rows in the caller's scope are touched;
     ``messages_to_delete`` is always ``[]`` and ``deleted`` is always 0.
@@ -267,10 +267,10 @@ def test_duplicate_pairs_carry_each_sides_author(monkeypatch):
 def _patch_message_purge(monkeypatch, terminal=(), deleted=0):
     """Stub the message-lane half of POST /admin/archive (no DB in unit tests)."""
 
-    async def fake_terminal_messages(namespaces=None):
+    async def fake_terminal_messages(owner=None):
         return list(terminal)
 
-    async def fake_delete_terminal_messages(namespaces=None):
+    async def fake_delete_terminal_messages(owner=None):
         return deleted
 
     monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
@@ -295,7 +295,7 @@ def _member_key(monkeypatch):
 
 
 def test_admin_archive_purges_only_the_namespaces_a_member_owns(monkeypatch):
-    calls = {"terminal": None, "deleted": None, "archived": None}
+    calls = {"terminal": [], "deleted": None, "archived": None}
 
     async def fake_archive_candidates(now, namespaces=None):
         return [{"id": "note:old", "kind": "agent_note", "hit_count": 0, "last_hit_at": None}]
@@ -304,30 +304,27 @@ def test_admin_archive_purges_only_the_namespaces_a_member_owns(monkeypatch):
         calls["archived"] = ids
         return len(ids)
 
-    async def fake_owned_by(label):
-        assert label == "member"
-        return ["mine"]
-
-    async def fake_terminal_messages(namespaces=None):
-        calls["terminal"] = namespaces
+    async def fake_terminal_messages(owner=None):
+        calls["terminal"].append(owner)
         return [{"id": "5f0d9d44-9a9d-4f0e-b7f6-6fa1e2b3c4d5", "status": "claimed"}]
 
-    async def fake_delete_terminal_messages(namespaces=None):
-        calls["deleted"] = namespaces
+    async def fake_delete_terminal_messages(owner=None):
+        calls["deleted"] = owner
         return 1
 
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
-    monkeypatch.setattr(namespaces, "owned_by", fake_owned_by)
     monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
     monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
     _member_key(monkeypatch)
 
+    previewed = client.post("/admin/archive", json={"author": "natsume"})
+    assert previewed.status_code == 200
     confirmed = client.post("/admin/archive", json={"confirm": True, "author": "natsume"})
     assert confirmed.json() == {"archived": 1, "deleted": 1}
-    # "default" and "shared" are readable but unowned: neither half may touch them.
-    assert calls["terminal"] == ["mine"]
-    assert calls["deleted"] == ["mine"]
+    # Ownership resolves inside the purge query, so a member names itself, never a list.
+    assert calls["terminal"] == ["member"]
+    assert calls["deleted"] == "member"
     assert calls["archived"] == ["note:old"]
 
 
@@ -345,7 +342,7 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
         calls["archive_rows"] = (ids, now)
         return len(ids)
 
-    async def fake_delete_terminal_messages(namespaces=None):
+    async def fake_delete_terminal_messages(owner=None):
         calls["delete_terminal"] += 1
         return 1
 
@@ -353,7 +350,7 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
     monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
 
-    async def fake_terminal_messages(namespaces=None):
+    async def fake_terminal_messages(owner=None):
         return list(terminal)
 
     monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
@@ -379,15 +376,15 @@ def test_admin_archive_confirm_archives_notes_and_deletes_terminal_messages(monk
         calls["ids"] = ids
         return len(ids)
 
-    async def fake_delete_terminal_messages(namespaces=None):
-        calls["deleted"] = True
+    async def fake_delete_terminal_messages(owner=None):
+        calls["deleted"] = owner
         return 3
 
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
 
-    async def fake_terminal_messages(namespaces=None):
-        return []
+    async def fake_terminal_messages(owner=None):
+        raise AssertionError("a confirmed purge deletes without loading the preview")
 
     monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
     monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
@@ -395,7 +392,7 @@ def test_admin_archive_confirm_archives_notes_and_deletes_terminal_messages(monk
     assert response.status_code == 200
     assert response.json() == {"archived": 2, "deleted": 3}
     assert calls["ids"] == ["note:old1", "note:old2"]
-    assert calls["deleted"] is True
+    assert calls["deleted"] is None
 
 
 def test_admin_archive_with_ids_previews_those_rows(monkeypatch):

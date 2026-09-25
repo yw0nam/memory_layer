@@ -119,6 +119,10 @@ def test_scope_rejects_local_checkout_paths():
         "repo:../checkout",
         "repo:./checkout",
         "repo:localhost/org/repo",
+        "repo:api.localhost/org/repo",
+        "repo:127.0.0.1/org/repo",
+        "repo:https://10.0.0.5/org/repo",
+        "repo:git@169.254.1.1:org/repo",
     ):
         with pytest.raises(ValueError):
             messages.normalize_scope(bad)
