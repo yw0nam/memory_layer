@@ -542,22 +542,6 @@ def test_mcp_tool_list_unaffected_by_supersede():
 # ---- integration: real DB + embedder ----------------------------------------
 
 
-def _db_reachable() -> bool:
-    async def _check() -> None:
-        conn = await asyncpg.connect(db_url(), timeout=5)
-        await conn.close()
-
-    try:
-        asyncio.run(_check())
-        return True
-    except Exception:
-        return False
-
-
-_DB = _db_reachable()
-requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
-
-
 async def _delete(note_id: str) -> None:
     conn = await asyncpg.connect(db_url())
     try:
@@ -588,7 +572,6 @@ async def _fetch_similar_ack(note_id: str):
 
 
 @pytest.mark.integration
-@requires_db
 def test_supersede_archives_old_note_and_stores_new_one(client):
     content_a = f"supersede integration pin A {NOW}: zzzsupersedepin unique marker one"
     content_b = f"supersede integration pin B {NOW}: zzzsupersedepin unique marker two"
@@ -624,7 +607,6 @@ def test_supersede_archives_old_note_and_stores_new_one(client):
 
 
 @pytest.mark.integration
-@requires_db
 def test_supersede_unknown_id_400_over_rest(client):
     content = f"supersede integration pin C {NOW}: zzzsupersedepin unique marker three"
     response = client.post(
@@ -641,7 +623,6 @@ def test_supersede_unknown_id_400_over_rest(client):
 
 
 @pytest.mark.integration
-@requires_db
 def test_similar_gate_refuses_then_resolves_by_supersede_or_ack(client):
     marker = f"zzzsimilarpin{int(NOW)}"
     content_b = f"similar-hint integration pin: {marker} a hard-won troubleshooting conclusion"

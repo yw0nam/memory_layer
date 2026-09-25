@@ -1,44 +1,47 @@
-"""Integration tests against the live DB (postgres:5439) and vLLM services
-(embedder/reranker/LLM) configured via .env.
+"""Integration tests for search() and the MCP tools against Postgres and the model services.
 
-Exercises search() and MCP tools against real code_chunks and memory_chunks.
-Tests that require a memory_chunks row seed it through save_note and remove
-it in a finally block. If the DB is unreachable, the whole module is skipped
-so this stays CI-safe.
+A small git repository is indexed into the session's throwaway Postgres container once
+per module, so code search runs against rows this module wrote; memory rows are seeded
+through save_note. The embedder and reranker are the configured live endpoints.
 """
 
 from __future__ import annotations
 
 import asyncio
-
-import pytest
+import os
+import subprocess
 
 import asyncpg
+import pytest
 
 from memory_base.core.config import PG_SCHEMA, db_url
+from memory_base.core.db import acquire, close_pool, get_pool
+from memory_base.retrieval.search import search
+from memory_base.serve import mcp_server, repos
 from memory_base.serve.notes import build_note_row, save_note
 
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("indexed_code")]
 
-def _db_reachable() -> bool:
-    async def _check() -> None:
-        conn = await asyncpg.connect(db_url(), timeout=5)
-        await conn.close()
+_SEED_SOURCE = '''"""Embedding vector search pipeline: chunks are stored as halfvec columns."""
 
-    try:
-        asyncio.run(_check())
-        return True
-    except Exception:
-        return False
+EMB_DIM = 2048  # halfvec(2048) in pgvector
 
 
-if not _db_reachable():
-    pytest.skip("DB is not configured or not reachable", allow_module_level=True)
+def embedding_vector_search_pipeline(query):
+    """Embed the query, then rank halfvec rows by cosine distance."""
+    return query
+'''
 
-pytestmark = pytest.mark.integration
 
-from memory_base.serve import mcp_server  # noqa: E402
-from memory_base.core.db import acquire, close_pool, get_pool  # noqa: E402
-from memory_base.retrieval.search import search  # noqa: E402
+@pytest.fixture(scope="module")
+def indexed_code(tmp_path_factory):
+    origin = tmp_path_factory.mktemp("seed-origin")
+    (origin / "seed.py").write_text(_SEED_SOURCE)
+    git_env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t"}
+    git_env.update(GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+    for args in (["init", "-q", "-b", "main"], ["add", "."], ["commit", "-q", "-m", "seed"]):
+        subprocess.run(["git", "-C", str(origin), *args], check=True, env=git_env)
+    asyncio.run(repos._run_ingest_job(str(origin), repos.CACHE_ROOT / "seed", None, "test"))
 
 
 async def _delete_note(note_id: str) -> None:
@@ -49,7 +52,7 @@ async def _delete_note(note_id: str) -> None:
         await conn.close()
 
 
-# ---- search() against real code_chunks / memory_chunks --------------------
+# ---- search() against seeded code_chunks / memory_chunks ------------------
 
 
 def test_search_code_source_returns_code_hits_with_line_refs():
@@ -83,8 +86,7 @@ def test_search_all_source_with_rerank_populates_rerank_score():
 
 
 def test_fts_exact_literal_hits_file_containing_it():
-    # "halfvec" is a literal known to appear verbatim in src/memory_base/core/config.py and
-    # the spec docs indexed into code_chunks.
+    # "halfvec" appears verbatim in the seeded repository.
     hits = asyncio.run(search("halfvec", source="code", rerank=False))
     assert any("halfvec" in h.text.lower() for h in hits)
 

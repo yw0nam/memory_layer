@@ -13,7 +13,7 @@
      change" only when the diff is non-runtime (docs, config, tooling). -->
 
 ## Verification
-- [ ] `uv run pytest` passes (integration tests run locally when DB/vLLM are reachable)
+- [ ] `uv run pytest` passes (integration tests run locally against a throwaway Postgres container and the live embedder)
 - [ ] `uv run ruff format --check .` and `uv run ruff check .` pass
 - [ ] `docker compose build mcp` passes (Dockerfile / dependency changes)
 - [ ] Runtime evidence attached above, or N/A justified

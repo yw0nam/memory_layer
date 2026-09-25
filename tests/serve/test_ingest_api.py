@@ -582,22 +582,6 @@ def test_csv_pipeline_writes_every_parsed_row_and_card_metadata(monkeypatch, tmp
 # ---- integration: same document_id across namespaces must not collide -----
 
 
-def _db_reachable() -> bool:
-    async def _check() -> None:
-        conn = await asyncpg.connect(db_url(), timeout=5)
-        await conn.close()
-
-    try:
-        asyncio.run(_check())
-        return True
-    except Exception:
-        return False
-
-
-_DB = _db_reachable()
-requires_db = pytest.mark.skipif(not _DB, reason="DB is not configured or not reachable")
-
-
 async def _delete_document_rows(document_id: str) -> None:
     conn = await asyncpg.connect(db_url())
     try:
@@ -611,7 +595,6 @@ async def _delete_document_rows(document_id: str) -> None:
 
 
 @pytest.mark.integration
-@requires_db
 def test_same_document_id_two_namespaces_no_pk_collision():
     """Regression: ingesting the same document_id into a second namespace must
     not crash with a UniqueViolation on the memory_chunks primary key, since

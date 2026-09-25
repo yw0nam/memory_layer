@@ -5,10 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import asyncpg
 import pytest
-
-from memory_base.core.config import db_url
 
 
 class StubPool:
@@ -186,15 +183,6 @@ def test_table_query_password_is_read_lazily(monkeypatch):
 @pytest.mark.integration
 def test_pool_reuses_closes_and_rebinds_across_event_loops():
     from memory_base.core.db import close_pool, get_pool
-
-    async def db_reachable():
-        connection = await asyncpg.connect(db_url(), timeout=5)
-        await connection.close()
-
-    try:
-        asyncio.run(db_reachable())
-    except Exception:
-        pytest.skip("DB is not configured or not reachable")
 
     async def reuse_then_close():
         first = await get_pool()

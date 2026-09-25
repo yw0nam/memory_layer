@@ -1,16 +1,11 @@
-"""Integration tests for URL-driven multi-repo ingestion against a live
-Postgres server and CocoIndex indexer (services configured via .env).
+"""Integration tests for URL-driven multi-repo ingestion against Postgres and CocoIndex.
 
-Fully isolated and non-destructive: a throwaway database (`memory_base_it`) is
-created on the configured server for the run and dropped afterwards, and
-CocoIndex's LMDB state points at a temp dir. The configured DB_URL /
-COCOINDEX_DB are never written to. Both env vars are redirected for the test;
-the `run_index()` subprocess inherits the redirected env (config.load_dotenv
-uses override=False, so it does not clobber them).
-
-Gated behind the `integration` marker; skipped when the DB server or the
-embedder is unreachable, keeping CI safe. Index/teardown run through the
-job-runner coroutines directly so completion is deterministic in-process.
+The test creates its own database on the session's throwaway Postgres container and
+drops it afterwards; CocoIndex's LMDB state points at a temp dir. Both env vars are
+redirected for the test, and the `run_index()` subprocess inherits them
+(config.load_dotenv uses override=False). Skipped when the embedder is unreachable.
+Index/teardown run through the job-runner coroutines directly so completion is
+deterministic in-process.
 """
 
 from __future__ import annotations
@@ -26,8 +21,6 @@ import pytest
 
 import asyncpg
 
-from memory_base.core.config import db_url
-
 IT_DB_NAME = "memory_base_it"
 
 
@@ -36,28 +29,12 @@ def _with_db(url: str, db_name: str) -> str:
     return urlunsplit(parts._replace(path=f"/{db_name}"))
 
 
-try:
-    _CONFIGURED_DB = db_url()
-except RuntimeError:
-    pytest.skip(
-        "DB_URL is not configured; skipping integration tests",
-        allow_module_level=True,
-    )
-
-ADMIN_DB = _with_db(_CONFIGURED_DB, "postgres")
-IT_DB = _with_db(_CONFIGURED_DB, IT_DB_NAME)
+def _admin_db() -> str:
+    return _with_db(os.environ["DB_URL"], "postgres")
 
 
-def _server_reachable() -> bool:
-    async def _check() -> None:
-        conn = await asyncpg.connect(ADMIN_DB, timeout=5)
-        await conn.close()
-
-    try:
-        asyncio.run(_check())
-        return True
-    except Exception:
-        return False
+def _it_db() -> str:
+    return _with_db(os.environ["DB_URL"], IT_DB_NAME)
 
 
 def _emb_reachable() -> bool:
@@ -76,11 +53,6 @@ def _emb_reachable() -> bool:
         return False
 
 
-if not _server_reachable():
-    pytest.skip(
-        f"DB server not reachable at {ADMIN_DB}; skipping integration tests",
-        allow_module_level=True,
-    )
 if not _emb_reachable():
     pytest.skip("EMB_URL unset or unreachable; skipping integration tests", allow_module_level=True)
 
@@ -134,7 +106,7 @@ def _delete(path):
 
 
 async def _repo_row_count(repo: str) -> int:
-    conn = await asyncpg.connect(IT_DB)
+    conn = await asyncpg.connect(_it_db())
     try:
         return await conn.fetchval(
             'SELECT COUNT(*) FROM "memory"."code_chunks" WHERE repo = $1', repo
@@ -162,13 +134,13 @@ def isolated_stack(tmp_path, monkeypatch):
     """Create a throwaway DB + LMDB state; redirect all DB access to them."""
 
     async def _create() -> None:
-        admin = await asyncpg.connect(ADMIN_DB)
+        admin = await asyncpg.connect(_admin_db())
         try:
             await admin.execute(f'DROP DATABASE IF EXISTS "{IT_DB_NAME}" WITH (FORCE)')
             await admin.execute(f'CREATE DATABASE "{IT_DB_NAME}"')
         finally:
             await admin.close()
-        conn = await asyncpg.connect(IT_DB)
+        conn = await asyncpg.connect(_it_db())
         try:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
             await conn.execute('CREATE SCHEMA IF NOT EXISTS "memory"')
@@ -176,17 +148,18 @@ def isolated_stack(tmp_path, monkeypatch):
             await conn.close()
 
     async def _drop() -> None:
-        admin = await asyncpg.connect(ADMIN_DB)
+        admin = await asyncpg.connect(_admin_db())
         try:
             await admin.execute(f'DROP DATABASE IF EXISTS "{IT_DB_NAME}" WITH (FORCE)')
         finally:
             await admin.close()
 
+    it_db = _it_db()
     asyncio.run(_create())
 
     cache = tmp_path / "cache"
     cache.mkdir()
-    monkeypatch.setenv("DB_URL", IT_DB)
+    monkeypatch.setenv("DB_URL", it_db)
     monkeypatch.setenv("COCOINDEX_DB", str(tmp_path / "cocoindex_state"))
     monkeypatch.setenv("REPO_CACHE", str(cache))
     monkeypatch.setattr(repos, "CACHE_ROOT", cache)

@@ -228,7 +228,7 @@ reference, optional tuning knobs, and private-repository credentials are documen
 ## Development
 
 ```bash
-uv run pytest                                        # integration tests skip without DB/vLLM
+uv run pytest                                        # unit + integration (throwaway Postgres container, needs docker)
 uv run pytest -m "not integration"                   # what CI runs
 uv run ruff format --check . && uv run ruff check .
 uv run python -m memory_base.eval.retrieval          # fixture retrieval eval report
