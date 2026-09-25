@@ -532,6 +532,10 @@ def test_mcp_tool_list_unaffected_by_supersede():
         "archive_notes",
         "restore_notes",
         "delete_notes",
+        "send_message",
+        "list_messages",
+        "claim_message",
+        "cancel_message",
     }
 
 

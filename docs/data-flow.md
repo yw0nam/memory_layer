@@ -34,6 +34,24 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
         ▲                                                ▲
         └────── the write→read contract, with one more ──┘
                memory.doc_rows — tabular rows, SQL-only
+               memory.messages — addressed signals, claim-only
+
+④ MESSAGE / HANDOFF
+POST /messages {subject, status, result, …}
+   │
+   ▼
+ validate purpose (scope ⇒ handoff), status, next,
+ verification {command, status, result}, refs ≤ 10 https,
+ expires_at (future, ≤ 30 days; default MESSAGE_TTL_DAYS)
+   │
+   ▼
+ render canonical Markdown (blockquote every user line,
+ headings cannot escape; reject past 4 KiB — no truncation)
+   │
+   ▼
+ INSERT memory.messages (no embedding, no content gate)
+ handoff: same transaction terminalizes older pending
+ snapshots of the same namespace+scope+subject_key
 ```
 
 Notes are stored exactly as written — the server never summarizes. Before embedding,
@@ -53,6 +71,19 @@ Every note records the agent that wrote it in `metadata.author`, drawn from the 
 key's allowlist in `api_keys.authors`; a key with an empty allowlist cannot save. A note
 archived by a save or by a targeted archive additionally carries `metadata.archived_by`,
 which a restore removes.
+
+Messages are stored exactly as the renderer produced them — the server never
+summarizes, embeds, or gates them. A send without a scope is a general message
+(`status: "info"`) for one namespace; a send with a portable scope is a handoff
+snapshot (`status: "in_progress"`, `"blocked"`, or `"completed"`), and any sender who
+can access the namespace may publish the next snapshot of a subject. A `repo:` scope
+names a remote host, so local paths, localhost, and private/loopback/link-local IP
+literals are refused as not portable. Verification is
+exactly `{command, status, result}` with `passed|failed|not_run`; refs are at most 10
+absolute https URLs, with credentials, localhost, private/loopback/link-local IP
+literals, and local paths rejected without fetching. An optional `idempotency_key`
+(unique per sender key) replays an identical effective request with 200 and refuses a
+different one with 409; deleting the row releases the key.
 
 Document uploads enter a durable Postgres backlog capped by `INGEST_BACKLOG_PER_KEY` and
 `INGEST_BACKLOG_MAX`. Two document workers dispatch fairly across API keys while serializing
@@ -186,6 +217,24 @@ functions (`set_config`, `pg_notify`, advisory locks) are revoked, and role-leve
 resource limits bound memory and lock waits. Other Postgres errors return `400` with the
 engine's message so the caller can correct its SQL.
 
+## Read path — messages (`GET /messages`, claim, cancel)
+
+Messages are read by address, never by similarity. `GET /messages` lists pending,
+unexpired messages newest-first (created_at DESC, id DESC) with `namespace`, `purpose`,
+`scope`, and `subject` filters — the subject filter normalizes its argument the same
+way the send path does, so any spelling variant of a subject finds its snapshot chain —
+and a `limit` (default 50, max 100). No query, no embedding call, no access to
+`memory_chunks`.
+
+Delivery is at-most-once. `POST /messages/{id}/claim` is a single conditional UPDATE
+on the lifecycle timestamps (`claimed_at IS NULL AND cancelled_at IS NULL AND
+superseded_at IS NULL AND expires_at > clock_timestamp()`), so two concurrent claims are decided by
+database commit order: exactly one returns the row, the other gets 409. There is no
+lease, ack, or re-read. `DELETE /messages/{id}` cancels a pending message — the
+sender's own, or any accessible one for an admin key. Terminal rows are invisible to
+the list and unclaimable; a stale superseded snapshot id gets 409, an unknown or
+out-of-scope id a 404.
+
 ## Lifecycle loop
 
 ```
@@ -209,9 +258,23 @@ engine's message so the caller can correct its SQL.
 `GET /admin/duplicates` lists near-duplicate pairs by cosine with each side's author,
 `GET /admin/notes` lists old agent notes, and `POST /admin/restore` clears `archived_at`
 and `metadata.archived_by`. `POST /admin/archive` archives the rows named by `ids`, or
-the cold ones when `ids` is omitted. Every mutating admin route previews by default and
+the cold ones when `ids` is omitted; the no-ids preview distinguishes
+`notes_to_archive` from `messages_to_delete`, and the confirm pass archives the notes
+and deletes claimed, cancelled, superseded, and expired messages, which also releases
+their idempotency keys. Archiving a note is reversible and deleting a message is not,
+so a member key purges the message half only in the namespaces it owns — enough to
+drain one before unregistering it, not enough to touch a shared namespace. An admin
+key purges everywhere. Every mutating admin route previews by default and
 acts only with `{"confirm": true}`, and each is reachable over MCP as
 `list_memory_duplicates`, `archive_notes`, `restore_notes`, and `delete_notes`.
+`archive_notes` always names ids, so the message purge is a REST-only call.
+
+Namespace deletion counts messages as content: a namespace with messages — pending or
+terminal — cannot be unregistered until a purge removes them.
+
+Retirement is manual: no scheduler runs in-process, so terminal rows survive until a
+caller runs the `/admin/archive` preview and confirm pass. A deployment that wants it
+periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
 
 ## Storage
 
@@ -237,6 +300,18 @@ acts only with `{"confirm": true}`, and each is reachable over MCP as
 no search indexes; read exclusively by `POST /tables/query` under the restricted role,
 written and deleted in the same transactions as the document's Card.
 
-These three tables are the only contract between the write side and the read side
-([ADR-0001](adr/0001-table-rows-third-read-contract.md)). Adding a source means
+`memory.messages` — addressed, once-claimed signals: `namespace`, `purpose`
+(`message` | `handoff`), `scope`, `subject` with its normalized `subject_key`,
+`status` (the report state: `info` | `in_progress` | `blocked` | `completed`),
+`content` (canonical Markdown), `author`, `sender_key`, `idempotency_key`, and the
+timestamptz lifecycle fields `created_at`, `claimed_at`, `cancelled_at`,
+`superseded_at`, `expires_at`. No embedding column, no search index; a partial index
+serves the pending listing, and a unique partial index on
+(`sender_key`, `idempotency_key`) backs idempotent sends. The lifecycle timestamps stay
+internal — responses carry the report status only.
+
+`doc_rows` and `messages` are both outside the retrieval contract: they are read by
+compute and by address respectively, and are never granted to the SQL query role or
+returned by search ([ADR-0001](adr/0001-table-rows-third-read-contract.md),
+[ADR-0002](adr/0002-messages-addressed-once-claimed-lane.md)). Adding a source means
 adding an adapter, not touching retrieval or serving.

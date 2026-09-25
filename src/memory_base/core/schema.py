@@ -136,6 +136,32 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           data jsonb NOT NULL,
           PRIMARY KEY (namespace, document_id, row_index)
         );
+        CREATE TABLE IF NOT EXISTS {schema}.messages (
+          id uuid PRIMARY KEY,
+          namespace text NOT NULL,
+          purpose text NOT NULL CHECK (purpose IN ('message', 'handoff')),
+          scope text,
+          subject text NOT NULL,
+          subject_key text NOT NULL,
+          status text NOT NULL CHECK (status IN ('info', 'in_progress', 'blocked', 'completed')),
+          content text NOT NULL,
+          author text NOT NULL,
+          sender_key text NOT NULL,
+          idempotency_key text,
+          created_at timestamptz NOT NULL,
+          claimed_at timestamptz,
+          cancelled_at timestamptz,
+          superseded_at timestamptz,
+          expires_at timestamptz NOT NULL,
+          CHECK (purpose <> 'handoff' OR scope IS NOT NULL),
+          CHECK (purpose <> 'message' OR scope IS NULL)
+        );
+        CREATE INDEX IF NOT EXISTS messages__pending
+          ON {schema}.messages (namespace, purpose, subject_key, created_at DESC, id DESC)
+          WHERE claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS messages__idempotency
+          ON {schema}.messages (sender_key, idempotency_key)
+          WHERE idempotency_key IS NOT NULL;
         CREATE TABLE IF NOT EXISTS {schema}.namespaces (
           name text PRIMARY KEY,
           created_at double precision NOT NULL

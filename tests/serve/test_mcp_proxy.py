@@ -62,6 +62,10 @@ def test_tool_list_includes_document_ingestion():
         "archive_notes",
         "restore_notes",
         "delete_notes",
+        "send_message",
+        "list_messages",
+        "claim_message",
+        "cancel_message",
     }
 
 

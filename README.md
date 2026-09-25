@@ -7,9 +7,11 @@ and an MCP server.
 Only high-signal content is embedded. Agent notes arrive already distilled, documents
 pass through deterministic chunking and a junk gate before embedding, and code is
 chunked by tree-sitter. Raw transcripts and raw files are never embedded. Tabular
-documents additionally keep their data rows as structured, never-embedded rows behind a
-read-only SQL interface, so questions about the numbers are computed rather than
-retrieved.
+documents keep their data rows as structured, never-embedded rows behind a read-only
+SQL interface, so questions about the numbers are computed rather than retrieved.
+Agent-authored messages — one-time signals and handoff snapshots — are stored as
+canonical Markdown, never embedded, listed while pending and consumed by claiming
+instead of search.
 
 ## Architecture
 
@@ -19,11 +21,13 @@ retrieved.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  15 tools: search / search_code / search_memory / save_memory
+   ┌─────────────┐  19 tools: search / search_code / search_memory / save_memory
    │ mcp_server  │            list_notes / ingest_document / remove_document
    └──────┬──────┘            query_table / ingest_repo / remove_repo / list_repos
           │                   list_memory_duplicates / archive_notes /
-          │ HTTP              restore_notes / delete_notes  (thin proxy, no logic)
+          │ HTTP              restore_notes / delete_notes / send_message /
+          │                   list_messages / claim_message / cancel_message
+          │                   (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
    ║              REST API  :8010   (the only backend)         ║
@@ -35,16 +39,17 @@ retrieved.
      └───────────────┴───────┬───────┴───────────────┘
                              ▼
               Postgres 17 + pgvector + pg_textsearch  :5439
-              memory_chunks · code_chunks · doc_rows · jobs · retrieval_log
+              memory_chunks · code_chunks · doc_rows · messages · jobs
+              retrieval_log
 
   side services:  vLLM (LLM / embedding / rerank)
 ```
 
 Every consumer reaches stored chunks through the REST API, never through the database
-directly. Three tables are the entire contract between the write side and the read
-side: `memory_chunks` and `code_chunks` feed search, and `doc_rows` holds a tabular
-document's data rows for the SQL read path alone — never embedded, never returned by
-search ([ADR-0001](docs/adr/0001-table-rows-third-read-contract.md)).
+directly. `memory_chunks` and `code_chunks` feed search, `doc_rows` holds a tabular
+document's data rows for the SQL read path alone ([ADR-0001](docs/adr/0001-table-rows-third-read-contract.md)),
+and `messages` holds addressed, once-claimed signals that are never embedded and never
+searched ([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)).
 
 The same components as an explorable diagram, with guided views and image export:
 [docs/diagrams/memory-base-architecture.html](docs/diagrams/memory-base-architecture.html)
@@ -71,6 +76,10 @@ trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, `kind`, and the optional id of a prior note to archive; refused with 409 when the chat model judges the content a tracker-artefact restatement, progress update, or file description unless `allow_restatement` is set, and when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind`, `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
+| `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, `author`, optional `idempotency_key` and `expires_at`; rendered to canonical Markdown, rejected past 4 KiB; an identical replay returns 200 |
+| `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
+| `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown or out-of-scope id a 404 |
+| `DELETE` | `/messages/{id}` | cancel a pending message — the sender, or an admin key for any accessible one |
 | `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, repeated `tags`; overwriting an existing `document_id` is creator-or-admin only |
 | `DELETE` | `/ingest/documents/{document_id}` | remove a document's chunks and table rows in one namespace (`namespace` query param, default the key's home) — the document's creator or an admin key only |
 | `POST` | `/tables/query` | read-only SQL over `memory.doc_rows` — `sql` (`SELECT`/`WITH`), `namespace`; 1,000-row / 5 MB / 10 s caps |
@@ -88,7 +97,7 @@ trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
 | `POST` | `/admin/notes/delete` | preview, or delete with `confirm` |
 | `GET` | `/admin/duplicates` | near-duplicate pairs above `threshold` |
-| `POST` | `/admin/archive` | preview cold rows, or the rows named by `ids`, and archive with `confirm`; `ids` requires an `author`, which is stamped on every row archived |
+| `POST` | `/admin/archive` | preview cold notes (`notes_to_archive`) and terminal messages (`messages_to_delete`), then archive the notes and delete the messages with `confirm`; message deletion is permanent, so a member key purges only the namespaces it owns; `ids` selects rows in the caller's scope and requires an `author`, stamped on every row archived |
 | `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author |
 
 Filters are bound to the source they belong to: `kind`, `tags`, `author`, and
@@ -107,7 +116,8 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `search` · `search_code` · `search_memory` · `save_memory` · `list_notes` ·
 `ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
-`archive_notes` · `restore_notes` · `delete_notes`
+`archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
+`list_messages` · `claim_message` · `cancel_message`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,
@@ -121,6 +131,12 @@ with both sides' authors, and `archive_notes` (`ids` and `author` required),
 `restore_notes`, and `delete_notes` preview by default and act only with `confirm`.
 Archiving is restorable and records its author; deleting is permanent and records
 nothing.
+
+The message lane is addressed, not searched: `list_messages` reads pending messages at
+the start of a session and `claim_message` takes exclusive delivery of each one acted
+on — never automatically. `send_message` publishes a general message or, with a scope,
+a handoff snapshot; `cancel_message` withdraws a sender's own pending message. A
+message is operational and expires; a note is durable knowledge.
 
 ## Running
 

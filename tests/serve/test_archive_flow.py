@@ -180,7 +180,8 @@ def test_full_archive_and_note_lifecycle():
         # ---- /admin/archive: dry-run lists our aged row, confirm archives it ----
         dry = client.post("/admin/archive", json={})
         assert dry.status_code == 200
-        candidates = dry.json()["candidates"]
+        candidates = dry.json()["notes_to_archive"]
+        assert "messages_to_delete" in dry.json()
         candidate_ids = {c["id"] for c in candidates}
         assert old_id in candidate_ids
         assert dup_a_id not in candidate_ids
@@ -191,6 +192,7 @@ def test_full_archive_and_note_lifecycle():
         confirm = client.post("/admin/archive", json={"confirm": True})
         assert confirm.status_code == 200
         assert confirm.json()["archived"] >= 1
+        assert "deleted" in confirm.json()
         assert asyncio.run(_archived_at(old_id)) is not None
 
         # ---- default /search excludes archived rows; include_archived brings back ----

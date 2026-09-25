@@ -27,3 +27,28 @@ def test_instructions_describe_the_curation_workflow():
     assert "list_memory_duplicates" in SERVER_INSTRUCTIONS
     assert "archive_notes" in SERVER_INSTRUCTIONS
     assert "delete_notes" in SERVER_INSTRUCTIONS
+
+
+def test_instructions_cover_the_message_lane_workflow():
+    # list + claim at session start, so addressed signals are not missed.
+    assert "list_messages" in SERVER_INSTRUCTIONS
+    assert "claim_message" in SERVER_INSTRUCTIONS
+    # A claim is explicit; nothing (including hooks) claims automatically.
+    assert "never automatically" in SERVER_INSTRUCTIONS
+    assert "prefetch hook" in SERVER_INSTRUCTIONS
+
+
+def test_instructions_route_handoffs_to_scope_bound_state():
+    assert "handoff" in SERVER_INSTRUCTIONS
+    assert "in_progress" in SERVER_INSTRUCTIONS
+    assert "completed" in SERVER_INSTRUCTIONS
+    assert "repo:" in SERVER_INSTRUCTIONS
+    assert "project:" in SERVER_INSTRUCTIONS
+
+
+def test_instructions_draw_the_message_vs_note_line():
+    # Operational one-time signal vs durable knowledge; the gate difference.
+    assert "durable knowledge" in SERVER_INSTRUCTIONS
+    assert "one-time" in SERVER_INSTRUCTIONS
+    assert "content gate" in SERVER_INSTRUCTIONS
+    assert "never embedded" in SERVER_INSTRUCTIONS
