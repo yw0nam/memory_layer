@@ -35,11 +35,12 @@ def test_any_error_status_surfaces_the_backend_reason(monkeypatch, status):
     assert message == "embedder is down"
 
 
-def test_error_without_a_reason_payload_names_status_and_body(monkeypatch):
+@pytest.mark.parametrize("status", [307, 502])
+def test_error_without_a_reason_payload_names_status_and_body(monkeypatch, status):
     message = _list_repos_error(
-        monkeypatch, lambda request: httpx.Response(502, text="upstream proxy failure")
+        monkeypatch, lambda request: httpx.Response(status, text="upstream proxy failure")
     )
-    assert "502" in message
+    assert str(status) in message
     assert "upstream proxy failure" in message
     assert "GET /repos" in message
 
