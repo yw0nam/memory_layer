@@ -56,6 +56,24 @@ def test_api_keys_and_jobs_stamp_their_own_created_at(monkeypatch):
         assert "created_at timestamptz NOT NULL DEFAULT now()" in body, table
 
 
+def test_messages_table_carries_the_lifecycle_constraints_and_indexes(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    sql = "\n".join(conn.queries)
+    body = sql.split('CREATE TABLE IF NOT EXISTS "scratch_schema".messages (', 1)[1]
+    body = body.split(");", 1)[0]
+    assert "purpose text NOT NULL CHECK (purpose IN ('message', 'handoff'))" in body
+    assert "CHECK (purpose <> 'handoff' OR scope IS NOT NULL)" in body
+    assert "CHECK (purpose <> 'message' OR scope IS NULL)" in body
+    assert "created_at timestamptz NOT NULL," in body
+    assert "embedding" not in body
+    assert "WHERE claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL" in sql
+    assert 'ON "scratch_schema".messages (sender_key, idempotency_key)' in " ".join(sql.split())
+
+
 def test_production_schema_self_heals_query_role_and_hardens_function_acls(
     monkeypatch,
 ):

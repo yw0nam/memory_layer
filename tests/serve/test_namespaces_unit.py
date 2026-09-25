@@ -3,8 +3,6 @@
 memory_base.core.db.acquire is monkeypatched to a fake connection, matching the
 convention already used in tests/serve/test_ingest_api.py
 (``monkeypatch.setattr(ingest_api.db, "acquire", acquire)``).
-
-Collection fails today: memory_base.serve.namespaces does not exist yet.
 """
 
 from __future__ import annotations
@@ -186,6 +184,12 @@ def test_require_registered_raises_when_absent(monkeypatch):
         asyncio.run(namespaces.require_registered(conn, "ghost"))
 
 
+def test_require_registered_holds_the_row_against_deletion():
+    conn = FakeConnection(fetchval_results=[1])
+    asyncio.run(namespaces.require_registered(conn, "team-a"))
+    assert "FOR SHARE" in conn.queries[0][0]
+
+
 def test_namespace_exists_true(monkeypatch):
     conn = FakeConnection(fetchval_results=[True])
     _patch_acquire(monkeypatch, conn)
@@ -245,6 +249,15 @@ def test_delete_namespace_treats_messages_as_content(monkeypatch):
         asyncio.run(namespaces.delete_namespace("team-a"))
 
     assert "messages" in conn.queries[-1][0]
+
+
+def test_delete_namespace_locks_the_row_before_checking_emptiness(monkeypatch):
+    conn = FakeConnection(fetchval_results=[1, False])
+    _patch_acquire(monkeypatch, conn)
+    asyncio.run(namespaces.delete_namespace("team-a"))
+    lock, emptiness = conn.queries[0][0], conn.queries[1][0]
+    assert "FOR UPDATE" in lock
+    assert "messages" in emptiness
 
 
 def test_delete_empty_namespace_succeeds(monkeypatch):

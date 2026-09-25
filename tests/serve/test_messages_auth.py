@@ -3,7 +3,7 @@
 Drives memory_base.serve.messages.claim_message / cancel_message against a
 fake connection, so the permission decisions (namespace access for claims,
 sender-or-admin for cancels, 404 for anything invisible) are pinned without a
-database. The real end-to-end flow runs in tests/serve/test_messages_integration.py.
+database.
 """
 
 from __future__ import annotations
