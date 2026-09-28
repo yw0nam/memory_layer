@@ -85,7 +85,9 @@ kind and length validation, the credential scan, and the content gate
 (`judge_note_content`, the production judge prompt on the chat provider from `.env`).
 The verdict is recorded as `stored` or `refused` with its reason. A gate call that fails
 is retried three times with backoff; a unit whose gate stays unavailable is not written
-and is retried by the next run, so no note carries an `unavailable` verdict. The
+and is retried by the next run, so no note carries an `unavailable` verdict. A session
+the provider's content filter refuses (z.ai error code 1301) is recorded as a completed
+unit with `provider_refused: "content_filter"` and contributes no notes. The
 production gate call sets no temperature, so its verdicts vary between runs; recording
 them once fixes them for every later stage.
 
