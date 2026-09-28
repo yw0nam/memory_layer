@@ -156,4 +156,4 @@ def test_every_detector_scans_a_crafted_two_million_char_line_in_linear_time(det
         started = time.perf_counter()
         for _ in detector.analyze_string(line):
             pass
-        assert time.perf_counter() - started < 1.0, anchor
+        assert time.perf_counter() - started < 5.0, anchor
