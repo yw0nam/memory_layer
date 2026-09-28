@@ -249,9 +249,6 @@ async def save_memory_route(request: Request) -> JSONResponse:
     allow_similar = body.get("allow_similar", False)
     if not isinstance(allow_similar, bool):
         return error("allow_similar must be a boolean")
-    allow_restatement = body.get("allow_restatement", False)
-    if not isinstance(allow_restatement, bool):
-        return error("allow_restatement must be a boolean")
     try:
         result = await save_note(
             body.get("content", ""),
@@ -262,7 +259,6 @@ async def save_memory_route(request: Request) -> JSONResponse:
             occurred_at=body.get("occurred_at"),
             author=author,
             allow_similar=allow_similar,
-            allow_restatement=allow_restatement,
         )
     except SimilarNotesError as exc:
         return JSONResponse({"error": str(exc), "similar": exc.similar}, status_code=409)

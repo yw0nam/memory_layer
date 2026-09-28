@@ -56,8 +56,13 @@ class LowSignalNoteError(ValueError):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(
-            f"Refused: {reason} If it does record something a future session could not "
-            "recover from anywhere else, call again with allow_restatement=true."
+            f"Refused by the content gate: {reason} If part of this note records something "
+            "that exists nowhere else (a decision and what it ruled out, a stated constraint "
+            "or preference, an observed environment fact, a lesson from a failure), rewrite it "
+            "to state that fact directly, without restating its source (PR, issue, commit, "
+            "file, tracker), and save that as a note of its own. If nothing in it does, store "
+            "nothing; that is the expected outcome. Retry at most once: if the rewrite is "
+            "refused too, do not save it, and tell the user when one is present."
         )
 
 
@@ -104,11 +109,8 @@ async def judge_note_content(content: str, kind: str) -> ContentVerdict:
     return ContentVerdict(accepted=verdict["accepted"], reason=verdict["reason"])
 
 
-async def _content_gate(row: dict[str, Any], allow_restatement: bool) -> None:
+async def _content_gate(row: dict[str, Any]) -> None:
     """Refuse a low-signal note before it costs an embedding call; fail open."""
-    if allow_restatement:
-        row["metadata"]["content_gate"] = "overridden"
-        return
     try:
         verdict = await judge_note_content(row["raw"], row["kind"])
     except Exception as exc:
@@ -174,7 +176,6 @@ async def save_note(
     occurred_at: str | None = None,
     author: str | None = None,
     allow_similar: bool = False,
-    allow_restatement: bool = False,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory.
 
@@ -191,7 +192,7 @@ async def save_note(
             f"content is identical to the note it supersedes ({supersedes}), so there is "
             "nothing to replace; change the content or drop supersedes"
         )
-    await _content_gate(row, allow_restatement)
+    await _content_gate(row)
     embedding = await embed_text(VllmEmbedder(), row["raw"])
     async with db.acquire() as conn:
         await ensure_schema_once(conn)

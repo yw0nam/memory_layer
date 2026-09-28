@@ -69,7 +69,10 @@ that contradicts it. A save that lands next to a near-identical active note is r
 with the neighbours listed; supersede the one it replaces, or pass allow_similar when it
 is a genuinely different fact. A note whose content is a restatement of a PR, issue, or
 commit, a progress update, or a description of what a file does is refused with the
-reason; pass allow_restatement only when it records a durable fact that merely cites one."""
+reason, and the verdict is final. If part of a refused note records something that exists
+nowhere else, rewrite that part to state the fact directly, without restating its source,
+and save it as a note of its own; if nothing does, store nothing. Retry at most once; if
+the rewrite is refused too, do not save it, and tell the user when one is present."""
 
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
@@ -415,7 +418,6 @@ async def save_memory(
     kind: str = "note",
     supersedes: str | None = None,
     allow_similar: bool = False,
-    allow_restatement: bool = False,
     namespace: str | None = None,
     occurred_at: str | None = None,
     ctx: Context | None = None,
@@ -437,8 +439,11 @@ async def save_memory(
     call again with `supersedes` naming the one it replaces, or with `allow_similar=True`
     when it is a genuinely different fact. A note whose content is a restatement of a PR,
     issue, or commit, a progress update, or a description of what a file does is refused
-    with the reason; pass `allow_restatement=True` only when it records a durable fact
-    that merely cites one.
+    by the content gate; the error states the reason and what to do. If part of the note
+    records something that exists nowhere else, rewrite it to state that fact directly,
+    without restating its source, and save that as a note of its own; if nothing does,
+    store nothing. Retry at most once; if the rewrite is refused too, do not save it, and
+    tell the user when one is present.
 
     `author` names the agent saving this note, e.g. claude-code or natsume; it
     must be in the calling key's author allowlist, and is stored with the note
@@ -461,7 +466,6 @@ async def save_memory(
         "tags": tags,
         "supersedes": supersedes,
         "allow_similar": allow_similar,
-        "allow_restatement": allow_restatement,
     }
     if namespace is not None:
         body["namespace"] = namespace

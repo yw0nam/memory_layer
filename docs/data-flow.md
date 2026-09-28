@@ -55,13 +55,14 @@ POST /messages {subject, status, result, …}
 ```
 
 Notes are stored exactly as written — the server never summarizes. Before embedding,
-every non-episode note passes the content gate: the chat model judges the text on one
-criterion — does it record something a future session could not recover from the systems
-of record and would need, or is it already answered there or bound to the moment it was
-written — and a note that fails is refused with HTTP 409 and the reason;
-`allow_restatement` overrides the refusal and stamps `metadata.content_gate =
-"overridden"`, while a judge failure saves the note stamped `content_gate =
-"unavailable"`. A note landing next to
+every note passes the content gate: the chat model judges the text on one criterion —
+does it record something a future session could not recover from the systems of record
+and would need, or is it already answered there or bound to the moment it was written
+(an episode is judged on provenance alone) — and a note that fails is refused with HTTP
+409 carrying the reason and the recovery: rewrite a fact that exists nowhere else as a
+note of its own, retry at most once, otherwise store nothing. The verdict is final; a
+judge failure saves the note stamped `metadata.content_gate = "unavailable"`. A note
+landing next to
 active notes above `NOTE_SIMILAR_THRESHOLD` cosine is refused with HTTP 409 listing them,
 unless `supersedes` names one of them or `allow_similar` is set; an accepted override
 records the neighbours' ids in `metadata.similar_ack`. The response carries `similar[]`
