@@ -2,17 +2,15 @@
 
 Before embedding, every note is judged against the write policy by the chat
 model: an artefact restatement, progress update, file description, or session
-narration raises ``LowSignalNoteError`` unless ``allow_restatement`` overrides
-the gate (stamped ``content_gate: "overridden"``); a judge failure saves the
-note stamped ``content_gate: "unavailable"`` (fail-open). An episode is judged
-on provenance alone, so a dated personal event passes and a dated restatement
-of a tracker artefact does not.
+narration raises ``LowSignalNoteError``, whose message states the judge's
+reason and how to recover — rewrite a fact that exists nowhere else as a note
+of its own, retry at most once — and offers no override. A judge failure saves
+the note stamped ``content_gate: "unavailable"`` (fail-open). An episode is
+judged on provenance alone, so a dated personal event passes and a dated
+restatement of a tracker artefact does not.
 
 Pure/unit sections follow tests/serve/test_rest_notes.py's FakeConnection
 pattern: no DB/network involved.
-
-Collection fails today: the gate, its error, and ``judge_note_content`` do not
-exist yet.
 """
 
 from __future__ import annotations
@@ -37,6 +35,24 @@ from memory_base.serve.notes import (
 )
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+
+
+def _assert_refusal_text(message: str, reason: str) -> None:
+    """The refusal states the reason, then the rewrite, then the retry limit — no override."""
+    assert "content gate" in message
+    assert reason in message
+    assert "rewrite it to state that fact directly" in message
+    assert "save that as a note of its own" in message
+    assert "store nothing" in message
+    assert "Retry at most once" in message
+    assert "do not save it" in message
+    assert "tell the user" in message
+    assert (
+        message.index(reason)
+        < message.index("rewrite it to state that fact directly")
+        < message.index("Retry at most once")
+    )
+    assert "allow_restatement" not in message
 
 
 # ---- judge_note_content -----------------------------------------------------
@@ -138,8 +154,7 @@ def test_save_note_refused_note_neither_embeds_nor_inserts(monkeypatch):
     with pytest.raises(LowSignalNoteError) as exc_info:
         asyncio.run(save_note("migrated the parser today", tags=["test"]))
     assert exc_info.value.reason == "a progress update"
-    assert "Refused: a progress update" in str(exc_info.value)
-    assert "allow_restatement=true" in str(exc_info.value)
+    _assert_refusal_text(str(exc_info.value), "a progress update")
     assert conn.embeds == []
     assert conn.insert_args is None
 
@@ -171,19 +186,6 @@ def test_episode_restating_an_artefact_is_refused(monkeypatch):
         asyncio.run(save_note("PR #1010 merged today", tags=["test"], kind="episode"))
     assert conn.embeds == []
     assert conn.insert_args is None
-
-
-def test_allow_restatement_skips_the_judge_and_stamps_overridden(monkeypatch):
-    conn = FakeConnection()
-    _patch_note_deps(monkeypatch, conn)
-
-    async def explosive_judge(content, kind):
-        raise AssertionError("the judge must not run when the gate is overridden")
-
-    monkeypatch.setattr(notes, "judge_note_content", explosive_judge)
-    asyncio.run(save_note("PR #12 changed the parser", tags=["test"], allow_restatement=True))
-    metadata = json.loads(conn.insert_args[11])
-    assert metadata["content_gate"] == "overridden"
 
 
 def test_judge_failure_stores_the_note_stamped_unavailable(monkeypatch):
@@ -223,40 +225,7 @@ def test_save_memory_low_signal_note_error_maps_to_409(monkeypatch):
     assert response.status_code == 409
     body = response.json()
     assert body["reason"] == "a progress update on the migration"
-    assert "Refused: a progress update on the migration" in body["error"]
-    assert "allow_restatement=true" in body["error"]
-
-
-def test_save_memory_non_bool_allow_restatement_400(monkeypatch):
-    async def fake_save_note(content, **kwargs):
-        return {"id": "note:x", "kind": "note", "stored": True, "superseded": None, "similar": []}
-
-    monkeypatch.setattr(api, "save_note", fake_save_note)
-    response = client.post(
-        "/save_memory",
-        json={"author": "natsume", "content": "new content", "allow_restatement": "yes"},
-    )
-    assert response.status_code == 400
-    assert response.json()["error"] == "allow_restatement must be a boolean"
-
-
-def test_save_memory_forwards_allow_restatement_to_save_note(monkeypatch):
-    captured = {}
-
-    async def fake_save_note(content, **kwargs):
-        captured.update(kwargs)
-        return {"id": "note:x", "kind": "note", "stored": True, "superseded": None, "similar": []}
-
-    monkeypatch.setattr(api, "save_note", fake_save_note)
-    response = client.post(
-        "/save_memory",
-        json={"author": "natsume", "content": "new content", "allow_restatement": True},
-    )
-    assert response.status_code == 200
-    assert captured["allow_restatement"] is True
-    response = client.post("/save_memory", json={"author": "natsume", "content": "new content"})
-    assert response.status_code == 200
-    assert captured["allow_restatement"] is False
+    _assert_refusal_text(body["error"], "a progress update on the migration")
 
 
 # ---- MCP proxy -----------------------------------------------------------------
@@ -271,30 +240,26 @@ def _patch_client(monkeypatch, handler):
     monkeypatch.setattr(mcp_server, "_client", fake_client)
 
 
-def test_mcp_save_memory_forwards_allow_restatement(monkeypatch):
-    captured = {}
+def test_mcp_save_memory_surfaces_the_content_gate_refusal_as_the_tool_error(monkeypatch):
+    refusal = LowSignalNoteError("the note restates PR #12")
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["json"] = json.loads(request.content)
-        return httpx.Response(
-            200, json={"id": "note:x", "kind": "note", "stored": True, "superseded": None}
-        )
+        return httpx.Response(409, json={"error": str(refusal), "reason": refusal.reason})
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(
-        mcp_server.save_memory("new content", "natsume", tags=["test"], allow_restatement=True)
-    )
-    assert captured["json"]["allow_restatement"] is True
-    asyncio.run(mcp_server.save_memory("new content", "natsume", tags=["test"]))
-    assert captured["json"]["allow_restatement"] is False
+    with pytest.raises(ValueError) as exc_info:
+        asyncio.run(mcp_server.save_memory("PR #12 changed the parser", "natsume", tags=["test"]))
+    assert str(exc_info.value) == str(refusal)
+    _assert_refusal_text(str(exc_info.value), "the note restates PR #12")
 
 
 # ---- instructions ----------------------------------------------------------------
 
 
-def test_server_instructions_state_the_write_policy_and_the_override():
+def test_server_instructions_state_the_write_policy_and_the_refusal_recovery():
     assert "Write rarely." in SERVER_INSTRUCTIONS
-    assert "allow_restatement" in SERVER_INSTRUCTIONS
+    assert "at most once" in SERVER_INSTRUCTIONS
+    assert "allow_restatement" not in SERVER_INSTRUCTIONS
     assert "\n\n\n" not in SERVER_INSTRUCTIONS
 
 

@@ -59,7 +59,7 @@ async def _noop(conn):
     return None
 
 
-async def _gate(row, allow_restatement):
+async def _gate(row):
     return None
 
 

@@ -96,6 +96,18 @@ def test_save_memory_schema_has_optional_allow_similar_boolean():
     assert "allow_similar" not in schema["required"]
 
 
+def test_save_memory_schema_offers_no_content_gate_override():
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    async def _run():
+        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
+            result = await client.list_tools()
+            return {t.name: t for t in result.tools}
+
+    tools = asyncio.run(_run())
+    assert "allow_restatement" not in tools["save_memory"].inputSchema["properties"]
+
+
 # ---- search proxying --------------------------------------------------------
 
 
@@ -431,7 +443,6 @@ def test_save_memory_posts_to_save_memory_and_returns_body(monkeypatch):
         "tags": ["infra"],
         "supersedes": None,
         "allow_similar": False,
-        "allow_restatement": False,
     }
     assert result == {"id": "note:abc", "kind": "note", "stored": True}
 
