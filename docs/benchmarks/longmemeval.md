@@ -85,7 +85,7 @@ verdict was recorded at extraction. The question then runs through
 the production score floor.
 
 A note id is a content hash, so identical notes from two sessions share one row; the
-harness keeps a note-to-sessions map and a hit counts for every session it came from.
+harness keeps a note-to-sessions map, so a hit counts toward every session it came from.
 
 The search's time decay multiplies fused scores by `0.5^(age/90 days)` against wall
 clock; for notes dated years back the ratio between two notes depends only on their
@@ -124,7 +124,8 @@ answered.
   log2(r). Abstention questions are excluded. Zero-hit packets are counted.
 - **Write path**: notes per unit, refused-save rate overall and per `question_type`,
   refusals by cause (gate, validation, credential), similar acks, and extraction and
-  gate token totals.
+  gate token totals. The overall refused-save rate counts each unit once; a per-type
+  rate counts a unit once per question of that type that contains it.
 
 ## Dated-embedding variant
 
