@@ -9,6 +9,7 @@ dependencies = [
     "anthropic>=1.5.0",
     "asyncpg>=0.31.0",
     "cocoindex[postgres]>=1.0.17",
+    "detect-secrets==1.5.0",
     "httpx>=0.28.1",
     "loguru>=0.7.3",
     "markitdown[docx,pdf,pptx]~=0.1.0",

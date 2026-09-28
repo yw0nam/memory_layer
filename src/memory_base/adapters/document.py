@@ -47,6 +47,16 @@ class ConversionError(DocumentError):
     """Raised when bounded conversion fails."""
 
 
+class CredentialDocumentError(DocumentError):
+    """Raised when a document's content carries a credential."""
+
+    def __init__(self, secret_type: str) -> None:
+        self.secret_type = secret_type
+        super().__init__(
+            f"document contains a credential ({secret_type}); remove it and upload again"
+        )
+
+
 @dataclass(frozen=True)
 class Chunk:
     text: str
@@ -355,6 +365,11 @@ def read_csv_sample(path: Path) -> CSVSample:
     except (UnicodeDecodeError, csv.Error) as exc:
         raise DocumentError(f"malformed CSV: {exc}") from exc
     return CSVSample(header, rows, len(rows), len(header))
+
+
+def csv_text(sample: CSVSample) -> str:
+    """Every header name and cell of a CSV, one per line."""
+    return "\n".join([*sample.header, *(cell for row in sample.rows for cell in row)])
 
 
 def csv_prompt_context(sample: CSVSample) -> str:

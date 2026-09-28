@@ -41,7 +41,12 @@ from memory_base.serve.auth import ApiKeyAuthMiddleware
 from memory_base.serve.http import TEXT_LIMIT
 from memory_base.serve.http import error
 from memory_base.serve.http import json_body
-from memory_base.serve.notes import LowSignalNoteError, SimilarNotesError, save_note
+from memory_base.serve.notes import (
+    CredentialNoteError,
+    LowSignalNoteError,
+    SimilarNotesError,
+    save_note,
+)
 
 SOURCES = ("all", "code", "memory")
 # Beyond this a query is a pasted payload, not a question: it costs embedder and BM25
@@ -264,6 +269,8 @@ async def save_memory_route(request: Request) -> JSONResponse:
         return JSONResponse({"error": str(exc), "similar": exc.similar}, status_code=409)
     except LowSignalNoteError as exc:
         return JSONResponse({"error": str(exc), "reason": exc.reason}, status_code=409)
+    except CredentialNoteError as exc:
+        return error(str(exc), 409)
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse(result)

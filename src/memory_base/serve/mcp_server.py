@@ -443,7 +443,9 @@ async def save_memory(
     records something that exists nowhere else, rewrite it to state that fact directly,
     without restating its source, and save that as a note of its own; if nothing does,
     store nothing. Retry at most once; if the rewrite is refused too, do not save it, and
-    tell the user when one is present.
+    tell the user when one is present. A note whose content or tags carry a credential (an
+    API key, token, private key, JWT, or password in a URL) is refused; store the fact
+    without the secret.
 
     `author` names the agent saving this note, e.g. claude-code or natsume; it
     must be in the calling key's author allowlist, and is stored with the note
@@ -773,6 +775,11 @@ async def ingest_document(
 
     `tags` are lowercased topical labels stamped on every chunk of the
     document and usable as the `tags` search filter.
+
+    A document carrying a credential (an API key, token, private key, JWT, or
+    password in a URL) is refused whole: in its filename, `document_id`,
+    `origin`, or tags the call fails; in its content the job fails and
+    nothing from it is stored.
     """
     try:
         extension = extension_for(filename)

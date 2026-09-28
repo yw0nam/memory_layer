@@ -20,11 +20,15 @@ from starlette.responses import JSONResponse
 
 from memory_base.adapters.document import (
     EXTRACTED_MAX_CHARS,
+    ConversionResult,
+    CredentialDocumentError,
+    CSVSample,
     DocumentError,
     UnsupportedDocumentError,
     build_csv_card,
     chunk_markdown,
     convert_to_markdown,
+    csv_text,
     extension_for,
     map_csv_card_row,
     map_csv_table_rows,
@@ -35,6 +39,7 @@ from memory_base.adapters.document import (
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
+from memory_base.core.secrets import find_secret
 from memory_base.ingest.enrich import EnrichmentError, summarize_and_tag
 from memory_base.retrieval.search import normalize_tags
 from memory_base.serve import job_store
@@ -239,7 +244,7 @@ async def _embed_rows(rows: Sequence[dict[str, Any]]) -> None:
 
 async def _csv_rows(
     job: IngestJob,
-    upload_path: Path,
+    sample: CSVSample,
     filename: str,
     content_hash: str,
     origin: str | None,
@@ -248,7 +253,6 @@ async def _csv_rows(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     job.touch(stage="chunking")
     await job_store.update_document_progress(job)
-    sample = read_csv_sample(upload_path)
     job.chunks_total = 1
     job.touch(stage="enriching")
     await job_store.update_document_progress(job)
@@ -290,7 +294,7 @@ async def _csv_rows(
 
 async def _markdown_rows(
     job: IngestJob,
-    upload_path: Path,
+    conversion: ConversionResult,
     filename: str,
     extension: str,
     content_hash: str,
@@ -298,9 +302,6 @@ async def _markdown_rows(
     now: float,
     namespace: str = "default",
 ) -> list[dict[str, Any]]:
-    conversion = await convert_to_markdown(upload_path)
-    if len(conversion.text) > EXTRACTED_MAX_CHARS:
-        raise DocumentError("extracted text exceeds 2000000 chars")
     job.touch(stage="chunking")
     await job_store.update_document_progress(job)
     chunking = chunk_markdown(conversion.text)
@@ -351,6 +352,17 @@ async def run_document_job(
     job.content_hash = content_hash
     await job_store.update_document_progress(job)
     extension = extension_for(filename)
+    if extension == ".csv":
+        sample = read_csv_sample(upload_path)
+        text = csv_text(sample)
+    else:
+        conversion = await convert_to_markdown(upload_path)
+        if len(conversion.text) > EXTRACTED_MAX_CHARS:
+            raise DocumentError("extracted text exceeds 2000000 chars")
+        text = conversion.text
+    secret_type = find_secret(text)
+    if secret_type is not None:
+        raise CredentialDocumentError(secret_type)
     if mode == "upsert":
         existing = await _existing_document_state(job.document_id, namespace, schema=schema)
         if existing is not None:
@@ -364,12 +376,12 @@ async def run_document_job(
     now = time.time()
     if extension == ".csv":
         rows, table_rows = await _csv_rows(
-            job, upload_path, filename, content_hash, origin, now, namespace
+            job, sample, filename, content_hash, origin, now, namespace
         )
     else:
         rows = await _markdown_rows(
             job,
-            upload_path,
+            conversion,
             filename,
             extension,
             content_hash,
@@ -469,6 +481,15 @@ async def ingest_document_route(request: Request) -> JSONResponse:
     if any(not isinstance(tag, str) or not tag.strip() for tag in raw_tags):
         await upload.close()
         return error("tags must be non-empty strings", 400)
+    secret_type = find_secret(
+        "\n".join([upload.filename, raw_document_id or "", origin_value or "", *raw_tags])
+    )
+    if secret_type is not None:
+        await upload.close()
+        return error(
+            f"upload metadata contains a credential ({secret_type}); remove it and upload again",
+            400,
+        )
     tags = normalize_tags(list(raw_tags), allow_empty=True)
 
     namespace_value = form.get("namespace")

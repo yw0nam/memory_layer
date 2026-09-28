@@ -16,6 +16,7 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.llm import chat_json
 from memory_base.core.schema import ensure_schema_once
+from memory_base.core.secrets import find_secret
 from memory_base.retrieval.search import (
     history_predicates,
     metadata_dict,
@@ -63,6 +64,16 @@ class LowSignalNoteError(ValueError):
             "file, tracker), and save that as a note of its own. If nothing in it does, store "
             "nothing; that is the expected outcome. Retry at most once: if the rewrite is "
             "refused too, do not save it, and tell the user when one is present."
+        )
+
+
+class CredentialNoteError(ValueError):
+    """A note or one of its tags carries a credential."""
+
+    def __init__(self, secret_type: str) -> None:
+        self.secret_type = secret_type
+        super().__init__(
+            f"note contains a credential ({secret_type}); store the fact without the secret"
         )
 
 
@@ -186,6 +197,9 @@ async def save_note(
     if ts > now:
         raise ValueError("occurred_at must not be in the future")
     row = build_note_row(content, kind, tags, ts, namespace, author)
+    secret_type = find_secret("\n".join([content, *(tags or [])]))
+    if secret_type is not None:
+        raise CredentialNoteError(secret_type)
     if supersedes == row["id"]:
         raise ValueError(
             f"content is identical to the note it supersedes ({supersedes}), so there is "
