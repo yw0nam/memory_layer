@@ -745,8 +745,6 @@ async def _retrieve_all(
     async def one(question: dict[str, Any]) -> None:
         nonlocal done
         async with semaphore:
-            if os.environ["DB_URL"] != db_url:
-                raise RuntimeError("DB_URL changed away from the throwaway database")
             packet = await retrieve_question(question, notes_by_unit, run)
             append_jsonl(out_path, [packet])
             done += 1
@@ -767,6 +765,7 @@ def run_retrieve(args: argparse.Namespace) -> None:
     from memory_base.core.config import emb_model, rerank_model
     from memory_base.serve import notes
 
+    code = code_revision()
     run = run_name(args.variant, args.gate)
     dataset = load_dataset(args.dataset)
     dataset_sha = sha256_file(args.dataset)
@@ -806,7 +805,7 @@ def run_retrieve(args: argparse.Namespace) -> None:
         args.manifest,
         section,
         {
-            "code": code_revision(),
+            "code": code,
             "gate": args.gate,
             "db_image": image or previous.get("db_image"),
             "db_extensions": extensions or previous.get("db_extensions"),
@@ -1017,6 +1016,7 @@ def render_report(report: dict[str, Any]) -> str:
 
 
 def run_score(args: argparse.Namespace) -> None:
+    code = code_revision()
     dataset = load_dataset(args.dataset)
     questions = {q["question_id"]: q for q in dataset}
     subset = select_subset(dataset)
@@ -1046,7 +1046,7 @@ def run_score(args: argparse.Namespace) -> None:
         args.manifest,
         "score",
         {
-            "code": code_revision(),
+            "code": code,
             "questions_scored": len(scope),
             "extraction": report["extraction"],
             "runs": runs,

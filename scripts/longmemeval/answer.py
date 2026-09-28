@@ -132,13 +132,18 @@ async def run_stage(
 
 
 def _stage_manifest(
-    stage: str, run: str, data_dir: Path, client: ChatModel, concurrency: int
+    stage: str,
+    run: str,
+    data_dir: Path,
+    client: ChatModel,
+    concurrency: int,
+    code: dict[str, Any],
 ) -> dict[str, Any]:
     out_path = lme.stage_output_path(data_dir, stage, run)
     rows = lme.read_jsonl(out_path)
     upstream = lme.upstream_manifest()
     return {
-        "code": lme.code_revision(),
+        "code": code,
         "provider": client.provider,
         "model": client.model,
         "temperature": 0,
@@ -171,6 +176,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     args = parser.parse_args(argv)
 
+    code = lme.code_revision()
     load_dotenv()
     run = lme.run_name(args.variant, args.gate)
     questions = {q["question_id"]: q for q in lme.load_dataset(args.dataset)}
@@ -183,11 +189,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     for failure in summary["failures"]:
         print(f"failed: {failure}")
-    lme.update_manifest(args.manifest, "upstream", lme.upstream_manifest())
     lme.update_manifest(
         args.manifest,
         f"{args.stage}{lme.run_suffix(run)}",
-        _stage_manifest(args.stage, run, args.data_dir, client, args.concurrency),
+        _stage_manifest(args.stage, run, args.data_dir, client, args.concurrency, code),
     )
     print(json.dumps({k: v for k, v in summary.items() if k != "failures"}))
 

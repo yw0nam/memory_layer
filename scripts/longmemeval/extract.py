@@ -315,6 +315,7 @@ def _extract_manifest(
     selected: Sequence[dict[str, Any]],
     client: OpenAIExtractor,
     summary: dict[str, Any],
+    code: dict[str, Any],
 ) -> dict[str, Any]:
     units = {(sid, date) for sid, date, _ in _units_for(selected)}
     sessions = [s for s in read_sessions(args.data_dir) if (s["session_id"], s["date"]) in units]
@@ -322,7 +323,7 @@ def _extract_manifest(
     gate_provider = llm.resolve_llm_provider(os.environ)
     totals = {name: sum(s[name] for s in sessions) for name in lme.SESSION_TOTALS}
     return {
-        "code": lme.code_revision(),
+        "code": code,
         "questions": None if args.questions is None else [q["question_id"] for q in selected],
         "extractor": {
             "provider": client.provider,
@@ -364,6 +365,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--questions", type=lambda s: s.split(","), default=None)
     args = parser.parse_args(argv)
 
+    code = lme.code_revision()
     load_dotenv()
     dataset = lme.load_dataset(args.dataset)
     subset = lme.select_subset(dataset)
@@ -389,7 +391,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         lme.subset_manifest(subset, lme.sha256_file(args.dataset)),
     )
     lme.update_manifest(
-        args.manifest, "extract", _extract_manifest(args, selected, client, summary)
+        args.manifest, "extract", _extract_manifest(args, selected, client, summary, code)
     )
     print(json.dumps({k: v for k, v in summary.items() if k != "failures"}))
 
