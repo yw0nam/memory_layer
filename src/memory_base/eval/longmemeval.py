@@ -1,16 +1,19 @@
-"""LongMemEval on the agent-distilled write path: retrieval, prompt files, and scoring.
+"""LongMemEval on the agent-distilled write path: retrieval, judge audit, and scoring.
 
 Notes come from scripts/longmemeval/extract.py, an emulated agent outside the server.
-`retrieve` loads each selected question's gate-stored notes into its own namespace of a
-throwaway Postgres built from db.Dockerfile through the production save_note path (gate
-pinned open, its verdict already recorded at extraction), then runs production search.
-Claude Code subagents answer and judge from the files `write-prompts` writes; `ingest`
-audits their replies and `score` reports QA accuracy and session-level retrieval metrics.
+`retrieve` loads each selected question's notes into its own namespace of a throwaway
+Postgres built from db.Dockerfile through the production save_note path (gate pinned
+open, its verdict already recorded at extraction), then runs production search.
+scripts/longmemeval/answer.py answers and judges the packets; `audit-sample` draws the
+seeded judgments a person grades by hand, and `score` reports QA accuracy, session-level
+retrieval metrics, and the judge agreement rate.
+
+Runs: `baseline` (gate on), `gate-off` (`--gate off`: gate-refused notes loaded too), and
+`dated` (`--variant dated`: temporal-reasoning questions, date-prefixed embeddings).
 
 CLI:
-  uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH [--variant dated]
-  uv run python -m memory_base.eval.longmemeval write-prompts --dataset PATH --stage answer
-  uv run python -m memory_base.eval.longmemeval ingest --dataset PATH --stage answer
+  uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH [--gate off]
+  uv run python -m memory_base.eval.longmemeval audit-sample --dataset PATH [--gate off]
   uv run python -m memory_base.eval.longmemeval score --dataset PATH
 """
 
@@ -25,7 +28,6 @@ import os
 import random
 import re
 import secrets
-import shutil
 import subprocess
 import time
 from collections import Counter, defaultdict
@@ -52,8 +54,12 @@ SAVE_ATTEMPTS = 3
 SAVE_BACKOFF_SECONDS = 5.0
 METRIC_KS = (5, 10)
 VARIANTS = ("baseline", "dated")
+GATES = ("on", "off")
+RUNS = ("baseline", "gate-off", "dated")
 DATED_VARIANT_TYPES = ("temporal-reasoning",)
 STAGES = ("answer", "judge")
+JUDGE_AUDIT_SIZE = 20
+JUDGE_AUDIT_SEED = 0
 NOTES_FILE = "notes.jsonl"
 SESSIONS_FILE = "sessions.jsonl"
 SESSION_TOTALS = (
@@ -240,6 +246,7 @@ class LoadStats:
     similar_acks: int = 0
     credential_refused: int = 0
     invalid: int = 0
+    gate_refused: int = 0
 
 
 SaveNote = Callable[..., Awaitable[dict[str, Any]]]
@@ -265,11 +272,14 @@ async def load_question_notes(
     units: Sequence[tuple[str, str]],
     notes_by_unit: dict[tuple[str, str], list[dict[str, Any]]],
     save: SaveNote | None = None,
+    gate: str = "on",
 ) -> tuple[LoadStats, dict[str, set[tuple[str, str]]]]:
-    """Save every gate-stored note of the units, in order, and map note ids to their units.
+    """Save the units' notes in order and map note ids to their units.
 
-    A note id is a content hash, so identical notes from two sessions collide on one row;
-    the returned provenance maps that row to both.
+    With the gate on only gate-stored notes load; with it off gate-refused notes load too,
+    while notes refused by validation or the credential scan never do (save_note would
+    refuse them). A note id is a content hash, so identical notes from two sessions
+    collide on one row; the returned provenance maps that row to both.
     """
     from memory_base.serve import notes as notes_module
     from memory_base.serve.namespaces import NamespaceError
@@ -280,9 +290,10 @@ async def load_question_notes(
     for unit in units:
         occurred_at = iso_datetime(unit[1])
         for note in notes_by_unit.get(unit, []):
-            if note["gate"] != "stored":
+            if not loadable(note, gate):
                 continue
             stats.submitted += 1
+            stats.gate_refused += note["gate"] == "refused"
             token = NOTE_DATE.set(occurred_at[:10])
             try:
                 result = await _save_with_retry(
@@ -312,6 +323,12 @@ async def load_question_notes(
             if result["similar"]:
                 stats.similar_acks += 1
     return stats, dict(provenance)
+
+
+def loadable(note: dict[str, Any], gate: str) -> bool:
+    if note["gate"] == "stored":
+        return True
+    return gate == "off" and not note["gate_reason"].startswith(REFUSAL_CAUSES)
 
 
 def dated_embed_text(embed: Callable[[Any, str], Awaitable[str]]):
@@ -433,49 +450,6 @@ def upstream_manifest() -> dict[str, Any]:
     }
 
 
-def _within_baseline(row: dict[str, Any], baseline: float) -> bool:
-    tool_uses = row.get("tool_uses")
-    return isinstance(tool_uses, int) and not isinstance(tool_uses, bool) and tool_uses <= baseline
-
-
-def accept_replies(
-    rows: Sequence[dict[str, Any]], expected: dict[str, str], *, baseline: int
-) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    """Keep each question's latest reply within the tool-use baseline.
-
-    `expected` maps each question awaiting a reply to the sha256 of its current prompt;
-    replies are appended in order, so the latest accepted one answers that prompt. A row
-    whose tool_uses is missing or above the baseline is rejected.
-    """
-    accepted: dict[str, dict[str, Any]] = {}
-    audit = {
-        "rows": len(rows),
-        "rejected_tool_uses": 0,
-        "invalid": 0,
-        "unknown_question": 0,
-        "duplicates": 0,
-    }
-    for row in rows:
-        qid = row.get("question_id")
-        if qid not in expected:
-            audit["unknown_question"] += 1
-        elif not _within_baseline(row, baseline):
-            audit["rejected_tool_uses"] += 1
-        elif not isinstance(row.get("text"), str):
-            audit["invalid"] += 1
-        else:
-            audit["duplicates"] += qid in accepted
-            accepted[qid] = {
-                "question_id": qid,
-                "text": row["text"],
-                "tool_uses": row["tool_uses"],
-                "model": row.get("model"),
-                "prompt_sha256": expected[qid],
-            }
-    audit["pending"] = [qid for qid in expected if qid not in accepted]
-    return accepted, audit
-
-
 def _accuracy(labels: Sequence[bool]) -> dict[str, Any]:
     correct = sum(labels)
     accuracy = correct / len(labels) if labels else None
@@ -487,26 +461,15 @@ def qa_accuracy(
     questions: dict[str, dict[str, Any]],
     answers: Sequence[dict[str, Any]],
     judgments: Sequence[dict[str, Any]],
-    *,
-    baseline: int,
 ) -> dict[str, Any]:
     """Accuracy overall, per question_type, and over abstention questions.
 
-    A judgment counts only when both it and its answer are within the tool-use
-    baseline and it graded the current answer (its prompt sha matches).
+    A question's answer is its latest answer row; a judgment counts only when it graded
+    that answer (its prompt sha matches), and the latest such judgment wins.
     """
-    answer_by_id: dict[str, dict[str, Any]] = {}
-    for row in answers:
-        if _within_baseline(row, baseline):
-            answer_by_id.setdefault(row["question_id"], row)
-    labels: dict[str, bool] = {}
-    for row in judgments:
-        qid = row["question_id"]
-        if qid in labels or qid not in answer_by_id or not _within_baseline(row, baseline):
-            continue
-        expected = prompt_sha(judge_prompt(questions[qid], answer_by_id[qid]["text"]))
-        if row.get("prompt_sha256") == expected:
-            labels[qid] = judge_label(row["text"])
+    labels = {
+        qid: judge_label(row["text"]) for qid, row in _judged(questions, answers, judgments).items()
+    }
     groups: defaultdict[str, list[bool]] = defaultdict(list, overall=[])
     for qid in question_ids:
         if qid not in labels:
@@ -518,6 +481,62 @@ def qa_accuracy(
     report: dict[str, Any] = {name: _accuracy(values) for name, values in sorted(groups.items())}
     report["unjudged"] = [qid for qid in question_ids if qid not in labels]
     return report
+
+
+def _judged(
+    questions: dict[str, dict[str, Any]],
+    answers: Sequence[dict[str, Any]],
+    judgments: Sequence[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Each question's latest judgment of its latest answer."""
+    answer_by_id = {row["question_id"]: row for row in answers}
+    expected = {
+        qid: judge_prompt(questions[qid], row["text"])
+        for qid, row in answer_by_id.items()
+        if qid in questions
+    }
+    return current_rows(judgments, expected)
+
+
+def judge_audit_sample(
+    question_ids: Sequence[str],
+    questions: dict[str, dict[str, Any]],
+    answers: dict[str, dict[str, Any]],
+    judgments: Sequence[dict[str, Any]],
+    *,
+    size: int = JUDGE_AUDIT_SIZE,
+    seed: int = JUDGE_AUDIT_SEED,
+) -> list[dict[str, Any]]:
+    """A seeded sample of judgments for a person to grade by setting `human_label`."""
+    judged = _judged(questions, list(answers.values()), judgments)
+    candidates = [qid for qid in question_ids if qid in judged]
+    picked = set(random.Random(seed).sample(candidates, min(size, len(candidates))))
+    return [
+        {
+            "question_id": qid,
+            "question_type": questions[qid]["question_type"],
+            "question": questions[qid]["question"],
+            "reference": questions[qid]["answer"],
+            "response": answers[qid]["text"],
+            "judge_reply": judged[qid]["text"],
+            "judge_label": judge_label(judged[qid]["text"]),
+            "human_label": None,
+        }
+        for qid in candidates
+        if qid in picked
+    ]
+
+
+def judge_agreement(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Agreement between the judge and the hand labels; unlabeled rows are left out."""
+    labeled = [row for row in rows if isinstance(row.get("human_label"), bool)]
+    agreed = sum(row["human_label"] == row["judge_label"] for row in labeled)
+    return {
+        "sample": len(rows),
+        "labeled": len(labeled),
+        "agreed": agreed,
+        "agreement_rate": agreed / len(labeled) if labeled else None,
+    }
 
 
 def gate_rates(
@@ -606,25 +625,30 @@ async def _prepare_schema(url: str, deadline_seconds: float = 90) -> list[str]:
     return [f"{row['extname']} {row['extversion']}" for row in rows]
 
 
-def _variant_suffix(variant: str) -> str:
-    return "" if variant == "baseline" else f"-{variant}"
+def run_name(variant: str, gate: str) -> str:
+    """The run a variant and gate setting select; gate-off runs only the baseline variant."""
+    if gate == "on":
+        return variant
+    if variant != "baseline":
+        raise ValueError("the gate-off run covers the baseline variant only")
+    return "gate-off"
 
 
-def packets_path(data_dir: Path, variant: str) -> Path:
-    return data_dir / f"packets{_variant_suffix(variant)}.jsonl"
+def run_suffix(run: str) -> str:
+    return "" if run == "baseline" else f"-{run}"
 
 
-def stage_output_path(data_dir: Path, stage: str, variant: str) -> Path:
+def packets_path(data_dir: Path, run: str) -> Path:
+    return data_dir / f"packets{run_suffix(run)}.jsonl"
+
+
+def stage_output_path(data_dir: Path, stage: str, run: str) -> Path:
     name = "answers" if stage == "answer" else "judgments"
-    return data_dir / f"{name}{_variant_suffix(variant)}.jsonl"
+    return data_dir / f"{name}{run_suffix(run)}.jsonl"
 
 
-def replies_path(data_dir: Path, stage: str, variant: str) -> Path:
-    return data_dir / "replies" / f"{stage}{_variant_suffix(variant)}.jsonl"
-
-
-def prompts_dir(data_dir: Path, stage: str, variant: str) -> Path:
-    return data_dir / "prompts" / f"{stage}{_variant_suffix(variant)}"
+def judge_audit_path(data_dir: Path, run: str) -> Path:
+    return data_dir / f"judge-audit{run_suffix(run)}.jsonl"
 
 
 def _hit_record(hit: Any, provenance: dict[str, set[tuple[str, str]]]) -> dict[str, Any]:
@@ -649,7 +673,7 @@ async def _gate_pinned_open(content: str, kind: str):
 async def retrieve_question(
     question: dict[str, Any],
     notes_by_unit: dict[tuple[str, str], list[dict[str, Any]]],
-    variant: str,
+    run: str,
 ) -> dict[str, Any]:
     from memory_base.eval.retrieval import _search_with_retry
     from memory_base.serve import namespaces
@@ -657,7 +681,12 @@ async def retrieve_question(
     namespace = NAMESPACE_PREFIX + question["question_id"]
     await namespaces.create_namespace(namespace)
     started = time.monotonic()
-    stats, provenance = await load_question_notes(namespace, session_units(question), notes_by_unit)
+    stats, provenance = await load_question_notes(
+        namespace,
+        session_units(question),
+        notes_by_unit,
+        gate="off" if run == "gate-off" else "on",
+    )
     loaded = time.monotonic()
     hits = await _search_with_retry(question["question"], source="memory", namespaces=[namespace])
     return {
@@ -665,7 +694,7 @@ async def retrieve_question(
         "question_type": question["question_type"],
         "question": question["question"],
         "question_date": question["question_date"],
-        "variant": variant,
+        "run": run,
         "load": asdict(stats),
         "seconds": {"load": loaded - started, "search": time.monotonic() - loaded},
         "hits": [_hit_record(hit, provenance) for hit in hits],
@@ -700,7 +729,7 @@ def _retrieval_constants() -> dict[str, Any]:
 async def _retrieve_all(
     pending: Sequence[dict[str, Any]],
     notes_by_unit: dict,
-    variant: str,
+    run: str,
     out_path: Path,
     db_url: str,
 ) -> list[str]:
@@ -715,7 +744,7 @@ async def _retrieve_all(
         async with semaphore:
             if os.environ["DB_URL"] != db_url:
                 raise RuntimeError("DB_URL changed away from the throwaway database")
-            packet = await retrieve_question(question, notes_by_unit, variant)
+            packet = await retrieve_question(question, notes_by_unit, run)
             append_jsonl(out_path, [packet])
             done += 1
             print(
@@ -735,30 +764,31 @@ def run_retrieve(args: argparse.Namespace) -> None:
     from memory_base.core.config import emb_model, rerank_model
     from memory_base.serve import notes
 
+    run = run_name(args.variant, args.gate)
     dataset = load_dataset(args.dataset)
     dataset_sha = sha256_file(args.dataset)
     subset = select_subset(dataset)
     selected = filter_questions(subset, args.questions)
-    if args.variant == "dated":
+    if run == "dated":
         selected = [q for q in selected if q["question_type"] in DATED_VARIANT_TYPES]
     notes_by_unit, completed = _notes_by_unit(args.data_dir)
     missing = {u for q in selected for u in session_units(q)} - completed
     if missing:
         raise SystemExit(f"{len(missing)} extraction units are not extracted yet; run extract")
-    out_path = packets_path(args.data_dir, args.variant)
+    out_path = packets_path(args.data_dir, run)
     done_ids = {row["question_id"] for row in read_jsonl(out_path)}
     pending = [q for q in selected if q["question_id"] not in done_ids]
-    print(f"questions: {len(selected)} selected, {len(pending)} pending ({args.variant})")
+    print(f"questions: {len(selected)} selected, {len(pending)} pending ({run})")
 
     notes.judge_note_content = _gate_pinned_open
-    if args.variant == "dated":
+    if run == "dated":
         notes.embed_text = dated_embed_text(notes.embed_text)
     image = extensions = None
     if pending:
         with throwaway_postgres() as database:
             image = database["image"]
             extensions = asyncio.run(
-                _retrieve_all(pending, notes_by_unit, args.variant, out_path, database["url"])
+                _retrieve_all(pending, notes_by_unit, run, out_path, database["url"])
             )
 
     packets = read_jsonl(out_path)
@@ -766,7 +796,7 @@ def run_retrieve(args: argparse.Namespace) -> None:
     load = Counter()
     for packet in packets:
         load.update(packet["load"])
-    section = f"retrieve{_variant_suffix(args.variant)}"
+    section = f"retrieve{run_suffix(run)}"
     previous = read_manifest(args.manifest).get(section, {})
     update_manifest(args.manifest, "subset", subset_manifest(subset, dataset_sha))
     update_manifest(
@@ -774,11 +804,12 @@ def run_retrieve(args: argparse.Namespace) -> None:
         section,
         {
             "code": code_revision(),
+            "gate": args.gate,
             "db_image": image or previous.get("db_image"),
             "db_extensions": extensions or previous.get("db_extensions"),
             "embedder": emb_model(),
             "reranker": rerank_model(),
-            "embedding_input": "{date}: {content}" if args.variant == "dated" else "{content}",
+            "embedding_input": "{date}: {content}" if run == "dated" else "{content}",
             "constants": _retrieval_constants(),
             "questions": len(packets),
             "load": dict(load),
@@ -790,97 +821,71 @@ def run_retrieve(args: argparse.Namespace) -> None:
     print(json.dumps(retrieval_metrics(packets, questions)["overall"] if packets else {}))
 
 
-def _packets_by_id(data_dir: Path, variant: str) -> dict[str, dict[str, Any]]:
+def _packets_by_id(data_dir: Path, run: str) -> dict[str, dict[str, Any]]:
     packets: dict[str, dict[str, Any]] = {}
-    for packet in read_jsonl(packets_path(data_dir, variant)):
+    for packet in read_jsonl(packets_path(data_dir, run)):
         packets.setdefault(packet["question_id"], packet)
     return packets
 
 
-def _expected_prompts(
-    stage: str,
-    data_dir: Path,
-    variant: str,
-    questions: dict[str, dict[str, Any]],
-    baseline: int,
-) -> dict[str, str]:
-    """Each question's current prompt for the stage, keyed by question id."""
-    if stage == "answer":
-        packets = _packets_by_id(data_dir, variant)
-        return {qid: answer_prompt(packet) for qid, packet in packets.items()}
-    return {
-        qid: judge_prompt(questions[qid], row["text"])
-        for qid, row in _current_answers(data_dir, variant).items()
-        if _within_baseline(row, baseline)
-    }
-
-
-def _current_rows(
-    rows: Sequence[dict[str, Any]], expected: dict[str, str], baseline: int
+def current_rows(
+    rows: Sequence[dict[str, Any]], expected: dict[str, str]
 ) -> dict[str, dict[str, Any]]:
-    """Rows within the baseline that answer the current prompt (prompt sha matches)."""
+    """Each question's latest row answering its current prompt (prompt sha matches).
+
+    `expected` maps a question id to the prompt text it is currently given.
+    """
+    shas = {qid: prompt_sha(text) for qid, text in expected.items()}
     current: dict[str, dict[str, Any]] = {}
     for row in rows:
         qid = row.get("question_id")
-        if (
-            qid in expected
-            and _within_baseline(row, baseline)
-            and row.get("prompt_sha256") == prompt_sha(expected[qid])
-        ):
+        if qid in shas and row.get("prompt_sha256") == shas[qid]:
             current[qid] = row
     return current
 
 
-def _current_answers(data_dir: Path, variant: str) -> dict[str, dict[str, Any]]:
-    """Ingested answers whose prompt matches the current packet."""
-    packets = _packets_by_id(data_dir, variant)
+def current_answers(data_dir: Path, run: str) -> dict[str, dict[str, Any]]:
+    """Answers whose prompt matches the current packet."""
+    packets = _packets_by_id(data_dir, run)
     expected = {qid: answer_prompt(packet) for qid, packet in packets.items()}
-    rows = read_jsonl(stage_output_path(data_dir, "answer", variant))
-    return _current_rows(rows, expected, baseline=math.inf)
+    return current_rows(read_jsonl(stage_output_path(data_dir, "answer", run)), expected)
 
 
-def run_write_prompts(args: argparse.Namespace) -> None:
+def stage_prompts(
+    stage: str, data_dir: Path, run: str, questions: dict[str, dict[str, Any]]
+) -> dict[str, str]:
+    """Each question's current prompt for the stage, keyed by question id."""
+    if stage == "answer":
+        packets = _packets_by_id(data_dir, run)
+        return {qid: answer_prompt(packet) for qid, packet in packets.items()}
+    return {
+        qid: judge_prompt(questions[qid], row["text"])
+        for qid, row in current_answers(data_dir, run).items()
+    }
+
+
+def _usage(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "questions": len(rows),
+        "in_tok": sum(row["in_tok"] for row in rows),
+        "out_tok": sum(row["out_tok"] for row in rows),
+        "seconds_per_question": _mean([row["seconds"] for row in rows]),
+    }
+
+
+def run_audit_sample(args: argparse.Namespace) -> None:
+    run = run_name(args.variant, args.gate)
+    out_path = judge_audit_path(args.data_dir, run)
+    if out_path.exists():
+        raise SystemExit(f"{out_path} exists; it may hold hand labels, so it is not replaced")
     questions = {q["question_id"]: q for q in load_dataset(args.dataset)}
-    expected = _expected_prompts(args.stage, args.data_dir, args.variant, questions, args.baseline)
-    rows = read_jsonl(stage_output_path(args.data_dir, args.stage, args.variant))
-    done = _current_rows(rows, expected, args.baseline)
-    out_dir = prompts_dir(args.data_dir, args.stage, args.variant)
-    shutil.rmtree(out_dir, ignore_errors=True)
-    out_dir.mkdir(parents=True)
-    pending = [qid for qid in expected if qid not in done]
-    for qid in pending:
-        (out_dir / f"{qid}.txt").write_text(expected[qid], encoding="utf-8")
-    print(f"{len(pending)} {args.stage} prompts in {out_dir} ({len(done)} already accepted)")
-    print(f"append replies to {replies_path(args.data_dir, args.stage, args.variant)}")
-
-
-def run_ingest(args: argparse.Namespace) -> None:
-    questions = {q["question_id"]: q for q in load_dataset(args.dataset)}
-    expected = _expected_prompts(args.stage, args.data_dir, args.variant, questions, args.baseline)
-    source = args.replies or replies_path(args.data_dir, args.stage, args.variant)
-    accepted, audit = accept_replies(
-        read_jsonl(source),
-        {qid: prompt_sha(text) for qid, text in expected.items()},
-        baseline=args.baseline,
+    answers = current_answers(args.data_dir, run)
+    judgments = read_jsonl(stage_output_path(args.data_dir, "judge", run))
+    rows = judge_audit_sample(
+        list(_packets_by_id(args.data_dir, run)), questions, answers, judgments
     )
-    out_path = stage_output_path(args.data_dir, args.stage, args.variant)
-    write_jsonl_atomic(out_path, [accepted[qid] for qid in expected if qid in accepted])
-    models = sorted({str(row["model"]) for row in accepted.values()})
-    update_manifest(args.manifest, "upstream", upstream_manifest())
-    update_manifest(
-        args.manifest,
-        f"{args.stage}{_variant_suffix(args.variant)}",
-        {
-            "tool_use_baseline": args.baseline,
-            "models": models,
-            "accepted": len(accepted),
-            "audit": {name: value for name, value in audit.items() if name != "pending"},
-            "pending": len(audit["pending"]),
-            "replies_sha256": sha256_file(source) if Path(source).exists() else None,
-            "output_sha256": sha256_file(out_path),
-        },
-    )
-    print(json.dumps({"accepted": len(accepted), "models": models, **audit}, indent=2))
+    write_jsonl_atomic(out_path, rows)
+    print(f"{len(rows)} judgments in {out_path}; set each human_label to true or false")
 
 
 def _extraction_summary(
@@ -930,24 +935,28 @@ def _extraction_summary(
     }
 
 
-def _variant_report(
-    data_dir: Path, variant: str, questions: dict[str, dict[str, Any]], baseline: int
+def _run_report(
+    data_dir: Path, run: str, questions: dict[str, dict[str, Any]]
 ) -> dict[str, Any] | None:
-    packets = _packets_by_id(data_dir, variant)
+    packets = _packets_by_id(data_dir, run)
     if not packets:
         return None
     question_ids = list(packets)
-    answers = list(_current_answers(data_dir, variant).values())
-    judgments = read_jsonl(stage_output_path(data_dir, "judge", variant))
+    answers = current_answers(data_dir, run)
+    judgments = read_jsonl(stage_output_path(data_dir, "judge", run))
+    judged = _judged(questions, list(answers.values()), judgments)
     load = Counter()
     for packet in packets.values():
         load.update(packet["load"])
     return {
         "questions": len(packets),
-        "qa": qa_accuracy(question_ids, questions, answers, judgments, baseline=baseline),
+        "qa": qa_accuracy(question_ids, questions, list(answers.values()), judgments),
         "retrieval": retrieval_metrics(list(packets.values()), questions),
         "load": dict(load),
         "similar_acks_per_question": load["similar_acks"] / len(packets),
+        "answer_usage": _usage(list(answers.values())),
+        "judge_usage": _usage(list(judged.values())),
+        "judge_audit": judge_agreement(read_jsonl(judge_audit_path(data_dir, run))),
     }
 
 
@@ -959,8 +968,8 @@ def _fmt(value: Any) -> str:
 
 def render_report(report: dict[str, Any]) -> str:
     lines = [f"# LongMemEval_S subset (n={report['subset']['size']})", ""]
-    for variant, body in report["variants"].items():
-        lines += [f"## {variant} (questions with packets: {body['questions']})", ""]
+    for run, body in report["runs"].items():
+        lines += [f"## {run} (questions with packets: {body['questions']})", ""]
         lines += ["| group | judged | accuracy |", "|---|---|---|"]
         for group, row in body["qa"].items():
             if group != "unjudged":
@@ -977,6 +986,9 @@ def render_report(report: dict[str, Any]) -> str:
             f"Zero-hit packets: {body['retrieval']['zero_hit_packets']} "
             f"(scored: {body['retrieval']['zero_hit_packets_scored']})",
             f"Load: {json.dumps(body['load'])}",
+            f"Answer usage: {json.dumps(body['answer_usage'])}",
+            f"Judge usage: {json.dumps(body['judge_usage'])}",
+            f"Judge audit: {json.dumps(body['judge_audit'])}",
             "",
         ]
     extraction = report["extraction"]
@@ -1005,18 +1017,17 @@ def run_score(args: argparse.Namespace) -> None:
     dataset = load_dataset(args.dataset)
     questions = {q["question_id"]: q for q in dataset}
     subset = select_subset(dataset)
-    variants = {}
-    for variant in VARIANTS:
-        body = _variant_report(args.data_dir, variant, questions, args.baseline)
+    runs = {}
+    for run in RUNS:
+        body = _run_report(args.data_dir, run, questions)
         if body is not None:
-            variants[variant] = body
-    if "baseline" not in variants:
+            runs[run] = body
+    if "baseline" not in runs:
         raise SystemExit("no packets yet; run retrieve")
     scope = list(_packets_by_id(args.data_dir, "baseline"))
     report = {
         "subset": subset_manifest(subset, sha256_file(args.dataset)),
-        "tool_use_baseline": args.baseline,
-        "variants": variants,
+        "runs": runs,
         "extraction": _extraction_summary(args.data_dir, scope, questions),
     }
     (args.data_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -1033,10 +1044,9 @@ def run_score(args: argparse.Namespace) -> None:
         "score",
         {
             "code": code_revision(),
-            "tool_use_baseline": args.baseline,
             "questions_scored": len(scope),
             "extraction": report["extraction"],
-            "variants": variants,
+            "runs": runs,
             "artefacts_sha256": artefacts,
         },
     )
@@ -1051,24 +1061,19 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--dataset", type=Path, required=True)
         sub.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
         sub.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+
+    def run_flags(sub: argparse.ArgumentParser) -> None:
         sub.add_argument("--variant", choices=VARIANTS, default="baseline")
+        sub.add_argument("--gate", choices=GATES, default="on")
 
     retrieve = commands.add_parser("retrieve", help="load notes and search per question")
     common(retrieve)
+    run_flags(retrieve)
     retrieve.add_argument("--questions", type=lambda s: s.split(","), default=None)
-    for name, helptext in (
-        ("write-prompts", "write one prompt file per pending question"),
-        ("ingest", "audit coordinator replies into answers/judgments"),
-    ):
-        sub = commands.add_parser(name, help=helptext)
-        common(sub)
-        sub.add_argument("--stage", choices=STAGES, required=True)
-        sub.add_argument("--baseline", type=int, default=0, help="max tool_uses per reply")
-        if name == "ingest":
-            sub.add_argument("--replies", type=Path, default=None)
-    score = commands.add_parser("score", help="report accuracy and retrieval metrics")
-    common(score)
-    score.add_argument("--baseline", type=int, default=0, help="max tool_uses per reply")
+    audit = commands.add_parser("audit-sample", help="draw the seeded judge-audit sample")
+    common(audit)
+    run_flags(audit)
+    common(commands.add_parser("score", help="report accuracy and retrieval metrics"))
     return parser
 
 
@@ -1077,8 +1082,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args.data_dir.mkdir(parents=True, exist_ok=True)
     {
         "retrieve": run_retrieve,
-        "write-prompts": run_write_prompts,
-        "ingest": run_ingest,
+        "audit-sample": run_audit_sample,
         "score": run_score,
     }[args.command](args)
 
