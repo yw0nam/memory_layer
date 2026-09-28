@@ -740,10 +740,11 @@ async def query_table(
 ) -> dict[str, Any]:
     """Run a read-only SQL query over ingested CSV rows.
 
-    Find the CSV card with `search_memory` first. Its `source_ref` is the
-    `document_id`, and its meta.columns lists the available JSON keys. Rows
-    live in `memory.doc_rows` as jsonb: use `(data->>'column')::numeric` for
-    numeric calculations and `WHERE document_id = '...'` to scope one table.
+    Find the CSV card with `search_memory` first. Its `ref` is
+    `<document_id>#card-N` (the part before `#` is the document_id), and its
+    meta.columns lists the available JSON keys. Rows live in `memory.doc_rows`
+    as jsonb: use `(data->>'column')::numeric` for numeric calculations and
+    `WHERE document_id = '...'` to scope one table.
     The server restricts the query to one permitted namespace and returns at
     most 1,000 rows.
     """

@@ -8,15 +8,18 @@ through save_note. The embedder and reranker are the configured live endpoints.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
+import uuid
 
 import asyncpg
+import numpy as np
 import pytest
 
-from memory_base.core.config import PG_SCHEMA, db_url
+from memory_base.core.config import EMB_DIM, PG_SCHEMA, db_url, vector_literal
 from memory_base.core.db import acquire, close_pool, get_pool
-from memory_base.retrieval.search import search
+from memory_base.retrieval.search import PER_FILE_CAP, search
 from memory_base.serve import mcp_server, repos
 from memory_base.serve.notes import build_note_row, save_note
 
@@ -74,6 +77,68 @@ def test_search_memory_source_returns_memory_hits():
         assert all(h.source == "memory" for h in hits)
     finally:
         asyncio.run(_delete_note(note_id))
+
+
+def test_notes_with_distinct_session_ids_are_not_capped_by_search():
+    marker = f"zzz_integ_notecap_{uuid.uuid4().hex[:8]}"
+    contents = [
+        f"integration-test note cap pin {marker}: fact number {i}" for i in range(PER_FILE_CAP + 2)
+    ]
+    note_ids = []
+    try:
+        for content in contents:
+            result = asyncio.run(save_note(content, tags=["test"], allow_similar=True))
+            note_ids.append(result["id"])
+        hits = asyncio.run(search(marker, source="memory", rerank=False))
+        assert len(hits) > PER_FILE_CAP
+    finally:
+        for note_id in note_ids:
+            asyncio.run(_delete_note(note_id))
+
+
+def test_document_chunks_sharing_a_session_id_are_capped_by_search():
+    document_id = f"cap-test-doc-{uuid.uuid4().hex[:8]}"
+    marker = f"zzz_integ_doccap_{uuid.uuid4().hex[:8]}"
+    embedding = vector_literal(np.zeros(EMB_DIM, dtype=np.float16))
+    chunk_count = PER_FILE_CAP + 2
+
+    async def seed() -> None:
+        async with acquire() as conn:
+            await conn.executemany(
+                f"""
+                INSERT INTO "{PG_SCHEMA}".memory_chunks
+                  (id, source_type, source_ref, chunk_kind, session_id, content_raw,
+                   distilled, embedding, ts_last_active, namespace, metadata)
+                VALUES ($1, 'document', $2, 'doc', $2, $3, $3, $4::halfvec, $5,
+                        'default', $6::jsonb)
+                """,
+                [
+                    (
+                        f"doc:{document_id}:{i}",
+                        document_id,
+                        f"{marker} chunk number {i} about the topic",
+                        embedding,
+                        1_700_000_000.0,
+                        json.dumps({"search_ref": f"{document_id}#chunk-{i}"}),
+                    )
+                    for i in range(chunk_count)
+                ],
+            )
+
+    async def clean() -> None:
+        async with acquire() as conn:
+            await conn.execute(
+                f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE session_id = $1',
+                document_id,
+            )
+
+    asyncio.run(seed())
+    try:
+        hits = asyncio.run(search(marker, source="memory", rerank=False))
+        matching = [h for h in hits if h.meta["session_id"] == document_id]
+        assert 0 < len(matching) <= PER_FILE_CAP
+    finally:
+        asyncio.run(clean())
 
 
 def test_search_all_source_with_rerank_populates_rerank_score():

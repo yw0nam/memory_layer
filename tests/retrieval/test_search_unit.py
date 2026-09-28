@@ -142,12 +142,12 @@ def test_dedup_cap_keeps_rrf_descending_order():
     assert [h.rrf for h in out] == [0.9, 0.6, 0.3]
 
 
-def test_dedup_cap_falls_back_to_ref_when_no_filename_meta():
-    # history hits have no meta["filename"] -> dedup key falls back to ref
-    hits = [Hit(source="memory", ref="sess-1", text="", ts=0.0, rrf=1.0, meta={})]
+def test_dedup_cap_code_falls_back_to_ref_when_no_filename_meta():
+    # a code hit with no meta["filename"] -> dedup key falls back to ref
+    hits = [_hit("chunk-1", rrf=1.0)]
     out = _dedup_cap(hits)
     assert len(out) == 1
-    assert out[0].ref == "sess-1"
+    assert out[0].ref == "chunk-1"
 
 
 # ---- _apply_min_score -----------------------------------------------------
