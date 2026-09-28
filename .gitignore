@@ -5,3 +5,4 @@ __pycache__/
 logs/
 .repos_cache/
 git-credentials
+/data/longmemeval/

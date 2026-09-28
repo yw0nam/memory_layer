@@ -41,7 +41,7 @@ def synthetic_dataset():
     questions = []
     for qtype, count in TYPES.items():
         for index in range(count):
-            questions.append(make_question(f"{qtype[:4]}{index:03d}", qtype))
+            questions.append(make_question(f"{qtype}-{index:03d}", qtype))
     return questions
 
 
@@ -320,7 +320,7 @@ def reply(qid, text, tool_uses=0, model="claude-sonnet-5"):
     return {"question_id": qid, "text": text, "tool_uses": tool_uses, "model": model}
 
 
-def test_accept_replies_keeps_the_first_row_within_the_tool_use_baseline():
+def test_accept_replies_keeps_the_latest_row_within_the_tool_use_baseline():
     expected = {"q1": "sha1", "q2": "sha2", "q3": "sha3"}
     rows = [
         reply("q1", "used a tool", tool_uses=2),
@@ -330,12 +330,13 @@ def test_accept_replies_keeps_the_first_row_within_the_tool_use_baseline():
         reply("unknown", "x"),
     ]
     accepted, audit = lme.accept_replies(rows, expected, baseline=0)
-    assert {qid: row["text"] for qid, row in accepted.items()} == {"q1": "clean"}
+    assert {qid: row["text"] for qid, row in accepted.items()} == {"q1": "second clean"}
     assert accepted["q1"]["prompt_sha256"] == "sha1"
     assert audit["rejected_tool_uses"] == 2
     assert audit["unknown_question"] == 1
     assert audit["pending"] == ["q2", "q3"]
-    accepted, audit = lme.accept_replies(rows, expected, baseline=2)
+    assert audit["duplicates"] == 1
+    accepted, audit = lme.accept_replies(rows[:1], expected, baseline=2)
     assert accepted["q1"]["text"] == "used a tool"
 
 
@@ -387,16 +388,19 @@ def test_score_ignores_a_judgment_of_a_different_answer():
     assert report["unjudged"] == ["q1"]
 
 
+D1, D2, D9 = "2023/05/01 (Mon) 10:00", "2023/05/02 (Tue) 10:00", "2023/05/09 (Tue) 10:00"
+
+
 def test_gate_rates_count_refusals_per_question_type():
     questions = {
-        "q1": make_question("q1", "multi-session", sessions=[("s1", "d1"), ("s2", "d2")]),
-        "q2": make_question("q2", "temporal-reasoning", sessions=[("s2", "d2")]),
+        "q1": make_question("q1", "multi-session", sessions=[("s1", D1), ("s2", D2)]),
+        "q2": make_question("q2", "temporal-reasoning", sessions=[("s2", D2)]),
     }
     notes = [
-        {"session_id": "s1", "date": "d1", "gate": "stored"},
-        {"session_id": "s1", "date": "d1", "gate": "refused"},
-        {"session_id": "s2", "date": "d2", "gate": "refused"},
-        {"session_id": "s9", "date": "d9", "gate": "stored"},
+        {"session_id": "s1", "date": D1, "gate": "stored"},
+        {"session_id": "s1", "date": D1, "gate": "refused"},
+        {"session_id": "s2", "date": D2, "gate": "refused"},
+        {"session_id": "s9", "date": D9, "gate": "stored"},
     ]
     rates = lme.gate_rates(["q1", "q2"], questions, notes)
     assert rates["overall"] == {"notes": 3, "refused": 2, "refused_rate": pytest.approx(2 / 3)}
