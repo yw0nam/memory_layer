@@ -190,8 +190,8 @@ async def save_note(
     embedding = await embed_text(VllmEmbedder(), row["raw"])
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
-        await namespaces.require_registered(conn, namespace)
         async with conn.transaction():
+            await namespaces.require_registered(conn, namespace)
             if supersedes is not None:
                 exists = await conn.fetchval(
                     f"""
