@@ -235,7 +235,10 @@ def code_revision() -> dict[str, Any]:
             ["git", "-C", str(REPO_ROOT), *args], check=True, capture_output=True, text=True
         ).stdout.strip()
 
-    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
+    # The run writes its own manifest, which must not mark the code it ran as modified.
+    manifest = f":(exclude){DEFAULT_MANIFEST.relative_to(REPO_ROOT)}"
+    dirty = git("status", "--porcelain", "--", ".", manifest)
+    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(dirty)}
 
 
 @dataclass
