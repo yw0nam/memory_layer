@@ -51,13 +51,18 @@ HEALTH_PROBE_TIMEOUT_SECONDS = 5.0
 
 
 def hit_to_dict(hit: Hit) -> dict[str, Any]:
-    """Convert a search hit into a JSON-serializable response object."""
+    """Convert a search hit into a JSON-serializable response object.
+
+    Memory hits are write-time bounded (notes, document chunks, CSV cards) and
+    come back whole. Code chunks are not hard-bounded — CocoIndex's chunk_size
+    is a target, not a limit — so code hits still get cut to TEXT_LIMIT here.
+    """
     out: dict[str, Any] = {
         "source": hit.source,
         "ref": hit.ref,
         "date": datetime.fromtimestamp(hit.ts, tz=timezone.utc).strftime("%Y-%m-%d"),
         "score": hit.score,
-        "text": hit.text[:TEXT_LIMIT],
+        "text": hit.text if hit.source == "memory" else hit.text[:TEXT_LIMIT],
     }
     repo = hit.meta.get("repo")
     if repo:

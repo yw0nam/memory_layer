@@ -363,7 +363,8 @@ def csv_prompt_context(sample: CSVSample) -> str:
     rendered.extend(",".join(row) for row in sample.rows[:20])
     return (
         "Create one English knowledge card describing this table, its fields, and useful "
-        f"patterns visible in the sample. Total data rows: {sample.row_count}. "
+        f"patterns visible in the sample. Keep the summary under {HARD_CHUNK_CHARS} "
+        f"characters. Total data rows: {sample.row_count}. "
         f"Columns: {sample.column_count}.\n\nCSV sample:\n" + "\n".join(rendered)
     )
 
@@ -372,9 +373,16 @@ async def build_csv_card(
     sample: CSVSample,
     summarize: Callable[[str, str], Awaitable[dict[str, Any]]],
 ) -> dict[str, Any]:
-    """Summarize a CSV sample with the generic enrichment operation."""
+    """Summarize a CSV sample with the generic enrichment operation.
+
+    A summary over HARD_CHUNK_CHARS fails the ingest job outright: this stored
+    card is a search hit returned whole, with no write-time split to fall back on.
+    """
     context = csv_prompt_context(sample)
-    return await summarize(context, "The input is a sampled tabular document.")
+    card = await summarize(context, "The input is a sampled tabular document.")
+    if len(card["summary"]) > HARD_CHUNK_CHARS:
+        raise DocumentError(f"CSV summary exceeds {HARD_CHUNK_CHARS} chars")
+    return card
 
 
 def _qualify_document_id(namespace: str, document_id: str) -> str:
