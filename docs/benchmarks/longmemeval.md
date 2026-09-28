@@ -122,10 +122,13 @@ are reported for both runs.
 
 `scripts/longmemeval/answer.py` is a client like the extractor: it builds its model
 client from `resolve_llm_provider`, requires the z.ai provider, and calls
-`glm-5.3-flash` with temperature 0, thinking disabled, and upstream's token limits
-(500 for an answer, 10 for a judgment), five questions at a time. Each question gets
-one fresh single-message request; each reply is appended with the sha256 of its prompt,
-its token usage, and its latency.
+`glm-5.3-flash` with temperature 0 and thinking disabled, five questions at a time.
+An answer keeps upstream's 500-token limit. A judgment gets 200 tokens instead of
+upstream's 10: `glm-5.3-flash` sometimes emits reasoning even with thinking disabled,
+and at 10 tokens that reasoning can use the whole budget and leave the reply empty.
+An empty reply is retried and never recorded. Each question gets one fresh
+single-message request; each reply is appended with the sha256 of its prompt, its
+token usage, and its latency.
 
 The answer prompt is upstream's facts template from `src/generation/run_generation.py`,
 with hits sorted by date and rendered in upstream's session-block format. The judge

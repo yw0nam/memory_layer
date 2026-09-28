@@ -33,8 +33,8 @@ from memory_base.eval import longmemeval as lme
 
 DEFAULT_MODEL = "glm-5.3-flash"
 DEFAULT_CONCURRENCY = 5
-# Upstream limits: run_generation.py answers with 500 tokens, evaluate_qa.py judges with 10.
-MAX_TOKENS = {"answer": 500, "judge": 10}
+# Answers keep upstream's 500; the judge gets room for the reasoning glm emits despite thinking off.
+MAX_TOKENS = {"answer": 500, "judge": 200}
 ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 5.0
 CALL_TIMEOUT_SECONDS = 120.0
