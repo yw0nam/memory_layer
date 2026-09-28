@@ -164,6 +164,78 @@ the manifest.
 - **Model usage**: answer and judge input and output tokens and seconds per question.
 - **Judge agreement**: the hand-audit agreement rate.
 
+## Results
+
+The 100-question subset, one pass of every stage, graded by `glm-5.3-flash`.
+
+### QA accuracy
+
+| question_type | questions | gate-on | gate-off |
+|---|---|---|---|
+| overall | 100 | 0.590 | 0.760 |
+| knowledge-update | 15 | 0.467 | 0.600 |
+| multi-session | 27 | 0.556 | 0.815 |
+| single-session-assistant | 11 | 0.182 | 0.455 |
+| single-session-preference | 6 | 0.500 | 0.667 |
+| single-session-user | 14 | 1.000 | 1.000 |
+| temporal-reasoning | 27 | 0.667 | 0.815 |
+| abstention (included above) | 5 | 0.800 | 0.800 |
+
+`glm-5.3-flash` is not deterministic at temperature 0. A second answer and judge pass
+over the same packets scores gate-on 0.64 (9 of 100 verdicts differ from the first
+pass) and gate-off 0.72 (8 differ), so overall accuracy spreads by about 5 points from
+run to run.
+
+### Retrieval
+
+Session-level metrics over the 95 non-abstention questions. No packet holds more than
+five distinct sessions, so every `@10` value equals its `@5` value.
+
+| question_type | questions | gate-on recall_all@5 | gate-on ndcg_any@5 | gate-off recall_all@5 | gate-off ndcg_any@5 |
+|---|---|---|---|---|---|
+| overall | 95 | 0.653 | 0.777 | 0.779 | 0.873 |
+| knowledge-update | 14 | 0.214 | 0.536 | 0.357 | 0.679 |
+| multi-session | 24 | 0.625 | 0.832 | 0.833 | 0.941 |
+| single-session-assistant | 11 | 0.545 | 0.545 | 0.727 | 0.727 |
+| single-session-preference | 6 | 0.667 | 0.667 | 0.833 | 0.833 |
+| single-session-user | 14 | 1.000 | 1.000 | 1.000 | 1.000 |
+| temporal-reasoning | 26 | 0.769 | 0.861 | 0.846 | 0.918 |
+
+| | gate-on | gate-off |
+|---|---|---|
+| zero-hit packets (of 100) | 12 | 6 |
+| zero-hit packets among the 95 scored | 10 | 4 |
+| mean hits per packet | 1.77 | 2.04 |
+| notes loaded | 10,203 | 12,800 |
+| similar acks | 46 | 74 |
+
+### Dated run
+
+| temporal-reasoning (27 questions) | accuracy | recall_all@5 | ndcg_any@5 | zero-hit packets |
+|---|---|---|---|---|
+| baseline | 0.667 (18) | 0.769 | 0.861 | 1 |
+| dated | 0.741 (20) | 0.769 | 0.861 | 1 |
+
+The dated run retrieves the same notes as the baseline for 26 of the 27 questions. One
+of its two extra correct answers comes from a question whose hits are identical in both
+runs, so the accuracy difference is within the run-to-run spread. The dated load
+acknowledges 32 similar notes.
+
+### Write path
+
+| | value |
+|---|---|
+| extraction units | 4,742 (4 refused by the provider's content filter) |
+| notes | 12,813 (2.70 per unit; 737 units with no note) |
+| stored by the gate | 10,203 |
+| refused | 2,610 (20.4%): 2,597 by the gate, 13 by validation |
+| refused rate per question_type | 19.7% to 21.2% |
+
+### Judge audit
+
+The 20 seeded gate-on judgments were graded by hand: the judge agrees on 20 of 20
+(9 yes, 11 no).
+
 ## Comparability
 
 The official LongMemEval judge is gpt-4o, and published numbers are graded by it. This
@@ -185,9 +257,17 @@ sha256 of every jsonl artefact.
 
 ## Cost
 
-Measured per unit on two subset questions (86 units): about 2.7k extractor input
-tokens, 2.8 notes, and 450 gate input tokens per gate call. Over the subset's 4,742
-units that is about 13M extractor input tokens and 6M gate input tokens.
+Measured token totals for the subset:
+
+| stage | calls | input tokens | output tokens |
+|---|---|---|---|
+| extraction | 4,742 units (11 retries) | 12,196,913 | 638,142 |
+| content gate | 12,932 (132 retries) | 5,768,264 | 929,510 |
+| answer, gate-on / gate-off / dated | 100 / 100 / 27 | 18,668 / 20,403 / 5,840 | 9,951 / 9,498 / 2,843 |
+| judge, gate-on / gate-off / dated | 100 / 100 / 27 | 23,516 / 23,091 / 7,459 | 588 / 553 / 105 |
+
+A unit takes 14.4 s on average at concurrency 5 (4.2 s of it the extraction call, the
+rest its gate calls). An answer takes 3.3 to 4.1 s and a judgment about 1.6 s.
 
 ## Commands
 
