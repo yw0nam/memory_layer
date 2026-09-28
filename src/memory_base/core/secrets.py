@@ -27,6 +27,33 @@ class AWSAccessKeyIdDetector(AWSKeyDetector):
     denylist = (AWSKeyDetector.denylist[0],)
 
 
+class AnchoredJwtDetector(JwtTokenDetector):
+    """The JWT shape, started only at a token boundary so scanning stays linear."""
+
+    # A header carrying the required "alg" member encodes to at least 14 characters.
+    denylist = (
+        re.compile(rf"(?<![{_TOKEN}])eyJ[{_TOKEN}]{{11,}}\.[A-Za-z0-9_=-]+\.?[A-Za-z0-9-_.+/=]*?"),
+    )
+
+
+class OpenAILegacyKeyDetector(OpenAIDetector):
+    """The legacy OpenAI key shape, started only at a token boundary so scanning stays linear."""
+
+    denylist = (
+        re.compile(rf"(?<![{_TOKEN}])sk-[{_TOKEN}]*[A-Za-z0-9]{{20}}T3BlbkFJ[A-Za-z0-9]{{20}}"),
+    )
+
+
+class NpmAuthTokenDetector(NpmDetector):
+    """An npmrc auth-token line, one start per whitespace- or quote-delimited run."""
+
+    denylist = (
+        re.compile(
+            r"(?<![^\s`'\"])//[^\s`'\"]+/:_authToken=\s*(?:npm_[A-Za-z0-9_-]+|[A-Fa-f0-9-]{36})"
+        ),
+    )
+
+
 class ModernOpenAIKeyDetector(RegexBasedDetector):
     secret_type = "OpenAI API Key"
     denylist = (
@@ -51,13 +78,13 @@ DETECTORS: tuple[RegexBasedDetector, ...] = (
     BasicAuthDetector(),
     GitHubTokenDetector(),
     GitLabTokenDetector(),
-    JwtTokenDetector(),
-    OpenAIDetector(),
+    AnchoredJwtDetector(),
+    OpenAILegacyKeyDetector(),
     PrivateKeyDetector(),
     SlackDetector(),
     StripeDetector(),
     SendGridDetector(),
-    NpmDetector(),
+    NpmAuthTokenDetector(),
     PypiTokenDetector(),
     ModernOpenAIKeyDetector(),
     AnthropicKeyDetector(),
