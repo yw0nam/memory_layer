@@ -138,3 +138,43 @@ def test_the_model_client_requires_the_zai_provider():
         answer.ChatModel.from_env({"OPENAI_API_KEY": "k"}, model="m")
     client = answer.ChatModel.from_env({"ZAI_API_KEY": "k"}, model="glm-5.3-flash")
     assert client.model == "glm-5.3-flash"
+
+
+def test_the_stage_manifest_records_the_code_revision_from_the_start_of_the_run(
+    tmp_path, monkeypatch
+):
+    import json
+
+    questions = [make_question(f"q{index:03d}") for index in range(500)]
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(questions))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    write_packets(data_dir, ["q001"])
+    client = FakeModel()
+    client.provider = "zai"
+    monkeypatch.setattr(answer.ChatModel, "from_env", lambda env, model: client)
+    revisions_captured_in_order(monkeypatch)
+    manifest = tmp_path / "manifest.json"
+    common = ["--dataset", str(dataset), "--data-dir", str(data_dir), "--manifest", str(manifest)]
+    answer.main(["answer", *common])
+    written = lme.read_manifest(manifest)
+    assert written["answer"]["code"] == {"commit": "start", "dirty": False}
+    assert written["answer"]["in_tok"] == 100
+    assert "upstream" not in written
+
+
+def revisions_captured_in_order(monkeypatch):
+    """code_revision reports "start" until the dataset is loaded and "end" afterwards."""
+    loaded = []
+    load_dataset = lme.load_dataset
+
+    def load(path):
+        loaded.append(path)
+        return load_dataset(path)
+
+    def revision():
+        return {"commit": "end" if loaded else "start", "dirty": False}
+
+    monkeypatch.setattr(lme, "load_dataset", load)
+    monkeypatch.setattr(lme, "code_revision", revision)

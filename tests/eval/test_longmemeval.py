@@ -529,3 +529,47 @@ def test_code_revision_ignores_the_manifest_the_run_itself_writes(tmp_path, monk
     assert lme.code_revision()["dirty"] is False
     (tmp_path / "tracked.txt").write_text("changed")
     assert lme.code_revision()["dirty"] is True
+
+
+def revisions_captured_in_order(monkeypatch):
+    """code_revision reports "start" until the dataset is loaded and "end" afterwards."""
+    loaded = []
+    load_dataset = lme.load_dataset
+
+    def load(path):
+        loaded.append(path)
+        return load_dataset(path)
+
+    def revision():
+        return {"commit": "end" if loaded else "start", "dirty": False}
+
+    monkeypatch.setattr(lme, "load_dataset", load)
+    monkeypatch.setattr(lme, "code_revision", revision)
+
+
+def test_retrieve_and_score_record_the_code_revision_from_the_start_of_the_run(
+    tmp_path, monkeypatch
+):
+    dataset = synthetic_dataset()
+    for question in dataset:
+        question["answer_session_ids"] = ["s1"]
+    dataset_path = tmp_path / "dataset.json"
+    dataset_path.write_text(json.dumps(dataset))
+    qid = lme.select_subset(dataset)[0]["question_id"]
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    packet = {"question_id": qid, "question": "q?", "hits": [], "load": {"submitted": 0}}
+    lme.append_jsonl(lme.packets_path(data_dir, "baseline"), [packet])
+    manifest = tmp_path / "manifest.json"
+    common = ["--dataset", str(dataset_path), "--data-dir", str(data_dir)]
+    common += ["--manifest", str(manifest)]
+
+    revisions_captured_in_order(monkeypatch)
+    lme.main(["retrieve", *common, "--questions", qid])
+    assert lme.read_manifest(manifest)["retrieve"]["code"]["commit"] == "start"
+
+    revisions_captured_in_order(monkeypatch)
+    lme.main(["score", *common])
+    written = lme.read_manifest(manifest)
+    assert written["score"]["code"]["commit"] == "start"
+    assert written["upstream"] == lme.upstream_manifest()

@@ -189,3 +189,62 @@ def test_the_extractor_requires_the_zai_provider():
         extract.OpenAIExtractor.from_env({"OPENAI_API_KEY": "k"}, model="m")
     client = extract.OpenAIExtractor.from_env({"ZAI_API_KEY": "k"}, model="glm-5.3-flash")
     assert client.model == "glm-5.3-flash"
+
+
+def revisions_captured_in_order(monkeypatch):
+    from memory_base.eval import longmemeval as lme
+
+    """code_revision reports "start" until the dataset is loaded and "end" afterwards."""
+    loaded = []
+    load_dataset = lme.load_dataset
+
+    def load(path):
+        loaded.append(path)
+        return load_dataset(path)
+
+    def revision():
+        return {"commit": "end" if loaded else "start", "dirty": False}
+
+    monkeypatch.setattr(lme, "load_dataset", load)
+    monkeypatch.setattr(lme, "code_revision", revision)
+
+
+def single_session_dataset(path):
+    questions = [
+        {
+            "question_id": f"q{index:03d}",
+            "question_type": "multi-session",
+            "question": "q?",
+            "question_date": "2023/06/01 (Thu) 10:00",
+            "answer": "a",
+            "answer_session_ids": [f"s{index}"],
+            "haystack_session_ids": [f"s{index}"],
+            "haystack_dates": [DATE_A],
+            "haystack_sessions": [[{"role": "user", "content": "my bike"}]],
+        }
+        for index in range(500)
+    ]
+    path.write_text(json.dumps(questions))
+    from memory_base.eval import longmemeval as lme
+
+    return lme.select_subset(questions)[0]["question_id"]
+
+
+def test_the_manifest_records_the_code_revision_from_the_start_of_the_run(tmp_path, monkeypatch):
+    from memory_base.eval import longmemeval as lme
+    from memory_base.serve import notes as notes_module
+
+    dataset = tmp_path / "dataset.json"
+    qid = single_session_dataset(dataset)
+    client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
+    client.model, client.provider = "glm-5.3-flash", "zai"
+    monkeypatch.setattr(extract.OpenAIExtractor, "from_env", lambda env, model: client)
+    monkeypatch.setattr(extract, "record_gate_usage", lambda: None)
+    monkeypatch.setattr(notes_module, "judge_note_content", accept)
+    revisions_captured_in_order(monkeypatch)
+    manifest = tmp_path / "manifest.json"
+    extract.main(
+        ["--dataset", str(dataset), "--data-dir", str(tmp_path / "data"),
+         "--manifest", str(manifest), "--questions", qid]
+    )  # fmt: skip
+    assert lme.read_manifest(manifest)["extract"]["code"] == {"commit": "start", "dirty": False}
