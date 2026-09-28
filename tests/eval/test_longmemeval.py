@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 from collections import Counter
+from pathlib import Path
 
 import pytest
 
@@ -316,61 +317,47 @@ def test_answer_prompt_renders_date_sorted_hits_with_the_upstream_template():
     )
 
 
-def reply(qid, text, tool_uses=0, model="claude-sonnet-5"):
-    return {"question_id": qid, "text": text, "tool_uses": tool_uses, "model": model}
+def reply(qid, text, model="glm-5.3-flash"):
+    return {"question_id": qid, "text": text, "model": model}
 
 
-def test_accept_replies_keeps_the_latest_row_within_the_tool_use_baseline():
-    expected = {"q1": "sha1", "q2": "sha2", "q3": "sha3"}
+def judged(question, answer_text, verdict):
+    return {
+        **reply(question["question_id"], verdict),
+        "prompt_sha256": judge_sha(question, answer_text),
+    }
+
+
+def judge_sha(question, answer_text):
+    return lme.prompt_sha(lme.judge_prompt(question, answer_text))
+
+
+def test_current_rows_keep_the_latest_row_answering_the_current_prompt():
+    expected = {"q1": "prompt one", "q2": "prompt two", "q3": "prompt three"}
     rows = [
-        reply("q1", "used a tool", tool_uses=2),
-        reply("q1", "clean"),
-        reply("q1", "second clean"),
-        {"question_id": "q2", "text": "no audit", "model": "m"},
-        reply("unknown", "x"),
+        {**reply("q1", "first"), "prompt_sha256": lme.prompt_sha("prompt one")},
+        {**reply("q1", "second"), "prompt_sha256": lme.prompt_sha("prompt one")},
+        {**reply("q2", "stale"), "prompt_sha256": lme.prompt_sha("old prompt")},
+        {**reply("unknown", "x"), "prompt_sha256": lme.prompt_sha("prompt one")},
     ]
-    accepted, audit = lme.accept_replies(rows, expected, baseline=0)
-    assert {qid: row["text"] for qid, row in accepted.items()} == {"q1": "second clean"}
-    assert accepted["q1"]["prompt_sha256"] == "sha1"
-    assert audit["rejected_tool_uses"] == 2
-    assert audit["unknown_question"] == 1
-    assert audit["pending"] == ["q2", "q3"]
-    assert audit["duplicates"] == 1
-    accepted, audit = lme.accept_replies(rows[:1], expected, baseline=2)
-    assert accepted["q1"]["text"] == "used a tool"
+    current = lme.current_rows(rows, expected)
+    assert {qid: row["text"] for qid, row in current.items()} == {"q1": "second"}
 
 
-def test_score_aggregates_accuracy_and_rejects_rows_over_the_baseline():
+def test_score_aggregates_accuracy_overall_per_type_and_over_abstention():
     questions = {
         "q1": make_question("q1", "multi-session"),
         "q2": make_question("q2", "multi-session"),
         "q3": make_question("q3", "temporal-reasoning"),
         "q4_abs": make_question("q4_abs", "temporal-reasoning"),
     }
-    answers = {qid: reply(qid, f"answer {qid}") for qid in questions}
-    for qid, row in answers.items():
-        row["prompt_sha256"] = "a"
+    answers = [{**reply(qid, f"answer {qid}"), "prompt_sha256": "a"} for qid in questions]
     judgments = [
-        {
-            **reply("q1", "yes"),
-            "prompt_sha256": lme.prompt_sha(lme.judge_prompt(questions["q1"], "answer q1")),
-        },
-        {
-            **reply("q2", "no"),
-            "prompt_sha256": lme.prompt_sha(lme.judge_prompt(questions["q2"], "answer q2")),
-        },
-        {
-            **reply("q3", "yes", tool_uses=1),
-            "prompt_sha256": lme.prompt_sha(lme.judge_prompt(questions["q3"], "answer q3")),
-        },
-        {
-            **reply("q4_abs", "Yes"),
-            "prompt_sha256": lme.prompt_sha(lme.judge_prompt(questions["q4_abs"], "answer q4_abs")),
-        },
+        judged(questions["q1"], "answer q1", "yes"),
+        judged(questions["q2"], "answer q2", "no"),
+        judged(questions["q4_abs"], "answer q4_abs", "Yes"),
     ]
-    report = lme.qa_accuracy(
-        list(questions), questions, list(answers.values()), judgments, baseline=0
-    )
+    report = lme.qa_accuracy(list(questions), questions, answers, judgments)
     assert report["overall"] == {"correct": 2, "judged": 3, "accuracy": pytest.approx(2 / 3)}
     assert report["multi-session"] == {"correct": 1, "judged": 2, "accuracy": 0.5}
     assert report["temporal-reasoning"] == {"correct": 1, "judged": 1, "accuracy": 1.0}
@@ -381,11 +368,107 @@ def test_score_aggregates_accuracy_and_rejects_rows_over_the_baseline():
 def test_score_ignores_a_judgment_of_a_different_answer():
     questions = {"q1": make_question("q1", "multi-session")}
     answers = [{**reply("q1", "new answer"), "prompt_sha256": "a"}]
-    stale = lme.prompt_sha(lme.judge_prompt(questions["q1"], "old answer"))
-    judgments = [{**reply("q1", "yes"), "prompt_sha256": stale}]
-    report = lme.qa_accuracy(["q1"], questions, answers, judgments, baseline=0)
+    judgments = [judged(questions["q1"], "old answer", "yes")]
+    report = lme.qa_accuracy(["q1"], questions, answers, judgments)
     assert report["overall"]["judged"] == 0
     assert report["unjudged"] == ["q1"]
+
+
+def test_score_uses_the_latest_judgment_of_the_current_answer():
+    questions = {"q1": make_question("q1", "multi-session")}
+    answers = [{**reply("q1", "the answer"), "prompt_sha256": "a"}]
+    judgments = [
+        judged(questions["q1"], "the answer", "no"),
+        judged(questions["q1"], "the answer", "yes"),
+    ]
+    report = lme.qa_accuracy(["q1"], questions, answers, judgments)
+    assert report["overall"] == {"correct": 1, "judged": 1, "accuracy": 1.0}
+
+
+def test_run_names_pair_gate_and_variant_without_gate_off_dated():
+    assert lme.run_name("baseline", "on") == "baseline"
+    assert lme.run_name("dated", "on") == "dated"
+    assert lme.run_name("baseline", "off") == "gate-off"
+    with pytest.raises(ValueError):
+        lme.run_name("dated", "off")
+    assert lme.packets_path(Path("d"), "gate-off") == Path("d/packets-gate-off.jsonl")
+    assert lme.stage_output_path(Path("d"), "judge", "gate-off") == Path(
+        "d/judgments-gate-off.jsonl"
+    )
+
+
+def test_gate_off_loading_adds_gate_refused_notes_but_not_save_path_refusals():
+    units = [("s1", "2023/05/20 (Sat) 02:21")]
+    notes_by_unit = {
+        units[0]: [
+            {"content": "Kept.", "kind": "note", "gate": "stored", "gate_reason": "ok"},
+            {"content": "Gate refused.", "kind": "note", "gate": "refused", "gate_reason": "plan"},
+            {
+                "content": "Bad kind.",
+                "kind": "plan",
+                "gate": "refused",
+                "gate_reason": "validation: kind must be one of ('note', 'decision', 'episode')",
+            },
+            {
+                "content": "Secret.",
+                "kind": "note",
+                "gate": "refused",
+                "gate_reason": "credential: GitHub Token",
+            },
+        ]
+    }
+    calls = []
+    stats, _ = asyncio.run(
+        lme.load_question_notes("lme-q1", units, notes_by_unit, save=fake_save_note(calls))
+    )
+    assert [c[0] for c in calls] == ["Kept."]
+    assert stats.gate_refused == 0
+    calls = []
+    stats, _ = asyncio.run(
+        lme.load_question_notes(
+            "lme-q1", units, notes_by_unit, save=fake_save_note(calls), gate="off"
+        )
+    )
+    assert [c[0] for c in calls] == ["Kept.", "Gate refused."]
+    assert stats.gate_refused == 1
+    assert stats.submitted == 2
+
+
+def test_judge_audit_sample_is_seeded_and_carries_what_the_auditor_needs():
+    questions = {
+        f"q{i}": make_question(f"q{i}", "multi-session", answer=f"ref {i}") for i in range(30)
+    }
+    answers = {qid: {**reply(qid, f"answer {qid}"), "prompt_sha256": "a"} for qid in questions}
+    judgments = [judged(questions[qid], f"answer {qid}", "yes") for qid in questions]
+    first = lme.judge_audit_sample(list(questions), questions, answers, judgments)
+    second = lme.judge_audit_sample(list(questions), questions, answers, judgments)
+    assert first == second
+    assert len(first) == 20
+    assert len({row["question_id"] for row in first}) == 20
+    row = first[0]
+    assert row["reference"] == questions[row["question_id"]]["answer"]
+    assert row["response"] == f"answer {row['question_id']}"
+    assert row["judge_reply"] == "yes"
+    assert row["judge_label"] is True
+    assert row["human_label"] is None
+    other = lme.judge_audit_sample(list(questions), questions, answers, judgments, seed=1)
+    assert {r["question_id"] for r in other} != {r["question_id"] for r in first}
+
+
+def test_judge_agreement_counts_only_hand_labeled_rows():
+    rows = [
+        {"judge_label": True, "human_label": True},
+        {"judge_label": True, "human_label": False},
+        {"judge_label": False, "human_label": False},
+        {"judge_label": False, "human_label": None},
+    ]
+    assert lme.judge_agreement(rows) == {
+        "sample": 4,
+        "labeled": 3,
+        "agreed": 2,
+        "agreement_rate": pytest.approx(2 / 3),
+    }
+    assert lme.judge_agreement([])["agreement_rate"] is None
 
 
 D1, D2, D9 = "2023/05/01 (Mon) 10:00", "2023/05/02 (Tue) 10:00", "2023/05/09 (Tue) 10:00"
