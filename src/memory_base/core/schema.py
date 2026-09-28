@@ -108,7 +108,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           id text PRIMARY KEY, source_type text NOT NULL, source_ref text NOT NULL,
           chunk_kind text NOT NULL, session_id text NOT NULL, content_raw text NOT NULL,
           distilled text, embedding halfvec({EMB_DIM}) NOT NULL,
-          ts_last_active double precision NOT NULL, idf_score double precision,
+          ts_last_active double precision NOT NULL,
           metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb
         );
         CREATE EXTENSION IF NOT EXISTS pg_textsearch;
@@ -128,6 +128,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           ADD COLUMN IF NOT EXISTS archived_at double precision;
         ALTER TABLE {schema}.memory_chunks
           ADD COLUMN IF NOT EXISTS namespace text NOT NULL DEFAULT 'default';
+        ALTER TABLE {schema}.memory_chunks DROP COLUMN IF EXISTS idf_score;
         CREATE INDEX IF NOT EXISTS memory_chunks__namespace ON {schema}.memory_chunks (namespace);
         CREATE TABLE IF NOT EXISTS {schema}.doc_rows (
           namespace text NOT NULL,

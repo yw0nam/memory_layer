@@ -36,9 +36,9 @@ def seeded_namespace():
                 f"""
                 INSERT INTO "{PG_SCHEMA}".memory_chunks
                   (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-                   distilled, embedding, ts_last_active, idf_score, namespace, metadata)
+                   distilled, embedding, ts_last_active, namespace, metadata)
                 VALUES ($1, 'agent_note', $2, 'note', $3, $4, $4, $5::halfvec,
-                        0, NULL, $3, '{{}}'::jsonb)
+                        0, $3, '{{}}'::jsonb)
                 """,
                 [
                     (f"{namespace}-{name}", name, namespace, content, embedding)

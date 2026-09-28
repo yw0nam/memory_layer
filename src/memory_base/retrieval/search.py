@@ -42,7 +42,7 @@ CODE_BM25_INDEX = "code_chunks_bm25"
 # Reranker relevance floor (0..1, rerank-only): above junk (<=~0.01), below weak true hits (~0.29).
 MIN_SCORE = 0.25
 FTS_RRF_WEIGHT = 0.2
-# Recency/idf are tie-breakers ("when relevance is otherwise equal, the newer wins");
+# Recency is a tie-breaker ("when relevance is otherwise equal, the newer wins");
 # ranked recency itself is enforced post-fusion by the time-decay multiplier.
 TIEBREAK_RRF_WEIGHT = 0.25
 # BM25 index scans cap candidates at bm25_catalog.bm25_limit (100 by default) before filters.
@@ -345,8 +345,7 @@ async def _search_memory(
         author=author,
     )
     columns = (
-        "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
-        "idf_score, archived_at"
+        "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, archived_at"
     )
     try:
         vec_rows = await conn.fetch(
@@ -368,10 +367,9 @@ async def _search_memory(
         return []
     by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
     recency = time_decay_list({r["id"]: r["ts_last_active"] for r in by_id.values()})
-    idf = time_decay_list({r["id"]: r["idf_score"] or 0.0 for r in by_id.values()})
     scores = rrf_fuse(
-        [[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency, idf],
-        [1.0, FTS_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT],
+        [[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency],
+        [1.0, FTS_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT],
     )
 
     hits = []

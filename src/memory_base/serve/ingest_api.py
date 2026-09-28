@@ -184,8 +184,8 @@ async def replace_document_rows(
                 f"""
                 INSERT INTO "{schema}".memory_chunks
                   (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-                   distilled, embedding, ts_last_active, idf_score, namespace, metadata)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11,$12::jsonb)
+                   distilled, embedding, ts_last_active, namespace, metadata)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb)
                 """,
                 [
                     (
@@ -198,7 +198,6 @@ async def replace_document_rows(
                         row["distilled"],
                         row["embedding"],
                         row["ts_last_active"],
-                        row["idf_score"],
                         row.get("namespace", namespace),
                         json.dumps(row["metadata"], ensure_ascii=False),
                     )

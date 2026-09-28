@@ -4,10 +4,12 @@ Any change to retrieval ranking, query construction, or fusion lands with
 before/after numbers from the method below in its PR.
 
 Doc-level retrieval quality of the hybrid search stack, measured on two corpora.
-Numbers are produced by the configuration in `retrieval/search.py`: BM25 FTS legs
-(`pg_textsearch`, `<@>` / `to_bm25query`), vector search over halfvec embeddings,
-and weighted RRF fusion (`vector 1.0, fts 0.2, recency 0.25, idf 0.25`) with
-optional cross-encoder reranking.
+`retrieval/search.py` configures BM25 FTS legs (`pg_textsearch`, `<@>` /
+`to_bm25query`), vector search over halfvec embeddings, and weighted RRF fusion
+(`vector 1.0, fts 0.2, recency 0.25`) with optional cross-encoder reranking.
+The ZX Bank and SciFact tables were measured with the previous fusion, which also
+carried an `idf 0.25` voter that ranked the candidate union vector-first with an
+FTS-only tail.
 
 ## Method
 
@@ -23,7 +25,7 @@ optional cross-encoder reranking.
   directly into `memory_chunks` with embeddings (retrieval-layer benchmark;
   product ingest is not under test), 300 claim queries scored against BEIR qrels.
 - FTS-only / vector-only rows are single-leg ablations using the same SQL shape
-  as the production legs; hybrid rows run `_search_memory` (all four RRF voters).
+  as the production legs; hybrid rows run `_search_memory` (all three RRF voters).
 
 ## ZX Bank (71 docs, 100 queries)
 
@@ -70,7 +72,7 @@ and lifts hybrid above vector-only.
   distilled English records. On non-English raw text the FTS leg contributes
   exact-token matching (identifiers, error strings, names) and the multilingual
   embedder carries semantic matching.
-- Recency/idf RRF voters are tie-breakers (weight 0.25); ranked recency
+- The recency RRF voter is a tie-breaker (weight 0.25); ranked recency
   preference is enforced post-fusion by the time-decay multiplier.
 - The bm25 index scan streams candidates in score order and outer predicate
   filters (e.g. namespace) do not truncate it: a row ranked below thousands of

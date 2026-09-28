@@ -429,7 +429,7 @@ def test_save_note_with_allow_similar_records_similar_ack(monkeypatch):
     assert result["stored"] is True
     assert result["similar"] == [neighbour]
     _, args = conn.inserts[0]
-    metadata = json.loads(args[11])
+    metadata = json.loads(args[10])
     assert metadata["similar_ack"] == [neighbour["id"]]
 
 
@@ -448,7 +448,7 @@ def test_save_note_allow_similar_with_supersedes_neighbour_stamps_nothing(monkey
     )
     assert result["stored"] is True
     _, args = conn.inserts[0]
-    metadata = json.loads(args[11])
+    metadata = json.loads(args[10])
     assert "similar_ack" not in metadata
     assert result["similar"] == []
 

@@ -199,7 +199,7 @@ def test_judge_failure_stores_the_note_stamped_unavailable(monkeypatch):
     result = asyncio.run(save_note("the parser bug was a stale cache", tags=["test"]))
     assert result["stored"] is True
     assert conn.embeds
-    metadata = json.loads(conn.insert_args[11])
+    metadata = json.loads(conn.insert_args[10])
     assert metadata["content_gate"] == "unavailable"
 
 
@@ -207,7 +207,7 @@ def test_accepted_note_stamps_no_content_gate_key(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
     asyncio.run(save_note("the burst gate weighs recency twice", tags=["test"]))
-    metadata = json.loads(conn.insert_args[11])
+    metadata = json.loads(conn.insert_args[10])
     assert "content_gate" not in metadata
 
 

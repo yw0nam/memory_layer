@@ -266,7 +266,6 @@ def test_memory_hit_uses_search_ref_and_keeps_source_ref_for_dedup():
         "distilled": None,
         "content_raw": "document chunk",
         "ts_last_active": 100.0,
-        "idf_score": None,
         "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])
@@ -291,7 +290,6 @@ def test_csv_card_hit_uses_search_ref():
         "distilled": "summary card",
         "content_raw": "summary card",
         "ts_last_active": 100.0,
-        "idf_score": None,
         "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])
@@ -309,7 +307,6 @@ def test_memory_hit_falls_back_to_source_ref():
         "distilled": "note",
         "content_raw": "note",
         "ts_last_active": 100.0,
-        "idf_score": None,
         "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])
@@ -416,7 +413,6 @@ def test_memory_hit_carries_the_author():
         "distilled": "note",
         "content_raw": "note",
         "ts_last_active": 100.0,
-        "idf_score": None,
         "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])
@@ -433,7 +429,6 @@ def test_memory_hit_author_is_none_when_unrecorded():
         "distilled": "note",
         "content_raw": "note",
         "ts_last_active": 100.0,
-        "idf_score": None,
         "archived_at": None,
     }
     conn = FakeSearchConnection([[row], []])

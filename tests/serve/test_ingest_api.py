@@ -249,7 +249,6 @@ def test_atomic_replacement_publishes_card_and_table_rows_together(monkeypatch):
         "distilled": None,
         "embedding": "[0]",
         "ts_last_active": 1.0,
-        "idf_score": None,
         "metadata": {"content_hash": "hash"},
     }
     table_rows = [{"row_index": 0, "data": {"name": "one", "value": None}}]

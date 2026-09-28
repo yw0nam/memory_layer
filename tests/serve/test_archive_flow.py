@@ -66,9 +66,9 @@ async def _seed_row(
         f"""
         INSERT INTO "{PG_SCHEMA}".memory_chunks
           (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-           distilled, embedding, ts_last_active, idf_score, metadata,
+           distilled, embedding, ts_last_active, metadata,
            hit_count, last_hit_at)
-        VALUES ($1,'agent_note','save_memory',$6,$1,$2,$2,$3::halfvec,$4,NULL,
+        VALUES ($1,'agent_note','save_memory',$6,$1,$2,$2,$3::halfvec,$4,
                 '{{}}'::jsonb, 0, $5)
         ON CONFLICT (id) DO NOTHING
         """,

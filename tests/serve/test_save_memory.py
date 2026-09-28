@@ -60,7 +60,6 @@ def test_row_shape_exact_keys_no_embedding():
         "raw",
         "distilled",
         "timestamp",
-        "idf",
         "metadata",
     }
     assert "embedding" not in row
@@ -76,7 +75,6 @@ def test_row_field_values():
     assert row["raw"] == content
     assert row["distilled"] == content
     assert row["timestamp"] == NOW
-    assert row["idf"] is None
 
 
 def test_tags_land_in_metadata():
@@ -190,7 +188,6 @@ def test_save_memory_stores_row_in_db(rest_in_process):
         assert row["session_id"] == note_id
         assert row["content_raw"] == content
         assert row["distilled"] == content
-        assert row["idf_score"] is None
     finally:
         asyncio.run(_delete(note_id))
 

@@ -412,7 +412,6 @@ def _base_row(
         "distilled": distilled,
         "embedding_text": embedding_text,
         "ts_last_active": timestamp,
-        "idf_score": None,
         "namespace": namespace,
         "metadata": metadata,
     }

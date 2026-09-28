@@ -143,12 +143,12 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
          │                                     │
  ┌───────┴────────────┐              ┌─────────┴──────────┐
  │    code_chunks     │              │   memory_chunks    │  archived excluded
- │ vec50 · fts50 · rec│              │vec50·fts50·rec·idf │  optional kind / tags
+ │ vec50 · fts50 · rec│              │ vec50 · fts50 · rec│  optional kind / tags
  │  optional repo     │              │                    │
  └───────┬────────────┘              └─────────┬──────────┘
          └──────────────┬───────────────────────┘
                         ▼
-                RRF   Σ w/(60 + rank)   w: vec 1.0 · fts 0.2 · rec/idf 0.25
+                RRF   Σ w/(60 + rank)   w: vec 1.0 · fts 0.2 · rec 0.25
                         ▼
                 ⏳ time decay (90-day half-life)
                         ▼
@@ -291,7 +291,7 @@ periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
 | `chunk_kind` | `note` · `decision` · `episode` · `doc` |
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
-| `ts_last_active`, `idf_score` | ranking signals |
+| `ts_last_active` | ranking signal |
 | `metadata` | jsonb: `tags`, `author`, `archived_by`, `similar_ack`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 

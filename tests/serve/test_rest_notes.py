@@ -87,7 +87,6 @@ def test_row_shape_exact_keys_no_embedding():
         "raw",
         "distilled",
         "timestamp",
-        "idf",
         "metadata",
     }
     assert "embedding" not in row
@@ -103,7 +102,6 @@ def test_row_field_values():
     assert row["raw"] == content
     assert row["distilled"] == content
     assert row["timestamp"] == NOW
-    assert row["idf"] is None
 
 
 def test_tags_land_in_metadata():
