@@ -929,6 +929,7 @@ def _extraction_summary(
         "notes": len(notes),
         "notes_per_unit": len(notes) / len(sessions) if sessions else None,
         "zero_note_units": sum(row["notes"] == 0 for row in sessions),
+        "provider_refused_units": sum(bool(row.get("provider_refused")) for row in sessions),
         "refused_by": dict(sorted(reasons.items())),
         "tokens": dict(totals),
         "seconds_per_unit": spread("seconds"),
@@ -999,7 +1000,8 @@ def render_report(report: dict[str, Any]) -> str:
         "",
         f"Units: {extraction['units_extracted']}/{extraction['units']}, notes: "
         f"{extraction['notes']} ({_fmt(extraction['notes_per_unit'])} per unit), zero-note "
-        f"units: {extraction['zero_note_units']}",
+        f"units: {extraction['zero_note_units']}, provider-refused units: "
+        f"{extraction['provider_refused_units']}",
         f"Tokens and seconds: {json.dumps(extraction['tokens'])}",
         f"Seconds per unit: {json.dumps(extraction['seconds_per_unit'])}, extraction only: "
         f"{json.dumps(extraction['extract_seconds_per_unit'])}",

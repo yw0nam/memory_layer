@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import openai
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
@@ -44,6 +45,8 @@ EXTRACT_ATTEMPTS = 3
 GATE_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 5.0
 EXTRACT_TIMEOUT_SECONDS = 180.0
+# z.ai's content filter: a 400 with this code refuses the input itself, so a retry cannot pass.
+CONTENT_FILTER_CODE = "1301"
 
 Gate = Callable[[str, str], Awaitable[notes_module.ContentVerdict]]
 
@@ -55,6 +58,18 @@ _gate_usage: contextvars.ContextVar[dict[str, int] | None] = contextvars.Context
 
 class UnitFailed(RuntimeError):
     """A unit could not be extracted or judged; nothing is written, so a rerun retries it."""
+
+
+class ProviderRefused(RuntimeError):
+    """The provider's content filter refused the session; the unit completes with no notes."""
+
+
+def is_content_filter_refusal(exc: BaseException) -> bool:
+    return (
+        isinstance(exc, openai.BadRequestError)
+        and exc.status_code == 400
+        and exc.code == CONTENT_FILTER_CODE
+    )
 
 
 def prompt_sha256() -> str:
@@ -189,6 +204,8 @@ async def _complete_with_retry(client: Any, messages: list[dict[str, str]]):
             out_tok += used_out
             return parse_extraction(text), in_tok, out_tok, attempt
         except Exception as exc:
+            if is_content_filter_refusal(exc):
+                raise ProviderRefused("content_filter") from exc
             if attempt == EXTRACT_ATTEMPTS - 1:
                 raise UnitFailed(f"extraction failed: {exc!r}") from exc
             if not isinstance(exc, ValueError):
@@ -214,9 +231,12 @@ async def extract_unit(
     usage = {"in": 0, "out": 0}
     _gate_usage.set(usage)
     started = time.monotonic()
-    raw_notes, in_tok, out_tok, extract_retries = await _complete_with_retry(
-        client, build_messages(date, turns)
-    )
+    try:
+        raw_notes, in_tok, out_tok, extract_retries = await _complete_with_retry(
+            client, build_messages(date, turns)
+        )
+    except ProviderRefused as refusal:
+        return [], _refused_session(session_id, date, client, started, str(refusal))
     extracted = time.monotonic()
     rows: list[dict[str, Any]] = []
     gate_calls = gate_retries = 0
@@ -260,6 +280,24 @@ async def extract_unit(
         "model": getattr(client, "model", None),
     }
     return rows, session
+
+
+def _refused_session(
+    session_id: str, date: str, client: Any, started: float, refused: str
+) -> dict[str, Any]:
+    """The completion record of a unit the provider refused: no notes and no usage."""
+    seconds = round(time.monotonic() - started, 3)
+    return {
+        "session_id": session_id,
+        "date": date,
+        "notes": 0,
+        "stored": 0,
+        **{name: 0 for name in lme.SESSION_TOTALS},
+        "extract_seconds": seconds,
+        "seconds": seconds,
+        "model": getattr(client, "model", None),
+        "provider_refused": refused,
+    }
 
 
 async def extract_units(
@@ -342,6 +380,7 @@ def _extract_manifest(
         "units": {
             "selected": len(units),
             "completed": len(sessions),
+            "provider_refused": sum(bool(s.get("provider_refused")) for s in sessions),
             "failed_this_run": summary["failed"],
         },
         "notes": {
