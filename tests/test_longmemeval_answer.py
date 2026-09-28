@@ -125,6 +125,25 @@ def test_failed_calls_are_retried_and_a_question_that_keeps_failing_writes_nothi
     assert lme.read_jsonl(lme.stage_output_path(tmp_other, "answer", "baseline")) == []
 
 
+def test_an_empty_reply_is_retried_and_never_recorded(tmp_path, monkeypatch):
+    monkeypatch.setattr(answer, "RETRY_BACKOFF_SECONDS", 0)
+    questions = {"q1": make_question("q1")}
+    write_packets(tmp_path, ["q1"])
+    client = FakeModel()
+    replies = iter([("", 100, 10), ("", 100, 10), ("an answer", 100, 5)])
+
+    async def complete(prompt, *, max_tokens):
+        client.calls.append((prompt, max_tokens))
+        return next(replies)
+
+    client.complete = complete
+    summary = run("answer", tmp_path, questions, client)
+    assert len(client.calls) == 3
+    assert summary["completed"] == 1
+    rows = lme.read_jsonl(lme.stage_output_path(tmp_path, "answer", "baseline"))
+    assert [r["text"] for r in rows] == ["an answer"]
+
+
 def test_each_run_reads_and_writes_its_own_files(tmp_path):
     questions = {"q1": make_question("q1")}
     write_packets(tmp_path, ["q1"], run="gate-off")
