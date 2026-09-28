@@ -579,3 +579,17 @@ def test_retrieve_and_score_record_the_code_revision_from_the_start_of_the_run(
     written = lme.read_manifest(manifest)
     assert written["score"]["code"]["commit"] == "start"
     assert written["upstream"] == lme.upstream_manifest()
+
+
+def test_the_extraction_summary_counts_provider_refused_units(tmp_path):
+    question = make_question("q1", "multi-session", sessions=[("s1", D1), ("s2", D2)])
+    rows = [
+        {"session_id": "s1", "date": D1, "notes": 0, "provider_refused": "content_filter"},
+        {"session_id": "s2", "date": D2, "notes": 0},
+    ]
+    for row in rows:
+        row.update({name: 0 for name in lme.SESSION_TOTALS})
+    lme.append_jsonl(tmp_path / lme.SESSIONS_FILE, rows)
+    summary = lme._extraction_summary(tmp_path, ["q1"], {"q1": question})
+    assert summary["units_extracted"] == 2
+    assert summary["provider_refused_units"] == 1

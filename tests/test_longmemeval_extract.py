@@ -248,3 +248,78 @@ def test_the_manifest_records_the_code_revision_from_the_start_of_the_run(tmp_pa
          "--manifest", str(manifest), "--questions", qid]
     )  # fmt: skip
     assert lme.read_manifest(manifest)["extract"]["code"] == {"commit": "start", "dirty": False}
+
+
+def provider_error(code):
+    import httpx
+    import openai
+
+    response = httpx.Response(400, request=httpx.Request("POST", "http://zai.test"))
+    body = {"code": code, "message": "System detected potentially unsafe content."}
+    return openai.BadRequestError(f"Error code: 400 - {body}", response=response, body=body)
+
+
+class RaisingClient:
+    model = "glm-5.3-flash"
+    provider = "zai"
+
+    def __init__(self, error):
+        self.error = error
+        self.calls = 0
+
+    async def complete(self, messages):
+        self.calls += 1
+        raise self.error
+
+
+def test_a_content_filter_refusal_completes_the_unit_with_no_notes_and_no_retry(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
+    client = RaisingClient(provider_error("1301"))
+    summary = run([unit("s1", DATE_A, "hello")], tmp_path, client)
+    assert client.calls == 1
+    assert summary["completed"] == 1
+    assert summary["failed"] == 0
+    assert extract.read_notes(tmp_path) == []
+    [session] = extract.read_sessions(tmp_path)
+    assert session["provider_refused"] == "content_filter"
+    assert (session["session_id"], session["date"], session["notes"]) == ("s1", DATE_A, 0)
+    assert all(session[name] == 0 for name in ("in_tok", "out_tok", "gate_calls"))
+    assert extract.prepare_resume(tmp_path) == {("s1", DATE_A)}
+
+
+def test_any_other_provider_error_stays_a_retried_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
+    client = RaisingClient(provider_error("1214"))
+    summary = run([unit("s1", DATE_A, "hello")], tmp_path, client)
+    assert client.calls == extract.EXTRACT_ATTEMPTS
+    assert summary["failed"] == 1
+    assert extract.read_sessions(tmp_path) == []
+
+
+def test_the_extract_manifest_counts_provider_refused_units(tmp_path, monkeypatch):
+    import argparse
+
+    monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
+    run([unit("s1", DATE_A, "hello")], tmp_path, RaisingClient(provider_error("1301")))
+    run([unit("s2", DATE_A, "hello")], tmp_path, FakeClient())
+    selected = [
+        {
+            "question_id": "q1",
+            "haystack_session_ids": ["s1", "s2"],
+            "haystack_dates": [DATE_A, DATE_A],
+            "haystack_sessions": [[], []],
+        }
+    ]
+    args = argparse.Namespace(data_dir=tmp_path, questions=None, concurrency=5)
+    client = RaisingClient(None)
+    manifest = extract._extract_manifest(
+        args, selected, client, {"failed": 0}, {"commit": "c", "dirty": False}
+    )
+    assert manifest["units"] == {
+        "selected": 2,
+        "completed": 2,
+        "provider_refused": 1,
+        "failed_this_run": 0,
+    }
