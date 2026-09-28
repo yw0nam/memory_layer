@@ -510,3 +510,22 @@ def test_upstream_manifest_pins_the_commit_and_every_copied_template():
     assert set(upstream["judge_templates_sha256"].values()) == {
         UPSTREAM_TEMPLATE_SHA256[name] for name in UPSTREAM_TEMPLATE_SHA256 if name != "answer"
     }
+
+
+def test_code_revision_ignores_the_manifest_the_run_itself_writes(tmp_path, monkeypatch):
+    import subprocess
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    (tmp_path / "tracked.txt").write_text("x")
+    git("add", "tracked.txt")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
+    manifest = tmp_path / "docs" / "benchmarks" / "longmemeval-manifest.json"
+    monkeypatch.setattr(lme, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(lme, "DEFAULT_MANIFEST", manifest)
+    lme.update_manifest(manifest, "subset", {})
+    assert lme.code_revision()["dirty"] is False
+    (tmp_path / "tracked.txt").write_text("changed")
+    assert lme.code_revision()["dirty"] is True
