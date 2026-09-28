@@ -253,7 +253,7 @@ def test_memory_filters_are_inside_both_candidate_queries():
     assert fts_args == ("query", "decision", ["infra", "database"])
 
 
-def test_memory_hit_uses_search_ref_and_keeps_source_ref_for_dedup():
+def test_memory_hit_uses_search_ref_and_carries_cap_fields():
     metadata = {
         "search_ref": "guide.md#chunk-2",
         "tags": ["infra"],
@@ -267,14 +267,18 @@ def test_memory_hit_uses_search_ref_and_keeps_source_ref_for_dedup():
         "content_raw": "document chunk",
         "ts_last_active": 100.0,
         "archived_at": None,
+        "namespace": "default",
+        "session_id": "guide.md",
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
 
     assert hits[0].ref == "guide.md#chunk-2"
-    assert hits[0].meta["source_ref"] == "guide.md"
+    assert hits[0].meta["namespace"] == "default"
+    assert hits[0].meta["session_id"] == "guide.md"
     assert hits[0].meta["kind"] == "doc"
     assert hits[0].meta["tags"] == ["infra"]
+    assert "source_ref" not in hits[0].meta
 
 
 def test_csv_card_hit_uses_search_ref():
@@ -291,6 +295,8 @@ def test_csv_card_hit_uses_search_ref():
         "content_raw": "summary card",
         "ts_last_active": 100.0,
         "archived_at": None,
+        "namespace": "default",
+        "session_id": "table.csv",
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -308,6 +314,8 @@ def test_memory_hit_falls_back_to_source_ref():
         "content_raw": "note",
         "ts_last_active": 100.0,
         "archived_at": None,
+        "namespace": "default",
+        "session_id": "note:1",
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -325,6 +333,8 @@ def test_memory_fusion_uses_vector_fts_and_recency_voters(monkeypatch):
             "content_raw": cid,
             "ts_last_active": ts,
             "archived_at": None,
+            "namespace": "default",
+            "session_id": cid,
         }
 
     calls = []
@@ -414,6 +424,8 @@ def test_memory_hit_carries_the_author():
         "content_raw": "note",
         "ts_last_active": 100.0,
         "archived_at": None,
+        "namespace": "default",
+        "session_id": "note:1",
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -430,25 +442,78 @@ def test_memory_hit_author_is_none_when_unrecorded():
         "content_raw": "note",
         "ts_last_active": 100.0,
         "archived_at": None,
+        "namespace": "default",
+        "session_id": "note:1",
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
     assert hits[0].meta["author"] is None
 
 
-def test_document_chunks_remain_subject_to_per_file_cap():
+# ---- _dedup_cap keys memory hits on (namespace, session_id) ---------------
+
+
+def _memory_hit(ref, rrf, namespace, session_id):
+    return Hit(
+        source="memory",
+        ref=ref,
+        text="",
+        ts=0.0,
+        rrf=rrf,
+        meta={"namespace": namespace, "session_id": session_id},
+    )
+
+
+def test_notes_with_distinct_session_ids_are_not_capped():
+    # every save_memory note carries the same production ref; only session_id
+    # (the note's own id) tells them apart, so the cap must key on that, not ref.
     hits = [
-        Hit(
-            source="memory",
-            ref=f"guide.md#chunk-{i}",
-            text="",
-            ts=0.0,
-            rrf=10.0 - i,
-            meta={"source_ref": "guide.md"},
-        )
+        _memory_hit("save_memory", rrf=10.0 - i, namespace="default", session_id=f"note:{i}")
+        for i in range(5)
+    ]
+    assert len(_dedup_cap(hits)) == 5
+
+
+def test_document_chunks_sharing_a_session_id_remain_capped():
+    hits = [
+        _memory_hit(f"guide.md#chunk-{i}", rrf=10.0 - i, namespace="default", session_id="guide.md")
         for i in range(PER_FILE_CAP + 2)
     ]
     assert len(_dedup_cap(hits)) == PER_FILE_CAP
+
+
+def test_same_session_id_in_different_namespaces_is_not_shared():
+    hits = [
+        _memory_hit(f"doc#chunk-{i}", rrf=10.0 - i, namespace="team-a", session_id="doc")
+        for i in range(PER_FILE_CAP + 2)
+    ] + [
+        _memory_hit(f"doc#chunk-{i}", rrf=5.0 - i, namespace="team-b", session_id="doc")
+        for i in range(PER_FILE_CAP + 2)
+    ]
+    out = _dedup_cap(hits)
+    assert len(out) == PER_FILE_CAP * 2
+    assert sum(1 for h in out if h.meta["namespace"] == "team-a") == PER_FILE_CAP
+    assert sum(1 for h in out if h.meta["namespace"] == "team-b") == PER_FILE_CAP
+
+
+def test_code_and_memory_hits_with_same_string_key_do_not_share_a_cap():
+    code_hits = [
+        Hit(
+            source="code",
+            ref=f"shared:L{i}",
+            text="",
+            ts=0.0,
+            rrf=20.0 - i,
+            meta={"filename": "shared"},
+        )
+        for i in range(PER_FILE_CAP)
+    ]
+    memory_hits = [
+        _memory_hit(f"shared#chunk-{i}", rrf=10.0 - i, namespace="shared", session_id="shared")
+        for i in range(PER_FILE_CAP)
+    ]
+    out = _dedup_cap(code_hits + memory_hits)
+    assert len(out) == PER_FILE_CAP * 2
 
 
 def test_search_does_not_accept_include_atoms():
