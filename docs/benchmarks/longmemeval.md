@@ -5,7 +5,7 @@ LongMemEval_S (Wu et al., 2024; MIT). An emulated agent distills each benchmark
 session into notes, the production content gate judges every note, the kept notes
 are stored through `save_note`, production search retrieves them, a model answers
 from the retrieved notes alone, and a judge grades the answer with the official
-LongMemEval grading prompts. Every model stage uses one open-provider model,
+LongMemEval grading prompts. Every chat-model stage uses one open-provider model,
 `glm-5.3-flash`.
 
 ## Subset
@@ -164,7 +164,7 @@ the manifest.
 The official LongMemEval judge is gpt-4o, and published numbers are graded by it. This
 harness answers and judges with `glm-5.3-flash`, so its accuracies are not directly
 comparable with published ones; the judge audit reports how often this judge agrees
-with a person on the run.
+with a person on the run. `glm-5.3-flash` may have seen LongMemEval during training.
 
 ## Artefacts
 
