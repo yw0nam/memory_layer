@@ -281,7 +281,9 @@ def _job(document_id="guide.md", tags=None):
     )
 
 
-def test_identical_hash_markdown_is_no_op_without_conversion_or_write(monkeypatch, tmp_path):
+def test_identical_hash_markdown_is_no_op_after_the_credential_scan_without_write(
+    monkeypatch, tmp_path
+):
     upload = tmp_path / "guide.md"
     upload.write_text("same content")
     expected_hash = ingest_api._file_hash(upload)
@@ -290,11 +292,14 @@ def test_identical_hash_markdown_is_no_op_without_conversion_or_write(monkeypatc
     async def existing(document_id, namespace="default", schema=None):
         return expected_hash, False
 
+    async def converted(path):
+        return document.ConversionResult("same content", "markitdown:0.1.2")
+
     async def forbidden(*args, **kwargs):
         called.append(True)
 
     monkeypatch.setattr(ingest_api, "_existing_document_state", existing)
-    monkeypatch.setattr(ingest_api, "convert_to_markdown", forbidden)
+    monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
     monkeypatch.setattr(ingest_api, "replace_document_rows", forbidden)
     job = _job()
     asyncio.run(ingest_api.run_document_job(job, upload, "guide.md", "upsert", None))
@@ -321,7 +326,11 @@ def test_force_mode_never_consults_existing_content_hash(monkeypatch, tmp_path):
     async def no_write(document_id, rows, namespace="default", schema=None, table_rows=()):
         return None
 
+    async def converted(path):
+        return document.ConversionResult("force mode content", "markitdown:0.1.2")
+
     monkeypatch.setattr(ingest_api, "_existing_document_state", forbidden_existing_state)
+    monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
     monkeypatch.setattr(ingest_api, "_markdown_rows", fake_markdown_rows)
     monkeypatch.setattr(ingest_api, "_embed_rows", no_embed)
     monkeypatch.setattr(ingest_api, "replace_document_rows", no_write)
