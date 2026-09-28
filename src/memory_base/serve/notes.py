@@ -186,6 +186,11 @@ async def save_note(
     if ts > now:
         raise ValueError("occurred_at must not be in the future")
     row = build_note_row(content, kind, tags, ts, namespace, author)
+    if supersedes == row["id"]:
+        raise ValueError(
+            f"content is identical to the note it supersedes ({supersedes}), so there is "
+            "nothing to replace; change the content or drop supersedes"
+        )
     await _content_gate(row, allow_restatement)
     embedding = await embed_text(VllmEmbedder(), row["raw"])
     async with db.acquire() as conn:
@@ -259,6 +264,22 @@ async def save_note(
                 and supersedes not in {n["id"] for n in neighbours}
             ):
                 raise SimilarNotesError(neighbours)
+            if not stored and supersedes is not None:
+                active = await conn.fetchval(
+                    f"""
+                    SELECT EXISTS(
+                      SELECT 1 FROM "{PG_SCHEMA}".memory_chunks
+                      WHERE id = $1 AND archived_at IS NULL
+                    )
+                    """,
+                    row["id"],
+                )
+                if not active:
+                    raise ValueError(
+                        f"content is identical to archived note {row['id']}; restore it with "
+                        f"restore_notes instead of re-saving it, then archive {supersedes} "
+                        "with archive_notes"
+                    )
             if supersedes is not None:
                 await conn.execute(
                     f"""
