@@ -425,7 +425,5 @@ def test_upstream_manifest_pins_the_commit_and_every_copied_template():
     assert upstream["commit"] == prompts.UPSTREAM_COMMIT
     assert upstream["answer_template_sha256"] == UPSTREAM_TEMPLATE_SHA256["answer"]
     assert set(upstream["judge_templates_sha256"].values()) == {
-        UPSTREAM_TEMPLATE_SHA256[name]
-        for name in UPSTREAM_TEMPLATE_SHA256
-        if name != "answer"
+        UPSTREAM_TEMPLATE_SHA256[name] for name in UPSTREAM_TEMPLATE_SHA256 if name != "answer"
     }

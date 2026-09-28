@@ -417,6 +417,22 @@ def judge_prompt(question: dict[str, Any], answer_text: str) -> str:
 judge_label = prompts.judge_label
 
 
+def upstream_manifest() -> dict[str, Any]:
+    """The upstream commit and sha256 of every template copied from it."""
+    judges = {
+        "qa": prompts.QA_TEMPLATE,
+        "temporal-reasoning": prompts.TEMPORAL_TEMPLATE,
+        "knowledge-update": prompts.KNOWLEDGE_UPDATE_TEMPLATE,
+        "single-session-preference": prompts.PREFERENCE_TEMPLATE,
+        "abstention": prompts.ABSTENTION_TEMPLATE,
+    }
+    return {
+        "commit": prompts.UPSTREAM_COMMIT,
+        "answer_template_sha256": prompt_sha(prompts.ANSWER_TEMPLATE),
+        "judge_templates_sha256": {name: prompt_sha(text) for name, text in judges.items()},
+    }
+
+
 def _within_baseline(row: dict[str, Any], baseline: float) -> bool:
     tool_uses = row.get("tool_uses")
     return isinstance(tool_uses, int) and not isinstance(tool_uses, bool) and tool_uses <= baseline
@@ -850,6 +866,7 @@ def run_ingest(args: argparse.Namespace) -> None:
     out_path = stage_output_path(args.data_dir, args.stage, args.variant)
     write_jsonl_atomic(out_path, [accepted[qid] for qid in expected if qid in accepted])
     models = sorted({str(row["model"]) for row in accepted.values()})
+    update_manifest(args.manifest, "upstream", upstream_manifest())
     update_manifest(
         args.manifest,
         f"{args.stage}{_variant_suffix(args.variant)}",
@@ -1010,6 +1027,7 @@ def run_score(args: argparse.Namespace) -> None:
         for path in sorted(args.data_dir.glob("*.jsonl"))
         if path.is_file()
     }
+    update_manifest(args.manifest, "upstream", upstream_manifest())
     update_manifest(
         args.manifest,
         "score",
