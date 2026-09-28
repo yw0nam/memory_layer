@@ -65,7 +65,9 @@ written — and a note that fails is refused with HTTP 409 and the reason;
 active notes above `NOTE_SIMILAR_THRESHOLD` cosine is refused with HTTP 409 listing them,
 unless `supersedes` names one of them or `allow_similar` is set; an accepted override
 records the neighbours' ids in `metadata.similar_ack`. The response carries `similar[]`
-either way. A prior-note id in the payload archives that row.
+either way. A prior-note id in the payload archives that row; the save is refused with
+HTTP 400 when it would leave no active note — the content is identical to the note it
+names, or to an archived note, which `restore_notes` brings back instead.
 
 Every note records the agent that wrote it in `metadata.author`, drawn from the calling
 key's allowlist in `api_keys.authors`; a key with an empty allowlist cannot save. A note

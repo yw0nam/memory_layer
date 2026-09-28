@@ -324,6 +324,73 @@ def test_supersede_stamps_archived_by_with_the_new_notes_author(monkeypatch):
     assert "natsume" in args
 
 
+# ---- save_note: a supersede never leaves zero active notes ------------------
+
+
+class ArchivedDuplicateConnection(FakeConnection):
+    """The new content already exists as an archived row: the INSERT no-ops, the row is not active."""
+
+    def __init__(self):
+        super().__init__(insert_status="INSERT 0 0")
+
+    async def fetchval(self, query, *args):
+        return "archived_at" not in query
+
+
+def test_supersede_of_the_note_with_identical_content_is_refused_before_gate_and_embed(
+    monkeypatch,
+):
+    from memory_base.serve import notes
+
+    conn = FakeConnection()
+    _patch_note_deps(monkeypatch, conn)
+    calls = []
+
+    async def counting_judge(content, kind):
+        calls.append("judge")
+        return ContentVerdict(accepted=True, reason="durable knowledge")
+
+    async def counting_embed(embedder, text):
+        calls.append("embed")
+        return "[0]"
+
+    monkeypatch.setattr(notes, "judge_note_content", counting_judge)
+    monkeypatch.setattr(notes, "embed_text", counting_embed)
+    content = "prefer ruff over flake8 for linting"
+    own_id = build_note_row(content, "note", ["test"], NOW)["id"]
+    with pytest.raises(ValueError, match="identical to the note it supersedes"):
+        asyncio.run(save_note(content, tags=["test"], supersedes=own_id, author="natsume"))
+    assert calls == []
+    assert conn.inserts == []
+    assert conn.updates == []
+
+
+def test_supersede_whose_content_matches_an_archived_note_is_refused(monkeypatch):
+    conn = ArchivedDuplicateConnection()
+    _patch_note_deps(monkeypatch, conn)
+    content = "prefer ruff over flake8 for linting"
+    archived_id = build_note_row(content, "note", ["test"], NOW)["id"]
+    with pytest.raises(ValueError) as exc_info:
+        asyncio.run(
+            save_note(content, tags=["test"], supersedes="note:old0000000000", author="natsume")
+        )
+    message = str(exc_info.value)
+    assert archived_id in message
+    assert "restore_notes" in message
+    assert conn.updates == []
+
+
+def test_supersede_whose_content_matches_an_active_note_archives_the_target(monkeypatch):
+    conn = FakeConnection(insert_status="INSERT 0 0")
+    _patch_note_deps(monkeypatch, conn)
+    result = asyncio.run(
+        save_note("new content", tags=["test"], supersedes="note:old0000000000", author="natsume")
+    )
+    assert result["stored"] is False
+    assert result["superseded"] == "note:old0000000000"
+    assert len(conn.updates) == 1
+
+
 # ---- save_note: the near-duplicate gate -------------------------------------
 
 
@@ -672,3 +739,45 @@ def test_similar_gate_refuses_then_resolves_by_supersede_or_ack(client):
     finally:
         asyncio.run(_delete(note_b))
         asyncio.run(_delete(note_c))
+
+
+async def _archive(note_id: str) -> None:
+    conn = await asyncpg.connect(db_url())
+    try:
+        await conn.execute(
+            f'UPDATE "{PG_SCHEMA}".memory_chunks SET archived_at = $2 WHERE id = $1',
+            note_id,
+            NOW,
+        )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.integration
+def test_supersede_with_content_of_an_archived_note_400_keeps_target_active(client):
+    content_a = "Postgres advisory locks are released when the session that took them ends"
+    content_b = "the reranker endpoint rejects batches larger than sixty-four passages"
+    note_a = build_note_row(content_a, "note", ["test"], NOW)["id"]
+    note_b = build_note_row(content_b, "note", ["test"], NOW)["id"]
+    try:
+        asyncio.run(save_note(content_a, tags=["test"], author="natsume"))
+        asyncio.run(save_note(content_b, tags=["test"], author="natsume"))
+        asyncio.run(_archive(note_a))
+
+        response = client.post(
+            "/save_memory",
+            json={
+                "author": "natsume",
+                "content": content_a,
+                "tags": ["test"],
+                "supersedes": note_b,
+            },
+        )
+        assert response.status_code == 400
+        assert note_a in response.json()["error"]
+        assert "restore_notes" in response.json()["error"]
+        assert asyncio.run(_fetch_archived_at(note_b)) is None
+        assert asyncio.run(_fetch_archived_at(note_a)) is not None
+    finally:
+        asyncio.run(_delete(note_a))
+        asyncio.run(_delete(note_b))
