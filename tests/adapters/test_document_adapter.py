@@ -243,6 +243,26 @@ def test_csv_sample_and_card_builder_use_header_first_twenty_rows(tmp_path):
     assert "row-20,20" not in captured["text"]
 
 
+def test_build_csv_card_accepts_summary_at_hard_chunk_limit():
+    sample = document.CSVSample(["name"], [["one"]], 1, 1)
+
+    async def summarize(text, context):
+        return {"summary": "s" * document.HARD_CHUNK_CHARS, "tags": ["sample table"]}
+
+    card = asyncio.run(document.build_csv_card(sample, summarize))
+    assert len(card["summary"]) == document.HARD_CHUNK_CHARS
+
+
+def test_build_csv_card_rejects_summary_over_hard_chunk_limit():
+    sample = document.CSVSample(["name"], [["one"]], 1, 1)
+
+    async def summarize(text, context):
+        return {"summary": "s" * (document.HARD_CHUNK_CHARS + 1), "tags": ["sample table"]}
+
+    with pytest.raises(document.DocumentError, match=str(document.HARD_CHUNK_CHARS)):
+        asyncio.run(document.build_csv_card(sample, summarize))
+
+
 def test_csv_card_row_mapping():
     sample = document.CSVSample(["name"], [["one"]], 1, 1)
     row = document.map_csv_card_row(

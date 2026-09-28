@@ -163,6 +163,38 @@ def test_reingest_preserves_original_created_by(monkeypatch, tmp_path):
     assert all(row["metadata"]["created_by"] == "alice" for row in written)
 
 
+# ---- CSV card write-time bound ---------------------------------------------
+
+
+def test_run_document_job_rejects_oversized_csv_summary(monkeypatch, tmp_path):
+    from memory_base.adapters import document
+
+    upload = tmp_path / "data.csv"
+    upload.write_text("name,value\none,1\n")
+
+    async def oversized_summary(text, context, *, semaphore=None, on_retry=None):
+        return {"summary": "s" * (document.HARD_CHUNK_CHARS + 1), "tags": ["overflow"]}
+
+    embed_calls = []
+    write_calls = []
+
+    async def embed(rows):
+        embed_calls.append(rows)
+
+    async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
+        write_calls.append(rows)
+
+    monkeypatch.setattr(ingest_api, "summarize_and_tag", oversized_summary)
+    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
+    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
+
+    job = _job(document_id="data.csv", key_label="alice")
+    with pytest.raises(document.DocumentError, match=str(document.HARD_CHUNK_CHARS)):
+        asyncio.run(ingest_api.run_document_job(job, upload, "data.csv", "force", None))
+    assert not embed_calls
+    assert not write_calls
+
+
 # ---- REST overwrite gate on POST /ingest/document --------------------------
 
 

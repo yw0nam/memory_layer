@@ -64,6 +64,12 @@ def test_hit_to_dict_truncates_text_and_includes_context():
     assert d["context"] == "CTX"
 
 
+def test_hit_to_dict_returns_memory_text_whole():
+    h = _hit(source="memory", text="n" * 4000)
+    d = api.hit_to_dict(h)
+    assert len(d["text"]) == 4000
+
+
 def test_hit_to_dict_includes_repo_for_code_hits():
     assert api.hit_to_dict(_hit(meta={"repo": "YUI"}))["repo"] == "YUI"
     assert "repo" not in api.hit_to_dict(_hit())
