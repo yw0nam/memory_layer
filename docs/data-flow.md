@@ -7,10 +7,19 @@ How content enters the store, how it comes back out, and where it lands.
 ```
 ① NOTE                  ② DOCUMENT                    ③ CODE
 POST /save_memory       POST /ingest/document         POST /repos {url}
+   │                       │ credential scan of          │
+   │                       │ upload fields → 400         │
    │                       │ 202 {job_id}                │ 202 {job_id}
    ▼                       ▼                             ▼
  validate ≤4000         MarkItDown worker            url validated
  kind ∈ note|decision|episode   (killable, 120 s)            free disk? → 507
+   │                       │                             │
+   ▼                       ▼                             │
+ credential scan        credential scan of the           │
+ content + raw tags     text or every CSV cell           │
+ → 409                  → job failed, nothing            │
+   │                      stored; then same              │
+   │                      bytes → no_op                  │
    │                       │                             │
    ▼                       ▼                             ▼
  id = sha256(content)   chunk 1500 / 2000 / 200      git clone --filter=blob:none
@@ -53,6 +62,23 @@ POST /messages {subject, status, result, …}
  handoff: same transaction terminalizes older pending
  snapshots of the same namespace+scope+subject_key
 ```
+
+Every note and document write starts with a deterministic credential scan
+(`core/secrets.py`): the fixed-format detectors of `detect-secrets` — the npm, JWT, and
+legacy OpenAI patterns anchored at token boundaries so a scan stays linear in the text
+length — plus local Anthropic, OpenAI project/service key, and Google API key patterns,
+with no entropy or keyword detection and no model call. It recognizes provider API keys
+(AWS access key ids, GitHub, GitLab, Slack, Stripe,
+SendGrid, npm, PyPI, OpenAI, Anthropic, Google), private-key headers, JSON Web Tokens, and
+credentials embedded in URLs (`scheme://user:pass@host`). A hit refuses the write whole —
+nothing is redacted — and the reason names only the detector type, never the matched
+value. A note is scanned together with its raw tags before the content gate and refused
+with HTTP 409. A document upload's filename, `document_id`, `origin`, and tags are scanned
+before the job is admitted and refused with HTTP 400. The worker scans the extracted text
+— for a CSV, every header name and cell — before the same-bytes `no_op` check, the Card
+summary, embedding, or any write, so the job fails, nothing from the document is stored,
+and an identical re-upload is refused the same way. Prose that quotes a literal
+`BEGIN … PRIVATE KEY` header is refused as a private key.
 
 Notes are stored exactly as written — the server never summarizes. Before embedding,
 every note passes the content gate: the chat model judges the text on one criterion —
