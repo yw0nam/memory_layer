@@ -221,7 +221,8 @@ working loop:
 search_memory("developer productivity sleep")
   └► hit: ref = "developer-productivity-metrics#card-0"
          columns = ["developer_id", "ai_usage", "sleep_hours", "commits"]
-              │     source_ref is the document_id, columns are the JSON keys
+              │     the part of ref before "#" is the document_id, columns
+              │     are the JSON keys
               ▼
 POST /tables/query  {"sql": "...", "namespace": "default"}
   SELECT data->>'ai_usage'                        AS grp,
@@ -318,6 +319,7 @@ periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
 | `id` | `note:<hash>` · `doc:<document_id>:<ordinal>` |
 | `source_type` | `agent_note` · `document` |
 | `source_ref` | `save_memory` or the document id |
+| `session_id` | the note's own id, or the document id for a document chunk — the unit the search cap (`PER_FILE_CAP` per `(namespace, session_id)`) is keyed on |
 | `chunk_kind` | `note` · `decision` · `episode` · `doc` |
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |

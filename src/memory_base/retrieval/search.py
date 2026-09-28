@@ -345,7 +345,8 @@ async def _search_memory(
         author=author,
     )
     columns = (
-        "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, archived_at"
+        "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
+        "archived_at, namespace, session_id"
     )
     try:
         vec_rows = await conn.fetch(
@@ -382,7 +383,8 @@ async def _search_memory(
             "kind": r["chunk_kind"],
             "tags": metadata.get("tags", []),
             "author": metadata.get("author"),
-            "source_ref": r["source_ref"],
+            "namespace": r["namespace"],
+            "session_id": r["session_id"],
             "archived": r["archived_at"] is not None,
         }
         if "columns" in metadata:
@@ -422,13 +424,13 @@ def _decay_targets(hits: list[Hit], include_archived: bool) -> list[Hit]:
 def _dedup_cap(hits: list[Hit]) -> list[Hit]:
     """Per-file/session cap for diversity, then take fused top."""
     hits.sort(key=lambda h: h.rrf, reverse=True)
-    counts: dict[str, int] = {}
+    counts: dict[tuple[str, ...], int] = {}
     out = []
     for h in hits:
         key = (
-            h.meta.get("source_ref", h.ref)
+            (h.source, h.meta["namespace"], h.meta["session_id"])
             if h.source == "memory"
-            else h.meta.get("filename") or h.ref
+            else (h.source, h.meta.get("filename") or h.ref)
         )
         if counts.get(key, 0) >= PER_FILE_CAP:
             continue
