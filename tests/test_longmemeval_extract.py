@@ -96,7 +96,7 @@ def test_resume_discards_a_partial_line_and_notes_of_uncompleted_units(tmp_path)
 
 
 def test_gate_failures_are_retried_and_never_recorded_as_a_verdict(tmp_path, monkeypatch):
-    monkeypatch.setattr(extract, "GATE_BACKOFF_SECONDS", 0)
+    monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
     attempts = []
 
     async def flaky(content, kind):
@@ -115,7 +115,7 @@ def test_gate_failures_are_retried_and_never_recorded_as_a_verdict(tmp_path, mon
 
 
 def test_a_unit_whose_gate_stays_down_is_not_written(tmp_path, monkeypatch):
-    monkeypatch.setattr(extract, "GATE_BACKOFF_SECONDS", 0)
+    monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
 
     async def down(content, kind):
         raise TimeoutError("gate down")
@@ -128,7 +128,7 @@ def test_a_unit_whose_gate_stays_down_is_not_written(tmp_path, monkeypatch):
 
 
 def test_invalid_extractor_output_is_retried_then_parsed(tmp_path, monkeypatch):
-    monkeypatch.setattr(extract, "GATE_BACKOFF_SECONDS", 0)
+    monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
     client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
     client.failures = 1
     run([unit("s1", DATE_A, "bike")], tmp_path, client)
