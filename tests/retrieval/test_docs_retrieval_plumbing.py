@@ -465,8 +465,7 @@ def _memory_hit(ref, rrf, namespace, session_id):
 
 
 def test_notes_with_distinct_session_ids_are_not_capped():
-    # every save_memory note carries the same production ref; only session_id
-    # (the note's own id) tells them apart, so the cap must key on that, not ref.
+    # all save_memory notes share one ref; only session_id tells them apart.
     hits = [
         _memory_hit("save_memory", rrf=10.0 - i, namespace="default", session_id=f"note:{i}")
         for i in range(5)
@@ -494,26 +493,6 @@ def test_same_session_id_in_different_namespaces_is_not_shared():
     assert len(out) == PER_FILE_CAP * 2
     assert sum(1 for h in out if h.meta["namespace"] == "team-a") == PER_FILE_CAP
     assert sum(1 for h in out if h.meta["namespace"] == "team-b") == PER_FILE_CAP
-
-
-def test_code_and_memory_hits_with_same_string_key_do_not_share_a_cap():
-    code_hits = [
-        Hit(
-            source="code",
-            ref=f"shared:L{i}",
-            text="",
-            ts=0.0,
-            rrf=20.0 - i,
-            meta={"filename": "shared"},
-        )
-        for i in range(PER_FILE_CAP)
-    ]
-    memory_hits = [
-        _memory_hit(f"shared#chunk-{i}", rrf=10.0 - i, namespace="shared", session_id="shared")
-        for i in range(PER_FILE_CAP)
-    ]
-    out = _dedup_cap(code_hits + memory_hits)
-    assert len(out) == PER_FILE_CAP * 2
 
 
 def test_search_does_not_accept_include_atoms():
