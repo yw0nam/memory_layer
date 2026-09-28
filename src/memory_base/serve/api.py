@@ -57,7 +57,8 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         "ref": hit.ref,
         "date": datetime.fromtimestamp(hit.ts, tz=timezone.utc).strftime("%Y-%m-%d"),
         "score": hit.score,
-        "text": hit.text[:TEXT_LIMIT],
+        # Memory text is bounded at write time; code chunks are not.
+        "text": hit.text if hit.source == "memory" else hit.text[:TEXT_LIMIT],
     }
     repo = hit.meta.get("repo")
     if repo:

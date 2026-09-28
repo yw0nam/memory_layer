@@ -246,8 +246,10 @@ async def search_all(
     (e.g. broad or ambiguous questions). Returns up to `top_k` hits sorted
     by relevance (rerank score, falling back to RRF fusion score), each with
     source ("code" or "memory"), ref (file:line-range or document ref),
-    date (YYYY-MM-DD), score, text (truncated to 2000 chars), repo for code
-    hits, and optional context (neighboring code for code hits).
+    date (YYYY-MM-DD), score, text (code hits truncated to 2000 chars; memory
+    hits — notes, document chunks, CSV cards — come back whole, already
+    bounded when written), repo for code hits, and optional context
+    (neighboring code for code hits).
 
     `include_archived` widens the search to archived memory; use `search_memory`
     for the `kind`/`tags` filters, which apply to memory only.
@@ -285,8 +287,9 @@ async def search_code(
     function/class definitions, or "where is X implemented" style questions.
     Returns up to `top_k` hits sorted by relevance, each with source="code",
     repo, ref (file:line-range), date (file mtime as YYYY-MM-DD), score, text
-    (truncated to 2000 chars), and optional context (neighboring code chunks
-    for continuity).
+    (truncated to 2000 chars — code chunks have no hard write-time bound, so a
+    chunk can run longer than that), and optional context (neighboring code
+    chunks for continuity).
 
     Every cached repository is searched unless `repo` narrows it to the named
     ones; `list_repos` reports the names that exist, and an unknown name simply
@@ -321,7 +324,9 @@ async def search_memory(
     documents, or any knowledge stored in the memory base rather than
     the current codebase. Returns up to `top_k` hits sorted by relevance,
     each with source="memory", ref (document ref), date (YYYY-MM-DD),
-    score, and text (truncated to 2000 chars).
+    score, and text: the note or chunk in full, never cut in the response
+    (bounded when written instead — notes up to 4000 chars, document
+    chunks and CSV cards up to 2000).
 
     Archived memory is excluded by default. Set `include_archived` only when the
     question is explicitly about superseded or historical content: it also drops
