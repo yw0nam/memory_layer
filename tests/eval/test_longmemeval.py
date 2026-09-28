@@ -558,7 +558,13 @@ def test_retrieve_and_score_record_the_code_revision_from_the_start_of_the_run(
     qid = lme.select_subset(dataset)[0]["question_id"]
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    packet = {"question_id": qid, "question": "q?", "hits": [], "load": {"submitted": 0}}
+    packet = {
+        "question_id": qid,
+        "question": "q?",
+        "question_date": "2023/06/01 (Thu) 10:00",
+        "hits": [],
+        "load": {"submitted": 0},
+    }
     lme.append_jsonl(lme.packets_path(data_dir, "baseline"), [packet])
     manifest = tmp_path / "manifest.json"
     common = ["--dataset", str(dataset_path), "--data-dir", str(data_dir)]
