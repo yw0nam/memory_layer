@@ -373,11 +373,7 @@ async def build_csv_card(
     sample: CSVSample,
     summarize: Callable[[str, str], Awaitable[dict[str, Any]]],
 ) -> dict[str, Any]:
-    """Summarize a CSV sample with the generic enrichment operation.
-
-    A summary over HARD_CHUNK_CHARS fails the ingest job outright: this stored
-    card is a search hit returned whole, with no write-time split to fall back on.
-    """
+    """Summarize a CSV sample into one card of at most HARD_CHUNK_CHARS."""
     context = csv_prompt_context(sample)
     card = await summarize(context, "The input is a sampled tabular document.")
     if len(card["summary"]) > HARD_CHUNK_CHARS:
