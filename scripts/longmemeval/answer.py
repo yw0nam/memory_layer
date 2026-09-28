@@ -84,7 +84,11 @@ def pending_prompts(
 async def _complete_with_retry(client: Any, prompt: str, max_tokens: int):
     for attempt in range(ATTEMPTS):
         try:
-            return await client.complete(prompt, max_tokens=max_tokens)
+            reply = await client.complete(prompt, max_tokens=max_tokens)
+            # glm can spend the whole token budget on reasoning despite thinking being disabled
+            if not reply[0]:
+                raise ValueError("empty reply")
+            return reply
         except Exception:
             if attempt == ATTEMPTS - 1:
                 raise
