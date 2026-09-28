@@ -317,6 +317,41 @@ def test_memory_hit_falls_back_to_source_ref():
     assert hits[0].ref == "save_memory"
 
 
+def test_memory_fusion_uses_vector_fts_and_recency_voters(monkeypatch):
+    def row(cid, ts):
+        return {
+            "id": cid,
+            "source_ref": "save_memory",
+            "chunk_kind": "note",
+            "metadata": {},
+            "distilled": cid,
+            "content_raw": cid,
+            "ts_last_active": ts,
+            "archived_at": None,
+        }
+
+    calls = []
+    real_rrf_fuse = search_module.rrf_fuse
+
+    def recording_rrf_fuse(lists, weights=None):
+        calls.append((lists, weights))
+        return real_rrf_fuse(lists, weights)
+
+    monkeypatch.setattr(search_module, "rrf_fuse", recording_rrf_fuse)
+    vec_rows = [row("vec-old", 100.0), row("both", 200.0)]
+    fts_rows = [row("both", 200.0), row("fts-new", 300.0)]
+    conn = FakeSearchConnection([vec_rows, fts_rows])
+
+    asyncio.run(_search_memory(conn, "query", "[1]"))
+
+    assert calls == [
+        (
+            [["vec-old", "both"], ["both", "fts-new"], ["fts-new", "both", "vec-old"]],
+            [1.0, search_module.FTS_RRF_WEIGHT, search_module.TIEBREAK_RRF_WEIGHT],
+        )
+    ]
+
+
 # ---- author filter ---------------------------------------------------------
 
 
