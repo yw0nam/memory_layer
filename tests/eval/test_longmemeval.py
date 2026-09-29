@@ -628,6 +628,32 @@ def test_retrieve_and_score_record_the_code_revision_from_the_start_of_the_run(
     assert written["upstream"] == lme.upstream_manifest()
 
 
+def test_score_reports_whichever_runs_have_packets(tmp_path, monkeypatch):
+    dataset = synthetic_dataset()
+    for question in dataset:
+        question["answer_session_ids"] = ["s1"]
+    dataset_path = tmp_path / "dataset.json"
+    dataset_path.write_text(json.dumps(dataset))
+    qid = lme.select_subset(dataset)[0]["question_id"]
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    packet = {
+        "question_id": qid,
+        "question": "q?",
+        "question_date": "2023/06/01 (Thu) 10:00",
+        "hits": [],
+        "load": {"submitted": 0},
+    }
+    lme.append_jsonl(lme.packets_path(data_dir, "prefetch-gate-off"), [packet])
+    lme.append_jsonl(data_dir / lme.SESSIONS_FILE, [])
+    manifest = tmp_path / "manifest.json"
+    revisions_captured_in_order(monkeypatch)
+    lme.main(["score", "--dataset", str(dataset_path), "--data-dir", str(data_dir), "--manifest", str(manifest)])
+    report = json.loads((data_dir / "report.json").read_text())
+    assert list(report["runs"]) == ["prefetch-gate-off"]
+    assert lme.read_manifest(manifest)["score"]["questions_scored"] == 1
+
+
 def test_the_extraction_summary_counts_provider_refused_units(tmp_path):
     question = make_question("q1", "multi-session", sessions=[("s1", D1), ("s2", D2)])
     rows = [
