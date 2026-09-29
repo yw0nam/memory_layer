@@ -38,6 +38,7 @@ def make_packet(qid):
 
 class FakeModel:
     model = "glm-5.3-flash"
+    thinking = "disabled"
 
     def __init__(self, failures=0):
         self.calls = []

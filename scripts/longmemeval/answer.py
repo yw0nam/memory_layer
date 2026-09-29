@@ -2,15 +2,17 @@
 """Answer and judge LongMemEval questions with the open-provider model.
 
 `answer` answers each retrieved packet with upstream's facts prompt; `judge` grades each
-current answer with upstream's grading prompt for its question type. Both call
-glm-5.3-flash on the z.ai provider from .env (temperature 0, thinking disabled, upstream's
-token limits) and append one fsynced line per question to answers[-run].jsonl or
-judgments[-run].jsonl in the data dir; a rerun skips every question whose current prompt
-already has a row.
+current answer with upstream's grading prompt for its question type. The zai backend calls
+glm-5.3-flash from .env (temperature 0, thinking disabled, upstream's token limits); the
+claude-code backend runs each prompt in a headless Claude Code session with no tools, MCP
+servers, hooks or settings, thinking at the given effort. Each reply is appended as one
+fsynced line per question to answers[-run].jsonl or judgments[-run].jsonl in the data dir;
+a rerun skips every question whose current prompt already has a row.
 
 Usage:
   uv run python scripts/longmemeval/answer.py answer --dataset PATH [--gate off | --variant dated]
   uv run python scripts/longmemeval/answer.py judge --dataset PATH [--gate off | --variant dated]
+  ... --backend claude-code --model claude-sonnet-5-5 --effort high
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import argparse
 import asyncio
 import json
 import os
+import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -31,7 +34,14 @@ from openai import AsyncOpenAI
 from memory_base.core import llm
 from memory_base.eval import longmemeval as lme
 
-DEFAULT_MODEL = "glm-5.3-flash"
+DEFAULT_MODEL = {"zai": "glm-5.3-flash", "claude-code": "claude-sonnet-5-5"}
+BACKENDS = tuple(DEFAULT_MODEL)
+SYSTEM_PROMPTS = {
+    "answer": "You answer one question about a user's past conversations using only the memory "
+    "excerpts in the message. Follow the output instruction in the message exactly.",
+    "judge": "You grade one answer. Follow the grading instruction in the message exactly and reply "
+    'with only "yes" or "no".',
+}
 DEFAULT_CONCURRENCY = 5
 # Answers keep upstream's 500; the judge gets room for the reasoning glm emits despite thinking off.
 MAX_TOKENS = {"answer": 500, "judge": 200}
@@ -47,6 +57,7 @@ class ChatModel:
     client: AsyncOpenAI
     model: str
     provider: str = "zai"
+    thinking: str = "disabled"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str], *, model: str) -> ChatModel:
@@ -70,6 +81,56 @@ class ChatModel:
         usage = response.usage
         text = (response.choices[0].message.content or "").strip()
         return text, usage.prompt_tokens, usage.completion_tokens
+
+
+@dataclass
+class ClaudeCodeModel:
+    """One headless Claude Code session per prompt, with nothing but the model and a system prompt."""
+
+    model: str
+    effort: str
+    system_prompt: str
+    provider: str = "claude-code"
+
+    @property
+    def thinking(self) -> str:
+        return f"effort {self.effort}"
+
+    async def complete(self, prompt: str, *, max_tokens: int) -> tuple[str, int, int]:
+        argv = (
+            "claude", "-p", "--model", self.model, "--effort", self.effort,
+            "--tools", "", "--setting-sources", "", "--strict-mcp-config",
+            "--no-session-persistence", "--system-prompt", self.system_prompt,
+            "--output-format", "json",
+        )  # fmt: skip
+        env = {**os.environ, "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"}
+        # An empty working directory keeps any CLAUDE.md out of the session.
+        with tempfile.TemporaryDirectory() as cwd:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+                env=env,
+            )
+            out, err = await asyncio.wait_for(
+                proc.communicate(prompt.encode()), timeout=CALL_TIMEOUT_SECONDS
+            )
+        if proc.returncode:
+            raise RuntimeError(f"claude exited {proc.returncode}: {err.decode()[:300]}")
+        result = json.loads(out)
+        if result.get("is_error") or result.get("num_turns") != 1:
+            raise RuntimeError(f"claude session did not end in one clean turn: {result}")
+        if set(result.get("modelUsage", {})) != {self.model}:
+            raise RuntimeError(f"claude answered with {list(result.get('modelUsage', {}))}")
+        usage = result["usage"]
+        in_tok = (
+            usage.get("input_tokens", 0)
+            + usage.get("cache_read_input_tokens", 0)
+            + usage.get("cache_creation_input_tokens", 0)
+        )
+        return result["result"].strip(), in_tok, usage.get("output_tokens", 0)
 
 
 def pending_prompts(
@@ -139,7 +200,7 @@ def _stage_manifest(
     stage: str,
     run: str,
     data_dir: Path,
-    client: ChatModel,
+    client: ChatModel | ClaudeCodeModel,
     concurrency: int,
     code: dict[str, Any],
 ) -> dict[str, Any]:
@@ -150,9 +211,10 @@ def _stage_manifest(
         "code": code,
         "provider": client.provider,
         "model": client.model,
-        "temperature": 0,
-        "thinking": "disabled",
-        "max_tokens": MAX_TOKENS[stage],
+        "temperature": 0 if client.provider == "zai" else None,
+        "thinking": client.thinking,
+        "max_tokens": MAX_TOKENS[stage] if client.provider == "zai" else None,
+        "system_prompt": None if client.provider == "zai" else client.system_prompt,
         "concurrency": concurrency,
         "templates_sha256": (
             upstream["answer_template_sha256"]
@@ -176,7 +238,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--manifest", type=Path, default=lme.DEFAULT_MANIFEST)
     parser.add_argument("--variant", choices=lme.VARIANTS, default="baseline")
     parser.add_argument("--gate", choices=lme.GATES, default="on")
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--backend", choices=BACKENDS, default="zai")
+    parser.add_argument("--model")
+    parser.add_argument("--effort", default="high")
     parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     args = parser.parse_args(argv)
 
@@ -184,7 +248,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     load_dotenv()
     run = lme.run_name(args.variant, args.gate)
     questions = {q["question_id"]: q for q in lme.load_dataset(args.dataset)}
-    client = ChatModel.from_env(os.environ, model=args.model)
+    model = args.model or DEFAULT_MODEL[args.backend]
+    client = (
+        ChatModel.from_env(os.environ, model=model)
+        if args.backend == "zai"
+        else ClaudeCodeModel(model, args.effort, SYSTEM_PROMPTS[args.stage])
+    )
     prompts = pending_prompts(args.stage, args.data_dir, run, questions)
     print(f"{args.stage} ({run}): {len(prompts)} pending", flush=True)
     out_path = lme.stage_output_path(args.data_dir, args.stage, run)
