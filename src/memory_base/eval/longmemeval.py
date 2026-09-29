@@ -1051,9 +1051,9 @@ def run_score(args: argparse.Namespace) -> None:
         body = _run_report(args.data_dir, run, questions)
         if body is not None:
             runs[run] = body
-    if "baseline" not in runs:
+    if not runs:
         raise SystemExit("no packets yet; run retrieve")
-    scope = list(_packets_by_id(args.data_dir, "baseline"))
+    scope = list(_packets_by_id(args.data_dir, next(iter(runs))))
     report = {
         "subset": subset_manifest(subset, sha256_file(args.dataset)),
         "runs": runs,

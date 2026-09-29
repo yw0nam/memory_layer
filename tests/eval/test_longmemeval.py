@@ -648,7 +648,17 @@ def test_score_reports_whichever_runs_have_packets(tmp_path, monkeypatch):
     lme.append_jsonl(data_dir / lme.SESSIONS_FILE, [])
     manifest = tmp_path / "manifest.json"
     revisions_captured_in_order(monkeypatch)
-    lme.main(["score", "--dataset", str(dataset_path), "--data-dir", str(data_dir), "--manifest", str(manifest)])
+    lme.main(
+        [
+            "score",
+            "--dataset",
+            str(dataset_path),
+            "--data-dir",
+            str(data_dir),
+            "--manifest",
+            str(manifest),
+        ]
+    )
     report = json.loads((data_dir / "report.json").read_text())
     assert list(report["runs"]) == ["prefetch-gate-off"]
     assert lme.read_manifest(manifest)["score"]["questions_scored"] == 1
