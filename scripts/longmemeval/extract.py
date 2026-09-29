@@ -2,8 +2,9 @@
 """Emulated agent for the LongMemEval harness: distill each benchmark session into notes.
 
 Every (session_id, date) unit of the selected questions goes once to the extractor model
-with one committed prompt: "agent" (a personal assistant's memory writer) or "digest" (the
-session-digest rules with the memory save policy); each returned note is then judged by the production content
+with one committed prompt: "agent" (a personal assistant's memory writer), "digest" (the
+session-digest rules with the memory save policy), or "personal" (the session-digest
+rules with the personal memory policy); each returned note is then judged by the production content
 gate (after the same length, kind, and credential checks save_note applies first) and its
 verdict recorded. <data-dir>/notes.jsonl holds one line per note, <data-dir>/sessions.jsonl
 one line per completed unit, zero-note units included. Rerunning resumes where it stopped.
@@ -42,7 +43,11 @@ from longmemeval.answer import ClaudeCodeModel  # noqa: E402
 
 NOTES_FILE = lme.NOTES_FILE
 SESSIONS_FILE = lme.SESSIONS_FILE
-PROMPT_FILES = {"agent": "extract_prompt.txt", "digest": "extract_prompt_digest.txt"}
+PROMPT_FILES = {
+    "agent": "extract_prompt.txt",
+    "digest": "extract_prompt_digest.txt",
+    "personal": "extract_prompt_personal.txt",
+}
 PROMPTS = {
     name: Path(__file__).with_name(file).read_text(encoding="utf-8")
     for name, file in PROMPT_FILES.items()
