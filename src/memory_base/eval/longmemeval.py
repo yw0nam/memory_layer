@@ -9,7 +9,9 @@ seeded judgments a person grades by hand, and `score` reports QA accuracy, sessi
 retrieval metrics, and the judge agreement rate.
 
 Runs: `baseline` (gate on), `gate-off` (`--gate off`: gate-refused notes loaded too), and
-`dated` (`--variant dated`: temporal-reasoning questions, date-prefixed embeddings).
+`dated` (`--variant dated`: temporal-reasoning questions, date-prefixed embeddings). `--read
+prefetch` reads each question the way the prefetch hook does (top 5, score floor 0.6) instead
+of search_memory's defaults (top 10, floor 0.25) and prefixes the run name with `prefetch`.
 
 CLI:
   uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH [--gate off]
@@ -55,7 +57,13 @@ SAVE_BACKOFF_SECONDS = 5.0
 METRIC_KS = (5, 10)
 VARIANTS = ("baseline", "dated")
 GATES = ("on", "off")
-RUNS = ("baseline", "gate-off", "dated")
+RUNS = ("baseline", "gate-off", "dated", "prefetch", "prefetch-gate-off")
+# How many hits a reader keeps and the score floor it asks for: search_memory's defaults
+# and the values the prefetch hook sends.
+READ_SETTINGS = {
+    "search": {"top_k": 10, "min_score": None},
+    "prefetch": {"top_k": 5, "min_score": 0.6},
+}
 DATED_VARIANT_TYPES = ("temporal-reasoning",)
 STAGES = ("answer", "judge")
 JUDGE_AUDIT_SIZE = 20
@@ -628,13 +636,21 @@ async def _prepare_schema(url: str, deadline_seconds: float = 90) -> list[str]:
     return [f"{row['extname']} {row['extversion']}" for row in rows]
 
 
-def run_name(variant: str, gate: str) -> str:
-    """The run a variant and gate setting select; gate-off runs only the baseline variant."""
+def run_name(variant: str, gate: str, read: str = "search") -> str:
+    """The run a variant, gate and read setting select; gate-off runs only the baseline variant."""
     if gate == "on":
-        return variant
-    if variant != "baseline":
+        run = variant
+    elif variant != "baseline":
         raise ValueError("the gate-off run covers the baseline variant only")
-    return "gate-off"
+    else:
+        run = "gate-off"
+    if read == "search":
+        return run
+    return read if run == "baseline" else f"{read}-{run}"
+
+
+def read_setting(run: str) -> dict[str, Any]:
+    return READ_SETTINGS["prefetch" if run.startswith("prefetch") else "search"]
 
 
 def run_suffix(run: str) -> str:
@@ -688,10 +704,17 @@ async def retrieve_question(
         namespace,
         session_units(question),
         notes_by_unit,
-        gate="off" if run == "gate-off" else "on",
+        gate="off" if run.endswith("gate-off") else "on",
     )
     loaded = time.monotonic()
-    hits = await _search_with_retry(question["question"], source="memory", namespaces=[namespace])
+    setting = read_setting(run)
+    hits = await _search_with_retry(
+        question["question"],
+        source="memory",
+        namespaces=[namespace],
+        min_score=setting["min_score"],
+    )
+    hits = hits[: setting["top_k"]]
     return {
         "question_id": question["question_id"],
         "question_type": question["question_type"],
@@ -766,7 +789,7 @@ def run_retrieve(args: argparse.Namespace) -> None:
     from memory_base.serve import notes
 
     code = code_revision()
-    run = run_name(args.variant, args.gate)
+    run = run_name(args.variant, args.gate, args.read)
     dataset = load_dataset(args.dataset)
     dataset_sha = sha256_file(args.dataset)
     subset = select_subset(dataset)
@@ -807,6 +830,7 @@ def run_retrieve(args: argparse.Namespace) -> None:
         {
             "code": code,
             "gate": args.gate,
+            "read": read_setting(run),
             "db_image": image or previous.get("db_image"),
             "db_extensions": extensions or previous.get("db_extensions"),
             "embedder": emb_model(),
@@ -876,7 +900,7 @@ def _usage(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
 
 
 def run_audit_sample(args: argparse.Namespace) -> None:
-    run = run_name(args.variant, args.gate)
+    run = run_name(args.variant, args.gate, args.read)
     out_path = judge_audit_path(args.data_dir, run)
     if out_path.exists():
         raise SystemExit(f"{out_path} exists; it may hold hand labels, so it is not replaced")
@@ -1070,6 +1094,7 @@ def build_parser() -> argparse.ArgumentParser:
     def run_flags(sub: argparse.ArgumentParser) -> None:
         sub.add_argument("--variant", choices=VARIANTS, default="baseline")
         sub.add_argument("--gate", choices=GATES, default="on")
+        sub.add_argument("--read", choices=tuple(READ_SETTINGS), default="search")
 
     retrieve = commands.add_parser("retrieve", help="load notes and search per question")
     common(retrieve)

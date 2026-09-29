@@ -239,6 +239,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--manifest", type=Path, default=lme.DEFAULT_MANIFEST)
     parser.add_argument("--variant", choices=lme.VARIANTS, default="baseline")
     parser.add_argument("--gate", choices=lme.GATES, default="on")
+    parser.add_argument("--read", choices=tuple(lme.READ_SETTINGS), default="search")
     parser.add_argument("--backend", choices=BACKENDS, default="zai")
     parser.add_argument("--model")
     parser.add_argument("--effort", default="high")
@@ -247,7 +248,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     code = lme.code_revision()
     load_dotenv()
-    run = lme.run_name(args.variant, args.gate)
+    run = lme.run_name(args.variant, args.gate, args.read)
     questions = {q["question_id"]: q for q in lme.load_dataset(args.dataset)}
     model = args.model or DEFAULT_MODEL[args.backend]
     client = (

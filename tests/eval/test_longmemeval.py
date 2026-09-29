@@ -401,7 +401,9 @@ def test_the_prefetch_read_setting_names_its_own_runs():
     assert lme.run_name("baseline", "on", "prefetch") == "prefetch"
     assert lme.run_name("baseline", "off", "prefetch") == "prefetch-gate-off"
     assert lme.run_name("baseline", "on", "search") == "baseline"
-    assert lme.packets_path(Path("d"), "prefetch-gate-off") == Path("d/packets-prefetch-gate-off.jsonl")
+    assert lme.packets_path(Path("d"), "prefetch-gate-off") == Path(
+        "d/packets-prefetch-gate-off.jsonl"
+    )
     assert lme.read_setting("prefetch-gate-off") == {"top_k": 5, "min_score": 0.6}
     assert lme.read_setting("gate-off") == {"top_k": 10, "min_score": None}
     assert set(lme.RUNS) >= {"prefetch", "prefetch-gate-off"}
