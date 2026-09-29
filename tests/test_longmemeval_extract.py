@@ -368,3 +368,12 @@ def test_the_claude_code_extractor_sends_the_system_and_user_turns_and_strips_a_
     assert extract.parse_extraction(text) == []
     assert (seen["system"], seen["prompt"]) == (messages[0]["content"], messages[1]["content"])
     assert (in_tok, out_tok) == (10, 2)
+
+
+def test_the_personal_prompt_carries_the_personal_policy_without_the_store_nothing_default():
+    turns = [{"role": "user", "content": "my bike"}]
+    content = extract.build_messages(DATE_A, turns, prompt="personal")[1]["content"]
+    assert DATE_A in content and "user: my bike" in content
+    assert "Personal memory policy" in content
+    assert "Storing nothing" not in content
+    assert len({extract.prompt_sha256(p) for p in ("agent", "digest", "personal")}) == 3
