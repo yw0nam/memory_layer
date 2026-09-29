@@ -130,6 +130,27 @@ def test_a_unit_whose_gate_stays_down_is_not_written(tmp_path, monkeypatch):
     assert extract.read_sessions(tmp_path) == []
 
 
+def test_a_gate_content_filter_refusal_stores_the_note_unjudged_like_production(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
+    attempts = []
+
+    async def filtered(content, kind):
+        attempts.append(content)
+        raise provider_error("1301")
+
+    client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
+    summary = run([unit("s1", DATE_A, "bike")], tmp_path, client, gate=filtered)
+    assert summary["failed"] == 0
+    assert len(attempts) == 1
+    [note] = extract.read_notes(tmp_path)
+    assert note["gate"] == "stored"
+    assert note["gate_reason"] == "content gate unavailable: content_filter"
+    [session] = extract.read_sessions(tmp_path)
+    assert (session["stored"], session["gate_retries"]) == (1, 0)
+
+
 def test_invalid_extractor_output_is_retried_then_parsed(tmp_path, monkeypatch):
     monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
     client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
