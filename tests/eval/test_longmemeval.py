@@ -397,6 +397,51 @@ def test_run_names_pair_gate_and_variant_without_gate_off_dated():
     )
 
 
+def test_the_prefetch_read_setting_names_its_own_runs():
+    assert lme.run_name("baseline", "on", "prefetch") == "prefetch"
+    assert lme.run_name("baseline", "off", "prefetch") == "prefetch-gate-off"
+    assert lme.run_name("baseline", "on", "search") == "baseline"
+    assert lme.packets_path(Path("d"), "prefetch-gate-off") == Path("d/packets-prefetch-gate-off.jsonl")
+    assert lme.read_setting("prefetch-gate-off") == {"top_k": 5, "min_score": 0.6}
+    assert lme.read_setting("gate-off") == {"top_k": 10, "min_score": None}
+    assert set(lme.RUNS) >= {"prefetch", "prefetch-gate-off"}
+
+
+def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(monkeypatch):
+    from memory_base.eval import retrieval
+    from memory_base.serve import namespaces
+
+    class Hit:
+        def __init__(self, i):
+            self.meta, self.ts, self.score, self.text = {"id": f"n{i}"}, 1.0, 1 - i / 10, "t"
+
+    calls = []
+
+    async def search(query, **kwargs):
+        calls.append(kwargs)
+        return [Hit(i) for i in range(7)]
+
+    async def load(namespace, units, notes_by_unit, gate):
+        calls.append(gate)
+        return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(7)}
+
+    async def create(namespace):
+        pass
+
+    monkeypatch.setattr(retrieval, "_search_with_retry", search)
+    monkeypatch.setattr(lme, "load_question_notes", load)
+    monkeypatch.setattr(namespaces, "create_namespace", create)
+    question = make_question("q1", "single-session-user", sessions=[("s1", D1)])
+    packet = asyncio.run(lme.retrieve_question(question, {}, "prefetch-gate-off"))
+    assert calls[0] == "off"
+    assert calls[1]["min_score"] == 0.6
+    assert [h["id"] for h in packet["hits"]] == ["n0", "n1", "n2", "n3", "n4"]
+    packet = asyncio.run(lme.retrieve_question(question, {}, "baseline"))
+    assert calls[2] == "on"
+    assert calls[3]["min_score"] is None
+    assert len(packet["hits"]) == 7
+
+
 def test_gate_off_loading_adds_gate_refused_notes_but_not_save_path_refusals():
     units = [("s1", "2023/05/20 (Sat) 02:21")]
     notes_by_unit = {
