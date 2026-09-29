@@ -372,7 +372,9 @@ def test_the_extract_manifest_counts_provider_refused_units(tmp_path, monkeypatc
             "haystack_sessions": [[], []],
         }
     ]
-    args = argparse.Namespace(data_dir=tmp_path, questions=None, concurrency=5, prompt="agent")
+    args = argparse.Namespace(
+        data_dir=tmp_path, questions=None, concurrency=5, prompt="agent", gate="on"
+    )
     client = RaisingClient(None)
     manifest = extract._extract_manifest(
         args, selected, client, {"failed": 0}, {"commit": "c", "dirty": False}

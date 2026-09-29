@@ -6,11 +6,12 @@ with one committed prompt: "agent" (a personal assistant's memory writer), "dige
 session-digest rules with the memory save policy), or "personal" (the session-digest
 rules with the personal memory policy); each returned note is then judged by the production content
 gate (after the same length, kind, and credential checks save_note applies first) and its
-verdict recorded. <data-dir>/notes.jsonl holds one line per note, <data-dir>/sessions.jsonl
-one line per completed unit, zero-note units included. Rerunning resumes where it stopped.
+verdict recorded, or recorded as "unjudged" with `--gate off`, which never calls the gate.
+<data-dir>/notes.jsonl holds one line per note, <data-dir>/sessions.jsonl one line per
+completed unit, zero-note units included. Rerunning resumes where it stopped.
 
 Usage:
-  uv run python scripts/longmemeval/extract.py --dataset PATH [--data-dir DIR]
+  uv run python scripts/longmemeval/extract.py --dataset PATH [--data-dir DIR] [--gate off]
   ... --prompt digest --backend claude-code --model claude-sonnet-5-5 --effort high
 """
 
@@ -288,7 +289,7 @@ async def extract_unit(
     turns: Sequence[dict[str, Any]],
     *,
     client: Any,
-    gate: Gate,
+    gate: Gate | None,
     prompt: str = "agent",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     usage = {"in": 0, "out": 0}
@@ -309,13 +310,15 @@ async def extract_unit(
             continue
         kind = note["kind"]
         reason = _save_path_refusal(content, kind)
-        if reason is None:
+        if reason is not None:
+            outcome = "refused"
+        elif gate is None:
+            outcome, reason = "unjudged", "gate off"
+        else:
             verdict, retries = await _judge_with_retry(gate, content, kind)
             gate_calls += 1 + retries
             gate_retries += retries
             outcome, reason = ("stored" if verdict.accepted else "refused"), verdict.reason
-        else:
-            outcome = "refused"
         rows.append(
             {
                 "session_id": session_id,
@@ -368,7 +371,7 @@ async def extract_units(
     data_dir: Path,
     *,
     client: Any,
-    gate: Gate,
+    gate: Gate | None,
     concurrency: int = DEFAULT_CONCURRENCY,
     prompt: str = "agent",
 ) -> dict[str, Any]:
@@ -424,7 +427,7 @@ def _extract_manifest(
     units = {(sid, date) for sid, date, _ in _units_for(selected)}
     sessions = [s for s in read_sessions(args.data_dir) if (s["session_id"], s["date"]) in units]
     notes = [n for n in read_notes(args.data_dir) if (n["session_id"], n["date"]) in units]
-    gate_provider = llm.resolve_llm_provider(os.environ)
+    gate_provider = None if args.gate == "off" else llm.resolve_llm_provider(os.environ)
     totals = {name: sum(s[name] for s in sessions) for name in lme.SESSION_TOTALS}
     return {
         "code": code,
@@ -439,7 +442,8 @@ def _extract_manifest(
             "prompt_sha256": prompt_sha256(args.prompt),
             "concurrency": args.concurrency,
         },
-        "gate": {
+        "gate": gate_provider
+        and {
             "provider": gate_provider.name,
             "model": gate_provider.model,
             "judge_prompt_sha256": lme.prompt_sha(notes_module.JUDGE_PROMPT),
@@ -470,6 +474,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--backend", choices=tuple(DEFAULT_MODEL), default="zai")
     parser.add_argument("--model")
     parser.add_argument("--effort", default="high")
+    parser.add_argument("--gate", choices=lme.GATES, default="on")
     parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     parser.add_argument("--questions", type=lambda s: s.split(","), default=None)
     args = parser.parse_args(argv)
@@ -485,7 +490,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.backend == "zai"
         else ClaudeCodeExtractor(model, args.effort)
     )
-    record_gate_usage()
+    if args.gate == "on":
+        record_gate_usage()
     units = _units_for(selected)
     print(f"questions: {len(selected)}, units: {len(units)}", flush=True)
     summary = asyncio.run(
@@ -493,7 +499,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             units,
             args.data_dir,
             client=client,
-            gate=notes_module.judge_note_content,
+            gate=notes_module.judge_note_content if args.gate == "on" else None,
             concurrency=args.concurrency,
             prompt=args.prompt,
         )
