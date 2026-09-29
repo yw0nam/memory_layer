@@ -151,6 +151,39 @@ def test_a_gate_content_filter_refusal_stores_the_note_unjudged_like_production(
     assert (session["stored"], session["gate_retries"]) == (1, 0)
 
 
+def test_with_the_gate_off_notes_are_recorded_unjudged_without_a_gate_call(tmp_path):
+    client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
+    run([unit("s1", DATE_A, "bike")], tmp_path, client, gate=None)
+    (note,) = extract.read_notes(tmp_path)
+    (session,) = extract.read_sessions(tmp_path)
+    assert (note["gate"], note["gate_reason"]) == ("unjudged", "gate off")
+    assert (session["stored"], session["gate_calls"]) == (0, 0)
+
+
+def test_the_gate_off_flag_skips_the_gate_and_leaves_it_out_of_the_manifest(tmp_path, monkeypatch):
+    from memory_base.eval import longmemeval as lme
+    from memory_base.serve import notes as notes_module
+
+    dataset = tmp_path / "dataset.json"
+    qid = single_session_dataset(dataset)
+    client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
+    client.model, client.provider = "glm-5.3-flash", "zai"
+    monkeypatch.setattr(extract.OpenAIExtractor, "from_env", lambda env, model: client)
+
+    async def never(content, kind):
+        raise AssertionError("gate called")
+
+    monkeypatch.setattr(notes_module, "judge_note_content", never)
+    manifest = tmp_path / "manifest.json"
+    extract.main(
+        ["--dataset", str(dataset), "--data-dir", str(tmp_path / "data"),
+         "--manifest", str(manifest), "--questions", qid, "--gate", "off"]
+    )  # fmt: skip
+    section = lme.read_manifest(manifest)["extract"]
+    assert section["gate"] is None
+    assert [n["gate"] for n in extract.read_notes(tmp_path / "data")] == ["unjudged"]
+
+
 def test_invalid_extractor_output_is_retried_then_parsed(tmp_path, monkeypatch):
     monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
     client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
