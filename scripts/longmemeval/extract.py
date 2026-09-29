@@ -2,13 +2,15 @@
 """Emulated agent for the LongMemEval harness: distill each benchmark session into notes.
 
 Every (session_id, date) unit of the selected questions goes once to the extractor model
-with the committed prompt; each returned note is then judged by the production content
+with one committed prompt: "agent" (a personal assistant's memory writer) or "digest" (the
+session-digest rules with the memory save policy); each returned note is then judged by the production content
 gate (after the same length, kind, and credential checks save_note applies first) and its
 verdict recorded. <data-dir>/notes.jsonl holds one line per note, <data-dir>/sessions.jsonl
 one line per completed unit, zero-note units included. Rerunning resumes where it stopped.
 
 Usage:
   uv run python scripts/longmemeval/extract.py --dataset PATH [--data-dir DIR]
+  ... --prompt digest --backend claude-code --model claude-sonnet-5-5 --effort high
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import asyncio
 import contextvars
 import json
 import os
+import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -33,18 +36,28 @@ from memory_base.core.secrets import find_secret
 from memory_base.eval import longmemeval as lme
 from memory_base.serve import notes as notes_module
 
+# Run as a script, this file sees its own directory on sys.path, not the package's parent.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from longmemeval.answer import ClaudeCodeModel  # noqa: E402
+
 NOTES_FILE = lme.NOTES_FILE
 SESSIONS_FILE = lme.SESSIONS_FILE
-PROMPT_TEMPLATE = (Path(__file__).with_name("extract_prompt.txt")).read_text(encoding="utf-8")
+PROMPT_FILES = {"agent": "extract_prompt.txt", "digest": "extract_prompt_digest.txt"}
+PROMPTS = {
+    name: Path(__file__).with_name(file).read_text(encoding="utf-8")
+    for name, file in PROMPT_FILES.items()
+}
 SYSTEM_PROMPT = (
     'Return only JSON: {"notes": [{"content": string, "kind": "note"|"decision"|"episode"}]}'
 )
-DEFAULT_MODEL = "glm-5.3-flash"
+DEFAULT_MODEL = {"zai": "glm-5.3-flash", "claude-code": "claude-sonnet-5-5"}
 DEFAULT_CONCURRENCY = 5
 EXTRACT_ATTEMPTS = 3
 GATE_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 5.0
 EXTRACT_TIMEOUT_SECONDS = 180.0
+# A thinking session reads the whole transcript before it answers.
+CLAUDE_EXTRACT_TIMEOUT_SECONDS = 600.0
 # z.ai's content filter: a 400 with this code refuses the input itself, so a retry cannot pass.
 CONTENT_FILTER_CODE = "1301"
 
@@ -72,20 +85,22 @@ def is_content_filter_refusal(exc: BaseException) -> bool:
     )
 
 
-def prompt_sha256() -> str:
-    return lme.prompt_sha(SYSTEM_PROMPT + "\n" + PROMPT_TEMPLATE)
+def prompt_sha256(prompt: str = "agent") -> str:
+    return lme.prompt_sha(SYSTEM_PROMPT + "\n" + PROMPTS[prompt])
 
 
 def render_session(turns: Sequence[dict[str, Any]]) -> str:
     return "\n".join(f"{turn['role']}: {turn['content']}" for turn in turns)
 
 
-def build_messages(date: str, turns: Sequence[dict[str, Any]]) -> list[dict[str, str]]:
+def build_messages(
+    date: str, turns: Sequence[dict[str, Any]], prompt: str = "agent"
+) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": PROMPT_TEMPLATE.format(date=date, session=render_session(turns)),
+            "content": PROMPTS[prompt].format(date=date, session=render_session(turns)),
         },
     ]
 
@@ -114,6 +129,8 @@ class OpenAIExtractor:
     client: AsyncOpenAI
     model: str
     provider: str = "zai"
+    temperature: float | None = 0
+    thinking: str = "disabled"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str], *, model: str) -> OpenAIExtractor:
@@ -139,6 +156,35 @@ class OpenAIExtractor:
             usage.prompt_tokens,
             usage.completion_tokens,
         )
+
+
+@dataclass
+class ClaudeCodeExtractor:
+    """The extractor as one tool-less headless Claude Code session per unit."""
+
+    model: str
+    effort: str
+    provider: str = "claude-code"
+    temperature: float | None = None
+
+    @property
+    def thinking(self) -> str:
+        return f"effort {self.effort}"
+
+    async def complete(self, messages: list[dict[str, str]]) -> tuple[str, int, int]:
+        system, user = messages[0]["content"], messages[1]["content"]
+        session = ClaudeCodeModel(self.model, self.effort, system, CLAUDE_EXTRACT_TIMEOUT_SECONDS)
+        text, in_tok, out_tok = await session.complete(user, max_tokens=0)
+        return _strip_fence(text), in_tok, out_tok
+
+
+def _strip_fence(text: str) -> str:
+    """The reply without a surrounding ```json fence, which Claude adds without a JSON mode."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        text = text.rsplit("```", 1)[0]
+    return text.strip()
 
 
 def record_gate_usage() -> None:
@@ -226,14 +272,20 @@ def _save_path_refusal(content: str, kind: str) -> str | None:
 
 
 async def extract_unit(
-    session_id: str, date: str, turns: Sequence[dict[str, Any]], *, client: Any, gate: Gate
+    session_id: str,
+    date: str,
+    turns: Sequence[dict[str, Any]],
+    *,
+    client: Any,
+    gate: Gate,
+    prompt: str = "agent",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     usage = {"in": 0, "out": 0}
     _gate_usage.set(usage)
     started = time.monotonic()
     try:
         raw_notes, in_tok, out_tok, extract_retries = await _complete_with_retry(
-            client, build_messages(date, turns)
+            client, build_messages(date, turns, prompt)
         )
     except ProviderRefused as refusal:
         return [], _refused_session(session_id, date, client, started, str(refusal))
@@ -307,6 +359,7 @@ async def extract_units(
     client: Any,
     gate: Gate,
     concurrency: int = DEFAULT_CONCURRENCY,
+    prompt: str = "agent",
 ) -> dict[str, Any]:
     """Extract every unit not completed yet; each unit's lines are appended once it is done."""
     data_dir = Path(data_dir)
@@ -323,7 +376,9 @@ async def extract_units(
     async def one(unit: tuple[str, str], turns: Sequence[dict[str, Any]]) -> None:
         async with semaphore:
             try:
-                rows, session = await extract_unit(*unit, turns, client=client, gate=gate)
+                rows, session = await extract_unit(
+                    *unit, turns, client=client, gate=gate, prompt=prompt
+                )
             except UnitFailed as exc:
                 summary["failed"] += 1
                 failures.append(f"{unit[0]} {unit[1]}: {exc}")
@@ -351,7 +406,7 @@ def _units_for(questions: Sequence[dict[str, Any]]):
 def _extract_manifest(
     args: argparse.Namespace,
     selected: Sequence[dict[str, Any]],
-    client: OpenAIExtractor,
+    client: OpenAIExtractor | ClaudeCodeExtractor,
     summary: dict[str, Any],
     code: dict[str, Any],
 ) -> dict[str, Any]:
@@ -366,10 +421,11 @@ def _extract_manifest(
         "extractor": {
             "provider": client.provider,
             "model": client.model,
-            "temperature": 0,
-            "thinking": "disabled",
-            "response_format": "json_object",
-            "prompt_sha256": prompt_sha256(),
+            "temperature": client.temperature,
+            "thinking": client.thinking,
+            "response_format": "json_object" if client.provider == "zai" else None,
+            "prompt": args.prompt,
+            "prompt_sha256": prompt_sha256(args.prompt),
             "concurrency": args.concurrency,
         },
         "gate": {
@@ -399,7 +455,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, default=lme.DEFAULT_DATA_DIR)
     parser.add_argument("--manifest", type=Path, default=lme.DEFAULT_MANIFEST)
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--prompt", choices=tuple(PROMPTS), default="agent")
+    parser.add_argument("--backend", choices=tuple(DEFAULT_MODEL), default="zai")
+    parser.add_argument("--model")
+    parser.add_argument("--effort", default="high")
     parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     parser.add_argument("--questions", type=lambda s: s.split(","), default=None)
     args = parser.parse_args(argv)
@@ -409,7 +468,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     dataset = lme.load_dataset(args.dataset)
     subset = lme.select_subset(dataset)
     selected = lme.filter_questions(subset, args.questions)
-    client = OpenAIExtractor.from_env(os.environ, model=args.model)
+    model = args.model or DEFAULT_MODEL[args.backend]
+    client = (
+        OpenAIExtractor.from_env(os.environ, model=model)
+        if args.backend == "zai"
+        else ClaudeCodeExtractor(model, args.effort)
+    )
     record_gate_usage()
     units = _units_for(selected)
     print(f"questions: {len(selected)}, units: {len(units)}", flush=True)
@@ -420,6 +484,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             client=client,
             gate=notes_module.judge_note_content,
             concurrency=args.concurrency,
+            prompt=args.prompt,
         )
     )
     for failure in summary["failures"]:

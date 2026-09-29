@@ -90,6 +90,7 @@ class ClaudeCodeModel:
     model: str
     effort: str
     system_prompt: str
+    timeout: float = CALL_TIMEOUT_SECONDS
     provider: str = "claude-code"
 
     @property
@@ -115,7 +116,7 @@ class ClaudeCodeModel:
                 env=env,
             )
             out, err = await asyncio.wait_for(
-                proc.communicate(prompt.encode()), timeout=CALL_TIMEOUT_SECONDS
+                proc.communicate(prompt.encode()), timeout=self.timeout
             )
         if proc.returncode:
             raise RuntimeError(f"claude exited {proc.returncode}: {err.decode()[:300]}")

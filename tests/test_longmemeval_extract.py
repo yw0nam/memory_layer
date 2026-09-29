@@ -15,6 +15,9 @@ DATE_B = "2023/05/22 (Mon) 09:00"
 
 
 class FakeClient:
+    temperature = 0
+    thinking = "disabled"
+
     def __init__(self, replies=None, failures=0):
         self.calls = []
         self.replies = replies or {}
@@ -260,6 +263,9 @@ def provider_error(code):
 
 
 class RaisingClient:
+    temperature = 0
+    thinking = "disabled"
+
     model = "glm-5.3-flash"
     provider = "zai"
 
@@ -312,7 +318,7 @@ def test_the_extract_manifest_counts_provider_refused_units(tmp_path, monkeypatc
             "haystack_sessions": [[], []],
         }
     ]
-    args = argparse.Namespace(data_dir=tmp_path, questions=None, concurrency=5)
+    args = argparse.Namespace(data_dir=tmp_path, questions=None, concurrency=5, prompt="agent")
     client = RaisingClient(None)
     manifest = extract._extract_manifest(
         args, selected, client, {"failed": 0}, {"commit": "c", "dirty": False}
