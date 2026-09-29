@@ -236,10 +236,16 @@ def prepare_resume(data_dir: Path) -> set[tuple[str, str]]:
 
 
 async def _judge_with_retry(gate: Gate, content: str, kind: str) -> tuple[Any, int]:
+    from memory_base.serve.notes import ContentVerdict
+
     for attempt in range(GATE_ATTEMPTS):
         try:
             return await gate(content, kind), attempt
         except Exception as exc:
+            if is_content_filter_refusal(exc):
+                # Production fails open when the gate cannot judge; the note is saved unjudged.
+                reason = "content gate unavailable: content_filter"
+                return ContentVerdict(accepted=True, reason=reason), attempt
             if attempt == GATE_ATTEMPTS - 1:
                 raise UnitFailed(f"content gate unavailable: {exc!r}") from exc
             await asyncio.sleep(RETRY_BACKOFF_SECONDS * 2**attempt)
