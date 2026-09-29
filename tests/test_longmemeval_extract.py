@@ -323,3 +323,42 @@ def test_the_extract_manifest_counts_provider_refused_units(tmp_path, monkeypatc
         "provider_refused": 1,
         "failed_this_run": 0,
     }
+
+
+def test_the_digest_prompt_carries_the_session_and_is_pinned_apart_from_the_agent_prompt():
+    turns = [{"role": "user", "content": "my bike"}]
+    messages = extract.build_messages(DATE_A, turns, prompt="digest")
+    assert DATE_A in messages[1]["content"] and "user: my bike" in messages[1]["content"]
+    assert "Storing nothing is the correct and common outcome" in messages[1]["content"]
+    assert messages[1]["content"] != extract.build_messages(DATE_A, turns)[1]["content"]
+    assert extract.prompt_sha256("digest") != extract.prompt_sha256("agent")
+
+
+def test_units_are_extracted_with_the_selected_prompt(tmp_path):
+    client = FakeClient()
+    asyncio.run(
+        extract.extract_units(
+            [unit("s1", DATE_A, "hi")], tmp_path, client=client, gate=accept, prompt="digest"
+        )
+    )
+    assert len(client.calls) == 1 and "Storing nothing" in client.calls[0]
+
+
+def test_the_claude_code_extractor_sends_the_system_and_user_turns_and_strips_a_fence(
+    monkeypatch,
+):
+    from longmemeval import answer
+
+    seen = {}
+
+    async def complete(self, prompt, *, max_tokens):
+        seen["system"], seen["prompt"] = self.system_prompt, prompt
+        return '```json\n{"notes": []}\n```', 10, 2
+
+    monkeypatch.setattr(answer.ClaudeCodeModel, "complete", complete)
+    client = extract.ClaudeCodeExtractor(model="claude-sonnet-5-5", effort="high")
+    messages = extract.build_messages(DATE_A, [{"role": "user", "content": "hi"}])
+    text, in_tok, out_tok = asyncio.run(client.complete(messages))
+    assert extract.parse_extraction(text) == []
+    assert (seen["system"], seen["prompt"]) == (messages[0]["content"], messages[1]["content"])
+    assert (in_tok, out_tok) == (10, 2)
