@@ -64,7 +64,10 @@ class FakeSave:
         self.calls.append((content, kwargs))
         if self.refuse is not None and self.refuse in content:
             raise ValueError("refused")
-        return {"id": f"note:{content}", "stored": True, "similar": []}
+        note_id = f"note:{content}"
+        stored = note_id not in {f"note:{c}" for c, _ in self.calls[:-1]}
+        superseded = kwargs.get("supersedes")
+        return {"id": note_id, "stored": stored, "superseded": superseded, "similar": []}
 
 
 class FakeArchive:
@@ -284,3 +287,54 @@ def test_a_refused_rewrite_archives_nothing():
     stats, _ = save_one(w, FakeSave(refuse="refused"))
     assert w.archive.calls == []
     assert (stats.superseded, stats.archived, stats.agent_errors) == (0, 0, 1)
+
+
+def test_the_writer_returns_the_ids_it_archived():
+    w = writer([supersede(0, "rewrite", [2])], THREE)
+    _, result = save_one(w, FakeSave())
+    assert result["archived_ids"] == ["note:team-b"]
+    assert result["superseded"] == "note:team-a"
+
+
+def test_the_note_that_holds_the_rewrite_is_never_archived():
+    hits = [*THREE, Hit("note:rewrite", "rewrite", 6)]
+    w = writer([supersede(0, "rewrite", [3])], hits)
+    stats, result = save_one(w, FakeSave())
+    assert w.archive.calls == []
+    assert stats.archived == 0
+    assert result["id"] == "note:rewrite"
+    w = writer([supersede(0, "rewrite", [2, 3])], hits)
+    save_one(w, FakeSave())
+    assert [call[0] for call in w.archive.calls] == [["note:team-b"]]
+
+
+def test_a_rewrite_carries_the_sessions_of_the_notes_it_replaced():
+    units = [
+        ("s1", "2023/01/05 (Thu) 10:00"),
+        ("s2", "2023/01/09 (Mon) 10:00"),
+        ("s3", "2023/05/20 (Sat) 02:21"),
+    ]
+    notes_by_unit = {
+        units[0]: [{"content": "10 people, 5 women.", "kind": "note", "gate": "stored"}],
+        units[1]: [{"content": "Ten people, five women.", "kind": "note", "gate": "stored"}],
+        units[2]: [{"content": "12 people, 6 women.", "kind": "note", "gate": "stored"}],
+    }
+    later = [
+        Hit("note:10 people, 5 women.", "10 people, 5 women.", 5),
+        Hit("note:Ten people, five women.", "Ten people, five women.", 9),
+    ]
+    replies = iter([[], [], later])
+
+    async def search(query, **kwargs):
+        return next(replies)
+
+    reply = supersede(0, "12 people, 6 women as of 2023-05 (10 people as of 2023-01).", [1])
+    w = aw.AgentWriter(FakeModel([reply]), search, FakeArchive(), "m", "medium")
+    stats, provenance = asyncio.run(
+        lme.load_question_notes(NAMESPACE, units, notes_by_unit, save=FakeSave(), writer=w)
+    )
+    assert (stats.superseded, stats.archived) == (1, 1)
+    rewrite = "note:12 people, 6 women as of 2023-05 (10 people as of 2023-01)."
+    assert provenance[rewrite] == set(units)
+    assert provenance["note:10 people, 5 women."] == {units[0]}
+    assert provenance["note:Ten people, five women."] == {units[1]}

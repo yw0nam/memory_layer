@@ -154,7 +154,7 @@ def test_the_frontier_sorts_by_junk_then_coverage_then_hits_and_names_the_best_c
     ]
     assert keys == sorted(keys)
     assert (report["cells"][0]["top_k"], report["cells"][0]["floor"]) == (1, 0)
-    assert report["best"] == report["cells"][0]
+    assert (report["best"]["top_k"], report["best"]["floor"]) == (1, 0)
     rendered = hit_judge.render_frontier(report)
     assert "3 questions" in rendered
     lines = [line for line in rendered.splitlines() if line.startswith("| 1 |")]
@@ -175,3 +175,44 @@ def test_without_a_qualifying_cell_there_is_no_best_and_empty_cells_sort_last():
     assert cell(report, 1, 0.4)["coverage"] == 0.0
     assert cell(report, 1, 0.4)["hits_per_question"] == 0.0
     assert "no cell" in hit_judge.render_frontier(report)
+
+
+def test_the_best_cell_has_the_highest_coverage_within_the_junk_limit():
+    one = {"question_id": "qx", "hits": [hit("s1", 0.9)]}
+    labels = ["useful", "unrelated", *["useful"] * 8]
+    many = {"question_id": "qy", "hits": [hit(f"s{i}", 0.9 - i / 100) for i in range(2, 12)]}
+    report = hit_judge.frontier(
+        [one, many],
+        [judged(one, ["useful"], 1), judged(many, labels, 3)],
+        {
+            "qx": question("qx", "single-session-user", ["s1"]),
+            "qy": question("qy", "multi-session", ["s2", "s4"]),
+        },
+    )
+    assert (report["cells"][0]["top_k"], report["cells"][0]["coverage"]) == (1, 0.5)
+    best = report["best"]
+    assert (best["top_k"], best["floor"]) == (10, 0)
+    assert best["coverage"] == pytest.approx(1.0)
+    assert best["junk"] == pytest.approx(1 / 11)
+    assert "top_k=10" in hit_judge.render_frontier(report)
+
+
+def test_a_zero_hit_packet_counts_as_judged_and_not_covered():
+    covered = {"question_id": "qa", "hits": [hit("s1", 0.9)]}
+    empty = {"question_id": "qb", "hits": []}
+    report = hit_judge.frontier(
+        [covered, empty],
+        [judged(covered, ["unrelated"], 1)],
+        {
+            "qa": question("qa", "multi-session", ["s1"]),
+            "qb": question("qb", "single-session-user", ["s2"]),
+        },
+    )
+    assert report["questions"] == 2
+    assert report["excluded"] == {"no_judgment": 0, "stale_judgment": 0, "abstention": 0}
+    full = cell(report, 10, 0)
+    assert full["coverage"] == pytest.approx(0.5)
+    assert full["coverage_lookup"] == pytest.approx(0.0)
+    assert full["junk"] == pytest.approx(1.0)
+    assert full["recall_all"] == pytest.approx(0.5)
+    assert full["hits_per_question"] == pytest.approx(0.5)

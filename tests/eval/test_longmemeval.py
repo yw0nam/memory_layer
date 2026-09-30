@@ -655,6 +655,7 @@ def test_retrieve_and_score_record_the_code_revision_from_the_start_of_the_run(
         "question_date": "2023/06/01 (Thu) 10:00",
         "hits": [],
         "load": {"submitted": 0},
+        "writer": lme.PLAIN_WRITER,
     }
     lme.append_jsonl(lme.packets_path(data_dir, "baseline"), [packet])
     manifest = tmp_path / "manifest.json"
@@ -864,10 +865,19 @@ def test_retrieve_resumes_a_packets_file_written_by_the_same_writer_config(
     assert len(lme.read_jsonl(lme.packets_path(tmp_path / "data", "baseline"))) == 2
 
 
-def test_retrieve_with_nothing_pending_ignores_the_rows_writer_config(tmp_path, monkeypatch):
-    common, done, _, manifest, retrieved = retrieve_setup(
-        tmp_path, monkeypatch, {"kind": "agent", "model": "m"}
-    )
+@pytest.mark.parametrize("row_writer", [{"kind": "agent", "model": "m"}, None])
+def test_retrieve_with_nothing_pending_still_refuses_another_writer_config(
+    tmp_path, monkeypatch, row_writer
+):
+    common, done, _, manifest, retrieved = retrieve_setup(tmp_path, monkeypatch, row_writer)
+    with pytest.raises(SystemExit):
+        lme.main(["retrieve", *common, "--questions", done])
+    assert retrieved == []
+    assert not manifest.exists()
+
+
+def test_retrieve_with_nothing_pending_records_the_matching_writer(tmp_path, monkeypatch):
+    common, done, _, manifest, retrieved = retrieve_setup(tmp_path, monkeypatch, {"kind": "plain"})
     lme.main(["retrieve", *common, "--questions", done])
     assert retrieved == []
     assert lme.read_manifest(manifest)["retrieve"]["writer"] == {"kind": "plain"}
