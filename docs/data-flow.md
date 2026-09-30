@@ -57,7 +57,7 @@ POST /messages {subject, status, result, …}
    │
    ▼
  render canonical Markdown (blockquote every user line,
- headings cannot escape; reject past 4 KiB — no truncation)
+ headings cannot escape; reject past 16 KiB — no truncation)
    │
    ▼
  INSERT memory.messages (no embedding, no content gate)

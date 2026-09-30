@@ -33,7 +33,7 @@ if not 1 <= MESSAGE_TTL_DAYS <= MESSAGE_MAX_TTL_DAYS:
     raise RuntimeError(
         f"MESSAGE_TTL_DAYS must be 1..{MESSAGE_MAX_TTL_DAYS}, got {MESSAGE_TTL_DAYS}"
     )
-MESSAGE_MAX_CONTENT_BYTES = 4096
+MESSAGE_MAX_CONTENT_BYTES = 16384
 LIST_MESSAGES_DEFAULT_LIMIT = 50
 LIST_MESSAGES_MAX_LIMIT = 100
 MAX_REFS = 10
@@ -209,7 +209,7 @@ def render_content(
     verification: dict[str, str] | None,
     refs: list[str] | None,
 ) -> str:
-    """Render the canonical Markdown; reject instead of truncating past 4 KiB."""
+    """Render the canonical Markdown; reject instead of truncating past 16 KiB."""
     sections = [f"# {subject}", "## Status", _quote(status), "## Result", _quote(result)]
     if next_text is not None:
         sections += ["## Next", _quote(next_text)]
