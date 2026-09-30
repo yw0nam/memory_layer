@@ -359,7 +359,8 @@ list. A source outside the caller's namespaces is a 404, like an unknown id; a r
 past the last turn is a 400. MCP reaches it as `expand_source`.
 
 `GET /conversations` lists sources newest-first by start time with `since`/`until`
-(until exclusive) bounding the session start, an exact `origin`, repeated `namespace`
+bounding the session start (a bare-date `until` covers that whole day; a datetime
+`until` is exclusive), an exact `origin`, repeated `namespace`
 params (403 outside the caller's allowed set, like `/notes`), and a `limit` (default
 50, max 200). Each row carries `id`, `namespace`, `origin`, `external_session_id`,
 `started_at`/`ended_at`, `turn_count`, `repo`, and `preview` — the first user turn cut
@@ -452,11 +453,12 @@ internal — responses carry the report status only.
 `external_session_id`, `started_at`/`ended_at` (epoch seconds), `turns` (jsonb list of
 `{role, text}`; a turn's index is its list position), `metadata` (jsonb, the client's own
 facts such as `repo` and `cwd`), `created_at`, `created_by`, unique on (`namespace`,
-`origin`, `external_session_id`). No embedding column, no BM25 or vector index, never
-read by search.
+`origin`, `external_session_id`), with a `started_at` index serving the listing. No
+embedding column, no BM25 or vector index, never read by search.
 
 `doc_rows`, `messages`, and `conversation_sources` are outside the retrieval contract:
-they are read by compute, by address, and by address and turn range respectively, and
+they are read by compute, by address, and — for conversation sources — listed by time
+and read by address, turn range, or substring within one source, respectively, and
 are never granted to the SQL query role or returned by search ([ADR-0001](adr/0001-table-rows-third-read-contract.md),
 [ADR-0002](adr/0002-messages-addressed-once-claimed-lane.md)). Adding a source means
 adding an adapter, not touching retrieval or serving.
