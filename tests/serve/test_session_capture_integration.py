@@ -30,6 +30,15 @@ MORE = [
     {"role": "user", "text": "The nightly backup now runs at 04:00 on the storage host."},
     {"role": "assistant", "text": "Noted: backups at 04:00, on the storage host."},
 ]
+LONG_QUESTION = (
+    "Before we touch the load balancer again, walk me through why the HAProxy health "
+    "check keeps marking the second storage node as down even though its disk, network, "
+    "and backup agent all report healthy in the dashboard every single morning."
+)
+ASSISTANT_FIRST_TURNS = [
+    {"role": "assistant", "text": "Resuming the storage investigation from yesterday."},
+    {"role": "user", "text": LONG_QUESTION},
+]
 OLDER_TURNS = [
     {"role": "user", "text": "Which host keeps the offsite backup copies?"},
     {"role": "assistant", "text": "The storage host in the second rack."},
@@ -106,9 +115,21 @@ def test_captured_sessions_are_listed_by_time_and_searched_within_one(namespace)
     stored_older = client.post("/conversations", json=older)
     assert stored_older.status_code == 201, stored_older.json()
     older_id = stored_older.json()["id"]
+    resumed = client.post(
+        "/conversations",
+        json={
+            **older,
+            "external_session_id": "capture-it-resumed",
+            "started_at": now - 9000,
+            "ended_at": now - 8800,
+            "turns": ASSISTANT_FIRST_TURNS,
+        },
+    )
+    assert resumed.status_code == 201, resumed.json()
+    resumed_id = resumed.json()["id"]
 
     listed = _listed(origin="claude_code")
-    assert [row["id"] for row in listed] == [newer_id, older_id]
+    assert [row["id"] for row in listed] == [newer_id, older_id, resumed_id]
     assert listed[0] == {
         "id": newer_id,
         "namespace": namespace,
@@ -124,7 +145,10 @@ def test_captured_sessions_are_listed_by_time_and_searched_within_one(namespace)
     assert listed[1]["preview"] == OLDER_TURNS[0]["text"]
     assert _listed(origin="hermes") == []
     assert [row["id"] for row in _listed(since=_iso(now - 3600))] == [newer_id]
-    assert [row["id"] for row in _listed(until=_iso(now - 3600))] == [older_id]
+    assert [row["id"] for row in _listed(until=_iso(now - 3600))] == [older_id, resumed_id]
+    assert len(LONG_QUESTION) > 200
+    assert listed[2]["preview"] == LONG_QUESTION[:200]
+    assert listed[2]["turn_count"] == 2
     assert [row["id"] for row in _listed(limit=1)] == [newer_id]
 
     matched = client.get(f"/conversations/{newer_id}", params={"contains": "haproxy"})

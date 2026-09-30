@@ -201,6 +201,10 @@ def test_ensure_schema_drops_the_conversation_job_kind_and_the_distill_cursor(mo
     ):
         assert statement in sql
     assert "'conversation')" not in sql
+    assert (
+        'CREATE INDEX IF NOT EXISTS conversation_sources__started ON "test_schema"'
+        ".conversation_sources (started_at DESC);" in sql
+    )
     assert "ADD COLUMN IF NOT EXISTS distilled_through" not in sql
 
 

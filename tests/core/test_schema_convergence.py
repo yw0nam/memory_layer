@@ -56,7 +56,7 @@ async def _columns(conn: asyncpg.Connection, table: str) -> set[str]:
 def test_ensure_schema_drops_conversation_jobs_from_a_deployed_jobs_table():
     job_id = "it-schema-convergence-conversation"
 
-    async def _run() -> tuple[int, str, set[str], set[str]]:
+    async def _run() -> tuple[int, str, set[str], set[str], set[str], set[str]]:
         conn = await asyncpg.connect(db_url())
         try:
             for statement in (
@@ -67,6 +67,13 @@ def test_ensure_schema_drops_conversation_jobs_from_a_deployed_jobs_table():
                 "ALTER TABLE {s}.jobs DROP CONSTRAINT IF EXISTS jobs_kind_check",
                 "ALTER TABLE {s}.jobs ADD CONSTRAINT jobs_kind_check "
                 "CHECK (kind IN ('document', 'repo', 'conversation')) NOT VALID",
+                "ALTER TABLE {s}.jobs DROP CONSTRAINT IF EXISTS jobs_conversation_check",
+                "ALTER TABLE {s}.jobs ADD CONSTRAINT jobs_conversation_check "
+                "CHECK (kind <> 'conversation' OR "
+                "(namespace IS NOT NULL AND conversation_id IS NOT NULL))",
+                "CREATE INDEX IF NOT EXISTS jobs__conversation_active "
+                "ON {s}.jobs (conversation_id, status) WHERE kind = 'conversation'",
+                "DROP INDEX IF EXISTS {s}.conversation_sources__started",
             ):
                 await conn.execute(statement.format(s=f'"{PG_SCHEMA}"'))
             await conn.execute(
@@ -87,13 +94,29 @@ def test_ensure_schema_drops_conversation_jobs_from_a_deployed_jobs_table():
             )
             jobs = await _columns(conn, "jobs")
             sources = await _columns(conn, "conversation_sources")
+            constraints = {
+                row["conname"]
+                for row in await conn.fetch(
+                    "SELECT conname FROM pg_constraint WHERE conrelid = $1::regclass",
+                    f'"{PG_SCHEMA}".jobs',
+                )
+            }
+            indexes = {
+                row["indexname"]
+                for row in await conn.fetch(
+                    "SELECT indexname FROM pg_indexes WHERE schemaname = $1", PG_SCHEMA
+                )
+            }
         finally:
             await conn.close()
-        return remaining, kind_check, jobs, sources
+        return remaining, kind_check, jobs, sources, constraints, indexes
 
-    remaining, kind_check, jobs, sources = asyncio.run(_run())
+    remaining, kind_check, jobs, sources, constraints, indexes = asyncio.run(_run())
     assert remaining == 0
     assert "'conversation'" not in kind_check
     assert "'document'" in kind_check and "'repo'" in kind_check
     assert not {"conversation_id", "result"} & jobs
     assert "distilled_through" not in sources
+    assert "jobs_conversation_check" not in constraints
+    assert "jobs__conversation_active" not in indexes
+    assert "conversation_sources__started" in indexes

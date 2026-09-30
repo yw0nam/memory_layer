@@ -590,11 +590,15 @@ def test_list_conversations_issues_one_newest_first_query(use):
     assert rows == [LISTED]
     (query, args) = conn.sql("conversation_sources")[0]
     assert len(conn.sql("conversation_sources")) == 1
-    assert "jsonb_array_length(turns) AS turn_count" in query
+    assert "jsonb_array_length(s.turns) AS turn_count" in query
     assert "metadata->>'repo' AS repo" in query
     assert "AS preview" in query and ", 200) AS preview" in query
     assert "t->>'role' = 'user'" in query
-    assert query.endswith("ORDER BY started_at DESC, id LIMIT $1")
+    page = query[query.index("FROM (") : query.index(" ) AS page")]
+    assert page.endswith("WHERE true ORDER BY started_at DESC, id LIMIT $1")
+    assert "turns" not in page and "metadata" not in page
+    assert query.index(" ) AS page") < query.index("ON s.id = page.id")
+    assert query.endswith("ORDER BY s.started_at DESC, s.id")
     assert args == (conversations.LIST_CONVERSATIONS_DEFAULT_LIMIT,)
 
 
@@ -611,7 +615,7 @@ def test_list_conversations_binds_every_filter_before_the_limit(use):
     )
     (query, args) = conn.sql("conversation_sources")[0]
     assert args == (5, ["default", "team-a"], 1785542400.0, 1786579200.0, "hermes")
-    where = query[query.rindex("WHERE") : query.rindex("ORDER BY")]
+    where = query[query.index("FROM (") : query.index("LIMIT $1 ) AS page")]
     for predicate in (
         "namespace = ANY($2::text[])",
         "started_at >= $3",
