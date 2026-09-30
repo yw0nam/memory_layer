@@ -359,6 +359,9 @@ async def load_question_notes(
             finally:
                 NOTE_DATE.reset(token)
             provenance[result["id"]].add(unit)
+            # A rewrite also stands for the notes it superseded or archived.
+            for replaced in [result.get("superseded"), *result.get("archived_ids", [])]:
+                provenance[result["id"]] |= provenance.get(replaced, set())
             if result["stored"]:
                 stats.stored += 1
             else:
@@ -872,7 +875,7 @@ def run_retrieve(args: argparse.Namespace) -> None:
     writer = _writer(args)
     config = writer.config() if writer else PLAIN_WRITER
     other = next((row.get("writer") for row in existing if row.get("writer") != config), config)
-    if pending and other != config:
+    if other != config:
         raise SystemExit(
             f"{out_path} holds packets written by writer {other}, not {config}; "
             "give this writer its own --data-dir and --manifest"

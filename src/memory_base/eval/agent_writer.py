@@ -138,14 +138,15 @@ class AgentWriter:
             stats.agent_errors += 1
             return await lme._save_with_retry(save, content, **kwargs)
         stats.superseded += 1
-        if archive:
-            try:
-                stats.archived += await self.archive(
-                    [candidates[j]["id"] for j in archive],
-                    now=time.time(),
-                    namespaces=[kwargs["namespace"]],
-                    archived_by=ARCHIVED_BY,
-                )
-            except Exception:
-                stats.agent_errors += 1
-        return result
+        # A rewrite that hashes to an existing candidate lands on that row, which stays active.
+        ids = [candidates[j]["id"] for j in archive if candidates[j]["id"] != result["id"]]
+        if not ids:
+            return result
+        try:
+            stats.archived += await self.archive(
+                ids, now=time.time(), namespaces=[kwargs["namespace"]], archived_by=ARCHIVED_BY
+            )
+        except Exception:
+            stats.agent_errors += 1
+            return result
+        return {**result, "archived_ids": ids}

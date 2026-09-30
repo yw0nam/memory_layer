@@ -126,6 +126,9 @@ def frontier(
         if "_abs" in qid:
             excluded["abstention"] += 1
             continue
+        if not packet["hits"]:
+            judged.append((packet, {"labels": [], "min_prefix": None}, questions[qid]))
+            continue
         if qid not in rows:
             excluded["no_judgment"] += 1
             continue
@@ -144,7 +147,12 @@ def frontier(
             c["hits_per_question"] or 0.0,
         )
     )
-    best = next((c for c in cells if c["junk"] is not None and c["junk"] <= BEST_MAX_JUNK), None)
+    qualifying = [c for c in cells if c["junk"] is not None and c["junk"] <= BEST_MAX_JUNK]
+    best = max(
+        qualifying,
+        key=lambda c: (c["coverage"] or 0.0, -(c["hits_per_question"] or 0.0)),
+        default=None,
+    )
     return {"questions": len(judged), "excluded": excluded, "cells": cells, "best": best}
 
 
