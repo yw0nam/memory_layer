@@ -236,11 +236,15 @@ def render_content(
     return content
 
 
-def resolve_expires_at(expires_at: Any) -> datetime:
-    """The caller's expiry (future, at most MESSAGE_MAX_TTL_DAYS out) or now + TTL."""
+def resolve_expires_at(purpose: str, expires_at: Any) -> datetime | None:
+    """The caller's expiry (future, at most MESSAGE_MAX_TTL_DAYS out), else the default.
+
+    A general message defaults to now + MESSAGE_TTL_DAYS; a handoff defaults to
+    no expiry and stays pending until it is claimed, superseded, or cancelled.
+    """
     now = datetime.now(timezone.utc)
     if expires_at is None:
-        return now + timedelta(days=MESSAGE_TTL_DAYS)
+        return None if purpose == "handoff" else now + timedelta(days=MESSAGE_TTL_DAYS)
     if not isinstance(expires_at, str) or not expires_at.strip():
         raise ValueError("expires_at must be an ISO 8601 datetime string")
     try:
@@ -305,7 +309,7 @@ def public_row(row: asyncpg.Record | dict[str, Any]) -> dict[str, Any]:
         "status": row["status"],
         "author": row["author"],
         "created_at": row["created_at"].isoformat(),
-        "expires_at": row["expires_at"].isoformat(),
+        "expires_at": row["expires_at"].isoformat() if row["expires_at"] is not None else None,
         "content": row["content"],
     }
 
@@ -342,7 +346,7 @@ async def send_message(
     verification = validate_verification(verification)
     refs = validate_refs(refs)
     content = render_content(subject, status, result, next_text, verification, refs)
-    expires = resolve_expires_at(expires_at)
+    expires = resolve_expires_at(purpose, expires_at)
     expires_specified = expires_at is not None
     idem = validate_idempotency_key(idempotency_key)
 
@@ -463,7 +467,7 @@ def _same_intent(
     subject_key: str,
     content: str,
     author: str,
-    expires: datetime,
+    expires: datetime | None,
     expires_specified: bool,
 ) -> bool:
     """An idempotent replay must carry the same effective request.
@@ -506,7 +510,7 @@ async def list_messages(
         "claimed_at IS NULL",
         "cancelled_at IS NULL",
         "superseded_at IS NULL",
-        "expires_at > now()",
+        "(expires_at IS NULL OR expires_at > now())",
     ]
     args: list[Any] = []
     if namespaces is not None:
@@ -552,7 +556,7 @@ async def claim_message(message_id: uuid.UUID, key, *, connection=None) -> dict[
             SET claimed_at = clock_timestamp()
             WHERE id = $1
               AND claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL
-              AND expires_at > clock_timestamp()
+              AND (expires_at IS NULL OR expires_at > clock_timestamp())
             RETURNING {_PUBLIC_COLUMNS}
             """,
             message_id,
@@ -585,7 +589,7 @@ async def cancel_message(message_id: uuid.UUID, key, *, connection=None) -> dict
             SET cancelled_at = clock_timestamp()
             WHERE id = $1
               AND claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL
-              AND expires_at > clock_timestamp()
+              AND (expires_at IS NULL OR expires_at > clock_timestamp())
             RETURNING {_PUBLIC_COLUMNS}
             """,
             message_id,
@@ -603,7 +607,7 @@ async def cancel_message(message_id: uuid.UUID, key, *, connection=None) -> dict
 
 _TERMINAL_PREDICATE = (
     "(claimed_at IS NOT NULL OR cancelled_at IS NOT NULL "
-    "OR superseded_at IS NOT NULL OR expires_at <= now())"
+    "OR superseded_at IS NOT NULL OR (expires_at IS NOT NULL AND expires_at <= now()))"
 )
 
 
