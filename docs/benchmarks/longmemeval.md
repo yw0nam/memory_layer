@@ -156,24 +156,33 @@ top 5 candidates, in rerank order: [i] (YYYY-MM-DD) text
    |  none -> plain save, no model call
    v
 writer model (claude-sonnet-5-5, effort medium, headless Claude Code)
-   |  {"action": "new"}                                  -> plain save
-   |  {"action": "supersede", "index": i, "content": ...} -> save the rewrite with
-   v                                                         supersedes=<candidate i id>
-LoadStats: agent_calls, superseded, agent_errors
+   |  {"action": "new"}  -> plain save
+   |  {"action": "supersede", "index": i, "archive": [j, ...], "content": ...}
+   |       -> save the rewrite with supersedes=<candidate i id>,
+   |          then archive_rows([candidate j ids], namespaces=[namespace],
+   v          archived_by="lme-writer")
+LoadStats: agent_calls, superseded, archived, agent_errors
 ```
 
 The rewrite states the current value and the previous value with their dates (for
 example "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)") and keeps the rest of
-the new note. A malformed reply or a failed call is retried up to three times; a search
-that fails, three failed attempts, or a rewrite that `save_note` refuses each count one
-agent error and save the original note plainly, so every note still reaches the store.
+the new note. `archive` is optional (default empty) and lists the other candidates that
+state the same stale value as candidate i, such as one fact extracted from two sessions;
+they are archived in the question namespace through `archive_rows`, the call behind the
+`archive_notes` tool, once the rewrite is saved. An `archive` entry that is not a
+candidate index, repeats, or equals `index` makes the reply malformed. A malformed reply
+or a failed call is retried up to three times; a search that fails, three failed
+attempts, or a rewrite that `save_note` refuses each count one agent error and save the
+original note plainly (archiving nothing), so every note still reaches the store. An
+archive call that fails counts one agent error and keeps the saved rewrite.
 `--writer-model` and `--writer-effort` choose another model or effort.
 
 | counter | counts |
 |---|---|
 | `agent_calls` | writer model calls, retries included |
 | `superseded` | notes saved as a rewrite with `supersedes` |
-| `agent_errors` | notes saved plainly after a search, model, or rewrite failure |
+| `archived` | candidate rows archived as stale duplicates of a superseded note |
+| `agent_errors` | notes saved plainly after a search, model, or rewrite failure, plus failed archive calls |
 
 Every packet row records its writer (`{"kind": "plain"}`, or the agent's kind, model,
 effort, and the sha256 of its prompts) and so does the manifest's retrieve section.
