@@ -70,7 +70,8 @@ a file does are none of those — git and search_code already answer them, and s
 only dilute retrieval. When a note goes out of date, supersede it rather than adding a
 second note that contradicts it. Before saving, search_memory the same subject; if the
 new note replaces one, pass supersedes and write it as the current value with the
-previous one stated, e.g. "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)". A save
+previous one stated, e.g. "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)". If
+other active notes state the same stale value, archive them with archive_notes. A save
 that lands next to a near-identical active note is refused with the neighbours listed;
 supersede the one it replaces, or pass allow_similar when it is a genuinely different
 fact. A note whose content is a
@@ -472,7 +473,8 @@ async def save_memory(
     search can narrow to it. `supersedes` archives an older note by id. Before saving,
     search_memory the same subject; if the new note replaces one, pass supersedes and
     write it as the current value with the previous one stated, e.g. "20 dozen eggs as of
-    2023-05 (30 dozen as of 2023-01)". A note that lands next to active notes saying
+    2023-05 (30 dozen as of 2023-01)". If other active notes state the same stale value,
+    archive them with archive_notes. A note that lands next to active notes saying
     nearly the same thing is refused and the error lists them;
     call again with `supersedes` naming the one it replaces, or with `allow_similar=True`
     when it is a genuinely different fact. A note whose content is a restatement of a PR,
