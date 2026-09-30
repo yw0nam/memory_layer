@@ -450,6 +450,9 @@ def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -504,6 +507,9 @@ def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -529,6 +535,9 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -553,6 +562,9 @@ def test_save_memory_unregistered_namespace_400(monkeypatch):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):

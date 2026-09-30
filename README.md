@@ -11,7 +11,9 @@ documents keep their data rows as structured, never-embedded rows behind a read-
 SQL interface, so questions about the numbers are computed rather than retrieved.
 Agent-authored messages — one-time signals and handoff snapshots — are stored as
 canonical Markdown, never embedded, listed while pending and consumed by claiming
-instead of search.
+instead of search. A conversation source — the user and assistant turns of one agent
+session — is stored unembedded as the evidence a note links back to, read by address and
+turn range only.
 
 ## Architecture
 
@@ -21,13 +23,13 @@ instead of search.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  19 tools: search / search_code / search_memory / save_memory
+   ┌─────────────┐  20 tools: search / search_code / search_memory / save_memory
    │ mcp_server  │            list_notes / ingest_document / remove_document
    └──────┬──────┘            query_table / ingest_repo / remove_repo / list_repos
           │                   list_memory_duplicates / archive_notes /
           │ HTTP              restore_notes / delete_notes / send_message /
-          │                   list_messages / claim_message / cancel_message
-          │                   (thin proxy, no logic)
+          │                   list_messages / claim_message / cancel_message /
+          │                   expand_source   (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
    ║              REST API  :8010   (the only backend)         ║
@@ -39,8 +41,8 @@ instead of search.
      └───────────────┴───────┬───────┴───────────────┘
                              ▼
               Postgres 17 + pgvector + pg_textsearch  :5439
-              memory_chunks · code_chunks · doc_rows · messages · jobs
-              retrieval_log
+              memory_chunks · code_chunks · doc_rows · messages ·
+              conversation_sources · jobs · retrieval_log
 
   side services:  vLLM (LLM / embedding / rerank)
 ```
@@ -48,8 +50,10 @@ instead of search.
 Every consumer reaches stored chunks through the REST API, never through the database
 directly. `memory_chunks` and `code_chunks` feed search, `doc_rows` holds a tabular
 document's data rows for the SQL read path alone ([ADR-0001](docs/adr/0001-table-rows-third-read-contract.md)),
-and `messages` holds addressed, once-claimed signals that are never embedded and never
-searched ([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)).
+`messages` holds addressed, once-claimed signals that are never embedded and never
+searched ([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)), and
+`conversation_sources` holds session turns that notes link to, never embedded and never
+searched.
 
 The same components as an explorable diagram, with guided views and image export:
 [docs/diagrams/memory-base-architecture.html](docs/diagrams/memory-base-architecture.html)
@@ -76,8 +80,10 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
-| `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, `kind`, and the optional id of a prior note to archive (400 when the save would leave no active note); refused with 409 when the chat model judges the content a tracker-artefact restatement, progress update, or file description (the error carries the reason and says to rewrite a fact that exists nowhere else as a note of its own, retrying at most once), and when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set; refused with 409 before any model call when the content or a tag carries a credential (the error names the credential type only) |
+| `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, `kind`, the optional id of a prior note to archive (400 when the save would leave no active note), an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time), and an optional `conversation_id` with an inclusive 0-based `turn_start`/`turn_end` linking the note to a stored conversation source in the same namespace (400 when the source is missing, in another namespace, or shorter than the range); refused with 409 when the chat model judges the content a tracker-artefact restatement, progress update, or file description (the error carries the reason and says to rewrite a fact that exists nowhere else as a note of its own, retrying at most once), and when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set; refused with 409 before any model call when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind`, `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
+| `POST` | `/conversations` | store a conversation source — refused whole with 400 when a turn carries a credential (the error names the turn and the credential type only); `origin` (e.g. `claude_code`, `hermes`), `external_session_id`, `started_at`/`ended_at` (epoch seconds), `turns` (a non-empty list of exactly `{role: user\|assistant, text}`), optional `namespace` (default the key's home); upserts by `(namespace, origin, external_session_id)` and returns `{id, created, turns}` (201 created, 200 replaced); a re-upload is the storing key's or an admin key's only (403), and once a note links to the source its turns are fixed — identical turns are a no-op, changed turns 409; over 2,000,000 chars of turn text is 413 |
+| `GET` | `/conversations/{id}` | a conversation source with `turns[{index, role, text}]`, optionally sliced to the inclusive `turn_start`/`turn_end`; 404 when unknown or outside the caller's namespaces, 400 for a range past the last turn |
 | `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, `author`, optional `idempotency_key` and `expires_at`; rendered to canonical Markdown, rejected past 4 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
 | `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown or out-of-scope id a 404 |
@@ -93,7 +99,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/repos/jobs/{job_id}` | repo job state |
 | `POST` | `/namespaces` | register a namespace — `name` (`^[a-z0-9_-]{1,64}$`), `visibility` (`public`\|`private`, default `public`); a private namespace records the caller's key label as owner |
 | `GET` | `/namespaces` | list namespaces the caller can access (every namespace for an admin key) |
-| `DELETE` | `/namespaces/{name}` | unregister an empty namespace — the namespace's owner or an admin key only; the reserved `default` namespace cannot be deleted |
+| `DELETE` | `/namespaces/{name}` | unregister a namespace with no notes, chunks, table rows, messages, or conversation sources — the namespace's owner or an admin key only; the reserved `default` namespace cannot be deleted |
 | `GET` | `/keys/{label}/authors` | a label's author allowlist — an admin key reads any label, a member key only its own |
 | `PUT` | `/keys/{label}/authors` | replace a label's allowlist — `authors` (slugs matching `^[a-z0-9][a-z0-9-]{0,39}$`); admin keys only |
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
@@ -106,8 +112,15 @@ Filters are bound to the source they belong to: `kind`, `tags`, `author`, and
 `since`/`until` require `source="memory"`, `repo` requires `source="code"`, and
 `source="all"` takes none of them. `repo` is a list of cache directory names as reported by `GET /repos`; an
 unknown name matches nothing. Code hits carry their `repo` whether or not the filter is
-set. `since` and `until` are ISO 8601 dates or datetimes bounding `ts_last_active`: a
-bare date covers that whole day, and naive values are read as UTC.
+set. `since` and `until` are ISO 8601 dates or datetimes bounding a row's `occurred_at`,
+or `ts_last_active` when none is recorded: a bare date covers that whole day, and naive
+values are read as UTC.
+
+A memory hit carries the stored row's `id` (the note id `supersedes` takes), `kind`, and
+`tags`; a note linked to a conversation source adds `conversation_id` and, when linked to
+a range, `turn_start`/`turn_end`. `date` is the note's `occurred_at` when recorded, else
+its save time. Code hits carry `repo` and optional `context` instead. `GET /notes` rows
+carry the same link fields and date.
 
 ## MCP tools
 
@@ -119,7 +132,7 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
-`list_messages` · `claim_message` · `cancel_message`
+`list_messages` · `claim_message` · `cancel_message` · `expand_source`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,
@@ -139,6 +152,11 @@ the start of a session and `claim_message` takes exclusive delivery of each one 
 on — never automatically. `send_message` publishes a general message or, with a scope,
 a handoff snapshot; `cancel_message` withdraws a sender's own pending message. A
 message is operational and expires; a note is durable knowledge.
+
+`save_memory` takes `conversation_id`, `turn_start`, and `turn_end` to link a note to
+the turns it was distilled from; `expand_source` reads those turns back by a hit's
+`conversation_id` and range. No tool stores a conversation source; a capture hook posts
+it to `POST /conversations`.
 
 ## Running
 

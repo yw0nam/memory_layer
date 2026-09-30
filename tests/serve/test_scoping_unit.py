@@ -61,6 +61,9 @@ def test_save_memory_omitted_namespace_lands_in_key_home(monkeypatch):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):

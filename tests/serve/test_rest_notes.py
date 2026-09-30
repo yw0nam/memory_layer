@@ -19,7 +19,7 @@ from memory_base.serve import api, notes
 from memory_base.serve.notes import ContentVerdict, build_note_row, save_note
 
 NOW = 1_700_000_000.0
-ID_RE = re.compile(r"^note:[0-9a-f]{16}$")
+ID_RE = re.compile(r"^note:default:[0-9a-f]{16}$")
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -47,9 +47,7 @@ def test_id_format_note_prefix_16_hex():
 # ---- id scheme: namespace qualification ------------------------------------
 
 
-def test_default_namespace_id_is_byte_identical_to_legacy_format():
-    """No namespace arg and explicit namespace='default' must produce the same id
-    as before namespaces existed, so pre-existing rows keep their identity."""
+def test_default_namespace_id_is_namespace_qualified_like_every_other():
     omitted = build_note_row("distilled content", "note", ["test"], NOW)
     explicit_default = build_note_row("distilled content", "note", ["test"], NOW, "default")
     assert omitted["id"] == explicit_default["id"]
@@ -88,6 +86,10 @@ def test_row_shape_exact_keys_no_embedding():
         "distilled",
         "timestamp",
         "metadata",
+        "conversation_id",
+        "turn_start",
+        "turn_end",
+        "occurred_at",
     }
     assert "embedding" not in row
 
@@ -139,6 +141,9 @@ async def _fake_save_note(
     supersedes=None,
     namespace="default",
     occurred_at=None,
+    conversation_id=None,
+    turn_start=None,
+    turn_end=None,
     author=None,
     allow_similar=False,
 ):

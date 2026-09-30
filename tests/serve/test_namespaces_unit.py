@@ -251,6 +251,16 @@ def test_delete_namespace_treats_messages_as_content(monkeypatch):
     assert "messages" in conn.queries[-1][0]
 
 
+def test_delete_namespace_treats_conversation_sources_as_content(monkeypatch):
+    conn = FakeConnection(fetchval_results=[True, True])
+    _patch_acquire(monkeypatch, conn)
+
+    with pytest.raises(namespaces.NamespaceNotEmptyError):
+        asyncio.run(namespaces.delete_namespace("team-a"))
+
+    assert "conversation_sources" in conn.queries[-1][0]
+
+
 def test_delete_namespace_locks_the_row_before_checking_emptiness(monkeypatch):
     conn = FakeConnection(fetchval_results=[1, False])
     _patch_acquire(monkeypatch, conn)

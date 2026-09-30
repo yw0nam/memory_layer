@@ -676,7 +676,7 @@ def _hit_record(hit: Any, provenance: dict[str, set[tuple[str, str]]]) -> dict[s
         raise RuntimeError(f"hit {note_id} was not loaded for this question")
     return {
         "id": note_id,
-        "date": dataset_date(hit.ts),
+        "date": dataset_date(hit.meta["occurred_at"]),
         "score": hit.score,
         "text": hit.text,
         "sessions": [list(unit) for unit in sorted(provenance[note_id])],

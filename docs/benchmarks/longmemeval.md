@@ -104,13 +104,16 @@ recorded at extraction. The question then runs through
 `search(question, source="memory", namespaces=[namespace])` with production rerank and
 the production score floor.
 
-A note id is a content hash, so identical notes from two sessions share one row; the
-harness keeps a note-to-sessions map, so a hit counts toward every session it came from.
+The harness links no note to a conversation source, so a note id hashes its content
+alone and identical notes from two sessions share one row; the harness keeps a
+note-to-sessions map, so a hit counts toward every session it came from. A packet hit's
+date is the note's `occurred_at`.
 
-The search's time decay multiplies fused scores by `0.5^(age/90 days)` against wall
-clock; for notes dated years back the ratio between two notes depends only on their
-date difference, so ranking matches ranking at the question date. Decay affects only
-which candidates reach the reranker; the floor applies to rerank scores.
+The search's time decay multiplies fused scores by `0.5^(age/90 days)` of
+`ts_last_active`, which is each note's save time, not its session date. A question's
+notes are saved within one load in session-date order, so decay weighs them almost
+alike while the recency voter still ranks later sessions first. Decay affects only which
+candidates reach the reranker; the floor applies to rerank scores.
 
 The dated run embeds each note as `"{date}: {content}"` (ISO date of its session) while
 the stored text stays unchanged: the eval process rebinds `notes.embed_text` to a

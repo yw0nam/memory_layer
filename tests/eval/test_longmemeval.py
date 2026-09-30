@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -415,7 +416,8 @@ def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(mon
 
     class Hit:
         def __init__(self, i):
-            self.meta, self.ts, self.score, self.text = {"id": f"n{i}"}, 1.0, 1 - i / 10, "t"
+            self.meta = {"id": f"n{i}", "occurred_at": 1.0}
+            self.ts, self.score, self.text = 1.0, 1 - i / 10, "t"
 
     calls = []
 
@@ -676,3 +678,17 @@ def test_the_extraction_summary_counts_provider_refused_units(tmp_path):
     summary = lme._extraction_summary(tmp_path, ["q1"], {"q1": question})
     assert summary["units_extracted"] == 2
     assert summary["provider_refused_units"] == 1
+
+
+def test_a_packet_hit_is_dated_by_the_note_occurred_at():
+    class Hit:
+        meta = {
+            "id": "n1",
+            "occurred_at": datetime(2023, 5, 20, 2, 21, tzinfo=timezone.utc).timestamp(),
+        }
+        ts = datetime(2026, 9, 30, tzinfo=timezone.utc).timestamp()
+        score = 0.9
+        text = "t"
+
+    record = lme._hit_record(Hit(), {"n1": {("s1", D1)}})
+    assert record["date"] == "2023/05/20 (Sat) 02:21"

@@ -68,6 +68,9 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -101,6 +104,9 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -134,6 +140,9 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -162,6 +171,9 @@ def test_save_memory_unknown_supersedes_id_400(monkeypatch, client):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -190,6 +202,9 @@ def test_save_memory_similar_notes_error_409(monkeypatch, client):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -228,6 +243,9 @@ def test_save_memory_forwards_allow_similar_to_save_note(monkeypatch, client):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -595,6 +613,7 @@ def test_mcp_tool_list_unaffected_by_supersede():
         "list_messages",
         "claim_message",
         "cancel_message",
+        "expand_source",
     }
 
 

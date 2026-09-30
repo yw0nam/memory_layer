@@ -74,6 +74,70 @@ def test_messages_table_carries_the_lifecycle_constraints_and_indexes(monkeypatc
     assert 'ON "scratch_schema".messages (sender_key, idempotency_key)' in " ".join(sql.split())
 
 
+def _statements(conn: RecordingConnection) -> list[str]:
+    return [" ".join(part.split()) for part in "\n".join(conn.queries).split(";")]
+
+
+def test_conversation_sources_table_holds_turns_unembedded(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    sql = "\n".join(conn.queries)
+    body = sql.split('CREATE TABLE IF NOT EXISTS "scratch_schema".conversation_sources (', 1)[1]
+    body = " ".join(body.split(");", 1)[0].split())
+    for column in (
+        "id text PRIMARY KEY",
+        "namespace text NOT NULL",
+        "origin text NOT NULL",
+        "external_session_id text NOT NULL",
+        "started_at double precision NOT NULL",
+        "ended_at double precision NOT NULL",
+        "turns jsonb NOT NULL",
+        "created_at double precision NOT NULL",
+        "created_by text NOT NULL",
+        "UNIQUE (namespace, origin, external_session_id)",
+    ):
+        assert column in body, column
+    assert "embedding" not in body
+
+
+def test_conversation_sources_get_no_bm25_or_hnsw_index(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    for statement in _statements(conn):
+        if "INDEX" in statement and "conversation_sources" in statement:
+            assert "bm25" not in statement.lower(), statement
+            assert "hnsw" not in statement.lower(), statement
+
+
+def test_memory_chunks_gain_the_conversation_link_columns(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    statements = _statements(conn)
+    for column in (
+        "conversation_id text",
+        "source_turn_start int",
+        "source_turn_end int",
+        "occurred_at double precision",
+    ):
+        assert (
+            f'ALTER TABLE "scratch_schema".memory_chunks ADD COLUMN IF NOT EXISTS {column}'
+            in statements
+        ), column
+    assert (
+        'CREATE INDEX IF NOT EXISTS memory_chunks__conversation ON "scratch_schema".memory_chunks '
+        "(conversation_id)" in statements
+    )
+
+
 def test_production_schema_self_heals_query_role_and_hardens_function_acls(
     monkeypatch,
 ):

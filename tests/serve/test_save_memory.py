@@ -23,7 +23,7 @@ from memory_base.serve.mcp_server import save_memory
 from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0
-ID_RE = re.compile(r"^note:[0-9a-f]{16}$")
+ID_RE = re.compile(r"^note:default:[0-9a-f]{16}$")
 
 
 # ---- pure: id scheme -------------------------------------------------------
@@ -61,6 +61,10 @@ def test_row_shape_exact_keys_no_embedding():
         "distilled",
         "timestamp",
         "metadata",
+        "conversation_id",
+        "turn_start",
+        "turn_end",
+        "occurred_at",
     }
     assert "embedding" not in row
 

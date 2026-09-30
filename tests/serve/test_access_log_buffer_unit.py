@@ -82,7 +82,15 @@ def _hit(chunk_id: str) -> Hit:
         ref=f"ref/{chunk_id}",
         text="body",
         ts=1_700_000_000.0,
-        meta={"id": chunk_id},
+        meta={
+            "id": chunk_id,
+            "kind": "note",
+            "tags": [],
+            "conversation_id": None,
+            "turn_start": None,
+            "turn_end": None,
+            "occurred_at": None,
+        },
     )
 
 

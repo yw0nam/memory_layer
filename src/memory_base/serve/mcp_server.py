@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from typing import Any, Mapping
 
@@ -41,6 +42,7 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
 REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
 API_KEY_HEADER = "x-api-key"
+CONVERSATION_ID_RE = re.compile(r"conv:[0-9a-f]{16}")
 
 # Served in the initialize response, so it is stated once per client session:
 # the store's invariants only. Per-consumer usage belongs to the consumer.
@@ -340,7 +342,8 @@ async def search_memory(
     `author` narrows the search to notes saved by one agent, e.g. claude-code
     or natsume.
 
-    `since`/`until` bound the search to memory last active in that window, for
+    `since`/`until` bound the search to memory whose event happened in that
+    window (its occurred_at, else when it was saved), for
     time-anchored questions ("what did we decide last week"). Both are ISO 8601
     dates or datetimes; a bare date covers that whole day, and naive values are
     read as UTC.
@@ -425,6 +428,9 @@ async def save_memory(
     allow_similar: bool = False,
     namespace: str | None = None,
     occurred_at: str | None = None,
+    conversation_id: str | None = None,
+    turn_start: int | None = None,
+    turn_end: int | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Store a distilled memory worth recalling in a future session.
@@ -456,9 +462,16 @@ async def save_memory(
     must be in the calling key's author allowlist, and is stored with the note
     and stamped on any note this save archives.
 
-    `occurred_at` backdates the stored timestamp to an ISO 8601 date or
-    datetime instead of now, e.g. to land a backfilled episode on the day it
-    happened; a future or unparseable value is rejected.
+    `occurred_at` records when the remembered event happened, as an ISO 8601
+    date or datetime, e.g. the day of a backfilled episode; hits and listings
+    show it as the note's date and since/until filter by it, while recency
+    ranking keeps the save time. A future or unparseable value is rejected.
+
+    `conversation_id` links the note to the stored conversation source it was
+    distilled from (the id the capture hook received), and `turn_start`/`turn_end`
+    narrow the link to that inclusive range of 0-based turns; the source must
+    exist in the note's namespace. Identical content from two conversations is
+    stored as two notes.
 
     `namespace` picks one namespace the caller's API key can access; omitted,
     the note lands in the key's home namespace. A namespace the key cannot
@@ -478,10 +491,48 @@ async def save_memory(
         body["namespace"] = namespace
     if occurred_at is not None:
         body["occurred_at"] = occurred_at
+    if conversation_id is not None:
+        body["conversation_id"] = conversation_id
+    if turn_start is not None:
+        body["turn_start"] = turn_start
+    if turn_end is not None:
+        body["turn_end"] = turn_end
     return await _call(
         "POST",
         "/save_memory",
         json=body,
+        headers=_auth_headers(ctx),
+    )
+
+
+@mcp.tool()
+async def expand_source(
+    conversation_id: str,
+    turn_start: int | None = None,
+    turn_end: int | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Read the conversation turns a memory hit was distilled from.
+
+    Pass a hit's `conversation_id`, and its `turn_start`/`turn_end` to read only
+    the linked turns (an inclusive, 0-based range; omit both for the whole
+    conversation). Returns id, namespace, origin, external_session_id,
+    started_at/ended_at (epoch seconds), and turns, each with index, role
+    ("user" or "assistant"), and text. Conversation text is never searchable;
+    this is the only way to read it. An unknown id, or one outside the caller's
+    namespaces, is an error.
+    """
+    if not CONVERSATION_ID_RE.fullmatch(conversation_id):
+        raise ValueError(f"conversation_id must look like conv:<16 hex>: {conversation_id!r}")
+    params: dict[str, int] = {}
+    if turn_start is not None:
+        params["turn_start"] = turn_start
+    if turn_end is not None:
+        params["turn_end"] = turn_end
+    return await _call(
+        "GET",
+        f"/conversations/{conversation_id}",
+        params=params,
         headers=_auth_headers(ctx),
     )
 

@@ -229,8 +229,12 @@ def history_predicates(
     until: float | None = None,
     author: str | None = None,
 ) -> tuple[str, list[Any]]:
-    """Filter clauses over memory_chunks; placeholders start at $2, $1 being the caller's."""
+    """Filter clauses over memory_chunks; placeholders start at $2, $1 being the caller's.
+
+    since/until bound when the remembered event happened, falling back to the save time.
+    """
     prefix = f"{alias}." if alias else ""
+    event_time = f"COALESCE({prefix}occurred_at, {prefix}ts_last_active)"
     clauses: list[str] = []
     args: list[Any] = []
     if not include_archived:
@@ -246,10 +250,10 @@ def history_predicates(
         clauses.append(f"{prefix}namespace = ANY(${len(args) + 1}::text[])")
     if since is not None:
         args.append(since)
-        clauses.append(f"{prefix}ts_last_active >= ${len(args) + 1}")
+        clauses.append(f"{event_time} >= ${len(args) + 1}")
     if until is not None:
         args.append(until)
-        clauses.append(f"{prefix}ts_last_active < ${len(args) + 1}")
+        clauses.append(f"{event_time} < ${len(args) + 1}")
     if author is not None:
         args.append(author)
         clauses.append(f"{prefix}metadata->>'author' = ${len(args) + 1}")
@@ -346,7 +350,8 @@ async def _search_memory(
     )
     columns = (
         "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
-        "archived_at, namespace, session_id"
+        "archived_at, namespace, session_id, conversation_id, source_turn_start, "
+        "source_turn_end, occurred_at"
     )
     try:
         vec_rows = await conn.fetch(
@@ -386,6 +391,10 @@ async def _search_memory(
             "namespace": r["namespace"],
             "session_id": r["session_id"],
             "archived": r["archived_at"] is not None,
+            "conversation_id": r["conversation_id"],
+            "turn_start": r["source_turn_start"],
+            "turn_end": r["source_turn_end"],
+            "occurred_at": r["occurred_at"],
         }
         if "columns" in metadata:
             hit_meta["columns"] = metadata["columns"]
