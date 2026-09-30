@@ -67,9 +67,22 @@ class FakeSave:
         return {"id": f"note:{content}", "stored": True, "similar": []}
 
 
-def writer(replies, hits=None, error=None):
+class FakeArchive:
+    def __init__(self, error=None):
+        self.calls = []
+        self.error = error
+
+    async def __call__(self, ids, *, now, namespaces, archived_by):
+        self.calls.append((ids, now, namespaces, archived_by))
+        if self.error is not None:
+            raise self.error
+        return len(ids)
+
+
+def writer(replies, hits=None, error=None, archive=None):
     hits = [Hit("note:eggs", "30 dozen eggs.", 5)] if hits is None else hits
-    return aw.AgentWriter(FakeModel(replies), FakeSearch(hits, error), "m", "medium")
+    archive = archive or FakeArchive()
+    return aw.AgentWriter(FakeModel(replies), FakeSearch(hits, error), archive, "m", "medium")
 
 
 def save_one(w, save, content="20 dozen eggs."):
@@ -78,8 +91,11 @@ def save_one(w, save, content="20 dozen eggs."):
     return stats, result
 
 
-def supersede(index=0, content="20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)."):
-    return json.dumps({"action": "supersede", "index": index, "content": content})
+def supersede(
+    index=0, content="20 dozen eggs as of 2023-05 (30 dozen as of 2023-01).", archive=None
+):
+    reply = {"action": "supersede", "index": index, "content": content}
+    return json.dumps(reply if archive is None else {**reply, "archive": archive})
 
 
 NEW = json.dumps({"action": "new"})
@@ -147,8 +163,14 @@ def test_three_failed_attempts_save_the_original_as_new(bad):
 
 
 def test_parse_decision_accepts_both_actions_and_ignores_extra_keys():
-    assert aw.parse_decision('{"action": "new", "why": "x"}', 2) == ("new", None, None)
-    assert aw.parse_decision(supersede(1, "rewrite"), 2) == ("supersede", 1, "rewrite")
+    assert aw.parse_decision('{"action": "new", "why": "x"}', 2) == ("new", None, None, [])
+    assert aw.parse_decision(supersede(1, "rewrite"), 2) == ("supersede", 1, "rewrite", [])
+    assert aw.parse_decision(supersede(1, "rewrite", [0, 2]), 3) == (
+        "supersede",
+        1,
+        "rewrite",
+        [0, 2],
+    )
     with pytest.raises(ValueError):
         aw.parse_decision(supersede(2, "rewrite"), 2)
 
@@ -212,3 +234,53 @@ def test_loading_with_a_writer_routes_each_save_through_it_and_maps_the_rewrite(
     assert "New note (2023-05-20)" in w.model.prompts[0]
     assert (stats.submitted, stats.stored, stats.superseded, stats.agent_calls) == (1, 1, 1, 1)
     assert provenance == {"note:rewrite": {UNITS[0]}}
+
+
+THREE = [
+    Hit("note:team-a", "Rachel's team: 10 people, 5 women.", 3),
+    Hit("note:milk", "Milk.", 4),
+    Hit("note:team-b", "Rachel's team: 10 people, 5 women.", 5),
+]
+
+
+def test_a_supersede_without_archive_archives_nothing():
+    w, save = writer([supersede(0)], THREE), FakeSave()
+    stats, _ = save_one(w, save)
+    assert w.archive.calls == []
+    assert (stats.superseded, stats.archived, stats.agent_errors) == (1, 0, 0)
+
+
+def test_a_supersede_archives_the_listed_duplicates_in_the_question_namespace():
+    w, save = writer([supersede(0, "rewrite", [2])], THREE), FakeSave()
+    stats, _ = save_one(w, save)
+    assert save.calls == [("rewrite", {**SAVE_KWARGS, "supersedes": "note:team-a"})]
+    [(ids, now, namespaces, archived_by)] = w.archive.calls
+    assert ids == ["note:team-b"]
+    assert isinstance(now, float) and now > 0
+    assert (namespaces, archived_by) == ([NAMESPACE], "lme-writer")
+    assert (stats.superseded, stats.archived, stats.agent_errors) == (1, 1, 0)
+
+
+@pytest.mark.parametrize("archive", [[True], [3], [-1], [0], [2, 2], ["2"], 2])
+def test_an_invalid_archive_list_is_malformed_and_retried(archive):
+    w, save = writer([supersede(0, "rewrite", archive), NEW, NEW], THREE), FakeSave()
+    stats, _ = save_one(w, save)
+    assert w.archive.calls == []
+    assert save.calls == [("20 dozen eggs.", SAVE_KWARGS)]
+    assert (stats.agent_calls, stats.superseded, stats.agent_errors) == (2, 0, 0)
+
+
+def test_a_failing_archive_is_counted_and_keeps_the_supersede():
+    archive = FakeArchive(error=RuntimeError("db down"))
+    w, save = writer([supersede(0, "rewrite", [2])], THREE, archive=archive), FakeSave()
+    stats, result = save_one(w, save)
+    assert result["id"] == "note:rewrite"
+    assert len(archive.calls) == 1
+    assert (stats.superseded, stats.archived, stats.agent_errors) == (1, 0, 1)
+
+
+def test_a_refused_rewrite_archives_nothing():
+    w = writer([supersede(0, "rewrite refused", [2])], THREE)
+    stats, _ = save_one(w, FakeSave(refuse="refused"))
+    assert w.archive.calls == []
+    assert (stats.superseded, stats.archived, stats.agent_errors) == (0, 0, 1)

@@ -925,3 +925,18 @@ def test_frontier_prints_the_grid_for_the_selected_run(tmp_path, capsys):
     assert "| top_k | floor | coverage |" in out
     assert "Best cell" in out
     assert not (tmp_path / "report.md").exists()
+
+
+def test_the_agent_writer_flags_build_a_writer_over_production_search_and_archive():
+    import argparse
+
+    from memory_base.eval import retrieval
+    from memory_base.serve import admin
+
+    args = argparse.Namespace(writer="agent", writer_model="m", writer_effort="low")
+    writer = lme._writer(args)
+    assert writer.search is retrieval._search_with_retry
+    assert writer.archive is admin.archive_rows
+    assert (writer.model.model, writer.model.effort) == ("m", "low")
+    assert (writer.model_name, writer.effort) == ("m", "low")
+    assert lme._writer(argparse.Namespace(writer="plain")) is None
