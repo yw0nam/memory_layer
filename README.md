@@ -120,9 +120,10 @@ values are read as UTC.
 
 A memory hit carries the stored row's `id` (the note id `supersedes` takes), `kind`, and
 `tags`; a note linked to a conversation source adds `conversation_id` and, when linked to
-a range, `turn_start`/`turn_end`. `date` is the note's `occurred_at` when recorded, else
-its save time. Code hits carry `repo` and optional `context` instead. `GET /notes` rows
-carry the same link fields and date.
+a range, `turn_start`/`turn_end`, and a note saved with `supersedes` carries the archived
+note's id as `supersedes`, in hits and in `GET /notes` rows. `date` is the note's
+`occurred_at` when recorded, else its save time. Code hits carry `repo` and optional
+`context` instead. `GET /notes` rows carry the same link fields and date.
 
 ## MCP tools
 
