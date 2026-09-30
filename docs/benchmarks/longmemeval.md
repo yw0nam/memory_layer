@@ -174,7 +174,11 @@ candidate index, repeats, or equals `index` makes the reply malformed. A malform
 or a failed call is retried up to three times; a search that fails, three failed
 attempts, or a rewrite that `save_note` refuses each count one agent error and save the
 original note plainly (archiving nothing), so every note still reaches the store. An
-archive call that fails counts one agent error and keeps the saved rewrite.
+archive call that fails counts one agent error and keeps the saved rewrite. A listed
+candidate whose id is the rewrite's own (the rewritten text hashes to that row) is never
+archived. The rewrite's id maps to its own session and to every session of the notes it
+superseded or archived, so a hit on it counts toward the sessions of the values it
+replaced.
 `--writer-model` and `--writer-effort` choose another model or effort.
 
 | counter | counts |
@@ -186,11 +190,12 @@ archive call that fails counts one agent error and keeps the saved rewrite.
 
 Every packet row records its writer (`{"kind": "plain"}`, or the agent's kind, model,
 effort, and the sha256 of its prompts) and so does the manifest's retrieve section.
-`retrieve` refuses to add packets to a file whose rows carry another writer config. An
-agent run keeps its own data directory and manifest: `notes.jsonl` and `sessions.jsonl`
-are symlinked from the baseline data directory, and the manifest lives inside the new
-directory (for example `data/longmemeval-agent/manifest.json`), so its packets, answers,
-judgments, and retrieve section stay apart from the baseline's. The writer searches raw
+`retrieve` refuses to run over a packets file whose rows carry another writer config,
+whether or not any question is pending. An agent run keeps its own data directory and
+manifest: before running it, the operator creates the new data directory and symlinks
+`notes.jsonl` and `sessions.jsonl` into it from the baseline data directory, and passes a
+manifest inside the new directory (for example `data/longmemeval-agent/manifest.json`),
+so its packets, answers, judgments, and retrieve section stay apart from the baseline's. The writer searches raw
 note text, so it runs on the baseline and gate-off variants; `--variant dated` is refused.
 
 ## Answer and judge
@@ -244,9 +249,10 @@ together are not. A reply whose labels miss or add an index, use another label, 
 a `min_prefix` outside 1..n is malformed and retried, up to three calls. Each question
 appends one row to `hit-judgments[-run].jsonl` with the judged hit `texts`, `labels`,
 `min_prefix`, the model, the prompt sha256, tokens, and seconds; a question that fails
-three times appends an error row. Abstention questions and zero-hit packets are skipped,
-and a rerun skips every question whose packet already has a non-error row for the same
-hit texts.
+three times appends an error row. Abstention questions and zero-hit packets are skipped
+(the frontier counts a zero-hit packet as judged with no labels and no `min_prefix`), and a
+rerun skips every question whose packet already has a non-error row for the same hit
+texts.
 
 **Evidence coverage** is the primary recall metric: the share of questions whose
 delivered notes contain enough to produce the reference answer (the delivered count
@@ -256,9 +262,11 @@ can also add misleading notes, so coverage is not answer accuracy.
 ## Frontier
 
 `frontier` reads a run's packets and hit judgments and prints one Markdown table; it
-writes no file. The question set is every non-abstention packet with a non-error judgment
-row for its current first-ten hit texts; the header counts the questions excluded for no
-judgment, a stale judgment (rows only for other hit texts), and abstention.
+writes no file. The question set is every non-abstention packet that has no hits or has a
+non-error judgment row for its current first-ten hit texts; a zero-hit packet counts as
+judged with no labels and no `min_prefix`, so it is not covered, adds nothing to the junk
+shares, and has recall 0. The header counts the questions excluded for no judgment, a
+stale judgment (rows only for other hit texts), and abstention.
 
 Each cell of `top_k` in (1, 2, 3, 5, 10) by `floor` in (0, 0.05, 0.1, 0.25, 0.4, 0.5)
 delivers the hits among the first `top_k` whose score reaches the floor, a prefix of the
@@ -266,7 +274,7 @@ judged hits because candidates come in descending score order:
 
 | field | value |
 |---|---|
-| `coverage` | share of questions whose delivered count reaches `min_prefix`; a question with no delivered hit is not covered |
+| `coverage` | share of questions whose delivered count reaches `min_prefix`; a question with no delivered hit, zero-hit packets included, is not covered |
 | `coverage_agg` / `coverage_lookup` | coverage over multi-session, temporal-reasoning, and knowledge-update questions / over the other types |
 | `junk` | misleading plus unrelated labels over all delivered hits, summed across questions; empty when nothing is delivered |
 | `misleading` / `related` | the same share for one label |
@@ -274,7 +282,8 @@ judged hits because candidates come in descending score order:
 | `hits_per_question` | mean delivered hits |
 
 Cells sort by `junk` ascending (empty last), then `coverage` descending, then
-`hits_per_question` ascending; the best cell is the first with `junk` at most 0.10.
+`hits_per_question` ascending. The best cell is the one with the highest `coverage` among
+the cells whose `junk` is at most 0.10, the fewer hits per question breaking a tie.
 
 ## Metrics
 
