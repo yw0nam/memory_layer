@@ -8,7 +8,7 @@ Config via config.yaml (memory.memory_base):
   url                — memory-base REST API base URL (required)
   timeout            — request timeout in seconds (default: 5)
   top_k              — max prefetch search results (default: 5)
-  min_score          — relevance floor for prefetch search (default: 0.6)
+  min_score          — relevance floor for prefetch search (default: 0.25)
   api_key            — API key value, takes precedence over api_key_env (optional)
   api_key_env        — env var holding the API key (default: MEMORY_BASE_API_KEY)
   capture_namespace  — namespace sessions are captured into (default: personal)
@@ -27,7 +27,7 @@ from . import client
 
 _DEFAULT_TIMEOUT = 5
 _DEFAULT_TOP_K = 5
-_DEFAULT_MIN_SCORE = 0.6
+_DEFAULT_MIN_SCORE = 0.25
 _DEFAULT_CAPTURE_NAMESPACE = "personal"
 _MIN_CAPTURE_TURNS = 2
 

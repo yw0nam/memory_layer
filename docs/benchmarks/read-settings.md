@@ -9,8 +9,8 @@ snapshot of the deployed corpus with `memory_base.eval.read_sweep`.
 | path | caller | shipped read | what decides it |
 |---|---|---|---|
 | A. search | an agent calling `search_memory` while answering | `top_k=10`, floor `MIN_SCORE` 0.25 (`min_score` omitted); `budget_tokens=4000` on request | answer accuracy, then tokens |
-| B. prefetch, Claude Code | `integrations/claude_code/prefetch_hook.py`, every prompt | `TOP_K=3`, `MIN_SCORE=0.6`, block cut at `BLOCK_LIMIT=1500` characters | tokens per prompt and junk; most prompts carry no memory intent |
-| C. prefetch, Hermes | `integrations/hermes/memory_base`, every turn | `top_k=5`, `min_score=0.6`, body cut at `PREFETCH_CHAR_BUDGET=2000` characters | as B, on personal memory |
+| B. prefetch, Claude Code | `integrations/claude_code/prefetch_hook.py`, every prompt | `TOP_K=3`, `MIN_SCORE=0.4`, block cut at `BLOCK_LIMIT=1500` characters | tokens per prompt and junk; most prompts carry no memory intent |
+| C. prefetch, Hermes | `integrations/hermes/memory_base`, every turn | `top_k=5`, `min_score=0.25`, body cut at `PREFETCH_CHAR_BUDGET=2000` characters | as B, on personal memory |
 
 ## Method
 
