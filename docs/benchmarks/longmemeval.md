@@ -81,9 +81,13 @@ uses `-dated`), and `score` reports every run present side by side.
 | `search` (default) | production floor | first 10 | unprefixed |
 | `prefetch` | `min_score=0.6` | first 5 | `prefetch-…` |
 | `budget` | `budget_tokens=4000` | every packed hit | `budget-…` |
+| `candidates` | a budget no packet reaches | every fused candidate, in rerank order | `candidates-…` |
 
 A budget packet records its `budget_tokens`, and the manifest records the read setting
 of every run.
+
+The `candidates` read feeds `memory_base.eval.read_sweep`, which cuts every read-settings
+grid point from the same candidates (see `read-settings.md`).
 
 ## Extraction
 
