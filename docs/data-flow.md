@@ -69,6 +69,7 @@ POST /conversations {origin, external_session_id, started_at, ended_at, turns}
    ▼
  validate turns: non-empty, each exactly {role: user|assistant, text}
  total text ≤ 2,000,000 chars → else 413
+ credential scan of every turn → 400
    │
    ▼
  id = conv: + sha256(namespace, origin, external_session_id)[:16]
@@ -142,7 +143,9 @@ different one with 409; deleting the row releases the key.
 
 A conversation source is the user and assistant turns of one agent session, posted by a
 capture hook; no MCP tool stores one. Each turn is exactly `{role, text}` with role
-`user` or `assistant`, so tool output never enters the table. The source is upserted by
+`user` or `assistant`, so tool output never enters the table, and every turn passes the
+same credential scan as notes and documents: a hit refuses the whole upload with HTTP 400
+naming the turn and the detector type. The source is upserted by
 (`namespace`, `origin`, `external_session_id`) and records the storing key's label as
 `created_by`; a re-upload by another non-admin key is refused with 403. Until a note
 links to the source, a re-upload replaces its turns and bounds; after that, identical
@@ -228,8 +231,9 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
 
 Memory hits (notes, document chunks, CSV cards) carry the row's `id`, `kind`, and
 `tags`, plus `conversation_id` and `turn_start`/`turn_end` for a linked note; `date` is
-the note's `occurred_at` when recorded, else `ts_last_active`. Recency voting, decay,
-and `since`/`until` read `ts_last_active` alone. Memory hits carry their stored text whole; each is
+the note's `occurred_at` when recorded, else `ts_last_active`. `since`/`until` bound the
+same event time, `COALESCE(occurred_at, ts_last_active)`, so an episode is found by the
+day it happened; recency voting and decay read `ts_last_active` alone. Memory hits carry their stored text whole; each is
 bounded at write time instead — notes ≤4000 chars, document chunks ≤2000 (hard split), CSV
 cards ≤2000 (the ingest job fails if the summary runs longer). Code hits have no such
 bound — CocoIndex's chunk_size is a target, not a limit — so the response still cuts them
@@ -373,10 +377,10 @@ periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
 | `chunk_kind` | `note` · `decision` · `episode` · `doc` |
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
-| `ts_last_active` | save time; recency ranking, decay, and `since`/`until` |
+| `ts_last_active` | save time; recency ranking and decay, and `since`/`until` when `occurred_at` is null |
 | `conversation_id` | the linked conversation source, indexed; null for unlinked notes and document chunks |
 | `source_turn_start` / `source_turn_end` | the inclusive linked turn range |
-| `occurred_at` | when the remembered event happened; shown as a hit's `date` |
+| `occurred_at` | when the remembered event happened; a hit's `date` and the `since`/`until` bound |
 | `metadata` | jsonb: `tags`, `author`, `archived_by`, `similar_ack`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 

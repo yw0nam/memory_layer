@@ -342,7 +342,8 @@ async def search_memory(
     `author` narrows the search to notes saved by one agent, e.g. claude-code
     or natsume.
 
-    `since`/`until` bound the search to memory last active in that window, for
+    `since`/`until` bound the search to memory whose event happened in that
+    window (its occurred_at, else when it was saved), for
     time-anchored questions ("what did we decide last week"). Both are ISO 8601
     dates or datetimes; a bare date covers that whole day, and naive values are
     read as UTC.
@@ -463,8 +464,8 @@ async def save_memory(
 
     `occurred_at` records when the remembered event happened, as an ISO 8601
     date or datetime, e.g. the day of a backfilled episode; hits and listings
-    show it as the note's date, while recency ranking and since/until keep the
-    save time. A future or unparseable value is rejected.
+    show it as the note's date and since/until filter by it, while recency
+    ranking keeps the save time. A future or unparseable value is rejected.
 
     `conversation_id` links the note to the stored conversation source it was
     distilled from (the id the capture hook received), and `turn_start`/`turn_end`

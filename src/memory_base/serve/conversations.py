@@ -18,6 +18,7 @@ from typing import Any
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
+from memory_base.core.secrets import find_secret
 from memory_base.serve import namespaces
 
 CONVERSATION_MAX_CHARS = 2_000_000
@@ -62,7 +63,7 @@ def _epoch(value: Any, field: str) -> float:
 
 
 def validate_turns(turns: Any) -> list[dict[str, str]]:
-    """Each turn is exactly {role, text}; tool output and other keys never enter a source."""
+    """Each turn is exactly {role, text} and carries no credential; tool output never enters."""
     if not isinstance(turns, list) or not turns:
         raise ValueError("turns must be a non-empty list of {role, text} objects")
     total = 0
@@ -79,6 +80,12 @@ def validate_turns(turns: Any) -> list[dict[str, str]]:
         raise ConversationTooLarge(
             f"turns total {total} chars, over the {CONVERSATION_MAX_CHARS} char limit"
         )
+    for index, turn in enumerate(turns):
+        secret_type = find_secret(turn["text"])
+        if secret_type is not None:
+            raise ValueError(
+                f"turn {index} contains a credential ({secret_type}); remove it and upload again"
+            )
     return [{"role": turn["role"], "text": turn["text"]} for turn in turns]
 
 
