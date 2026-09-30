@@ -319,3 +319,25 @@ def test_export_writes_the_delivered_packets_for_the_answer_stage(tmp_path):
     assert exported["run"] == "gate-off"
     assert exported["read"] == {"setting": "k3-f0.25", "path": "search"}
     assert json.dumps(exported)
+
+
+def test_a_deployed_snapshot_row_is_copied_through_the_table_row_type():
+    executed = []
+
+    class Conn:
+        async def execute(self, sql, *args):
+            executed.append((sql, args))
+
+    rows = [{"id": "note:a", "metadata": {"tags": ["x"]}, "embedding": "[0.1,0.2]"}]
+    asyncio.run(sweep.copy_snapshot(Conn(), rows, "memory"))
+    ((sql, args),) = executed
+    assert 'INSERT INTO "memory".memory_chunks ("id", "metadata", "embedding")' in sql
+    assert 'jsonb_populate_record(NULL::"memory".memory_chunks, $1::jsonb)' in sql
+    assert json.loads(args[0]) == rows[0]
+
+
+def test_the_deployed_snapshot_reads_every_row_with_its_embedding_as_text():
+    sql = sweep.snapshot_sql("memory")
+    assert sql.lstrip().upper().startswith("SELECT")
+    assert "embedding::text" in sql
+    assert '"memory".memory_chunks' in sql
