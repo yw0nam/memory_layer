@@ -493,7 +493,7 @@ async def list_notes(
             note["archived"] = True
         if metadata.get("archived_by") is not None:
             note["archived_by"] = metadata["archived_by"]
-        if "supersedes" in metadata:
+        if metadata.get("supersedes") is not None:
             note["supersedes"] = metadata["supersedes"]
         out.append(note)
     return out
