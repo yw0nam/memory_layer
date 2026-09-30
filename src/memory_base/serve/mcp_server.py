@@ -68,9 +68,12 @@ in coding sessions and personal chat alike, durable facts about the user include
 that report what a PR, issue, or commit says, progress updates, and descriptions of what
 a file does are none of those — git and search_code already answer them, and stale copies
 only dilute retrieval. When a note goes out of date, supersede it rather than adding a
-second note that contradicts it. A save that lands next to a near-identical active note
-is refused with the neighbours listed; supersede the one it replaces, or pass
-allow_similar when it is a genuinely different fact. A note whose content is a
+second note that contradicts it. Before saving, search_memory the same subject; if the
+new note replaces one, pass supersedes and write it as the current value with the
+previous one stated, e.g. "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)". A save
+that lands next to a near-identical active note is refused with the neighbours listed;
+supersede the one it replaces, or pass allow_similar when it is a genuinely different
+fact. A note whose content is a
 restatement of a PR, issue, or commit, a progress update, or a description of what a file
 does is refused with the reason, and the verdict is final. If part of a refused note
 records something that exists nowhere else, rewrite that part to state the fact directly,
@@ -466,8 +469,11 @@ async def save_memory(
     `kind` is "note" (default), "decision", or "episode" (a 1-3 sentence
     past-tense record of one conversation session). `tags` is required; the
     first tag names the subject, usually the repository or domain, so a later
-    search can narrow to it. `supersedes` archives an older note by id. A note that lands
-    next to active notes saying nearly the same thing is refused and the error lists them;
+    search can narrow to it. `supersedes` archives an older note by id. Before saving,
+    search_memory the same subject; if the new note replaces one, pass supersedes and
+    write it as the current value with the previous one stated, e.g. "20 dozen eggs as of
+    2023-05 (30 dozen as of 2023-01)". A note that lands next to active notes saying
+    nearly the same thing is refused and the error lists them;
     call again with `supersedes` naming the one it replaces, or with `allow_similar=True`
     when it is a genuinely different fact. A note whose content is a restatement of a PR,
     issue, or commit, a progress update, or a description of what a file does is refused
