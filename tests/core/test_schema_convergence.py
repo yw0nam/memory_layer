@@ -41,3 +41,27 @@ def test_ensure_schema_drops_the_idf_score_column():
     after_first, after_second = asyncio.run(_run())
     assert "idf_score" not in after_first
     assert after_second == after_first
+
+
+def test_ensure_schema_admits_conversation_jobs_on_a_deployed_jobs_table():
+    async def _run() -> str:
+        conn = await asyncpg.connect(db_url())
+        try:
+            await conn.execute(
+                f'ALTER TABLE "{PG_SCHEMA}".jobs DROP CONSTRAINT IF EXISTS jobs_kind_check'
+            )
+            await conn.execute(
+                f'ALTER TABLE "{PG_SCHEMA}".jobs ADD CONSTRAINT jobs_kind_check '
+                "CHECK (kind IN ('document', 'repo')) NOT VALID"
+            )
+            await ensure_schema(conn)
+            await ensure_schema(conn)
+            return await conn.fetchval(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conname = 'jobs_kind_check' AND conrelid = $1::regclass",
+                f'"{PG_SCHEMA}".jobs',
+            )
+        finally:
+            await conn.close()
+
+    assert "'conversation'" in asyncio.run(_run())

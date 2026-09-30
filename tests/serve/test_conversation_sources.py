@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -80,8 +81,11 @@ class FakeConn:
         if self.source is None:
             return None
         if "FOR UPDATE" in query:
-            same = json.loads(args[1]) == self.source["turns"]
-            return {"created_by": self.source["created_by"], "same": same}
+            return {
+                "created_by": self.source["created_by"],
+                "turns": json.dumps(self.source["turns"]),
+                "distilled_through": self.source.get("distilled_through", 0),
+            }
         if "jsonb_array_length" in query:
             return {
                 "namespace": self.source["namespace"],
@@ -129,8 +133,29 @@ async def _noop(conn):
     return None
 
 
+class FakeAdmission:
+    """Records each distill job admission and the connection it ran on."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+        self.error: BaseException | None = None
+
+    async def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(job_id=f"job-{len(self.calls)}")
+
+
 @pytest.fixture
-def use(monkeypatch):
+def admission(monkeypatch):
+    fake = FakeAdmission()
+    monkeypatch.setattr(conversations.job_store, "admit_conversation", fake)
+    return fake
+
+
+@pytest.fixture
+def use(monkeypatch, admission):
     def _use(conn):
         @asynccontextmanager
         async def acquire(timeout=None):
@@ -316,7 +341,7 @@ def test_post_conversation_by_its_creator_replaces_an_unreferenced_source(use, m
     changed = [*TURNS, {"role": "assistant", "text": "one more turn"}]
     response = member.post("/conversations", json={**BODY, "turns": changed})
     assert response.status_code == 200
-    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4}
+    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4, "job_id": "job-1"}
     assert len(conn.sql("SET turns")) == 1
 
 
@@ -327,12 +352,13 @@ def test_post_conversation_creates_a_new_source(use):
     conn = use(FakeConn())
     response = client.post("/conversations", json=BODY)
     assert response.status_code == 201
-    assert response.json() == {"id": SOURCE_ID, "created": True, "turns": 3}
+    assert response.json() == {"id": SOURCE_ID, "created": True, "turns": 3, "job_id": "job-1"}
     (insert,) = conn.sql("INSERT INTO")
     assert "conversation_sources" in insert[0]
     assert "ON CONFLICT (namespace, origin, external_session_id)" in insert[0]
     assert json.loads(insert[1][6]) == TURNS
-    assert insert[1][8] == "test"
+    assert json.loads(insert[1][7]) == {}
+    assert insert[1][9] == "test"
 
 
 def test_post_conversation_replaces_an_unreferenced_source(use):
@@ -340,28 +366,148 @@ def test_post_conversation_replaces_an_unreferenced_source(use):
     changed = [*TURNS, {"role": "assistant", "text": "a fourth turn"}]
     response = client.post("/conversations", json={**BODY, "turns": changed, "ended_at": NOW + 120})
     assert response.status_code == 200
-    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4}
+    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4, "job_id": "job-1"}
     (update,) = conn.sql("SET turns")
     assert update[1][0] == SOURCE_ID
     assert json.loads(update[1][1]) == changed
     assert update[1][3] == NOW + 120
 
 
-def test_post_conversation_refuses_changed_turns_once_a_note_references_it(use):
+def test_post_conversation_refuses_changed_turns_once_a_note_references_it(use, admission):
     conn = use(FakeConn(_source(), referenced=True))
-    changed = [*TURNS, {"role": "assistant", "text": "rewritten evidence"}]
+    changed = [TURNS[0], {"role": "assistant", "text": "rewritten evidence"}, TURNS[2]]
     response = client.post("/conversations", json={**BODY, "turns": changed})
     assert response.status_code == 409
     assert "referenced" in response.json()["error"]
     assert conn.sql("SET turns") == []
+    assert admission.calls == []
+
+
+def test_post_conversation_refuses_a_shorter_upload_of_a_referenced_source(use):
+    conn = use(FakeConn(_source(), referenced=True))
+    response = client.post("/conversations", json={**BODY, "turns": TURNS[:2]})
+    assert response.status_code == 409
+    assert conn.sql("SET turns") == []
+
+
+def test_post_conversation_refuses_changed_turns_once_turns_are_distilled(use):
+    conn = use(FakeConn(_source(distilled_through=2)))
+    changed = [TURNS[0], {"role": "assistant", "text": "rewritten evidence"}, TURNS[2]]
+    response = client.post("/conversations", json={**BODY, "turns": changed})
+    assert response.status_code == 409
+    assert "distilled" in response.json()["error"]
+    assert conn.sql("SET turns") == []
+
+
+def test_post_conversation_extends_a_referenced_source_by_appended_turns(use, admission):
+    conn = use(FakeConn(_source(distilled_through=3), referenced=True))
+    extended = [*TURNS, {"role": "assistant", "text": "a fourth turn"}]
+    response = client.post(
+        "/conversations", json={**BODY, "turns": extended, "ended_at": NOW + 120}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4, "job_id": "job-1"}
+    (update,) = conn.sql("SET turns")
+    assert json.loads(update[1][1]) == extended
+    assert update[1][3] == NOW + 120
+    assert len(admission.calls) == 1
+
+
+def test_an_upload_never_writes_the_distill_cursor(use):
+    conn = use(FakeConn(_source(distilled_through=3), referenced=True))
+    extended = [*TURNS, {"role": "assistant", "text": "a fourth turn"}]
+    assert client.post("/conversations", json={**BODY, "turns": extended}).status_code == 200
+    use(FakeConn())
+    assert client.post("/conversations", json=BODY).status_code == 201
+    written = [s for s in conn.statements if s[0].startswith(("INSERT", "UPDATE"))]
+    assert written
+    assert all("distilled_through" not in statement for statement, _ in written)
 
 
 def test_post_conversation_identical_turns_on_a_referenced_source_is_a_no_op(use):
     conn = use(FakeConn(_source(), referenced=True))
     response = client.post("/conversations", json=BODY)
     assert response.status_code == 200
-    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 3}
+    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 3, "job_id": "job-1"}
     assert conn.sql("SET turns") == []
+
+
+# ---- POST /conversations: metadata and the distill job ---------------------------
+
+
+def test_post_conversation_stores_the_client_metadata(use):
+    conn = use(FakeConn())
+    metadata = {"repo": "memory_base", "cwd": "/home/me/memory_base"}
+    response = client.post("/conversations", json={**BODY, "metadata": metadata})
+    assert response.status_code == 201
+    (insert,) = conn.sql("INSERT INTO")
+    assert json.loads(insert[1][7]) == metadata
+
+
+@pytest.mark.parametrize("metadata", [[], "repo", 3, {"cwd": "x" * 2048}])
+def test_post_conversation_rejects_bad_metadata(use, metadata):
+    conn = use(FakeConn())
+    response = client.post("/conversations", json={**BODY, "metadata": metadata})
+    assert response.status_code == 400
+    assert "metadata" in response.json()["error"]
+    assert conn.statements == []
+
+
+def test_post_conversation_admits_a_distill_job_on_the_upload_connection(use, admission):
+    conn = use(FakeConn())
+    response = client.post("/conversations", json=BODY)
+    assert response.json()["job_id"] == "job-1"
+    (call,) = admission.calls
+    assert call["connection"] is conn
+    assert call["conversation_id"] == SOURCE_ID
+    assert call["namespace"] == "default"
+    assert (call["key_id"], call["key_label"]) == ("test-key-hash", "test")
+
+
+def test_a_failed_admission_fails_the_upload(use, admission):
+    use(FakeConn())
+    admission.error = RuntimeError("jobs table unavailable")
+    failing = TestClient(api.app, headers={"X-API-Key": "test-key"}, raise_server_exceptions=False)
+    response = failing.post("/conversations", json=BODY)
+    assert response.status_code == 500
+
+
+def test_an_origin_without_an_extraction_prompt_admits_no_job(use, admission):
+    use(FakeConn())
+    response = client.post("/conversations", json={**BODY, "origin": "codex"})
+    assert response.status_code == 201
+    assert response.json()["job_id"] is None
+    assert admission.calls == []
+
+
+def test_get_conversation_job_returns_its_state(monkeypatch):
+    from memory_base.serve import distill, job_store
+
+    job = distill.ConversationJob(
+        job_id="job-9",
+        conversation_id=SOURCE_ID,
+        namespace="default",
+        key_id="k",
+        key_label="test",
+        status="succeeded",
+        result={"units": 2, "stored": 1, "refused": 1, "similar": 0},
+    )
+
+    async def get_job(job_id, *, kind):
+        assert kind == "conversation"
+        return job if job_id == "job-9" else None
+
+    monkeypatch.setattr(job_store, "get_job", get_job)
+    response = client.get("/conversations/jobs/job-9")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "succeeded"
+    assert body["result"] == {"units": 2, "stored": 1, "refused": 1, "similar": 0}
+    assert body["conversation_id"] == SOURCE_ID
+    assert "key_id" not in body
+    assert client.get("/conversations/jobs/nope").status_code == 404
+    member = _member_client(monkeypatch, allowed={"team-b"})
+    assert member.get("/conversations/jobs/job-9").status_code == 404
 
 
 def test_storing_a_source_never_calls_the_embedding_client(use, monkeypatch):

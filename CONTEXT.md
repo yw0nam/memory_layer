@@ -60,7 +60,9 @@ _Avoid_: pop, read receipt, acknowledge
 **Conversation source**:
 The user and assistant turns of one agent session, stored unembedded in
 `conversation_sources` as the evidence a note links back to by `conversation_id` and
-turn range — read by address, never returned by search.
+turn range — read by address, never returned by search. Its turns only grow once any of
+them is distilled or referenced; `distilled_through` counts the turns the distill job has
+already turned into notes.
 _Avoid_: transcript chunk, session log, raw history
 
 **Creator**:

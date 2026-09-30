@@ -50,6 +50,7 @@ async def _cleanup() -> None:
         await conn.execute(
             f'DELETE FROM "{PG_SCHEMA}".conversation_sources WHERE namespace = $1', NAMESPACE
         )
+        await conn.execute(f'DELETE FROM "{PG_SCHEMA}".jobs WHERE namespace = $1', NAMESPACE)
         await conn.execute(f'DELETE FROM "{PG_SCHEMA}".namespaces WHERE name = $1', NAMESPACE)
     finally:
         await conn.close()
@@ -132,12 +133,19 @@ def test_linked_notes_carry_their_source_and_the_source_never_surfaces(namespace
 
     replayed = client.post("/conversations", json=source)
     assert replayed.status_code == 200
-    assert replayed.json() == {"id": conversation_id, "created": False, "turns": 3}
+    assert replayed.json()["created"] is False
+    assert replayed.json()["turns"] == 3
     rewritten = client.post(
+        "/conversations",
+        json={**source, "turns": [TURNS[0], {"role": "assistant", "text": "Rewritten."}, TURNS[2]]},
+    )
+    assert rewritten.status_code == 409
+    extended = client.post(
         "/conversations",
         json={**source, "turns": [*TURNS, {"role": "assistant", "text": "A new turn."}]},
     )
-    assert rewritten.status_code == 409
+    assert extended.status_code == 200, extended.json()
+    assert extended.json()["turns"] == 4
 
 
 def test_a_note_linked_to_a_missing_source_is_refused(namespace):

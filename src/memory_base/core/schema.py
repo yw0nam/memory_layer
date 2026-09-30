@@ -149,6 +149,10 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           created_by text NOT NULL,
           UNIQUE (namespace, origin, external_session_id)
         );
+        ALTER TABLE {schema}.conversation_sources
+          ADD COLUMN IF NOT EXISTS distilled_through int NOT NULL DEFAULT 0;
+        ALTER TABLE {schema}.conversation_sources
+          ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb;
         CREATE TABLE IF NOT EXISTS {schema}.doc_rows (
           namespace text NOT NULL,
           document_id text NOT NULL,
@@ -217,7 +221,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         CREATE INDEX IF NOT EXISTS retrieval_log__ts ON {schema}.retrieval_log (ts);
         CREATE TABLE IF NOT EXISTS {schema}.jobs (
           job_id text PRIMARY KEY,
-          kind text NOT NULL CHECK (kind IN ('document', 'repo')),
+          kind text NOT NULL,
           status text NOT NULL DEFAULT 'queued'
             CHECK (status IN ('queued', 'running', 'succeeded', 'no_op', 'failed')),
           key_id text NOT NULL,
@@ -250,12 +254,22 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         );
         ALTER TABLE {schema}.jobs
           ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{{}}'::text[];
+        ALTER TABLE {schema}.jobs ADD COLUMN IF NOT EXISTS conversation_id text;
+        ALTER TABLE {schema}.jobs ADD COLUMN IF NOT EXISTS result jsonb;
+        ALTER TABLE {schema}.jobs DROP CONSTRAINT IF EXISTS jobs_kind_check;
+        ALTER TABLE {schema}.jobs ADD CONSTRAINT jobs_kind_check
+          CHECK (kind IN ('document', 'repo', 'conversation'));
+        ALTER TABLE {schema}.jobs DROP CONSTRAINT IF EXISTS jobs_conversation_check;
+        ALTER TABLE {schema}.jobs ADD CONSTRAINT jobs_conversation_check
+          CHECK (kind <> 'conversation' OR (namespace IS NOT NULL AND conversation_id IS NOT NULL));
         CREATE INDEX IF NOT EXISTS jobs__claim
           ON {schema}.jobs (kind, status, key_id, created_at);
         CREATE INDEX IF NOT EXISTS jobs__document_active
           ON {schema}.jobs (namespace, document_id, status) WHERE kind = 'document';
         CREATE INDEX IF NOT EXISTS jobs__document_list
           ON {schema}.jobs (kind, created_at DESC) WHERE kind = 'document';
+        CREATE INDEX IF NOT EXISTS jobs__conversation_active
+          ON {schema}.jobs (conversation_id, status) WHERE kind = 'conversation';
         CREATE INDEX IF NOT EXISTS jobs__retention
           ON {schema}.jobs (status, updated_at);
         """

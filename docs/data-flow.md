@@ -64,21 +64,45 @@ POST /messages {subject, status, result, …}
  handoff: same transaction terminalizes older pending
  snapshots of the same namespace+scope+subject_key
 
-⑤ CONVERSATION SOURCE
-POST /conversations {origin, external_session_id, started_at, ended_at, turns}
+⑤ CONVERSATION SOURCE → DISTILLED NOTES
+Claude Code SessionEnd hook ──┐   Hermes provider on_session_end
+  (integrations/claude_code/  │     (integrations/hermes/memory_base/)
+   capture_hook.py)           │        │
+                              ▼        ▼
+POST /conversations {origin, external_session_id, started_at, ended_at, turns, metadata}
    │
    ▼
  validate turns: non-empty, each exactly {role: user|assistant, text}
  total text ≤ 2,000,000 chars → else 413
- credential scan of every turn → 400
+ credential scan of every turn and of metadata (a JSON object ≤ 2 KB) → 400
    │
    ▼
  id = conv: + sha256(namespace, origin, external_session_id)[:16]
    │
    ▼
- INSERT memory.conversation_sources (no embedding, no gate, no search index)
- ON CONFLICT → replace turns, unless a note links to it:
-               identical turns → no-op, changed turns → 409
+ one transaction ─┬─ INSERT memory.conversation_sources (no embedding, no search index)
+                  │  ON CONFLICT → stored turns a prefix of the new ones → append
+                  │               identical → no write
+                  │               otherwise → replace, unless a note links to the
+                  │                           source or distilled_through > 0 → 409
+                  └─ admit a `conversation` job (reuses one already queued)
+   │
+   ▼  201/200 {id, created, turns, job_id}
+conversation worker (one job per source at a time)
+   │
+   ▼
+ read distilled_through; turns after it, fewer than 2 → no_op
+   │
+   ▼
+ batches of ≤ 60,000 chars, never splitting a turn ──► per batch:
+   render "[index] role: text" (absolute indices) + session date
+   extraction prompt by origin: claude_code → digest, hermes → personal
+   chat model, JSON, one retry on unparseable output
+   each unit → save_note (① above: credential scan, content gate, embed,
+               near-duplicate check) with conversation_id, turn range,
+               occurred_at, tags + repo:<metadata.repo>, source_ref "distill"
+   UPDATE distilled_through = end of batch
+     WHERE distilled_through = the value read  (compare-and-swap)
 ```
 
 Every note and document write starts with a deterministic credential scan
@@ -98,7 +122,8 @@ summary, embedding, or any write, so the job fails, nothing from the document is
 and an identical re-upload is refused the same way. Prose that quotes a literal
 `BEGIN … PRIVATE KEY` header is refused as a private key.
 
-Notes are stored exactly as written — the server never summarizes. Before embedding,
+A note is stored exactly as written — the server never rewrites one, and the only notes
+it writes itself are the units the conversation distill job extracts (⑤). Before embedding,
 every note passes the content gate: the chat model judges the text against two lists —
 a note is accepted when a future conversation would otherwise have to ask again and it
 records a durable fact about the user or the people, places, and things around them,
@@ -156,11 +181,45 @@ capture hook; no MCP tool stores one. Each turn is exactly `{role, text}` with r
 same credential scan as notes and documents: a hit refuses the whole upload with HTTP 400
 naming the turn and the detector type. The source is upserted by
 (`namespace`, `origin`, `external_session_id`) and records the storing key's label as
-`created_by`; a re-upload by another non-admin key is refused with 403. Until a note
-links to the source, a re-upload replaces its turns and bounds; after that, identical
-turns return `created: false` without a write, and changed turns are refused with 409 so
-a note's evidence never changes under it. The source is never embedded, gated, or
-indexed for search.
+`created_by`; a re-upload by another non-admin key is refused with 403. A re-upload whose
+turns start with the stored turns appends the rest and replaces the bounds and
+`metadata`, which is how a resumed session that ends again under the same id grows its
+source. Identical turns return `created: false` without a write. Any other change
+replaces the turns only while no note links to the source and `distilled_through` is 0;
+otherwise it is refused with 409, so a note's evidence and the distill cursor never
+change under them. The source itself is never embedded, gated, or indexed for search.
+
+Every upload admits a distill job of kind `conversation` in the same transaction as the
+write, so a failed admission rolls the upload back; when a job for the source is already
+queued the upload returns that job's id, since the job reads the source only when it
+runs. An origin without an extraction prompt (anything but `claude_code` and `hermes`)
+admits no job and returns `job_id: null`. One conversation worker runs the jobs, never
+two for the same source at once, and `GET /conversations/jobs/{job_id}` reports a job's
+`status`, `error`, and `result` to keys that can read its namespace.
+
+The job reads the source's `distilled_through` — the number of turns already distilled
+— and ends `no_op` when fewer than two turns follow it. The remaining turns are split
+into consecutive batches of at most 60,000 characters of turn text; a turn is never
+split, and a single turn over the limit is a batch of its own, cut to the limit in the
+model input only. Each batch is rendered one line per turn as `[index] role: text`,
+indices being absolute positions in the source, under the session date taken from
+`started_at`, into the extraction prompt the origin selects: the coding-session digest
+prompt for `claude_code`, the personal memory prompt for `hermes`
+(`src/memory_base/serve/prompts/`, shared with the LongMemEval harness). The chat model
+returns units of `content`, `kind`, `turn_start`/`turn_end`, `tags`, and an episode's
+`date`; unparseable output is retried once, then the job fails. Each unit is saved
+through `save_note` exactly as an agent's note would be, linked to the source with the
+unit's turn range (the whole batch's range when the unit's range is missing or outside
+the batch), `occurred_at` from a valid past `date`, the unit's tags plus
+`repo:<metadata.repo>` when the client sent one (the origin's name when both are empty),
+`metadata.author` set to the origin, and `source_ref: "distill"`. A unit refused by
+validation, the credential scan, or the content gate counts as `refused`, one refused as
+a near duplicate as `similar`; neither fails the job. After each batch the job advances
+`distilled_through` to the end of that batch by compare-and-swap on the value it read; if
+another job moved the cursor, the update matches no row and the job fails without
+storing anything further. A provider or storage failure fails the job with the cursor
+at the end of the last completed batch, and the next upload's job resumes there. The
+job's `result` is `{units, stored, refused, similar}`.
 
 Document uploads enter a durable Postgres backlog capped by `INGEST_BACKLOG_PER_KEY` and
 `INGEST_BACKLOG_MAX`. Two document workers dispatch fairly across API keys while serializing
@@ -190,7 +249,8 @@ admin-only, fail-closed. `DELETE /ingest/documents/{document_id}?namespace=…` 
 the document's chunks and its `doc_rows` together.
 
 Repo jobs use the same durable jobs table and dispatch one at a time, so interrupted clone,
-pull, remove, and index work is retried after an API restart.
+pull, remove, and index work is retried after an API restart. Conversation jobs share the
+table too, and startup recovery requeues an interrupted one.
 
 The code indexer mounts every subdirectory of `REPO_CACHE` as an independent codebase, so
 adding or removing a checkout adds or tears down its rows on the next run. Clones keep
@@ -392,7 +452,7 @@ periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
 |---|---|
 | `id` | `note:<namespace>:<hash>` · `doc:<document_id>:<ordinal>` |
 | `source_type` | `agent_note` · `document` |
-| `source_ref` | `save_memory` or the document id |
+| `source_ref` | `save_memory`, `distill` for a note written by the conversation distill job, or the document id |
 | `session_id` | the note's own id, or the document id for a document chunk — the unit the search cap (`PER_FILE_CAP` per `(namespace, session_id)`) is keyed on |
 | `chunk_kind` | `note` · `decision` · `episode` · `doc` |
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
@@ -425,8 +485,10 @@ internal — responses carry the report status only.
 `memory.conversation_sources` — one agent session's turns: `id`
 (`conv:<hash>`), `namespace`, `origin` (e.g. `claude_code`, `hermes`),
 `external_session_id`, `started_at`/`ended_at` (epoch seconds), `turns` (jsonb list of
-`{role, text}`; a turn's index is its list position), `created_at`, `created_by`, unique
-on (`namespace`, `origin`, `external_session_id`). No embedding column, no BM25 or
+`{role, text}`; a turn's index is its list position), `metadata` (jsonb, the client's own
+facts such as `repo` and `cwd`), `distilled_through` (turns already distilled; written
+only by the distill job), `created_at`, `created_by`, unique on (`namespace`, `origin`,
+`external_session_id`). No embedding column, no BM25 or
 vector index, never read by search.
 
 `doc_rows`, `messages`, and `conversation_sources` are outside the retrieval contract:
