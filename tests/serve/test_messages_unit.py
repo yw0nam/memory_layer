@@ -416,9 +416,18 @@ def test_render_blockquotes_blank_lines_inside_scalars():
     assert "> a\n>\n> b" in content
 
 
-def test_render_rejects_content_over_4kib_instead_of_truncating():
+def _render_sized_to(total_bytes: int) -> bytes:
+    base = len(messages.render_content("S", "info", "x", None, None, None).encode("utf-8"))
+    return messages.render_content(
+        "S", "info", "x" * (total_bytes - base + 1), None, None, None
+    ).encode("utf-8")
+
+
+def test_render_rejects_content_over_16kib_instead_of_truncating():
+    assert messages.MESSAGE_MAX_CONTENT_BYTES == 16384
+    assert len(_render_sized_to(16384)) == 16384
     with pytest.raises(ValueError):
-        messages.render_content("S", "info", "x" * 5000, None, None, None)
+        _render_sized_to(16385)
 
 
 # ---- TTL / expires_at -----------------------------------------------------------

@@ -22,7 +22,7 @@ Agent-authored messages live in a separate `messages` table on the same pattern 
 invisible to every search path. The write side renders a validated field set into
 canonical Markdown (`# Subject`, `## Status`, `## Result`, optional `## Next`,
 `## Verification`, `## References`), blockquoting every line of user-controlled text so
-nothing escapes the skeleton, and rejects instead of truncating past 4 KiB.
+nothing escapes the skeleton, and rejects instead of truncating past 16 KiB.
 
 - The namespace is the access boundary; a message names its purpose (`message` for a
   namespace-wide signal, `handoff` when it carries a portable scope:
