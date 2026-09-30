@@ -36,6 +36,10 @@ nothing escapes the skeleton, and rejects instead of truncating past 4 KiB.
   ack, or re-read. Cancel and expiry are the other terminal transitions, and the
   admin purge deletes delivered, cancelled, superseded, and expired rows — no
   scheduler and no new sweep.
+- Retention: a general message expires after `MESSAGE_TTL_DAYS` unless its sender
+  gives an earlier `expires_at`. A handoff has no expiry unless its sender gives one
+  (at most 30 days out); it stays pending until it is claimed, superseded by a newer
+  snapshot of its subject, or cancelled.
 - Responses expose the report status (`info`, `in_progress`, `blocked`, `completed`)
   and never the lifecycle timestamps or key identities; a 200 claim or cancel response
   itself proves the transition.
@@ -51,5 +55,5 @@ signal — not transcript capture — and the note gate's refusal is what define
   stays part of the trust boundary.
 - Namespace deletion counts messages as content, so a namespace cannot be dropped out
   from under undelivered signals.
-- A message cannot carry durable knowledge: it expires, and the MCP instructions draw
-  the line explicitly.
+- A message cannot carry durable knowledge: a general message expires, a handoff is
+  consumed by its claim, and the MCP instructions draw the line explicitly.
