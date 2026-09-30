@@ -320,20 +320,25 @@ async def list_conversations(
     ):
         raise ValueError(f"limit must be an integer between 1 and {LIST_CONVERSATIONS_MAX_LIMIT}")
     predicates, args = _listing_predicates(namespaces, since_ts, until_ts, origin)
+    # The page picks ids first so only the returned rows' turns are read.
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         rows = await conn.fetch(
             f"""
-            SELECT id, namespace, origin, external_session_id, started_at, ended_at,
-                   jsonb_array_length(turns) AS turn_count,
-                   metadata->>'repo' AS repo,
+            SELECT s.id, s.namespace, s.origin, s.external_session_id, s.started_at, s.ended_at,
+                   jsonb_array_length(s.turns) AS turn_count,
+                   s.metadata->>'repo' AS repo,
                    left((SELECT t->>'text'
-                         FROM jsonb_array_elements(turns) WITH ORDINALITY AS x(t, n)
+                         FROM jsonb_array_elements(s.turns) WITH ORDINALITY AS x(t, n)
                          WHERE t->>'role' = 'user' ORDER BY n LIMIT 1), {PREVIEW_CHARS}) AS preview
-            FROM "{PG_SCHEMA}".conversation_sources
-            WHERE {predicates}
-            ORDER BY started_at DESC, id
-            LIMIT $1
+            FROM (
+              SELECT id FROM "{PG_SCHEMA}".conversation_sources
+              WHERE {predicates}
+              ORDER BY started_at DESC, id
+              LIMIT $1
+            ) AS page
+            JOIN "{PG_SCHEMA}".conversation_sources AS s ON s.id = page.id
+            ORDER BY s.started_at DESC, s.id
             """,
             limit,
             *args,

@@ -150,6 +150,8 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           UNIQUE (namespace, origin, external_session_id)
         );
         ALTER TABLE {schema}.conversation_sources DROP COLUMN IF EXISTS distilled_through;
+        CREATE INDEX IF NOT EXISTS conversation_sources__started
+          ON {schema}.conversation_sources (started_at DESC);
         ALTER TABLE {schema}.conversation_sources
           ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb;
         CREATE TABLE IF NOT EXISTS {schema}.doc_rows (
