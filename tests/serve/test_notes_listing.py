@@ -281,6 +281,13 @@ def test_list_notes_omits_the_superseded_key_when_unrecorded(monkeypatch):
     assert "supersedes" not in rows[0]
 
 
+def test_list_notes_omits_the_superseded_key_when_null(monkeypatch):
+    conn = FakeConnection([_row(metadata={"tags": [], "supersedes": None})])
+    _patch_conn(monkeypatch, conn)
+    rows = asyncio.run(notes.list_notes())
+    assert "supersedes" not in rows[0]
+
+
 def test_list_notes_filters_by_author(monkeypatch):
     conn = FakeConnection([])
     _patch_conn(monkeypatch, conn)
