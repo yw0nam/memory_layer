@@ -979,3 +979,118 @@ def test_response_never_exposes_key_identity():
         assert "sender_key" not in claimed
     finally:
         asyncio.run(_cleanup(marker))
+
+
+# ---- handoff retention: no expiry unless the sender gives one ----------------------------
+
+
+async def _execute(sql, *args):
+    conn = await asyncpg.connect(db_url())
+    try:
+        return await conn.execute(sql, *args)
+    finally:
+        await conn.close()
+
+
+class _Rollback(Exception):
+    """Carries a value out of a transaction that must not commit."""
+
+
+def test_ensure_schema_makes_an_existing_not_null_expiry_nullable():
+    async def _run():
+        conn = await asyncpg.connect(db_url())
+        try:
+            async with conn.transaction():
+                await conn.execute(f'DELETE FROM "{PG_SCHEMA}".messages WHERE expires_at IS NULL')
+                await conn.execute(
+                    f'ALTER TABLE "{PG_SCHEMA}".messages ALTER COLUMN expires_at SET NOT NULL'
+                )
+                await ensure_schema(conn)
+                nullable = await conn.fetchval(
+                    """
+                    SELECT is_nullable FROM information_schema.columns
+                    WHERE table_schema = $1 AND table_name = 'messages'
+                      AND column_name = 'expires_at'
+                    """,
+                    PG_SCHEMA,
+                )
+                raise _Rollback(nullable)
+        except _Rollback as rollback:
+            return rollback.args[0]
+        finally:
+            await conn.close()
+
+    assert asyncio.run(_run()) == "YES"
+
+
+def test_a_handoff_without_expiry_is_stored_null_and_listed_as_pending():
+    marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
+    subject = f"{marker} open-ended work"
+    try:
+        sent = _send_handoff(subject)
+        assert sent.status_code == 201
+        assert sent.json()["expires_at"] is None
+
+        listed = client.get(
+            "/messages",
+            params={"purpose": "handoff", "scope": "repo:github.com/o/r", "subject": subject},
+        ).json()
+        assert [row["id"] for row in listed] == [sent.json()["id"]]
+        assert listed[0]["expires_at"] is None
+    finally:
+        asyncio.run(_cleanup(marker))
+
+
+def test_a_handoff_without_expiry_is_still_pending_and_claimable_after_thirty_days():
+    marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
+    subject = f"{marker} long-lived work"
+    try:
+        sent = _send_handoff(subject)
+        message_id = sent.json()["id"]
+        asyncio.run(
+            _execute(
+                f'UPDATE "{PG_SCHEMA}".messages '
+                "SET created_at = now() - interval '35 days' WHERE id = $1",
+                uuid.UUID(message_id),
+            )
+        )
+        listed = client.get("/messages", params={"subject": subject}).json()
+        assert [row["id"] for row in listed] == [message_id]
+
+        preview = client.post("/admin/archive", json={}).json()
+        assert message_id not in {row["id"] for row in preview["messages_to_delete"]}
+
+        claimed = client.post(f"/messages/{message_id}/claim")
+        assert claimed.status_code == 200
+        assert claimed.json()["expires_at"] is None
+    finally:
+        asyncio.run(_cleanup(marker))
+
+
+def test_a_handoff_without_expiry_can_be_cancelled():
+    marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
+    try:
+        message_id = _send_handoff(f"{marker} withdrawn work").json()["id"]
+        cancelled = client.delete(f"/messages/{message_id}")
+        assert cancelled.status_code == 200
+        assert client.get("/messages", params={"subject": f"{marker} withdrawn work"}).json() == []
+    finally:
+        asyncio.run(_cleanup(marker))
+
+
+def test_a_handoff_keeps_an_explicit_expiry_and_a_message_defaults_to_the_ttl():
+    marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
+    try:
+        explicit = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+        handoff = _send_handoff(f"{marker} bounded work", expires_at=explicit)
+        assert handoff.status_code == 201
+        assert handoff.json()["expires_at"] == explicit
+
+        general = _send(f"{marker} signal", result="r")
+        remaining = datetime.fromisoformat(general.json()["expires_at"]) - datetime.now(
+            timezone.utc
+        )
+        assert timedelta(days=messages.MESSAGE_TTL_DAYS - 0.1) < remaining
+        assert remaining <= timedelta(days=messages.MESSAGE_TTL_DAYS)
+    finally:
+        asyncio.run(_cleanup(marker))

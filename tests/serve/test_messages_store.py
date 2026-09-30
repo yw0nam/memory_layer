@@ -177,6 +177,35 @@ def test_handoff_send_locks_the_chain_then_inserts_then_supersedes_older_pending
     assert all(depth >= 1 for _, _, depth in conn.statements)
 
 
+def test_a_handoff_sent_without_expiry_is_stored_with_null_expiry(use):
+    conn = use(RecordingConn())
+    row, _ = _handoff()
+
+    ((_, insert_args, _),) = conn.sql("INSERT")
+    assert insert_args[11] is None
+    assert row["expires_at"] is None
+
+
+def test_a_message_sent_without_expiry_is_stored_with_the_default_ttl(use, monkeypatch):
+    monkeypatch.setattr(messages, "MESSAGE_TTL_DAYS", 7)
+    conn = use(RecordingConn())
+    _send()
+
+    ((_, insert_args, _),) = conn.sql("INSERT")
+    remaining = insert_args[11] - datetime.now(timezone.utc)
+    assert timedelta(days=6.9) < remaining <= timedelta(days=7.1)
+
+
+def test_a_handoff_keeps_an_explicit_expiry(use):
+    conn = use(RecordingConn())
+    explicit = datetime.now(timezone.utc) + timedelta(days=3)
+    row, _ = _handoff(expires_at=explicit.isoformat())
+
+    ((_, insert_args, _),) = conn.sql("INSERT")
+    assert insert_args[11] == explicit
+    assert row["expires_at"] == explicit.isoformat()
+
+
 def test_general_message_takes_no_lock_and_supersedes_nothing(use):
     conn = use(RecordingConn())
     row, _ = _send()
@@ -267,7 +296,7 @@ def test_claim_and_cancel_are_one_conditional_update_checked_at_wake_up(use, act
     (update,) = conn.sql("UPDATE")
     assert f"SET {stamp} = clock_timestamp()" in update[0]
     assert "claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL" in update[0]
-    assert "expires_at > clock_timestamp()" in update[0]
+    assert "(expires_at IS NULL OR expires_at > clock_timestamp())" in update[0]
 
 
 def test_a_claim_the_conditional_update_refuses_is_a_conflict(use):
@@ -293,7 +322,7 @@ def test_listing_reads_only_pending_unexpired_rows_newest_first(use):
     )
     ((sql, args, _),) = conn.statements
     assert "claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL" in sql
-    assert "expires_at > now()" in sql
+    assert "(expires_at IS NULL OR expires_at > now())" in sql
     assert "ORDER BY created_at DESC, id DESC" in sql
     assert args == (["default"], "handoff", "repo:github.com/o/r", "deploy plan", 5)
 
@@ -320,6 +349,6 @@ def test_admin_purge_covers_every_namespace_but_only_terminal_rows(use):
         "claimed_at IS NOT NULL",
         "cancelled_at IS NOT NULL",
         "superseded_at IS NOT NULL",
-        "expires_at <= now()",
+        "(expires_at IS NOT NULL AND expires_at <= now())",
     ):
         assert terminal in sql

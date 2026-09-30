@@ -424,36 +424,43 @@ def test_render_rejects_content_over_4kib_instead_of_truncating():
 # ---- TTL / expires_at -----------------------------------------------------------
 
 
-def test_default_ttl_comes_from_message_ttl_days(monkeypatch):
+def test_a_message_without_expiry_expires_after_message_ttl_days(monkeypatch):
     monkeypatch.setattr(messages, "MESSAGE_TTL_DAYS", 7)
-    expires = messages.resolve_expires_at(None)
+    expires = messages.resolve_expires_at("message", None)
     assert timedelta(days=6.9) < expires - datetime.now(timezone.utc) <= timedelta(days=7.1)
 
 
-def test_expires_at_accepts_future_iso_string():
+def test_a_handoff_without_expiry_never_expires():
+    assert messages.resolve_expires_at("handoff", None) is None
+
+
+@pytest.mark.parametrize("purpose", ["message", "handoff"])
+def test_expires_at_accepts_future_iso_string(purpose):
     soon = datetime.now(timezone.utc) + timedelta(days=2)
-    assert messages.resolve_expires_at(soon.isoformat()) == soon
+    assert messages.resolve_expires_at(purpose, soon.isoformat()) == soon
 
 
-def test_expires_at_must_be_in_the_future():
+@pytest.mark.parametrize("purpose", ["message", "handoff"])
+def test_expires_at_must_be_in_the_future(purpose):
     past = datetime.now(timezone.utc) - timedelta(hours=1)
     with pytest.raises(ValueError):
-        messages.resolve_expires_at(past.isoformat())
+        messages.resolve_expires_at(purpose, past.isoformat())
 
 
-def test_expires_at_may_be_at_most_thirty_days_out():
+@pytest.mark.parametrize("purpose", ["message", "handoff"])
+def test_expires_at_may_be_at_most_thirty_days_out(purpose):
     limit = datetime.now(timezone.utc) + timedelta(days=30, minutes=5)
     with pytest.raises(ValueError):
-        messages.resolve_expires_at(limit.isoformat())
+        messages.resolve_expires_at(purpose, limit.isoformat())
     ok = datetime.now(timezone.utc) + timedelta(days=29)
-    assert messages.resolve_expires_at(ok.isoformat()) == ok
+    assert messages.resolve_expires_at(purpose, ok.isoformat()) == ok
 
 
 def test_expires_at_rejects_unparseable_and_non_string():
     with pytest.raises(ValueError):
-        messages.resolve_expires_at("not a date")
+        messages.resolve_expires_at("message", "not a date")
     with pytest.raises(ValueError):
-        messages.resolve_expires_at(12345)
+        messages.resolve_expires_at("handoff", 12345)
 
 
 # ---- idempotency key ------------------------------------------------------------
@@ -531,6 +538,10 @@ def test_public_row_exposes_only_the_contracted_fields():
     assert public["id"] == str(row["id"])
     assert public["created_at"] == row["created_at"].isoformat()
     assert public["expires_at"] == row["expires_at"].isoformat()
+
+
+def test_public_row_renders_a_missing_expiry_as_null():
+    assert messages.public_row(_stored_row(expires_at=None))["expires_at"] is None
 
 
 def test_public_row_keeps_the_report_status_and_hides_lifecycle_timestamps():
