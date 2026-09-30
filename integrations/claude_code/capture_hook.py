@@ -1,7 +1,8 @@
 """Claude Code SessionEnd hook: upload the session's user and assistant turns to memory-base.
 
 Reads the hook payload on stdin, parses the session transcript, and posts its
-text turns to `POST /conversations`, where the server distills them into notes.
+text turns to `POST /conversations`, where the server stores them unembedded as
+the evidence a note can link to.
 Every failure mode is fail-open: exit 0, one log row, never a blocked session
 exit. Stdlib only — the script runs under whatever python3 Claude Code invokes,
 outside any venv.
@@ -171,7 +172,7 @@ def run_hook(payload: dict, post: Callable[[dict], dict], namespace: str) -> dic
         row["decision"] = "skipped"
         return row
     reply = post(build_body(payload, turns, started, ended, namespace))
-    row.update(decision="uploaded", conversation_id=reply.get("id"), job_id=reply.get("job_id"))
+    row.update(decision="uploaded", conversation_id=reply.get("id"))
     return row
 
 

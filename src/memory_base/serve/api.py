@@ -355,7 +355,7 @@ CONVERSATION_BODY_FIELDS = frozenset(
 
 
 async def conversations_store_route(request: Request) -> JSONResponse:
-    """Store or extend a conversation source and queue its distill job; namespace defaults to key.home."""
+    """Store or extend a conversation source; namespace defaults to key.home."""
     key = request.state.key
     try:
         body = await json_body(request)
@@ -419,14 +419,6 @@ async def conversations_list_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse(rows)
-
-
-async def conversation_job_route(request: Request) -> JSONResponse:
-    """A distill job's state and result, visible to keys that can read its namespace."""
-    job = await job_store.get_job(request.path_params["job_id"], kind="conversation")
-    if job is None or not request.state.key.permits(job.namespace):
-        return error("conversation job not found", 404)
-    return JSONResponse(job.response())
 
 
 async def conversation_get_route(request: Request) -> JSONResponse:
@@ -848,7 +840,6 @@ app = Starlette(
         Route("/notes", notes_list_route, methods=["GET"]),
         Route("/conversations", conversations_store_route, methods=["POST"]),
         Route("/conversations", conversations_list_route, methods=["GET"]),
-        Route("/conversations/jobs/{job_id}", conversation_job_route, methods=["GET"]),
         Route("/conversations/{conversation_id}", conversation_get_route, methods=["GET"]),
         Route("/messages", messages_send_route, methods=["POST"]),
         Route("/messages", messages_list_route, methods=["GET"]),

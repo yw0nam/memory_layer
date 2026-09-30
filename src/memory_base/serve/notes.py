@@ -197,7 +197,6 @@ def build_note_row(
     turn_start: int | None = None,
     turn_end: int | None = None,
     occurred_at: float | None = None,
-    source_ref: str = "save_memory",
 ) -> dict[str, Any]:
     """Validate a note and map it to memory_chunks columns (no embedding).
 
@@ -221,7 +220,7 @@ def build_note_row(
     return {
         "id": note_id,
         "source_type": "agent_note",
-        "source_ref": source_ref,
+        "source_ref": "save_memory",
         "kind": kind,
         "session_id": note_id,
         "raw": content,
@@ -271,7 +270,6 @@ async def save_note(
     conversation_id: str | None = None,
     turn_start: int | None = None,
     turn_end: int | None = None,
-    source_ref: str = "save_memory",
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory.
 
@@ -279,7 +277,6 @@ async def save_note(
     stays the note's recency timestamp; a future or unparseable value raises
     ValueError. `conversation_id` links the note to a stored conversation source
     in the same namespace, optionally to its turns `turn_start`..`turn_end`.
-    `source_ref` names the writer: `save_memory`, or `distill` for the conversation job.
     """
     now = time.time()
     occurred_ts = parse_time_bound(occurred_at) if occurred_at is not None else None
@@ -296,7 +293,6 @@ async def save_note(
         turn_start=turn_start,
         turn_end=turn_end,
         occurred_at=occurred_ts,
-        source_ref=source_ref,
     )
     secret_type = find_secret("\n".join([content, *(tags or [])]))
     if secret_type is not None:

@@ -496,8 +496,8 @@ async def save_memory(
     show it as the note's date and since/until filter by it, while recency
     ranking keeps the save time. A future or unparseable value is rejected.
 
-    `conversation_id` links the note to the stored conversation source it was
-    distilled from (the id the capture hook received), and `turn_start`/`turn_end`
+    `conversation_id` links the note to the stored conversation source it comes
+    from (the id the capture hook received), and `turn_start`/`turn_end`
     narrow the link to that inclusive range of 0-based turns; the source must
     exist in the note's namespace. Identical content from two conversations is
     stored as two notes.

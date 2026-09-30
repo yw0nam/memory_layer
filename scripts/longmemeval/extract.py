@@ -4,8 +4,8 @@
 Every (session_id, date) unit of the selected questions goes once to the extractor model
 with one committed prompt: "agent" (a personal assistant's memory writer), "digest" (the
 session-digest rules with the memory save policy), or "personal" (the session-digest
-rules with the personal memory policy). "digest" and "personal" are the production
-conversation-distill prompts, read from the package with their numbered-turn rendering
+rules with the personal memory policy). "digest" and "personal" are the packaged
+extraction prompts (memory_base.eval.extraction), with their numbered-turn rendering
 and output contract; each returned note is then judged by the production content
 gate (after the same length, kind, and credential checks save_note applies first) and its
 verdict recorded, or recorded as "unjudged" with `--gate off`, which never calls the gate.
@@ -37,10 +37,10 @@ from openai import AsyncOpenAI
 
 from memory_base.core import llm
 from memory_base.core.secrets import find_secret
+from memory_base.eval import extraction
 from memory_base.eval import longmemeval as lme
-from memory_base.serve import distill
+from memory_base.eval.extraction import parse_extraction
 from memory_base.serve import notes as notes_module
-from memory_base.serve.distill import parse_extraction
 
 # Run as a script, this file sees its own directory on sys.path, not the package's parent.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -50,16 +50,16 @@ NOTES_FILE = lme.NOTES_FILE
 SESSIONS_FILE = lme.SESSIONS_FILE
 PROMPTS = {
     "agent": Path(__file__).with_name("extract_prompt.txt").read_text(encoding="utf-8"),
-    "digest": distill.load_prompt("digest"),
-    "personal": distill.load_prompt("personal"),
+    "digest": extraction.load_prompt("digest"),
+    "personal": extraction.load_prompt("personal"),
 }
 SYSTEM_PROMPT = (
     'Return only JSON: {"notes": [{"content": string, "kind": "note"|"decision"|"episode"}]}'
 )
 SYSTEM_PROMPTS = {
     "agent": SYSTEM_PROMPT,
-    "digest": distill.EXTRACTION_SYSTEM_PROMPT,
-    "personal": distill.EXTRACTION_SYSTEM_PROMPT,
+    "digest": extraction.EXTRACTION_SYSTEM_PROMPT,
+    "personal": extraction.EXTRACTION_SYSTEM_PROMPT,
 }
 DEFAULT_MODEL = {"zai": "glm-5.3-flash", "claude-code": "claude-sonnet-5-5"}
 DEFAULT_CONCURRENCY = 5
@@ -110,7 +110,7 @@ def build_messages(
     if prompt == "agent":
         session = render_session(turns)
     else:
-        session = distill.render_turns(
+        session = extraction.render_turns(
             [{"role": turn["role"], "text": turn["content"]} for turn in turns]
         )
     return [

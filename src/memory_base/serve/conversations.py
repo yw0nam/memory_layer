@@ -1,12 +1,10 @@
 """Conversation sources: the user and assistant turns of one session, stored unembedded.
 
-A source is evidence a note points back to, read by address and turn range only:
-it is never embedded, never indexed for BM25, and never read by search. The id is
-derived from (namespace, origin, external_session_id), so re-uploading a session
-replaces its turns in place until a note references the source or a distill job has
-consumed some of them; from then on the stored turns are fixed and a re-upload may
-only append turns after them. Every upload admits a distill job inside the upload's
-transaction.
+A source is evidence a note points back to, read by address, turn range, and
+substring: it is never embedded, never indexed for BM25, and never read by search.
+The id is derived from (namespace, origin, external_session_id), so re-uploading a
+session replaces its turns in place until a note references the source; from then
+on the stored turns are fixed and a re-upload may only append turns after them.
 """
 
 from __future__ import annotations
@@ -15,7 +13,6 @@ import hashlib
 import json
 import math
 import time
-import uuid
 from typing import Any
 
 from memory_base.core import db
@@ -23,8 +20,7 @@ from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
 from memory_base.retrieval.search import normalize_time_range
-from memory_base.serve import job_store, namespaces
-from memory_base.serve.distill import ORIGIN_PROMPTS
+from memory_base.serve import namespaces
 
 CONVERSATION_MAX_CHARS = 2_000_000
 IDENTIFIER_MAX_CHARS = 256
@@ -41,7 +37,7 @@ class ConversationTooLarge(ValueError):
 
 
 class ConversationConflict(Exception):
-    """A re-upload would change the stored turns of a referenced or distilled source."""
+    """A re-upload would change the stored turns of a referenced source."""
 
 
 class ConversationForbidden(Exception):
@@ -113,20 +109,6 @@ def validate_metadata(metadata: Any) -> str:
     return payload
 
 
-async def _admit(conn: Any, key: Any, namespace: str, origin: str, source_id: str) -> str | None:
-    if origin not in ORIGIN_PROMPTS:
-        return None
-    job = await job_store.admit_conversation(
-        job_id=uuid.uuid4().hex,
-        key_id=key.key_id,
-        key_label=key.label,
-        namespace=namespace,
-        conversation_id=source_id,
-        connection=conn,
-    )
-    return job.job_id
-
-
 async def store_conversation(
     key: Any,
     *,
@@ -138,10 +120,7 @@ async def store_conversation(
     turns: Any,
     metadata: Any = None,
 ) -> dict[str, Any]:
-    """Insert or update a source and admit its distill job; `created` says which happened.
-
-    `job_id` is null for an origin with no extraction prompt.
-    """
+    """Insert or update a source; `created` says which happened."""
     origin = _identifier(origin, "origin")
     external_session_id = _identifier(external_session_id, "external_session_id")
     started = _epoch(started_at, "started_at")
@@ -177,11 +156,10 @@ async def store_conversation(
                 key.label,
             )
             if status.endswith(" 1"):
-                job_id = await _admit(conn, key, namespace, origin, source_id)
-                return {**result, "created": True, "job_id": job_id}
+                return {**result, "created": True}
             existing = await conn.fetchrow(
                 f"""
-                SELECT created_by, turns, distilled_through
+                SELECT created_by, turns
                 FROM "{PG_SCHEMA}".conversation_sources
                 WHERE id = $1
                 FOR UPDATE
@@ -197,7 +175,7 @@ async def store_conversation(
                 stored = json.loads(stored)
             if stored != clean_turns:
                 if clean_turns[: len(stored)] != stored:
-                    await _refuse_rewrite(conn, source_id, existing["distilled_through"])
+                    await _refuse_rewrite(conn, source_id)
                 await conn.execute(
                     f"""
                     UPDATE "{PG_SCHEMA}".conversation_sources
@@ -210,18 +188,11 @@ async def store_conversation(
                     ended,
                     metadata_payload,
                 )
-            job_id = await _admit(conn, key, namespace, origin, source_id)
-    return {**result, "job_id": job_id}
+    return result
 
 
-async def _refuse_rewrite(conn: Any, source_id: str, distilled_through: int) -> None:
-    """A rewrite that is not an append is refused once notes or the distill cursor depend on it."""
-    if distilled_through > 0:
-        raise ConversationConflict(
-            f"conversation source {source_id} has {distilled_through} distilled turns, so its "
-            "stored turns cannot change; re-upload them unchanged with any new turns appended, "
-            "or store the changed session under a new external_session_id"
-        )
+async def _refuse_rewrite(conn: Any, source_id: str) -> None:
+    """A rewrite that is not an append is refused once notes depend on the source."""
     # A separate statement after the row lock sees notes committed while it waited.
     referenced = await conn.fetchval(
         f"""
