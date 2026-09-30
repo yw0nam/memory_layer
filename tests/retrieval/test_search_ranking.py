@@ -230,3 +230,29 @@ def test_without_a_budget_rerank_top_and_the_floor_still_apply(run_search):
     assert len(hits) <= search.RERANK_TOP
     assert all(h.score >= search.MIN_SCORE for h in hits)
     assert len(hits) == 8
+
+
+# ---- hit meta ----------------------------------------------------------------
+
+
+def test_memory_hit_meta_carries_the_superseded_id_when_recorded(run_search):
+    row = memory_row("replacing-note", time.time())
+    row["metadata"] = {"supersedes": "note:old0000000000"}
+
+    hits = run_search(
+        FakeConn(memory_vec=[row]),
+        FakeReranker({"replacing-note": 0.9}),
+        source="memory",
+    )
+
+    assert hits[0].meta["supersedes"] == "note:old0000000000"
+
+
+def test_memory_hit_meta_reports_no_superseded_id_when_unrecorded(run_search):
+    hits = run_search(
+        FakeConn(memory_vec=[memory_row("plain-note", time.time())]),
+        FakeReranker({"plain-note": 0.9}),
+        source="memory",
+    )
+
+    assert hits[0].meta["supersedes"] is None

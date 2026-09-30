@@ -267,6 +267,20 @@ def test_list_notes_reports_archived_by_when_recorded(monkeypatch):
     assert rows[0]["archived_by"] == "claude-code"
 
 
+def test_list_notes_exposes_the_superseded_id_when_recorded(monkeypatch):
+    conn = FakeConnection([_row(metadata={"tags": ["infra"], "supersedes": "note:old0000000000"})])
+    _patch_conn(monkeypatch, conn)
+    rows = asyncio.run(notes.list_notes())
+    assert rows[0]["supersedes"] == "note:old0000000000"
+
+
+def test_list_notes_omits_the_superseded_key_when_unrecorded(monkeypatch):
+    conn = FakeConnection([_row()])
+    _patch_conn(monkeypatch, conn)
+    rows = asyncio.run(notes.list_notes())
+    assert "supersedes" not in rows[0]
+
+
 def test_list_notes_filters_by_author(monkeypatch):
     conn = FakeConnection([])
     _patch_conn(monkeypatch, conn)

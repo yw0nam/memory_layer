@@ -403,6 +403,27 @@ def test_supersede_whose_content_matches_an_active_note_archives_the_target(monk
     assert len(conn.updates) == 1
 
 
+# ---- save_note: the replacement records the superseded id --------------------
+
+
+def test_supersede_stores_the_archived_notes_id_in_the_new_notes_metadata(monkeypatch):
+    conn = FakeConnection()
+    _patch_note_deps(monkeypatch, conn)
+    asyncio.run(
+        save_note("new content", tags=["test"], supersedes="note:old0000000000", author="natsume")
+    )
+    metadata = json.loads(conn.inserts[0][1][10])
+    assert metadata["supersedes"] == "note:old0000000000"
+
+
+def test_plain_save_stores_no_supersedes_key_in_the_metadata(monkeypatch):
+    conn = FakeConnection()
+    _patch_note_deps(monkeypatch, conn)
+    asyncio.run(save_note("new content", tags=["test"], author="natsume"))
+    metadata = json.loads(conn.inserts[0][1][10])
+    assert "supersedes" not in metadata
+
+
 # ---- save_note: the near-duplicate gate -------------------------------------
 
 
@@ -679,6 +700,51 @@ def test_supersede_archives_old_note_and_stores_new_one(client):
 
         assert asyncio.run(_fetch_archived_at(note_a)) is not None
         assert asyncio.run(_fetch_archived_at(note_b)) is None
+    finally:
+        asyncio.run(_delete(note_a))
+        asyncio.run(_delete(note_b))
+
+
+@pytest.mark.integration
+def test_supersede_pointer_is_visible_in_notes_listing_and_search(client):
+    content_a = f"supersede pointer integration pin A {NOW}: zzzsupersedepin unique marker four"
+    content_b = f"supersede pointer integration pin B {NOW}: zzzsupersedepin unique marker five"
+    note_a = build_note_row(content_a, "note", ["test"], NOW)["id"]
+    note_b = build_note_row(content_b, "note", ["test"], NOW)["id"]
+    asyncio.run(_delete(note_a))
+    asyncio.run(_delete(note_b))
+    try:
+        response_a = client.post(
+            "/save_memory", json={"author": "natsume", "content": content_a, "tags": ["test"]}
+        )
+        assert response_a.status_code == 200
+        response_b = client.post(
+            "/save_memory",
+            json={
+                "author": "natsume",
+                "content": content_b,
+                "tags": ["test"],
+                "supersedes": note_a,
+            },
+        )
+        assert response_b.status_code == 200
+
+        listing = client.get("/notes")
+        assert listing.status_code == 200
+        listed = {row["id"]: row for row in listing.json()}
+        assert listed[note_b]["supersedes"] == note_a
+        archived_listing = client.get("/notes?include_archived=true")
+        assert archived_listing.status_code == 200
+        archived = {row["id"]: row for row in archived_listing.json()}
+        assert "supersedes" not in archived[note_a]
+
+        found = client.post(
+            "/search",
+            json={"query": content_b, "source": "memory", "namespaces": ["default"]},
+        )
+        assert found.status_code == 200
+        hit = next(h for h in found.json() if h["id"] == note_b)
+        assert hit["supersedes"] == note_a
     finally:
         asyncio.run(_delete(note_a))
         asyncio.run(_delete(note_b))

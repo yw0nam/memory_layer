@@ -263,6 +263,10 @@ def test_server_instructions_state_the_write_policy_and_the_refusal_recovery():
     assert "\n\n\n" not in SERVER_INSTRUCTIONS
 
 
+def test_server_instructions_tell_agents_to_search_before_superseding():
+    assert "search_memory the same subject" in SERVER_INSTRUCTIONS
+
+
 def test_judge_prompt_states_one_general_criterion_without_domain_anchors():
     assert "provenance" in JUDGE_PROMPT
     for anchor in ("PR", "commit", "namespace", "file does", "session that produced"):
