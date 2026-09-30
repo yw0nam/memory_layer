@@ -425,7 +425,7 @@ def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(mon
         calls.append(kwargs)
         return [Hit(i) for i in range(7)]
 
-    async def load(namespace, units, notes_by_unit, gate):
+    async def load(namespace, units, notes_by_unit, gate, writer=None):
         calls.append(gate)
         return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(7)}
 
@@ -468,7 +468,7 @@ def test_a_budget_run_passes_the_budget_to_search_and_keeps_every_packed_hit(mon
         calls.append(kwargs)
         return [Hit(i) for i in range(12)]
 
-    async def load(namespace, units, notes_by_unit, gate):
+    async def load(namespace, units, notes_by_unit, gate, writer=None):
         return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(12)}
 
     async def create(namespace):
@@ -734,3 +734,194 @@ def test_a_packet_hit_is_dated_by_the_note_occurred_at():
 
     record = lme._hit_record(Hit(), {"n1": {("s1", D1)}})
     assert record["date"] == "2023/05/20 (Sat) 02:21"
+
+
+class ConfigWriter:
+    def __init__(self, config):
+        self._config = config
+
+    def config(self):
+        return self._config
+
+
+def test_a_packet_records_the_writer_config_or_the_plain_writer(monkeypatch):
+    from memory_base.eval import retrieval
+    from memory_base.serve import namespaces
+
+    class Hit:
+        meta = {"id": "n0", "occurred_at": 1.0}
+        ts, score, text = 1.0, 0.9, "t"
+
+    seen = []
+
+    async def search(query, **kwargs):
+        return [Hit()]
+
+    async def load(namespace, units, notes_by_unit, gate, writer=None):
+        seen.append(writer)
+        return lme.LoadStats(), {"n0": {("s1", D1)}}
+
+    async def create(namespace):
+        pass
+
+    monkeypatch.setattr(retrieval, "_search_with_retry", search)
+    monkeypatch.setattr(lme, "load_question_notes", load)
+    monkeypatch.setattr(namespaces, "create_namespace", create)
+    question = make_question("q1", "multi-session", sessions=[("s1", D1)])
+    writer = ConfigWriter({"kind": "agent", "model": "m"})
+    packet = asyncio.run(lme.retrieve_question(question, {}, "gate-off", writer=writer))
+    assert seen == [writer]
+    assert packet["writer"] == {"kind": "agent", "model": "m"}
+    packet = asyncio.run(lme.retrieve_question(question, {}, "gate-off"))
+    assert seen[-1] is None
+    assert packet["writer"] == lme.PLAIN_WRITER == {"kind": "plain"}
+
+
+def retrieve_setup(tmp_path, monkeypatch, row_writer):
+    """A data dir whose packets file holds the first subset question with `row_writer`."""
+    from contextlib import contextmanager
+
+    from memory_base.serve import notes
+
+    dataset = synthetic_dataset()
+    for question in dataset:
+        question["answer_session_ids"] = ["s1"]
+    dataset_path = tmp_path / "dataset.json"
+    dataset_path.write_text(json.dumps(dataset))
+    done, pending = (q["question_id"] for q in lme.select_subset(dataset)[:2])
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    def packet(qid, writer):
+        row = {"question_id": qid, "question": "q?", "hits": [], "load": {"submitted": 0}}
+        row["question_date"] = "2023/06/01 (Thu) 10:00"
+        return row if writer is None else {**row, "writer": writer}
+
+    lme.append_jsonl(lme.packets_path(data_dir, "baseline"), [packet(done, row_writer)])
+    manifest = tmp_path / "manifest.json"
+    common = ["--dataset", str(dataset_path), "--data-dir", str(data_dir)]
+    common += ["--manifest", str(manifest)]
+
+    @contextmanager
+    def database():
+        yield {"image": "x", "url": "postgresql://memory:pw@127.0.0.1:1/memory_base"}
+
+    retrieved = []
+
+    async def retrieve_all(pending_questions, notes_by_unit, run, out_path, db_url, writer):
+        config = writer.config() if writer else lme.PLAIN_WRITER
+        retrieved.append(config)
+        lme.append_jsonl(out_path, [packet(q["question_id"], config) for q in pending_questions])
+        return []
+
+    monkeypatch.setattr(notes, "judge_note_content", notes.judge_note_content)
+    monkeypatch.setattr(lme, "throwaway_postgres", database)
+    monkeypatch.setattr(lme, "_retrieve_all", retrieve_all)
+    revisions_captured_in_order(monkeypatch)
+    return common, done, pending, manifest, retrieved
+
+
+def agent_config():
+    from memory_base.eval import agent_writer as aw
+
+    return {
+        "kind": "agent",
+        "model": aw.WRITER_MODEL,
+        "effort": aw.WRITER_EFFORT,
+        "prompt_sha": lme.prompt_sha(aw.WRITER_SYSTEM_PROMPT + "\n" + aw.WRITER_PROMPT),
+    }
+
+
+@pytest.mark.parametrize(
+    ("row_writer", "flags"),
+    [
+        ({"kind": "agent", "model": "m"}, []),
+        (None, []),
+        ({"kind": "plain"}, ["--writer", "agent"]),
+    ],
+)
+def test_retrieve_refuses_to_add_packets_from_another_writer_config(
+    tmp_path, monkeypatch, row_writer, flags
+):
+    common, _, pending, manifest, retrieved = retrieve_setup(tmp_path, monkeypatch, row_writer)
+    with pytest.raises(SystemExit):
+        lme.main(["retrieve", *common, "--questions", pending, *flags])
+    assert retrieved == []
+
+
+@pytest.mark.parametrize(
+    ("row_writer", "flags"),
+    [({"kind": "plain"}, []), ("agent", ["--writer", "agent"])],
+)
+def test_retrieve_resumes_a_packets_file_written_by_the_same_writer_config(
+    tmp_path, monkeypatch, row_writer, flags
+):
+    config = agent_config() if row_writer == "agent" else row_writer
+    common, _, pending, manifest, retrieved = retrieve_setup(tmp_path, monkeypatch, config)
+    lme.main(["retrieve", *common, "--questions", pending, *flags])
+    assert retrieved == [config]
+    assert lme.read_manifest(manifest)["retrieve"]["writer"] == config
+    assert len(lme.read_jsonl(lme.packets_path(tmp_path / "data", "baseline"))) == 2
+
+
+def test_retrieve_with_nothing_pending_ignores_the_rows_writer_config(tmp_path, monkeypatch):
+    common, done, _, manifest, retrieved = retrieve_setup(
+        tmp_path, monkeypatch, {"kind": "agent", "model": "m"}
+    )
+    lme.main(["retrieve", *common, "--questions", done])
+    assert retrieved == []
+    assert lme.read_manifest(manifest)["retrieve"]["writer"] == {"kind": "plain"}
+
+
+def test_the_agent_writer_refuses_the_dated_variant(tmp_path, monkeypatch):
+    common, _, pending, _, retrieved = retrieve_setup(tmp_path, monkeypatch, None)
+    with pytest.raises(SystemExit, match="baseline and gate-off"):
+        lme.main(["retrieve", *common, "--writer", "agent", "--variant", "dated"])
+    assert retrieved == []
+
+
+def test_hit_judgments_live_beside_the_run_packets():
+    assert lme.hit_judgments_path(Path("d"), "candidates-gate-off") == Path(
+        "d/hit-judgments-candidates-gate-off.jsonl"
+    )
+    assert lme.hit_judgments_path(Path("d"), "baseline") == Path("d/hit-judgments.jsonl")
+
+
+def test_frontier_prints_the_grid_for_the_selected_run(tmp_path, capsys):
+    dataset = [
+        make_question("q1", "multi-session", answers=["s1"]),
+        make_question("q2", "single-session-user", answers=["s2"]),
+    ]
+    dataset_path = tmp_path / "dataset.json"
+    dataset_path.write_text(json.dumps(dataset))
+    run = "candidates-gate-off"
+
+    def hit(sid, score):
+        return {
+            "id": sid,
+            "date": D1,
+            "score": score,
+            "text": f"fact {sid}",
+            "sessions": [[sid, D1]],
+        }
+
+    packets = [
+        {"question_id": "q1", "hits": [hit("s1", 0.9), hit("s9", 0.2)]},
+        {"question_id": "q2", "hits": [hit("s2", 0.8)]},
+    ]
+    lme.append_jsonl(lme.packets_path(tmp_path, run), packets)
+    judgments = [
+        {"question_id": "q1", "texts": ["fact s1", "fact s9"], "labels": ["useful", "unrelated"],
+         "min_prefix": 1},
+        {"question_id": "q2", "texts": ["fact s2"], "labels": ["useful"], "min_prefix": 1},
+    ]  # fmt: skip
+    lme.append_jsonl(lme.hit_judgments_path(tmp_path, run), judgments)
+    lme.main(
+        ["frontier", "--dataset", str(dataset_path), "--data-dir", str(tmp_path)]
+        + ["--gate", "off", "--read", "candidates"]
+    )
+    out = capsys.readouterr().out
+    assert "2 questions" in out
+    assert "| top_k | floor | coverage |" in out
+    assert "Best cell" in out
+    assert not (tmp_path / "report.md").exists()

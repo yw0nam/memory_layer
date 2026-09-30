@@ -409,7 +409,7 @@ def test_units_are_extracted_with_the_selected_prompt(tmp_path):
 def test_the_claude_code_extractor_sends_the_system_and_user_turns_and_strips_a_fence(
     monkeypatch,
 ):
-    from longmemeval import answer
+    from memory_base.eval import claude_code
 
     seen = {}
 
@@ -417,7 +417,7 @@ def test_the_claude_code_extractor_sends_the_system_and_user_turns_and_strips_a_
         seen["system"], seen["prompt"] = self.system_prompt, prompt
         return '```json\n{"notes": []}\n```', 10, 2
 
-    monkeypatch.setattr(answer.ClaudeCodeModel, "complete", complete)
+    monkeypatch.setattr(claude_code.ClaudeCodeModel, "complete", complete)
     client = extract.ClaudeCodeExtractor(model="claude-sonnet-5-5", effort="high")
     messages = extract.build_messages(DATE_A, [{"role": "user", "content": "hi"}])
     text, in_tok, out_tok = asyncio.run(client.complete(messages))
