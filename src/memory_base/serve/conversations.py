@@ -22,6 +22,7 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
+from memory_base.retrieval.search import normalize_time_range
 from memory_base.serve import job_store, namespaces
 from memory_base.serve.distill import ORIGIN_PROMPTS
 
@@ -30,6 +31,9 @@ IDENTIFIER_MAX_CHARS = 256
 METADATA_MAX_BYTES = 2048
 TURN_ROLES = ("user", "assistant")
 TURN_KEYS = frozenset({"role", "text"})
+LIST_CONVERSATIONS_DEFAULT_LIMIT = 50
+LIST_CONVERSATIONS_MAX_LIMIT = 200
+PREVIEW_CHARS = 200
 
 
 class ConversationTooLarge(ValueError):
@@ -249,12 +253,20 @@ async def get_conversation(
     *,
     turn_start: Any = None,
     turn_end: Any = None,
+    contains: Any = None,
 ) -> dict[str, Any]:
-    """A readable source with its turns sliced to [turn_start, turn_end], both inclusive."""
+    """A readable source with its turns sliced to [turn_start, turn_end], both inclusive.
+
+    A non-empty `contains` keeps only the sliced turns whose text contains it,
+    case-insensitively; each kept turn keeps its original index.
+    """
     start = _turn_bound(turn_start, "turn_start")
     end = _turn_bound(turn_end, "turn_end")
     if start is not None and end is not None and start > end:
         raise ValueError("turn_start must not be greater than turn_end")
+    if contains is not None and not isinstance(contains, str):
+        raise ValueError("contains must be a string")
+    needle = (contains or "").casefold()
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         row = await conn.fetchrow(
@@ -285,5 +297,74 @@ async def get_conversation(
         "external_session_id": row["external_session_id"],
         "started_at": row["started_at"],
         "ended_at": row["ended_at"],
-        "turns": [{"index": i, **turns[i]} for i in range(first, final + 1)],
+        "turns": [
+            {"index": i, **turns[i]}
+            for i in range(first, final + 1)
+            if needle in turns[i]["text"].casefold()
+        ],
     }
+
+
+def _listing_predicates(
+    namespaces: list[str] | None,
+    since: float | None,
+    until: float | None,
+    origin: str | None,
+) -> tuple[str, list[Any]]:
+    """Filter clauses over conversation_sources; placeholders start at $2, $1 being the limit."""
+    clauses: list[str] = []
+    args: list[Any] = []
+    for value, clause in (
+        (namespaces, "namespace = ANY(${}::text[])"),
+        (since, "started_at >= ${}"),
+        (until, "started_at < ${}"),
+        (origin, "origin = ${}"),
+    ):
+        if value is not None:
+            args.append(value)
+            clauses.append(clause.format(len(args) + 1))
+    return " AND ".join(clauses) or "true", args
+
+
+async def list_conversations(
+    *,
+    namespaces: list[str] | None,
+    since: str | None = None,
+    until: str | None = None,
+    origin: str | None = None,
+    limit: int = LIST_CONVERSATIONS_DEFAULT_LIMIT,
+) -> list[dict[str, Any]]:
+    """Sources newest first by start time, each with its turn count and first user turn cut short.
+
+    `namespaces` of None means every namespace (the caller resolves permission
+    scope before calling); `until` is exclusive.
+    """
+    since_ts, until_ts = normalize_time_range(since, until)
+    if origin is not None and (not isinstance(origin, str) or not origin.strip()):
+        raise ValueError("origin must be a non-empty string")
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not 1 <= limit <= LIST_CONVERSATIONS_MAX_LIMIT
+    ):
+        raise ValueError(f"limit must be an integer between 1 and {LIST_CONVERSATIONS_MAX_LIMIT}")
+    predicates, args = _listing_predicates(namespaces, since_ts, until_ts, origin)
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        rows = await conn.fetch(
+            f"""
+            SELECT id, namespace, origin, external_session_id, started_at, ended_at,
+                   jsonb_array_length(turns) AS turn_count,
+                   metadata->>'repo' AS repo,
+                   left((SELECT t->>'text'
+                         FROM jsonb_array_elements(turns) WITH ORDINALITY AS x(t, n)
+                         WHERE t->>'role' = 'user' ORDER BY n LIMIT 1), {PREVIEW_CHARS}) AS preview
+            FROM "{PG_SCHEMA}".conversation_sources
+            WHERE {predicates}
+            ORDER BY started_at DESC, id
+            LIMIT $1
+            """,
+            limit,
+            *args,
+        )
+    return [dict(row) for row in rows]

@@ -391,6 +391,36 @@ async def conversations_store_route(request: Request) -> JSONResponse:
     return JSONResponse(result, status_code=201 if result["created"] else 200)
 
 
+async def conversations_list_route(request: Request) -> JSONResponse:
+    """List conversation sources newest first by time filters alone, scoped like notes."""
+    key = request.state.key
+    params = request.query_params
+    try:
+        limit = int(params.get("limit", str(conversations.LIST_CONVERSATIONS_DEFAULT_LIMIT)))
+    except ValueError:
+        return error("limit must be an integer")
+    try:
+        requested_namespaces = normalize_namespaces(params.getlist("namespace") or None)
+    except ValueError as exc:
+        return error(str(exc))
+    if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
+        return error("requested namespaces are outside the caller's allowed set", 403)
+    scope = requested_namespaces
+    if scope is None and not key.is_admin:
+        scope = sorted(key.allowed)
+    try:
+        rows = await conversations.list_conversations(
+            namespaces=scope,
+            since=params.get("since"),
+            until=params.get("until"),
+            origin=params.get("origin"),
+            limit=limit,
+        )
+    except ValueError as exc:
+        return error(str(exc))
+    return JSONResponse(rows)
+
+
 async def conversation_job_route(request: Request) -> JSONResponse:
     """A distill job's state and result, visible to keys that can read its namespace."""
     job = await job_store.get_job(request.path_params["job_id"], kind="conversation")
@@ -400,7 +430,7 @@ async def conversation_job_route(request: Request) -> JSONResponse:
 
 
 async def conversation_get_route(request: Request) -> JSONResponse:
-    """Read a conversation source's turns, optionally one inclusive turn range."""
+    """Read a conversation source's turns, optionally one inclusive turn range and a substring."""
     params = request.query_params
     bounds: dict[str, int | None] = {}
     for name in ("turn_start", "turn_end"):
@@ -411,7 +441,10 @@ async def conversation_get_route(request: Request) -> JSONResponse:
             return error(f"{name} must be an integer")
     try:
         row = await conversations.get_conversation(
-            request.path_params["conversation_id"], request.state.key, **bounds
+            request.path_params["conversation_id"],
+            request.state.key,
+            **bounds,
+            contains=params.get("contains"),
         )
     except conversations.ConversationNotFound as exc:
         return error(str(exc), 404)
@@ -814,6 +847,7 @@ app = Starlette(
         Route("/save_memory", save_memory_route, methods=["POST"]),
         Route("/notes", notes_list_route, methods=["GET"]),
         Route("/conversations", conversations_store_route, methods=["POST"]),
+        Route("/conversations", conversations_list_route, methods=["GET"]),
         Route("/conversations/jobs/{job_id}", conversation_job_route, methods=["GET"]),
         Route("/conversations/{conversation_id}", conversation_get_route, methods=["GET"]),
         Route("/messages", messages_send_route, methods=["POST"]),
