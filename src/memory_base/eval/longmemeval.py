@@ -283,6 +283,7 @@ class LoadStats:
     gate_refused: int = 0
     agent_calls: int = 0
     superseded: int = 0
+    archived: int = 0
     agent_errors: int = 0
 
 
@@ -834,9 +835,12 @@ def _writer(args: argparse.Namespace) -> Any:
     from memory_base.eval.agent_writer import WRITER_SYSTEM_PROMPT, AgentWriter
     from memory_base.eval.claude_code import ClaudeCodeModel
     from memory_base.eval.retrieval import _search_with_retry
+    from memory_base.serve.admin import archive_rows
 
     model = ClaudeCodeModel(args.writer_model, args.writer_effort, WRITER_SYSTEM_PROMPT)
-    return AgentWriter(model, _search_with_retry, args.writer_model, args.writer_effort)
+    return AgentWriter(
+        model, _search_with_retry, archive_rows, args.writer_model, args.writer_effort
+    )
 
 
 def run_retrieve(args: argparse.Namespace) -> None:
