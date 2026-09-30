@@ -416,7 +416,8 @@ def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(mon
 
     class Hit:
         def __init__(self, i):
-            self.meta, self.ts, self.score, self.text = {"id": f"n{i}"}, 1.0, 1 - i / 10, "t"
+            self.meta = {"id": f"n{i}", "occurred_at": 1.0}
+            self.ts, self.score, self.text = 1.0, 1 - i / 10, "t"
 
     calls = []
 

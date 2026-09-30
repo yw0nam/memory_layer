@@ -56,6 +56,12 @@ The at-most-once delivery of a pending message: exactly one claimer wins, and th
 loser is refused. Terminal — a claimed message is never delivered again.
 _Avoid_: pop, read receipt, acknowledge
 
+**Conversation source**:
+The user and assistant turns of one agent session, stored unembedded in
+`conversation_sources` as the evidence a note links back to by `conversation_id` and
+turn range — read by address, never returned by search.
+_Avoid_: transcript chunk, session log, raw history
+
 **Creator**:
 The key label that first ingested a document or repo. Fixed at first ingest; the only
 non-admin identity allowed to overwrite or delete it.

@@ -346,7 +346,8 @@ async def _search_memory(
     )
     columns = (
         "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
-        "archived_at, namespace, session_id"
+        "archived_at, namespace, session_id, conversation_id, source_turn_start, "
+        "source_turn_end, occurred_at"
     )
     try:
         vec_rows = await conn.fetch(
@@ -386,6 +387,10 @@ async def _search_memory(
             "namespace": r["namespace"],
             "session_id": r["session_id"],
             "archived": r["archived_at"] is not None,
+            "conversation_id": r["conversation_id"],
+            "turn_start": r["source_turn_start"],
+            "turn_end": r["source_turn_end"],
+            "occurred_at": r["occurred_at"],
         }
         if "columns" in metadata:
             hit_meta["columns"] = metadata["columns"]

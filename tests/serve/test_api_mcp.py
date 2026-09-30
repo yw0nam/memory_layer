@@ -35,7 +35,15 @@ def _hit(
     )
 
 
-MEMORY_META = {"id": "note:default:0000000000000000", "kind": "note", "tags": []}
+MEMORY_META = {
+    "id": "note:default:0000000000000000",
+    "kind": "note",
+    "tags": [],
+    "conversation_id": None,
+    "turn_start": None,
+    "turn_end": None,
+    "occurred_at": None,
+}
 
 
 # ---- api.py pure functions ---------------------------------------------------

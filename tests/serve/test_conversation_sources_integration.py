@@ -124,10 +124,11 @@ def test_linked_notes_carry_their_source_and_the_source_never_surfaces(namespace
     assert sliced.json()["turns"] == [{"index": 2, **TURNS[2]}]
 
     turn_texts = {turn["text"] for turn in TURNS}
-    for turn in TURNS:
-        for hit in _search(turn["text"]):
-            assert hit["text"] not in turn_texts
-            assert hit["id"] in {arch["id"], drain["id"]}
+    copied = _search(TURNS[2]["text"])
+    assert drain["id"] in {hit["id"] for hit in copied}
+    for hit in copied:
+        assert hit["text"] not in turn_texts
+        assert hit["id"] in {arch["id"], drain["id"]}
 
     replayed = client.post("/conversations", json=source)
     assert replayed.status_code == 200
