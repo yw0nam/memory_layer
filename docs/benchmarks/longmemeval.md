@@ -45,9 +45,11 @@ packets.jsonl    one line per question: load counts, hits with their benchmark s
    |
    | scripts/longmemeval/answer.py answer      upstream answer prompt -> answers.jsonl
    | scripts/longmemeval/answer.py judge       upstream judge prompt  -> judgments.jsonl
+   | scripts/longmemeval/answer.py judge-hits  per-hit labels         -> hit-judgments.jsonl
    | memory_base.eval.longmemeval audit-sample 20 seeded judgments    -> judge-audit.jsonl
    v
 score            report.md / report.json and the manifest's score section
+frontier         coverage and junk per read cell, printed from a candidates run
 ```
 
 Every stage resumes: extraction skips units already in `sessions.jsonl` and discards a
@@ -139,6 +141,63 @@ wrapper that reads the date the loader binds around each `save_note` call, and n
 in the server changes. It also moves near-duplicate neighbour scores, so similar acks
 are reported for both runs.
 
+### Agent writer
+
+`--writer agent` puts an emulated client agent in front of each save, the way a client
+agent decides supersedes; the decision stays in eval code and the server makes none.
+Per note, in date order within the question:
+
+```
+note (content, session date)
+   |
+   | search(content, source="memory", namespaces=[namespace], min_score=MIN_SCORE)
+   v
+top 5 candidates, in rerank order: [i] (YYYY-MM-DD) text
+   |  none -> plain save, no model call
+   v
+writer model (claude-sonnet-5-5, effort medium, headless Claude Code)
+   |  {"action": "new"}  -> plain save
+   |  {"action": "supersede", "index": i, "archive": [j, ...], "content": ...}
+   |       -> save the rewrite with supersedes=<candidate i id>,
+   |          then archive_rows([candidate j ids], namespaces=[namespace],
+   v          archived_by="lme-writer")
+LoadStats: agent_calls, superseded, archived, agent_errors
+```
+
+The rewrite states the current value and the previous value with their dates (for
+example "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)") and keeps the rest of
+the new note. `archive` is optional (default empty) and lists the other candidates that
+state the same stale value as candidate i, such as one fact extracted from two sessions;
+they are archived in the question namespace through `archive_rows`, the call behind the
+`archive_notes` tool, once the rewrite is saved. An `archive` entry that is not a
+candidate index, repeats, or equals `index` makes the reply malformed. A malformed reply
+or a failed call is retried up to three times; a search that fails, three failed
+attempts, or a rewrite that `save_note` refuses each count one agent error and save the
+original note plainly (archiving nothing), so every note still reaches the store. An
+archive call that fails counts one agent error and keeps the saved rewrite. A listed
+candidate whose id is the rewrite's own (the rewritten text hashes to that row) is never
+archived. The rewrite's id maps to its own session and to every session of the notes it
+superseded or archived, so a hit on it counts toward the sessions of the values it
+replaced.
+`--writer-model` and `--writer-effort` choose another model or effort.
+
+| counter | counts |
+|---|---|
+| `agent_calls` | writer model calls, retries included |
+| `superseded` | notes saved as a rewrite with `supersedes` |
+| `archived` | candidate rows archived as stale duplicates of a superseded note |
+| `agent_errors` | notes saved plainly after a search, model, or rewrite failure, plus failed archive calls |
+
+Every packet row records its writer (`{"kind": "plain"}`, or the agent's kind, model,
+effort, and the sha256 of its prompts) and so does the manifest's retrieve section.
+`retrieve` refuses to run over a packets file whose rows carry another writer config,
+whether or not any question is pending. An agent run keeps its own data directory and
+manifest: before running it, the operator creates the new data directory and symlinks
+`notes.jsonl` and `sessions.jsonl` into it from the baseline data directory, and passes a
+manifest inside the new directory (for example `data/longmemeval-agent/manifest.json`),
+so its packets, answers, judgments, and retrieve section stay apart from the baseline's. The writer searches raw
+note text, so it runs on the baseline and gate-off variants; `--variant dated` is refused.
+
 ## Answer and judge
 
 `scripts/longmemeval/answer.py` is a client like the extractor: it builds its model
@@ -169,6 +228,63 @@ each row's `human_label` to `true` or `false`, and `score` reports the agreement
 between those labels and the judge over the labeled rows, per run, in the report and
 the manifest.
 
+## Hit judge
+
+`answer.py judge-hits` labels the first ten hits of every packet of a run, normally the
+candidates run (`--gate off --read candidates`), in one call per question: the question
+and its date, the reference answer, and the notes in rerank order with their dates. The
+default judge is `claude-sonnet-5-5` at effort medium (`--backend claude-code`); the zai
+backend sends the same instructions as a system turn. Each note gets one label:
+
+| label | definition |
+|---|---|
+| useful | contains information a careful answerer would use to produce the reference answer (a fact the answer states, a date needed to compute it, or a fact that rules out a wrong answer). |
+| related | not needed for this answer, but about the user and the same subject the question asks about (the same entity, activity, or category), so it is sensible context that would not push the answerer toward a wrong answer. |
+| misleading | would push a careful answerer toward a wrong answer: it contradicts the reference answer, states a value the answer has superseded, or looks like it answers the question but does not (the wrong event, person, item, or time window). |
+| unrelated | about a different subject than the question. |
+
+The judge also names `min_prefix`, the smallest n such that notes 0..n-1 together are
+enough for a careful answerer to produce the reference answer, or null when all the notes
+together are not. A reply whose labels miss or add an index, use another label, or give
+a `min_prefix` outside 1..n is malformed and retried, up to three calls. Each question
+appends one row to `hit-judgments[-run].jsonl` with the judged hit `texts`, `labels`,
+`min_prefix`, the model, the prompt sha256, tokens, and seconds; a question that fails
+three times appends an error row. Abstention questions and zero-hit packets are skipped
+(the frontier counts a zero-hit packet as judged with no labels and no `min_prefix`), and a
+rerun skips every question whose packet already has a non-error row for the same hit
+texts.
+
+**Evidence coverage** is the primary recall metric: the share of questions whose
+delivered notes contain enough to produce the reference answer (the delivered count
+reaches `min_prefix`). Session-level `recall_all` is a reference number. A longer prefix
+can also add misleading notes, so coverage is not answer accuracy.
+
+## Frontier
+
+`frontier` reads a run's packets and hit judgments and prints one Markdown table; it
+writes no file. The question set is every non-abstention packet that has no hits or has a
+non-error judgment row for its current first-ten hit texts; a zero-hit packet counts as
+judged with no labels and no `min_prefix`, so it is not covered, adds nothing to the junk
+shares, and has recall 0. The header counts the questions excluded for no judgment, a
+stale judgment (rows only for other hit texts), and abstention.
+
+Each cell of `top_k` in (1, 2, 3, 5, 10) by `floor` in (0, 0.05, 0.1, 0.25, 0.4, 0.5)
+delivers the hits among the first `top_k` whose score reaches the floor, a prefix of the
+judged hits because candidates come in descending score order:
+
+| field | value |
+|---|---|
+| `coverage` | share of questions whose delivered count reaches `min_prefix`; a question with no delivered hit, zero-hit packets included, is not covered |
+| `coverage_agg` / `coverage_lookup` | coverage over multi-session, temporal-reasoning, and knowledge-update questions / over the other types |
+| `junk` | misleading plus unrelated labels over all delivered hits, summed across questions; empty when nothing is delivered |
+| `misleading` / `related` | the same share for one label |
+| `recall_all` | mean session-level recall of the delivered hits over their distinct sessions (reference) |
+| `hits_per_question` | mean delivered hits |
+
+Cells sort by `junk` ascending (empty last), then `coverage` descending, then
+`hits_per_question` ascending. The best cell is the one with the highest `coverage` among
+the cells whose `junk` is at most 0.10, the fewer hits per question breaking a tie.
+
 ## Metrics
 
 - **QA accuracy**: correct / judged, overall, per `question_type`, and over abstention
@@ -178,6 +294,8 @@ the manifest.
   distinct benchmark sessions of the hits (at most `RERANK_TOP` hits survive rerank and
   the floor under the `search` read; a `budget` read keeps as many as fit the budget). The DCG is upstream's: rank 1 undiscounted and rank r >= 2 divided by
   log2(r). Abstention questions are excluded. Zero-hit packets are counted.
+- **Evidence coverage**: the hit judge's share of questions whose delivered notes suffice
+  for the reference answer, per read cell of the frontier (see Hit judge).
 - **Write path**: notes per unit, refused-save rate overall and per `question_type`,
   refusals by cause (gate, validation, credential), similar acks, and extraction and
   gate token totals. The overall refused-save rate counts each unit once; a per-type
@@ -280,6 +398,10 @@ uv run python scripts/longmemeval/answer.py answer --dataset PATH
 uv run python scripts/longmemeval/answer.py judge --dataset PATH
 uv run python -m memory_base.eval.longmemeval audit-sample --dataset PATH
 uv run python -m memory_base.eval.longmemeval score --dataset PATH
+uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH --gate off --read candidates \
+    --writer agent --data-dir data/longmemeval-agent --manifest data/longmemeval-agent/manifest.json
+uv run python scripts/longmemeval/answer.py judge-hits --dataset PATH --gate off --read candidates --backend claude-code
+uv run python -m memory_base.eval.longmemeval frontier --dataset PATH --gate off --read candidates
 ```
 
 `answer.py` and `audit-sample` take `--gate off` or `--variant dated` for those runs;

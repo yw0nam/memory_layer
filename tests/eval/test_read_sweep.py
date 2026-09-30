@@ -225,7 +225,7 @@ def test_the_candidates_read_keeps_every_fused_candidate(monkeypatch):
         calls.append(kwargs)
         return [Hit(i) for i in range(search_module.FUSED_TOP)]
 
-    async def load(namespace, units, notes_by_unit, gate):
+    async def load(namespace, units, notes_by_unit, gate, writer=None):
         return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(search_module.FUSED_TOP)}
 
     async def create(namespace):
@@ -263,7 +263,7 @@ def test_probe_collection_searches_each_probe_in_the_question_namespace(monkeypa
         calls.append((query, kwargs))
         return [Hit(0)]
 
-    async def load(namespace, units, notes_by_unit, gate):
+    async def load(namespace, units, notes_by_unit, gate, writer=None):
         calls.append((namespace, gate))
         return lme.LoadStats(), {}
 

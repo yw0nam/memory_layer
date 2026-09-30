@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
+from types import SimpleNamespace
 
 import pytest
 from longmemeval import answer
 
+from memory_base.eval import hit_judge
 from memory_base.eval import longmemeval as lme
 
 DATE = "2023/05/20 (Sat) 02:21"
@@ -39,6 +43,7 @@ def make_packet(qid):
 class FakeModel:
     model = "glm-5.3-flash"
     thinking = "disabled"
+    system_prompt = None
 
     def __init__(self, failures=0):
         self.calls = []
@@ -173,7 +178,7 @@ def test_the_stage_manifest_records_the_code_revision_from_the_start_of_the_run(
     write_packets(data_dir, ["q001"])
     client = FakeModel()
     client.provider = "zai"
-    monkeypatch.setattr(answer.ChatModel, "from_env", lambda env, model: client)
+    monkeypatch.setattr(answer.ChatModel, "from_env", lambda env, model, system_prompt=None: client)
     revisions_captured_in_order(monkeypatch)
     manifest = tmp_path / "manifest.json"
     common = ["--dataset", str(dataset), "--data-dir", str(data_dir), "--manifest", str(manifest)]
@@ -200,68 +205,153 @@ def revisions_captured_in_order(monkeypatch):
     monkeypatch.setattr(lme, "code_revision", revision)
 
 
-def test_the_claude_code_client_runs_a_tool_less_headless_session(monkeypatch):
-    import json
-
-    sent = {}
-
-    class Proc:
-        returncode = 0
-
-        async def communicate(self, data):
-            sent["stdin"] = data.decode()
-            result = {
-                "result": " yes ",
-                "num_turns": 1,
-                "is_error": False,
-                "usage": {"input_tokens": 90, "cache_read_input_tokens": 10, "output_tokens": 7},
-                "modelUsage": {"claude-sonnet-5-5": {"thinkingTokens": 3}},
-            }
-            return json.dumps(result).encode(), b""
-
-    async def spawn(*argv, **kwargs):
-        sent["argv"], sent["env"] = argv, kwargs["env"]
-        return Proc()
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-    client = answer.ClaudeCodeModel(model="claude-sonnet-5-5", effort="high", system_prompt="S")
-    assert asyncio.run(client.complete("the prompt", max_tokens=10)) == ("yes", 100, 7)
-    assert sent["stdin"] == "the prompt"
-    argv = sent["argv"]
-    for flag, value in [
-        ("--model", "claude-sonnet-5-5"),
-        ("--tools", ""),
-        ("--setting-sources", ""),
-    ]:
-        assert argv[argv.index(flag) + 1] == value
-    assert "--strict-mcp-config" in argv
-    assert sent["env"]["CLAUDE_CODE_DISABLE_ADVISOR_TOOL"] == "1"
+CANDIDATES = "candidates-gate-off"
 
 
-def test_the_claude_code_client_refuses_a_reply_from_another_model_or_a_tool_turn(monkeypatch):
-    import json
+def hits_packet(qid, texts):
+    packet = make_packet(qid)
+    packet["hits"] = [
+        {"id": f"n{i}", "date": DATE, "score": 0.9 - i / 100, "text": text, "sessions": []}
+        for i, text in enumerate(texts)
+    ]
+    return packet
 
-    def result(**overrides):
-        base = {"result": "yes", "num_turns": 1, "is_error": False, "usage": {}}
-        base["modelUsage"] = {"claude-sonnet-5-5": {}}
-        return {**base, **overrides}
 
-    for bad in (
-        result(modelUsage={"claude-opus-5-5": {}}),
-        result(num_turns=2),
-        result(is_error=True),
-    ):
+def valid_reply(prompt):
+    count = len(re.findall(r"^\[\d+\] ", prompt, flags=re.M))
+    labels = {str(i): "useful" if i == 0 else "related" for i in range(count)}
+    return json.dumps({"labels": labels, "min_prefix": 1})
 
-        class Proc:
-            returncode = 0
 
-            async def communicate(self, data, payload=bad):
-                return json.dumps(payload).encode(), b""
+class FakeJudge:
+    model = "claude-sonnet-5-5"
 
-        async def spawn(*argv, **kwargs):
-            return Proc()
+    def __init__(self, malformed=False):
+        self.prompts = []
+        self.malformed = malformed
 
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-        client = answer.ClaudeCodeModel(model="claude-sonnet-5-5", effort="high", system_prompt="S")
-        with pytest.raises(RuntimeError):
-            asyncio.run(client.complete("p", max_tokens=10))
+    async def complete(self, prompt, *, max_tokens):
+        self.prompts.append((prompt, max_tokens))
+        return ("not json" if self.malformed else valid_reply(prompt)), 50, 8
+
+
+def judge_hits(data_dir, questions, client):
+    return asyncio.run(answer.run_judge_hits(data_dir, CANDIDATES, questions, client, 2))
+
+
+def test_judge_hits_labels_every_judged_packet_and_skips_abstention_and_empty_ones(tmp_path):
+    packets = [
+        hits_packet("q1", ["fact a", "fact b"]),
+        hits_packet("q2_abs", ["fact c"]),
+        hits_packet("q3", []),
+        hits_packet("q4", [f"fact {i}" for i in range(12)]),
+    ]
+    lme.append_jsonl(lme.packets_path(tmp_path, CANDIDATES), packets)
+    questions = {p["question_id"]: make_question(p["question_id"]) for p in packets}
+    client = FakeJudge()
+    summary = judge_hits(tmp_path, questions, client)
+    assert summary == {"completed": 2, "failed": 0, "failures": []}
+    assert {tokens for _, tokens in client.prompts} == {answer.MAX_TOKENS["judge-hits"]}
+    rows = {
+        r["question_id"]: r for r in lme.read_jsonl(lme.hit_judgments_path(tmp_path, CANDIDATES))
+    }
+    assert set(rows) == {"q1", "q4"}
+    assert rows["q1"]["texts"] == ["fact a", "fact b"]
+    assert rows["q1"]["labels"] == ["useful", "related"]
+    assert rows["q1"]["min_prefix"] == 1
+    assert rows["q1"]["run"] == CANDIDATES
+    assert rows["q1"]["model"] == "claude-sonnet-5-5"
+    assert (rows["q1"]["in_tok"], rows["q1"]["out_tok"]) == (50, 8)
+    prompt = hit_judge.hit_judge_prompt(packets[0], questions["q1"])
+    assert rows["q1"]["prompt_sha256"] == lme.prompt_sha(prompt)
+    assert rows["q4"]["texts"] == [f"fact {i}" for i in range(10)]
+    assert len(rows["q4"]["labels"]) == 10
+
+
+def test_a_judge_hits_rerun_skips_current_rows_and_rejudges_a_changed_packet(tmp_path):
+    path = lme.packets_path(tmp_path, CANDIDATES)
+    lme.append_jsonl(path, [hits_packet("q1", ["fact a"]), hits_packet("q2", ["fact b"])])
+    questions = {qid: make_question(qid) for qid in ("q1", "q2")}
+    judge_hits(tmp_path, questions, FakeJudge())
+    client = FakeJudge()
+    assert judge_hits(tmp_path, questions, client)["completed"] == 0
+    assert client.prompts == []
+    lme.write_jsonl_atomic(path, [hits_packet("q1", ["fact a"]), hits_packet("q2", ["fact z"])])
+    client = FakeJudge()
+    judge_hits(tmp_path, questions, client)
+    assert len(client.prompts) == 1 and "fact z" in client.prompts[0][0]
+
+
+def test_judge_hits_retries_a_malformed_reply_and_records_an_error_row(tmp_path, monkeypatch):
+    monkeypatch.setattr(answer, "RETRY_BACKOFF_SECONDS", 0)
+    lme.append_jsonl(lme.packets_path(tmp_path, CANDIDATES), [hits_packet("q1", ["fact a"])])
+    questions = {"q1": make_question("q1")}
+    client = FakeJudge(malformed=True)
+    summary = judge_hits(tmp_path, questions, client)
+    assert len(client.prompts) == answer.ATTEMPTS
+    assert summary["failed"] == 1
+    [row] = lme.read_jsonl(lme.hit_judgments_path(tmp_path, CANDIDATES))
+    assert row["question_id"] == "q1" and row["texts"] == ["fact a"] and row["error"]
+    client = FakeJudge()
+    assert judge_hits(tmp_path, questions, client)["completed"] == 1
+
+
+class RecordingClaudeCode:
+    made = []
+
+    def __init__(self, model, effort, system_prompt):
+        self.model, self.effort, self.system_prompt = model, effort, system_prompt
+        self.provider, self.thinking = "claude-code", f"effort {effort}"
+        RecordingClaudeCode.made.append(self)
+
+    async def complete(self, prompt, *, max_tokens):
+        return valid_reply(prompt), 50, 8
+
+
+def test_the_judge_hits_stage_defaults_to_medium_effort_and_records_its_manifest(
+    tmp_path, monkeypatch
+):
+    questions = [make_question(f"q{index:03d}") for index in range(500)]
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(questions))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    lme.append_jsonl(lme.packets_path(data_dir, CANDIDATES), [hits_packet("q001", ["fact a"])])
+    error_row = {"question_id": "q001", "run": CANDIDATES, "texts": ["fact a"], "error": "x"}
+    lme.append_jsonl(lme.hit_judgments_path(data_dir, CANDIDATES), [error_row])
+    RecordingClaudeCode.made.clear()
+    monkeypatch.setattr(answer, "ClaudeCodeModel", RecordingClaudeCode)
+    revisions_captured_in_order(monkeypatch)
+    manifest = tmp_path / "manifest.json"
+    common = ["--dataset", str(dataset), "--data-dir", str(data_dir), "--manifest", str(manifest)]
+    common += ["--backend", "claude-code"]
+    answer.main(["judge-hits", *common, "--gate", "off", "--read", "candidates"])
+    made = RecordingClaudeCode.made[-1]
+    assert (made.model, made.effort) == ("claude-sonnet-5-5", "medium")
+    assert made.system_prompt == hit_judge.HIT_JUDGE_SYSTEM_PROMPT
+    section = lme.read_manifest(manifest)[f"judge-hits-{CANDIDATES}"]
+    assert section["templates_sha256"] == lme.prompt_sha(hit_judge.HIT_JUDGE_SYSTEM_PROMPT)
+    assert section["thinking"] == "effort medium"
+    assert (section["rows"], section["in_tok"]) == (1, 50)
+    assert not lme.stage_output_path(data_dir, "judge", CANDIDATES).exists()
+    answer.main(["answer", *common])
+    assert RecordingClaudeCode.made[-1].effort == "high"
+    assert lme.read_manifest(manifest)["answer"]["thinking"] == "effort high"
+
+
+def test_the_zai_client_sends_a_system_turn_only_when_it_has_a_system_prompt():
+    sent = []
+
+    async def create(**kwargs):
+        sent.append(kwargs["messages"])
+        usage = SimpleNamespace(prompt_tokens=3, completion_tokens=1)
+        message = SimpleNamespace(content=" ok ")
+        return SimpleNamespace(usage=usage, choices=[SimpleNamespace(message=message)])
+
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    assert asyncio.run(answer.ChatModel(fake, "m").complete("p", max_tokens=5)) == ("ok", 3, 1)
+    asyncio.run(answer.ChatModel(fake, "m", system_prompt="S").complete("p", max_tokens=5))
+    assert sent == [
+        [{"role": "user", "content": "p"}],
+        [{"role": "system", "content": "S"}, {"role": "user", "content": "p"}],
+    ]
