@@ -145,7 +145,9 @@ unless `supersedes` names one of them or `allow_similar` is set; an accepted ove
 records the neighbours' ids in `metadata.similar_ack`. The response carries `similar[]`
 either way. A prior-note id in the payload archives that row; the replacement records
 the archived note's id as `metadata.supersedes`, which `GET /notes` rows and memory hits
-carry as `supersedes`. The save is refused with
+carry as `supersedes`. When the save's content is identical to an active note, the
+insert no-ops and the target is archived without a pointer written on the existing row.
+The save is refused with
 HTTP 400 when it would leave no active note — the content is identical to the note it
 names, or to an archived note, which `restore_notes` brings back instead.
 
