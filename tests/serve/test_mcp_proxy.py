@@ -356,6 +356,32 @@ def test_search_memory_omitted_min_score_not_in_body(monkeypatch):
     assert "min_score" not in captured["json"]
 
 
+@pytest.mark.parametrize("tool", [mcp_server.search_all, mcp_server.search_memory])
+def test_search_tools_forward_budget_tokens(monkeypatch, tool):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(tool(query="burst gate", budget_tokens=4000))
+    assert captured["json"]["budget_tokens"] == 4000
+
+
+@pytest.mark.parametrize("tool", [mcp_server.search_all, mcp_server.search_memory])
+def test_search_tools_omit_an_unset_budget(monkeypatch, tool):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json=[])
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(tool(query="burst gate"))
+    assert "budget_tokens" not in captured["json"]
+
+
 def test_search_400_non_json_body_raises_generic_value_error(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, text="upstream proxy error")

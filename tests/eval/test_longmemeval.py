@@ -446,6 +446,47 @@ def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(mon
     assert len(packet["hits"]) == 7
 
 
+def test_the_budget_read_setting_names_its_own_runs():
+    assert lme.run_name("baseline", "off", "budget") == "budget-gate-off"
+    assert lme.read_setting("budget-gate-off") == {"budget_tokens": 4000}
+    assert lme.read_setting("budget") == {"budget_tokens": 4000}
+    assert set(lme.RUNS) >= {"budget", "budget-gate-off"}
+
+
+def test_a_budget_run_passes_the_budget_to_search_and_keeps_every_packed_hit(monkeypatch):
+    from memory_base.eval import retrieval
+    from memory_base.serve import namespaces
+
+    class Hit:
+        def __init__(self, i):
+            self.meta, self.ts, self.score, self.text = {"id": f"n{i}"}, 1.0, 1 - i / 20, "t"
+
+    calls = []
+
+    async def search(query, **kwargs):
+        calls.append(kwargs)
+        return [Hit(i) for i in range(12)]
+
+    async def load(namespace, units, notes_by_unit, gate):
+        return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(12)}
+
+    async def create(namespace):
+        pass
+
+    monkeypatch.setattr(retrieval, "_search_with_retry", search)
+    monkeypatch.setattr(lme, "load_question_notes", load)
+    monkeypatch.setattr(namespaces, "create_namespace", create)
+    question = make_question("q1", "multi-session", sessions=[("s1", D1)])
+    packet = asyncio.run(lme.retrieve_question(question, {}, "budget-gate-off"))
+    assert calls[0]["budget_tokens"] == 4000
+    assert len(packet["hits"]) == 12
+    assert packet["budget_tokens"] == 4000
+    packet = asyncio.run(lme.retrieve_question(question, {}, "gate-off"))
+    assert calls[1].get("budget_tokens") is None
+    assert len(packet["hits"]) == 10
+    assert packet["budget_tokens"] is None
+
+
 def test_gate_off_loading_adds_gate_refused_notes_but_not_save_path_refusals():
     units = [("s1", "2023/05/20 (Sat) 02:21")]
     notes_by_unit = {

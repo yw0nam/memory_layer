@@ -138,3 +138,80 @@ def test_the_longmemeval_manifest_records_no_decay_half_life():
     from memory_base.eval import longmemeval
 
     assert "TIME_DECAY_HALF_LIFE_DAYS" not in longmemeval._retrieval_constants()
+
+
+# ---- token-budget packing --------------------------------------------------
+
+
+def _scored_rows(count: int, chars: int) -> tuple[list[dict], dict[str, float]]:
+    now = time.time()
+    rows = [
+        memory_row(f"note-{i:02d}", now - i * 60, f"note-{i:02d} " + "x" * (chars - 8))
+        for i in range(count)
+    ]
+    # Every other hit scores below MIN_SCORE, which budget mode ignores.
+    scores = {f"note-{i:02d}": 0.9 - i * 0.01 - (0.8 if i % 2 else 0.0) for i in range(count)}
+    return rows, scores
+
+
+def test_a_budget_returns_more_than_ten_short_hits_in_reranked_order(run_search):
+    rows, scores = _scored_rows(15, 40)
+    reranker = FakeReranker(scores)
+
+    hits = run_search(
+        FakeConn(memory_vec=rows), reranker, source="memory", budget_tokens=1000, min_score=0.5
+    )
+
+    assert len(hits) == 15 > search.RERANK_TOP
+    assert [h.rerank_score for h in hits] == sorted(scores.values(), reverse=True)
+
+
+def test_a_budget_stops_before_the_hit_that_would_exceed_it(run_search):
+    rows, scores = _scored_rows(6, 400)
+
+    hits = run_search(
+        FakeConn(memory_vec=rows), FakeReranker(scores), source="memory", budget_tokens=250
+    )
+
+    assert [h.meta["id"] for h in hits] == ["note-00", "note-02"]
+    assert sum(search.estimate_tokens(h) for h in hits) <= 250
+
+
+def test_a_budget_counts_a_code_hit_with_its_restored_context(run_search):
+    now = time.time()
+    first = memory_row("first-note", now, "first-note " + "x" * 389)
+    last = memory_row("last-note", now, "last-note " + "x" * 70)
+    code = code_row("module", "def f(): pass  # module marker")
+    neighbours = [{"code": "y" * 800, "start_line": 20}]
+    reranker = FakeReranker({"first-note": 0.9, "module marker": 0.8, "last-note": 0.7})
+
+    hits = run_search(
+        FakeConn(memory_vec=[first, last], code_vec=[code], neighbours=neighbours),
+        reranker,
+        source="all",
+        budget_tokens=150,
+    )
+
+    assert [h.ref for h in hits] == ["first-note"]
+
+
+def test_the_token_estimate_is_a_quarter_of_the_characters_and_at_least_one():
+    hit = search.Hit(source="memory", ref="r", text="x" * 41, ts=0.0)
+    empty = search.Hit(source="memory", ref="r", text="", ts=0.0)
+    with_context = search.Hit(
+        source="code", ref="r", text="x" * 40, ts=0.0, meta={"context": "y" * 40}
+    )
+
+    assert search.estimate_tokens(hit) == 10
+    assert search.estimate_tokens(empty) == 1
+    assert search.estimate_tokens(with_context) == 20
+
+
+def test_without_a_budget_rerank_top_and_the_floor_still_apply(run_search):
+    rows, scores = _scored_rows(15, 40)
+
+    hits = run_search(FakeConn(memory_vec=rows), FakeReranker(scores), source="memory")
+
+    assert len(hits) <= search.RERANK_TOP
+    assert all(h.score >= search.MIN_SCORE for h in hits)
+    assert len(hits) == 8
