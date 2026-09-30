@@ -143,7 +143,11 @@ landing next to
 active notes above `NOTE_SIMILAR_THRESHOLD` cosine is refused with HTTP 409 listing them,
 unless `supersedes` names one of them or `allow_similar` is set; an accepted override
 records the neighbours' ids in `metadata.similar_ack`. The response carries `similar[]`
-either way. A prior-note id in the payload archives that row; the save is refused with
+either way. A prior-note id in the payload archives that row; the replacement records
+the archived note's id as `metadata.supersedes`, which `GET /notes` rows and memory hits
+carry as `supersedes`. When the save's content is identical to an active note, the
+insert no-ops and the target is archived without a pointer written on the existing row.
+The save is refused with
 HTTP 400 when it would leave no active note — the content is identical to the note it
 names, or to an archived note, which `restore_notes` brings back instead.
 
@@ -301,7 +305,8 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
 ```
 
 Memory hits (notes, document chunks, CSV cards) carry the row's `id`, `kind`, and
-`tags`, plus `conversation_id` and `turn_start`/`turn_end` for a linked note; `date` is
+`tags`, plus `conversation_id` and `turn_start`/`turn_end` for a linked note and
+`supersedes` for a note that replaced one; `date` is
 the note's `occurred_at` when recorded, else `ts_last_active`. `since`/`until` bound the
 same event time, `COALESCE(occurred_at, ts_last_active)`, so an episode is found by the
 day it happened; recency voting and decay read `ts_last_active` alone. Memory hits carry their stored text whole; each is
@@ -461,7 +466,7 @@ periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
 | `conversation_id` | the linked conversation source, indexed; null for unlinked notes and document chunks |
 | `source_turn_start` / `source_turn_end` | the inclusive linked turn range |
 | `occurred_at` | when the remembered event happened; a hit's `date` and the `since`/`until` bound |
-| `metadata` | jsonb: `tags`, `author`, `archived_by`, `similar_ack`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
+| `metadata` | jsonb: `tags`, `author`, `archived_by`, `supersedes`, `similar_ack`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 
 `memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,

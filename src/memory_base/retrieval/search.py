@@ -384,6 +384,7 @@ async def _search_memory(
             "kind": r["chunk_kind"],
             "tags": metadata.get("tags", []),
             "author": metadata.get("author"),
+            "supersedes": metadata.get("supersedes"),
             "namespace": r["namespace"],
             "session_id": r["session_id"],
             "archived": r["archived_at"] is not None,

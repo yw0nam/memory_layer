@@ -352,6 +352,8 @@ async def save_note(
             acknowledged = [n["id"] for n in neighbours if n["id"] != supersedes]
             if allow_similar and acknowledged:
                 row["metadata"]["similar_ack"] = acknowledged
+            if supersedes is not None:
+                row["metadata"]["supersedes"] = supersedes
             status = await conn.execute(
                 f"""
                 INSERT INTO "{PG_SCHEMA}".memory_chunks
@@ -491,5 +493,7 @@ async def list_notes(
             note["archived"] = True
         if metadata.get("archived_by") is not None:
             note["archived_by"] = metadata["archived_by"]
+        if metadata.get("supersedes") is not None:
+            note["supersedes"] = metadata["supersedes"]
         out.append(note)
     return out

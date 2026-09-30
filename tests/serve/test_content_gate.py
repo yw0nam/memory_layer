@@ -263,6 +263,28 @@ def test_server_instructions_state_the_write_policy_and_the_refusal_recovery():
     assert "\n\n\n" not in SERVER_INSTRUCTIONS
 
 
+def _tools():
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    async def _run():
+        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
+            result = await client.list_tools()
+            return {t.name: t for t in result.tools}
+
+    return asyncio.run(_run())
+
+
+def test_server_instructions_tell_agents_to_search_before_superseding():
+    assert "search_memory the same subject" in SERVER_INSTRUCTIONS
+    assert "archive them with archive_notes" in SERVER_INSTRUCTIONS
+
+
+def test_save_memory_tool_description_tells_agents_to_search_before_superseding():
+    description = _tools()["save_memory"].description
+    assert "search_memory the same subject" in description
+    assert "archive them with archive_notes" in description
+
+
 def test_judge_prompt_states_one_general_criterion_without_domain_anchors():
     assert "provenance" in JUDGE_PROMPT
     for anchor in ("PR", "commit", "namespace", "file does", "session that produced"):

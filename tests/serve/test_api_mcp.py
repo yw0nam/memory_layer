@@ -108,6 +108,18 @@ def test_hit_to_dict_omits_the_author_when_unrecorded():
     assert "author" not in api.hit_to_dict(_hit())
 
 
+def test_hit_to_dict_exposes_the_superseded_id_when_present():
+    hit = _hit(source="memory", meta={**MEMORY_META, "supersedes": "note:old0000000000"})
+    assert api.hit_to_dict(hit)["supersedes"] == "note:old0000000000"
+
+
+def test_hit_to_dict_omits_the_superseded_id_when_unrecorded():
+    assert "supersedes" not in api.hit_to_dict(
+        _hit(source="memory", meta={**MEMORY_META, "supersedes": None})
+    )
+    assert "supersedes" not in api.hit_to_dict(_hit(source="memory", meta=MEMORY_META))
+
+
 def test_hit_to_dict_exposes_csv_columns_when_present():
     assert api.hit_to_dict(_hit(meta={"columns": ["group", "value"]}))["columns"] == [
         "group",
