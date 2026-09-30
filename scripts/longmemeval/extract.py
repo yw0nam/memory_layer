@@ -4,7 +4,9 @@
 Every (session_id, date) unit of the selected questions goes once to the extractor model
 with one committed prompt: "agent" (a personal assistant's memory writer), "digest" (the
 session-digest rules with the memory save policy), or "personal" (the session-digest
-rules with the personal memory policy); each returned note is then judged by the production content
+rules with the personal memory policy). "digest" and "personal" are the production
+conversation-distill prompts, read from the package with their numbered-turn rendering
+and output contract; each returned note is then judged by the production content
 gate (after the same length, kind, and credential checks save_note applies first) and its
 verdict recorded, or recorded as "unjudged" with `--gate off`, which never calls the gate.
 <data-dir>/notes.jsonl holds one line per note, <data-dir>/sessions.jsonl one line per
@@ -36,7 +38,9 @@ from openai import AsyncOpenAI
 from memory_base.core import llm
 from memory_base.core.secrets import find_secret
 from memory_base.eval import longmemeval as lme
+from memory_base.serve import distill
 from memory_base.serve import notes as notes_module
+from memory_base.serve.distill import parse_extraction
 
 # Run as a script, this file sees its own directory on sys.path, not the package's parent.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -44,18 +48,19 @@ from longmemeval.answer import ClaudeCodeModel  # noqa: E402
 
 NOTES_FILE = lme.NOTES_FILE
 SESSIONS_FILE = lme.SESSIONS_FILE
-PROMPT_FILES = {
-    "agent": "extract_prompt.txt",
-    "digest": "extract_prompt_digest.txt",
-    "personal": "extract_prompt_personal.txt",
-}
 PROMPTS = {
-    name: Path(__file__).with_name(file).read_text(encoding="utf-8")
-    for name, file in PROMPT_FILES.items()
+    "agent": Path(__file__).with_name("extract_prompt.txt").read_text(encoding="utf-8"),
+    "digest": distill.load_prompt("digest"),
+    "personal": distill.load_prompt("personal"),
 }
 SYSTEM_PROMPT = (
     'Return only JSON: {"notes": [{"content": string, "kind": "note"|"decision"|"episode"}]}'
 )
+SYSTEM_PROMPTS = {
+    "agent": SYSTEM_PROMPT,
+    "digest": distill.EXTRACTION_SYSTEM_PROMPT,
+    "personal": distill.EXTRACTION_SYSTEM_PROMPT,
+}
 DEFAULT_MODEL = {"zai": "glm-5.3-flash", "claude-code": "claude-sonnet-5-5"}
 DEFAULT_CONCURRENCY = 5
 EXTRACT_ATTEMPTS = 3
@@ -92,7 +97,7 @@ def is_content_filter_refusal(exc: BaseException) -> bool:
 
 
 def prompt_sha256(prompt: str = "agent") -> str:
-    return lme.prompt_sha(SYSTEM_PROMPT + "\n" + PROMPTS[prompt])
+    return lme.prompt_sha(SYSTEM_PROMPTS[prompt] + "\n" + PROMPTS[prompt])
 
 
 def render_session(turns: Sequence[dict[str, Any]]) -> str:
@@ -102,30 +107,16 @@ def render_session(turns: Sequence[dict[str, Any]]) -> str:
 def build_messages(
     date: str, turns: Sequence[dict[str, Any]], prompt: str = "agent"
 ) -> list[dict[str, str]]:
+    if prompt == "agent":
+        session = render_session(turns)
+    else:
+        session = distill.render_turns(
+            [{"role": turn["role"], "text": turn["content"]} for turn in turns]
+        )
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": PROMPTS[prompt].format(date=date, session=render_session(turns)),
-        },
+        {"role": "system", "content": SYSTEM_PROMPTS[prompt]},
+        {"role": "user", "content": PROMPTS[prompt].format(date=date, session=session)},
     ]
-
-
-def parse_extraction(text: str) -> list[dict[str, str]]:
-    """The reply's notes as {content, kind}; a malformed reply raises ValueError."""
-    payload = json.loads(text)
-    notes = payload.get("notes") if isinstance(payload, dict) else None
-    if not isinstance(notes, list):
-        raise ValueError("reply has no notes list")
-    parsed = []
-    for note in notes:
-        if not isinstance(note, dict):
-            raise ValueError("a note is not an object")
-        content, kind = note.get("content"), note.get("kind", "note")
-        if not isinstance(content, str) or not isinstance(kind, str):
-            raise ValueError("a note's content or kind is not a string")
-        parsed.append({"content": content, "kind": kind})
-    return parsed
 
 
 @dataclass

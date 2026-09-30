@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -82,6 +83,10 @@ def _row_to_job(row: Any):
         from memory_base.serve.ingest_api import IngestJob
 
         return IngestJob.from_row(values)
+    if values["kind"] == "conversation":
+        from memory_base.serve.distill import ConversationJob
+
+        return ConversationJob.from_row(values)
     from memory_base.serve.repos import RepoJob
 
     return RepoJob.from_row(values)
@@ -195,6 +200,46 @@ async def admit_repo(
     return _row_to_job(row)
 
 
+async def admit_conversation(
+    *,
+    job_id: str,
+    key_id: str,
+    key_label: str,
+    namespace: str,
+    conversation_id: str,
+    connection=None,
+):
+    """Queue a distill job for a source, or return the one already queued for it.
+
+    A queued job loads the source when it runs, so one queued job covers every
+    upload that lands before it starts.
+    """
+    async with _connection(connection) as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext('memory-jobs-admission'))")
+            await _prune_rows(conn)
+            row = await conn.fetchrow(
+                f'''SELECT * FROM "{PG_SCHEMA}".jobs
+                WHERE kind = 'conversation' AND conversation_id = $1 AND status = 'queued'
+                ORDER BY created_at, job_id
+                LIMIT 1''',
+                conversation_id,
+            )
+            if row is None:
+                row = await conn.fetchrow(
+                    f'''INSERT INTO "{PG_SCHEMA}".jobs
+                    (job_id, kind, status, key_id, key_label, namespace, conversation_id)
+                    VALUES ($1, 'conversation', 'queued', $2, $3, $4, $5)
+                    RETURNING *''',
+                    job_id,
+                    key_id,
+                    key_label,
+                    namespace,
+                    conversation_id,
+                )
+    return _row_to_job(row)
+
+
 DOCUMENT_CLAIM_SQL = f'''
 WITH eligible AS (
   SELECT queued.job_id, queued.key_id, queued.created_at
@@ -258,6 +303,36 @@ RETURNING jobs.*
 '''
 
 
+CONVERSATION_CLAIM_SQL = f'''
+WITH candidate AS (
+  SELECT queued.job_id
+  FROM "{PG_SCHEMA}".jobs queued
+  WHERE queued.kind = 'conversation' AND queued.status = 'queued'
+    AND CASE WHEN $1::text IS NULL THEN queued.key_id NOT LIKE '{RESERVED_KEY_PREFIX}%'
+         ELSE queued.key_id LIKE $1 || '%' END
+    AND NOT EXISTS (
+      SELECT 1 FROM "{PG_SCHEMA}".jobs active
+      WHERE active.kind = 'conversation' AND active.status = 'running'
+        AND active.conversation_id = queued.conversation_id
+    )
+  ORDER BY queued.created_at, queued.job_id
+  LIMIT 1
+  FOR UPDATE OF queued SKIP LOCKED
+)
+UPDATE "{PG_SCHEMA}".jobs jobs
+SET status = 'running', updated_at = now(), error = NULL, result = NULL
+FROM candidate
+WHERE jobs.job_id = candidate.job_id
+RETURNING jobs.*
+'''
+
+CLAIM_SQL = {
+    "document": DOCUMENT_CLAIM_SQL,
+    "repo": REPO_CLAIM_SQL,
+    "conversation": CONVERSATION_CLAIM_SQL,
+}
+
+
 async def claim_job(kind: str, *, connection=None, only_key_prefix: str | None = None):
     """Claim one job atomically in the kind-specific fair order.
 
@@ -265,16 +340,14 @@ async def claim_job(kind: str, *, connection=None, only_key_prefix: str | None =
     integration-test jobs stay invisible to production workers by construction.
     Passing only_key_prefix claims exactly the reserved rows under that prefix.
     """
-    if kind not in {"document", "repo"}:
+    if kind not in CLAIM_SQL:
         raise ValueError(f"unsupported job kind: {kind}")
     async with _connection(connection) as conn:
         async with conn.transaction():
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtext('memory-jobs-claim-' || $1))", kind
             )
-            row = await conn.fetchrow(
-                DOCUMENT_CLAIM_SQL if kind == "document" else REPO_CLAIM_SQL, only_key_prefix
-            )
+            row = await conn.fetchrow(CLAIM_SQL[kind], only_key_prefix)
     return _row_to_job(row) if row else None
 
 
@@ -303,12 +376,14 @@ async def update_document_progress(job) -> None:
 async def mark_terminal(job, status: str, error: str | None = None) -> None:
     """Persist a terminal result before any document spool cleanup."""
     stage = "done" if getattr(job, "kind", None) == "document" else None
+    result = getattr(job, "result", None)
     async with _connection() as conn:
         await conn.execute(
             f'''UPDATE "{PG_SCHEMA}".jobs
             SET status = $2, stage = COALESCE($3, stage), error = $4, updated_at = now(),
                 chunks_total = $5, chunks_done = $6, chunks_dropped = $7,
-                rows_written = $8, enrichment_retries = $9, content_hash = $10
+                rows_written = $8, enrichment_retries = $9, content_hash = $10,
+                result = COALESCE($11::jsonb, result)
             WHERE job_id = $1''',
             job.job_id,
             status,
@@ -320,6 +395,7 @@ async def mark_terminal(job, status: str, error: str | None = None) -> None:
             getattr(job, "rows_written", 0),
             getattr(job, "enrichment_retries", 0),
             getattr(job, "content_hash", None),
+            None if result is None else json.dumps(result),
         )
     job.status = status
     job.error = error
@@ -426,6 +502,16 @@ async def _run_claimed(job) -> None:
         Path(job.spool_path).unlink(missing_ok=True)
         return
 
+    if job.kind == "conversation":
+        from memory_base.serve.distill import run_conversation_job
+
+        try:
+            await run_conversation_job(job)
+            await mark_terminal(job, job.status)
+        except Exception as exc:
+            await mark_terminal(job, "failed", str(exc) or type(exc).__name__)
+        return
+
     from memory_base.serve import repos
 
     try:
@@ -473,6 +559,7 @@ def start_workers() -> list[asyncio.Task[None]]:
     return [
         *(asyncio.create_task(worker_loop("document")) for _ in range(INGEST_MAX_CONCURRENT_JOBS)),
         asyncio.create_task(worker_loop("repo")),
+        asyncio.create_task(worker_loop("conversation")),
     ]
 
 

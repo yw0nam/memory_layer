@@ -348,12 +348,12 @@ async def notes_list_route(request: Request) -> JSONResponse:
 
 
 CONVERSATION_BODY_FIELDS = frozenset(
-    {"namespace", "origin", "external_session_id", "started_at", "ended_at", "turns"}
+    {"namespace", "origin", "external_session_id", "started_at", "ended_at", "turns", "metadata"}
 )
 
 
 async def conversations_store_route(request: Request) -> JSONResponse:
-    """Store or replace a conversation source; omitted namespace lands in key.home."""
+    """Store or extend a conversation source and queue its distill job; namespace defaults to key.home."""
     key = request.state.key
     try:
         body = await json_body(request)
@@ -376,6 +376,7 @@ async def conversations_store_route(request: Request) -> JSONResponse:
             started_at=body.get("started_at"),
             ended_at=body.get("ended_at"),
             turns=body.get("turns"),
+            metadata=body.get("metadata"),
         )
     except conversations.ConversationTooLarge as exc:
         return error(str(exc), 413)
@@ -386,6 +387,14 @@ async def conversations_store_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse(result, status_code=201 if result["created"] else 200)
+
+
+async def conversation_job_route(request: Request) -> JSONResponse:
+    """A distill job's state and result, visible to keys that can read its namespace."""
+    job = await job_store.get_job(request.path_params["job_id"], kind="conversation")
+    if job is None or not request.state.key.permits(job.namespace):
+        return error("conversation job not found", 404)
+    return JSONResponse(job.response())
 
 
 async def conversation_get_route(request: Request) -> JSONResponse:
@@ -803,6 +812,7 @@ app = Starlette(
         Route("/save_memory", save_memory_route, methods=["POST"]),
         Route("/notes", notes_list_route, methods=["GET"]),
         Route("/conversations", conversations_store_route, methods=["POST"]),
+        Route("/conversations/jobs/{job_id}", conversation_job_route, methods=["GET"]),
         Route("/conversations/{conversation_id}", conversation_get_route, methods=["GET"]),
         Route("/messages", messages_send_route, methods=["POST"]),
         Route("/messages", messages_list_route, methods=["GET"]),

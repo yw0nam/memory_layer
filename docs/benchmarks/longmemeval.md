@@ -91,7 +91,10 @@ The extractor is `glm-5.3-flash` on the z.ai endpoint resolved from `.env`
 (`resolve_llm_provider`; any other provider is refused), temperature 0, thinking
 disabled, JSON output, with the committed prompt
 `scripts/longmemeval/extract_prompt.txt`. Note kinds follow the `save_memory` contract
-(`note`, `decision`, `episode`).
+(`note`, `decision`, `episode`). `--prompt digest` and `--prompt personal` run the
+production conversation-distill prompts instead (`src/memory_base/serve/prompts/`, the
+same text the server's distill job sends), with each turn rendered as
+`[index] role: text` and the replies read by the server's `parse_extraction`.
 
 Each returned note then goes through the checks `save_note` applies before storing:
 kind and length validation, the credential scan, and the content gate
