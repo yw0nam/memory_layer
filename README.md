@@ -66,6 +66,8 @@ Both pages are rendered from the JSON specification beside them.
 Hybrid search beats vector-only on both evaluated corpora (ZX Bank hit@10 0.98 vs 0.95;
 SciFact hit@5 0.86 with rerank vs 0.82). Scores, method, single-leg ablations, and known
 trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
+End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write path:
+[docs/benchmarks/longmemeval.md](docs/benchmarks/longmemeval.md).
 
 ## REST API
 
@@ -233,6 +235,7 @@ uv run pytest -m "not integration"                   # what CI runs
 uv run ruff format --check . && uv run ruff check .
 uv run python -m memory_base.eval.retrieval          # fixture retrieval eval report
 uv run python -m memory_base.eval.retrieval --notes  # labeled real-query replay against live memory
+uv run python scripts/longmemeval/extract.py --dataset PATH  # LongMemEval harness, see docs/benchmarks/longmemeval.md
 ```
 
 Work happens in a git worktree and lands via PR; `main` requires a PR and green CI (lint,
