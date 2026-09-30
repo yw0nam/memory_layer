@@ -12,7 +12,9 @@ Runs: `baseline` (gate on), `gate-off` (`--gate off`: gate-refused notes loaded 
 `dated` (`--variant dated`: temporal-reasoning questions, date-prefixed embeddings). `--read
 prefetch` reads each question the way the prefetch hook does (top 5, score floor 0.6) instead
 of search_memory's defaults (top 10, floor 0.25) and prefixes the run name with `prefetch`;
-`--read budget` packs hits up to a 4000-token budget (`budget_tokens`) and prefixes `budget`.
+`--read budget` packs hits up to a 4000-token budget (`budget_tokens`) and prefixes `budget`;
+`--read candidates` keeps every fused candidate in rerank order for memory_base.eval.read_sweep
+and prefixes `candidates`.
 
 CLI:
   uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH [--gate off]
@@ -67,12 +69,15 @@ RUNS = (
     "budget",
     "budget-gate-off",
 )
+# A budget no packet reaches, so a search returns every fused candidate in rerank order.
+CANDIDATES_BUDGET = 10**9
 # How a reader bounds its hits: search_memory's defaults, the values the prefetch hook
-# sends, and a token budget packed in rerank order.
+# sends, a token budget packed in rerank order, and every candidate for the read sweep.
 READ_SETTINGS = {
     "search": {"top_k": 10, "min_score": None},
     "prefetch": {"top_k": 5, "min_score": 0.6},
     "budget": {"budget_tokens": 4000},
+    "candidates": {"budget_tokens": CANDIDATES_BUDGET},
 }
 DATED_VARIANT_TYPES = ("temporal-reasoning",)
 STAGES = ("answer", "judge")
