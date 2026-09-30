@@ -12,9 +12,9 @@ SQL interface, so questions about the numbers are computed rather than retrieved
 Agent-authored messages — one-time signals and handoff snapshots — are stored as
 canonical Markdown, never embedded, listed while pending and consumed by claiming
 instead of search. A conversation source — the user and assistant turns of one agent
-session — is stored unembedded as the evidence a note links back to, read by address and
-turn range only; a capture hook uploads every Claude Code and Hermes session when it ends,
-and the server distills its new turns into notes linked back to them.
+session — is stored unembedded as the evidence a note links back to; a capture hook
+uploads every Claude Code and Hermes session when it ends, and the stored sources are
+listed by time and read back by id, turn range, or substring within one source.
 
 ## Architecture
 
@@ -24,13 +24,13 @@ and the server distills its new turns into notes linked back to them.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  20 tools: search / search_code / search_memory / save_memory
+   ┌─────────────┐  21 tools: search / search_code / search_memory / save_memory
    │ mcp_server  │            list_notes / ingest_document / remove_document
    └──────┬──────┘            query_table / ingest_repo / remove_repo / list_repos
           │                   list_memory_duplicates / archive_notes /
           │ HTTP              restore_notes / delete_notes / send_message /
           │                   list_messages / claim_message / cancel_message /
-          │                   expand_source   (thin proxy, no logic)
+          │                   expand_source / list_conversations   (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
    ║              REST API  :8010   (the only backend)         ║
@@ -83,9 +83,9 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, `kind`, the optional id of a prior note to archive (400 when the save would leave no active note), an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time), and an optional `conversation_id` with an inclusive 0-based `turn_start`/`turn_end` linking the note to a stored conversation source in the same namespace (400 when the source is missing, in another namespace, or shorter than the range); refused with 409 when the chat model judges the content a report of what a record elsewhere says (a tracker artefact, a progress update, or a file description), generic advice with no fact tied to this user, or filler (the error carries the reason and says to rewrite a fact that exists nowhere else as a note of its own, retrying at most once), and when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set; refused with 409 before any model call when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind`, `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
-| `POST` | `/conversations` | store a conversation source — refused whole with 400 when a turn carries a credential (the error names the turn and the credential type only); `origin` (e.g. `claude_code`, `hermes`), `external_session_id`, `started_at`/`ended_at` (epoch seconds), `turns` (a non-empty list of exactly `{role: user\|assistant, text}`), optional `namespace` (default the key's home), optional `metadata` (a JSON object of at most 2 KB, e.g. `{repo, cwd}`); upserts by `(namespace, origin, external_session_id)`, admits a distill job in the same transaction, and returns `{id, created, turns, job_id}` (201 created, 200 updated; `job_id` is null for an origin other than `claude_code` or `hermes`); a re-upload is the storing key's or an admin key's only (403) and may always append turns after the stored ones, while changing a stored turn is 409 once a note links to the source or any turn is distilled; over 2,000,000 chars of turn text is 413 |
-| `GET` | `/conversations/jobs/{job_id}` | a distill job's `status` (`queued`, `running`, `succeeded`, `no_op`, `failed`), `error`, and `result` `{units, stored, refused, similar}`; 404 when unknown or outside the caller's namespaces |
-| `GET` | `/conversations/{id}` | a conversation source with `turns[{index, role, text}]`, optionally sliced to the inclusive `turn_start`/`turn_end`; 404 when unknown or outside the caller's namespaces, 400 for a range past the last turn |
+| `POST` | `/conversations` | store a conversation source — refused whole with 400 when a turn carries a credential (the error names the turn and the credential type only); `origin` (e.g. `claude_code`, `hermes`), `external_session_id`, `started_at`/`ended_at` (epoch seconds), `turns` (a non-empty list of exactly `{role: user\|assistant, text}`), optional `namespace` (default the key's home), optional `metadata` (a JSON object of at most 2 KB, e.g. `{repo, cwd}`); upserts by `(namespace, origin, external_session_id)` and returns `{id, created, turns}` (201 created, 200 updated); a re-upload is the storing key's or an admin key's only (403) and may always append turns after the stored ones, while changing a stored turn is 409 once a note links to the source; over 2,000,000 chars of turn text is 413 |
+| `GET` | `/conversations` | list conversation sources newest-first by start time without a query or embedding call — `since`/`until` (until exclusive) bounding the session start, `origin`, repeated `namespace` (403 outside the key's set), `limit` (default 50, max 200); each row carries `id`, `namespace`, `origin`, `external_session_id`, `started_at`/`ended_at`, `turn_count`, `repo`, and `preview` (the first user turn, cut to 200 chars) |
+| `GET` | `/conversations/{id}` | a conversation source with `turns[{index, role, text}]`, optionally sliced to the inclusive `turn_start`/`turn_end` and filtered to the turns whose text contains `contains` (case-insensitive, within this one source; kept turns keep their indices, the filters combine, no match is an empty list); 404 when unknown or outside the caller's namespaces, 400 for a range past the last turn |
 | `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, `author`, optional `idempotency_key` and `expires_at`; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
 | `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown or out-of-scope id a 404 |
@@ -137,7 +137,8 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
-`list_messages` · `claim_message` · `cancel_message` · `expand_source`
+`list_messages` · `claim_message` · `cancel_message` · `expand_source` ·
+`list_conversations`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,
@@ -163,13 +164,13 @@ pending until it is claimed, superseded, or cancelled unless its sender gives an
 `expires_at`; a note is durable knowledge.
 
 `save_memory` takes `conversation_id`, `turn_start`, and `turn_end` to link a note to
-the turns it was distilled from; `expand_source` reads those turns back by a hit's
-`conversation_id` and range. No tool stores a conversation source; a capture hook posts
-it to `POST /conversations` — `integrations/claude_code/capture_hook.py` as a Claude Code
-`SessionEnd` hook (install steps in its docstring, beside the prefetch hook's), and the
-Hermes provider in `integrations/hermes/` at session end. The server then distills the
-turns after the source's `distilled_through` cursor with the chat model and saves each
-extracted unit through the same `save_note` path, linked to its turns; see
+the turns it comes from; `expand_source` reads those turns back by a hit's
+`conversation_id`, optionally by range or a case-insensitive `contains` substring, and
+`list_conversations` lists stored sources by time. No tool stores a conversation source;
+a capture hook posts it to `POST /conversations` —
+`integrations/claude_code/capture_hook.py` as a Claude Code `SessionEnd` hook (install
+steps in its docstring, beside the prefetch hook's), and the Hermes provider in
+`integrations/hermes/` at session end; see
 [docs/data-flow.md](docs/data-flow.md).
 
 ## Running
