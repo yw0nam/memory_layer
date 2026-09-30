@@ -62,11 +62,11 @@ have a row for their current prompt.
 | dated | `--variant dated` | the 27 temporal-reasoning | gate-stored, embedded as `"{date}: {content}"` |
 
 Gate-on is the product number: it measures what an agent's memory holds after the
-content gate. The gate is tuned for coding-agent memory, whose notes must record
-something no tracker, repository, or file already holds; it refuses personal plans
-(for example, "the user is considering a bachata festival next month") and records
-of what the assistant recommended in a past session, and LongMemEval asks about
-both. Gate-off loads those refused notes as well, so it isolates extraction and
+content gate. The gate accepts what a future conversation would otherwise have to ask
+again — durable facts about the user, plans, dated episodes, decisions with their
+rejected alternatives, and answers worth keeping, personal and coding alike — and
+refuses copies of what a record elsewhere says, progress reports, and file
+descriptions. Gate-off loads refused notes as well, so it isolates extraction and
 retrieval from the gate's policy. Notes refused by validation or the credential scan
 stay out of gate-off too, because `save_note` never stores them. Each run writes its
 own files (`packets-gate-off.jsonl`, `answers-gate-off.jsonl`, and so on; the dated run

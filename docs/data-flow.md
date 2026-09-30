@@ -99,10 +99,18 @@ and an identical re-upload is refused the same way. Prose that quotes a literal
 `BEGIN … PRIVATE KEY` header is refused as a private key.
 
 Notes are stored exactly as written — the server never summarizes. Before embedding,
-every note passes the content gate: the chat model judges the text on one criterion —
-does it record something a future session could not recover from the systems of record
-and would need, or is it already answered there or bound to the moment it was written
-(an episode is judged on provenance alone) — and a note that fails is refused with HTTP
+every note passes the content gate: the chat model judges the text against two lists —
+a note is accepted when a future conversation would otherwise have to ask again and it
+records a durable fact about the user or the people, places, and things around them,
+what the user has, uses, does regularly, likes, dislikes, or plans, a dated event the
+user took part in, a decision with its reason or ruled-out alternatives, a specific
+answer the assistant gave that the user may ask for again, or a stated constraint,
+preference, environment fact, or lesson from a failure; it is refused when it reports
+what a record held elsewhere says (version control, the tracker, the filesystem, the
+running system), narrates progress in a coding session, describes what a file or
+function does, states generic advice true of anyone, or carries greetings, filler, or a
+restated question (an episode is judged on provenance alone: lived by a person rather
+than recorded) — and a note that fails is refused with HTTP
 409 carrying the reason and the recovery: rewrite a fact that exists nowhere else as a
 note of its own, retry at most once, otherwise store nothing. The verdict is final; a
 judge failure saves the note stamped `metadata.content_gate = "unavailable"`. A note
