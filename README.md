@@ -151,7 +151,9 @@ The message lane is addressed, not searched: `list_messages` reads pending messa
 the start of a session and `claim_message` takes exclusive delivery of each one acted
 on — never automatically. `send_message` publishes a general message or, with a scope,
 a handoff snapshot; `cancel_message` withdraws a sender's own pending message. A
-message is operational and expires; a note is durable knowledge.
+general message is operational and expires after `MESSAGE_TTL_DAYS`; a handoff stays
+pending until it is claimed, superseded, or cancelled unless its sender gives an
+`expires_at`; a note is durable knowledge.
 
 `save_memory` takes `conversation_id`, `turn_start`, and `turn_end` to link a note to
 the turns it was distilled from; `expand_source` reads those turns back by a hit's

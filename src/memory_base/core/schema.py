@@ -172,10 +172,11 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           claimed_at timestamptz,
           cancelled_at timestamptz,
           superseded_at timestamptz,
-          expires_at timestamptz NOT NULL,
+          expires_at timestamptz,
           CHECK (purpose <> 'handoff' OR scope IS NOT NULL),
           CHECK (purpose <> 'message' OR scope IS NULL)
         );
+        ALTER TABLE {schema}.messages ALTER COLUMN expires_at DROP NOT NULL;
         CREATE INDEX IF NOT EXISTS messages__pending
           ON {schema}.messages (namespace, purpose, subject_key, created_at DESC, id DESC)
           WHERE claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL;

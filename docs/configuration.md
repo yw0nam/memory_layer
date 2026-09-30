@@ -26,7 +26,8 @@
 | `LOG_DIR` | file-sink directory (default `logs/`) |
 
 Tuning knobs, all optional: `NOTE_SIMILAR_THRESHOLD`, `MESSAGE_TTL_DAYS` (1..30, default 7;
-the server refuses to boot outside that range), `INGEST_MAX_BYTES`,
+the expiry of a general message sent without `expires_at` — a handoff has none; the
+server refuses to boot outside that range), `INGEST_MAX_BYTES`,
 `INGEST_BACKLOG_PER_KEY`, `INGEST_BACKLOG_MAX`, `INGEST_MAX_CONCURRENT_JOBS`,
 `REPO_MAX_QUEUED`, `REPO_MAX_BYTES`, `REPO_DISK_HEADROOM_BYTES`, `JOB_RETENTION_SECONDS`,
 `COLD_AGE_DAYS`, `COLD_UNHIT_DAYS`, `HIT_FLUSH_INTERVAL_SECONDS`,

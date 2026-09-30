@@ -200,3 +200,34 @@ def test_scratch_schema_does_not_require_or_retarget_query_role(monkeypatch):
     sql = "\n".join(conn.queries)
     assert '"memory_eval_scratch".doc_rows' in sql
     assert "memory_tables_query" not in sql
+
+
+def test_messages_expiry_is_nullable_on_new_and_existing_tables(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    sql = "\n".join(conn.queries)
+    create = sql[sql.index('CREATE TABLE IF NOT EXISTS "scratch_schema".messages') :]
+    create = create[: create.index(");")]
+    assert "expires_at timestamptz," in create
+    assert "expires_at timestamptz NOT NULL" not in create
+    alter = 'ALTER TABLE "scratch_schema".messages ALTER COLUMN expires_at DROP NOT NULL'
+    assert alter in " ".join(sql.split())
+    assert sql.index("ALTER COLUMN expires_at DROP NOT NULL") > sql.index(
+        'CREATE TABLE IF NOT EXISTS "scratch_schema".messages'
+    )
+
+
+def test_pending_message_index_carries_no_expiry_predicate(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    sql = "\n".join(conn.queries)
+    index = sql[sql.index("CREATE INDEX IF NOT EXISTS messages__pending") :]
+    index = index[: index.index(";")]
+    assert "WHERE claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL" in index
+    assert "expires_at" not in index

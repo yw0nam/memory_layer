@@ -85,11 +85,13 @@ shapes: a general message (status "info", no scope) addressed to a namespace, or
 a scope repo:<origin> or project:<organization>/<project> — a handoff, the latest
 snapshot of a work state statused in_progress, blocked, or completed. Whoever next works
 in that scope claims it; a new snapshot supersedes the pending one, and a completed
-handoff remains the delivered record of that state. Keep the lanes straight: a note is
+handoff remains the delivered record of that state. A handoff stays pending until it is
+claimed, superseded, or cancelled unless its sender gives an expires_at; a general
+message expires after the server's default TTL. Keep the lanes straight: a note is
 durable knowledge and records why something was decided; a message is operational state
-and expires. The note content gate does not apply to messages — that is what makes them
-the right carrier for progress signals the gate refuses, and the wrong place for
-anything meant to outlive the week."""
+and is consumed once. The note content gate does not apply to messages — that is what
+makes them the right carrier for progress signals the gate refuses, and the wrong place
+for anything meant to be read more than once."""
 
 _SERVER_INSTRUCTIONS_CLOSING = """\
 Work knowledge belongs in the key's home namespace. Personal context — schedule,
@@ -577,7 +579,9 @@ async def send_message(
     rejected. `author` must be in the calling key's author allowlist.
     `idempotency_key` (max 128 chars) replays an identical send instead of
     duplicating it. `expires_at` is an ISO 8601 datetime at most 30 days out;
-    messages otherwise expire after the server's configured default TTL.
+    without it a general message expires after the server's configured default
+    TTL and a handoff never expires (it leaves the lane by claim, supersede, or
+    cancel).
     """
     body: dict[str, Any] = {
         "subject": subject,
@@ -622,7 +626,8 @@ async def list_messages(
     similarity, and never appear in search results. Returns newest-first rows
     with exactly id, namespace, purpose, scope, subject, status (the report
     state: info, in_progress, blocked, or completed), author, created_at,
-    expires_at, and content — the canonical Markdown.
+    expires_at (null for a handoff without an expiry), and content — the
+    canonical Markdown.
 
     `purpose` is "message" or "handoff"; `scope` is the portable scope the
     message was sent with; `subject` matches after the same normalization the
