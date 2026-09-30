@@ -1,0 +1,60 @@
+{"intent": "off_topic", "query": "fix the failing test in test_api.py"}
+{"intent": "off_topic", "query": "rename this variable to something clearer"}
+{"intent": "off_topic", "query": "why does ruff complain here about an unused import"}
+{"intent": "off_topic", "query": "add type hints to this function"}
+{"intent": "off_topic", "query": "write a unit test for the parse_date helper"}
+{"intent": "off_topic", "query": "this list comprehension is hard to read, can you simplify it"}
+{"intent": "off_topic", "query": "run the test suite and tell me what fails"}
+{"intent": "off_topic", "query": "explain what this regular expression matches"}
+{"intent": "off_topic", "query": "convert this for loop into a dict comprehension"}
+{"intent": "off_topic", "query": "the build is failing with ModuleNotFoundError: No module named 'yaml'"}
+{"intent": "off_topic", "query": "sort these imports and remove the duplicates"}
+{"intent": "off_topic", "query": "make this function async and await the http call"}
+{"intent": "off_topic", "query": "add a docstring to the class below"}
+{"intent": "off_topic", "query": "extract this block into a separate helper function"}
+{"intent": "off_topic", "query": "why is mypy saying Incompatible return value type"}
+{"intent": "off_topic", "query": "bump the version in pyproject.toml to 0.4.0"}
+{"intent": "off_topic", "query": "write a commit message for the staged changes"}
+{"intent": "off_topic", "query": "what does this git error mean: fatal: not a git repository"}
+{"intent": "off_topic", "query": "replace the print statements with proper logging"}
+{"intent": "off_topic", "query": "format this JSON file with two-space indentation"}
+{"intent": "off_topic", "query": "add a --verbose flag to the argparse parser"}
+{"intent": "off_topic", "query": "this SQL query is slow, add an index on user_id"}
+{"intent": "off_topic", "query": "delete the commented-out code in utils.py"}
+{"intent": "off_topic", "query": "make the button text bold and center it"}
+{"intent": "off_topic", "query": "how do I reverse a list in place in python"}
+{"intent": "off_topic", "query": "write a bash one-liner that counts lines in every .py file"}
+{"intent": "off_topic", "query": "the CI job times out after 10 minutes, split the tests into two jobs"}
+{"intent": "off_topic", "query": "fix the off-by-one error in the pagination loop"}
+{"intent": "off_topic", "query": "add a README section explaining how to install the package"}
+{"intent": "off_topic", "query": "translate this error message into a user-friendly sentence"}
+{"intent": "off_topic", "query": "continue with the next step of the plan"}
+{"intent": "off_topic", "query": "looks good, go ahead and implement it"}
+{"intent": "off_topic", "query": "이 함수 이름을 더 명확하게 바꿔줘 부탁해"}
+{"intent": "off_topic", "query": "테스트가 왜 실패하는지 확인하고 고쳐줘"}
+{"intent": "off_topic", "query": "이 파일에서 안 쓰는 import 전부 지워줘"}
+{"intent": "off_topic", "query": "타입 에러 나는 부분 찾아서 수정해줘 부탁해"}
+{"intent": "off_topic", "query": "이 코드 리뷰해주고 개선할 점 알려줘"}
+{"intent": "off_topic", "query": "로그 메시지를 영어로 통일해줘 부탁해"}
+{"intent": "off_topic", "query": "このエラーの原因を調べて直してください、お願いします"}
+{"intent": "off_topic", "query": "この関数のテストを書いてもらえますか、お願いします"}
+{"intent": "memory", "query": "what did we decide about the reranker floor"}
+{"intent": "memory", "query": "how do I connect to the staging db"}
+{"intent": "memory", "query": "what was the reason we dropped the old caching layer"}
+{"intent": "memory", "query": "which python version did we standardise on"}
+{"intent": "memory", "query": "what is our convention for naming feature branches"}
+{"intent": "memory", "query": "how do we cut a release again"}
+{"intent": "memory", "query": "remind me why we chose postgres over sqlite"}
+{"intent": "memory", "query": "what did we agree on for the API error format"}
+{"intent": "memory", "query": "where do the deployment credentials live"}
+{"intent": "memory", "query": "what was the fix for the flaky integration test last time"}
+{"intent": "memory", "query": "how did we configure the embedding endpoint"}
+{"intent": "memory", "query": "what did we decide about backward compatibility"}
+{"intent": "memory", "query": "have we hit this docker build cache problem before"}
+{"intent": "memory", "query": "what is the policy for writing commit messages here"}
+{"intent": "memory", "query": "which license constraints do our dependencies have"}
+{"intent": "memory", "query": "how did we resolve the timeout issue with the vllm server"}
+{"intent": "memory", "query": "what did we learn from the last benchmark run"}
+{"intent": "memory", "query": "what is the agreed way to run the tests locally"}
+{"intent": "memory", "query": "did we decide to keep the recency signal in search"}
+{"intent": "memory", "query": "지난번에 리랭커 점수 기준 어떻게 정했었지"}
