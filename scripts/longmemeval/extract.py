@@ -24,7 +24,6 @@ import asyncio
 import contextvars
 import json
 import os
-import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -39,12 +38,9 @@ from memory_base.core import llm
 from memory_base.core.secrets import find_secret
 from memory_base.eval import extraction
 from memory_base.eval import longmemeval as lme
+from memory_base.eval.claude_code import ClaudeCodeModel
 from memory_base.eval.extraction import parse_extraction
 from memory_base.serve import notes as notes_module
-
-# Run as a script, this file sees its own directory on sys.path, not the package's parent.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from longmemeval.answer import ClaudeCodeModel  # noqa: E402
 
 NOTES_FILE = lme.NOTES_FILE
 SESSIONS_FILE = lme.SESSIONS_FILE
