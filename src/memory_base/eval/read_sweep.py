@@ -9,8 +9,9 @@ renders the prefetch hook's context block, and `hermes` renders the Hermes provi
 
 Corpora: the LongMemEval personal notes (`longmemeval retrieve --read candidates --gate off`
 writes the candidate packets; `lme-probe` searches the probe prompts in one question's
-namespace), and the deployed corpus (`deployed` replays the labelled notes queries and the
-probe prompts over a read-only connection).
+namespace), and the deployed corpus (`deployed` copies memory_chunks over a read-only
+connection into a throwaway Postgres on the current schema, then replays the labelled notes
+queries and the probe prompts there).
 
 CLI:
   uv run python -m memory_base.eval.read_sweep lme-probe --dataset PATH --data-dir DIR
@@ -27,7 +28,6 @@ import asyncio
 import functools
 import importlib.util
 import json
-import os
 import re
 import sys
 from collections.abc import Sequence
@@ -334,18 +334,51 @@ def run_lme_probe(args: argparse.Namespace) -> None:
     print(f"{len(rows)} probes searched in lme-{question['question_id']}")
 
 
-async def _collect_deployed(probes: Sequence[dict[str, Any]]) -> dict[str, Any]:
+def snapshot_sql(schema: str) -> str:
+    """Every memory row as JSON, its embedding as the vector's text form."""
+    return (
+        "SELECT (to_jsonb(m) - 'embedding') || jsonb_build_object('embedding', m.embedding::text) "
+        f'AS row FROM "{schema}".memory_chunks m'
+    )
+
+
+async def snapshot_deployed(url: str) -> list[dict[str, Any]]:
+    import asyncpg
+
+    from memory_base.core.config import PG_SCHEMA
+
+    conn = await asyncpg.connect(url, timeout=5)
+    try:
+        return [json.loads(row["row"]) for row in await conn.fetch(snapshot_sql(PG_SCHEMA))]
+    finally:
+        await conn.close()
+
+
+async def copy_snapshot(conn: Any, rows: Sequence[dict[str, Any]], schema: str) -> None:
+    """Insert snapshot rows through the table's row type; columns it lacks keep their default."""
+    table = f'"{schema}".memory_chunks'
+    for row in rows:
+        columns = ", ".join(f'"{name}"' for name in row)
+        await conn.execute(
+            f"INSERT INTO {table} ({columns}) SELECT {columns} "
+            f"FROM jsonb_populate_record(NULL::{table}, $1::jsonb)",
+            json.dumps(row),
+        )
+
+
+async def _collect_deployed(
+    url: str, snapshot: Sequence[dict[str, Any]], probes: Sequence[dict[str, Any]]
+) -> dict[str, Any]:
     import asyncpg
 
     from memory_base.core import db
-    from memory_base.core.config import PG_SCHEMA, db_url
+    from memory_base.core.config import PG_SCHEMA
     from memory_base.eval import retrieval
 
-    conn = await asyncpg.connect(db_url(), timeout=5)
+    await lme._prepare_schema(url)
+    conn = await asyncpg.connect(url, timeout=5)
     try:
-        corpus = await conn.fetch(
-            f'SELECT id FROM "{PG_SCHEMA}".memory_chunks WHERE archived_at IS NULL'
-        )
+        await copy_snapshot(conn, snapshot, PG_SCHEMA)
     finally:
         await conn.close()
 
@@ -377,22 +410,26 @@ async def _collect_deployed(probes: Sequence[dict[str, Any]]) -> dict[str, Any]:
     finally:
         await db.close_pool()
     return {
-        "corpus_ids": sorted(row["id"] for row in corpus),
+        "corpus_ids": sorted(row["id"] for row in snapshot if row["archived_at"] is None),
         "labels": labels,
         "probes": probe_rows,
     }
 
 
 def run_deployed(args: argparse.Namespace) -> None:
+    """Snapshot the deployed corpus read-only, then search the snapshot in a throwaway database."""
     from memory_base.core.config import db_url
 
-    os.environ["DB_URL"] = read_only_url(db_url())
-    collected = asyncio.run(_collect_deployed(load_probes(args.probes)))
+    snapshot = asyncio.run(snapshot_deployed(read_only_url(db_url())))
+    with lme.throwaway_postgres() as database:
+        collected = asyncio.run(
+            _collect_deployed(database["url"], snapshot, load_probes(args.probes))
+        )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(collected, ensure_ascii=False) + "\n", encoding="utf-8")
     print(
-        f"corpus={len(collected['corpus_ids'])} labels={len(collected['labels'])} "
-        f"probes={len(collected['probes'])} -> {args.out}"
+        f"snapshot={len(snapshot)} corpus={len(collected['corpus_ids'])} "
+        f"labels={len(collected['labels'])} probes={len(collected['probes'])} -> {args.out}"
     )
 
 
@@ -514,7 +551,7 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--question", default=None)
     probe.add_argument("--gate", choices=lme.GATES, default="off")
     probe.add_argument("--probes", type=Path, default=PROBES_PATH)
-    deployed = commands.add_parser("deployed", help="replay labels and probes, read-only")
+    deployed = commands.add_parser("deployed", help="replay labels and probes on a snapshot")
     deployed.add_argument("--out", type=Path, required=True)
     deployed.add_argument("--probes", type=Path, default=PROBES_PATH)
     report = commands.add_parser("report", help="metrics for every setting and read path")
