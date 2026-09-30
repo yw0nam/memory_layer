@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -676,3 +677,17 @@ def test_the_extraction_summary_counts_provider_refused_units(tmp_path):
     summary = lme._extraction_summary(tmp_path, ["q1"], {"q1": question})
     assert summary["units_extracted"] == 2
     assert summary["provider_refused_units"] == 1
+
+
+def test_a_packet_hit_is_dated_by_the_note_occurred_at():
+    class Hit:
+        meta = {
+            "id": "n1",
+            "occurred_at": datetime(2023, 5, 20, 2, 21, tzinfo=timezone.utc).timestamp(),
+        }
+        ts = datetime(2026, 9, 30, tzinfo=timezone.utc).timestamp()
+        score = 0.9
+        text = "t"
+
+    record = lme._hit_record(Hit(), {"n1": {("s1", D1)}})
+    assert record["date"] == "2023/05/20 (Sat) 02:21"

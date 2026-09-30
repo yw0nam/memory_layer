@@ -269,6 +269,10 @@ def test_memory_hit_uses_search_ref_and_carries_cap_fields():
         "archived_at": None,
         "namespace": "default",
         "session_id": "guide.md",
+        "conversation_id": None,
+        "source_turn_start": None,
+        "source_turn_end": None,
+        "occurred_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -297,6 +301,10 @@ def test_csv_card_hit_uses_search_ref():
         "archived_at": None,
         "namespace": "default",
         "session_id": "table.csv",
+        "conversation_id": None,
+        "source_turn_start": None,
+        "source_turn_end": None,
+        "occurred_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -316,6 +324,10 @@ def test_memory_hit_falls_back_to_source_ref():
         "archived_at": None,
         "namespace": "default",
         "session_id": "note:1",
+        "conversation_id": None,
+        "source_turn_start": None,
+        "source_turn_end": None,
+        "occurred_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -335,6 +347,10 @@ def test_memory_fusion_uses_vector_fts_and_recency_voters(monkeypatch):
             "archived_at": None,
             "namespace": "default",
             "session_id": cid,
+            "conversation_id": None,
+            "source_turn_start": None,
+            "source_turn_end": None,
+            "occurred_at": None,
         }
 
     calls = []
@@ -426,6 +442,10 @@ def test_memory_hit_carries_the_author():
         "archived_at": None,
         "namespace": "default",
         "session_id": "note:1",
+        "conversation_id": None,
+        "source_turn_start": None,
+        "source_turn_end": None,
+        "occurred_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))
@@ -444,6 +464,10 @@ def test_memory_hit_author_is_none_when_unrecorded():
         "archived_at": None,
         "namespace": "default",
         "session_id": "note:1",
+        "conversation_id": None,
+        "source_turn_start": None,
+        "source_turn_end": None,
+        "occurred_at": None,
     }
     conn = FakeSearchConnection([[row], []])
     hits = asyncio.run(_search_memory(conn, "query", "[1]"))

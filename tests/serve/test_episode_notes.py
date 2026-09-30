@@ -96,13 +96,22 @@ def _patch_note_deps(monkeypatch, conn):
     monkeypatch.setattr(notes, "judge_note_content", accepted_judge)
 
 
-def test_occurred_at_sets_stored_timestamp(monkeypatch):
+def test_occurred_at_is_stored_apart_from_the_save_time(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
     monkeypatch.setattr(notes.time, "time", lambda: NOW)
     asyncio.run(save_note("distilled content", tags=["test"], occurred_at="2020-01-01"))
     expected = datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp()
-    assert conn.insert_args[8] == expected
+    assert conn.insert_args[8] == NOW
+    assert conn.insert_args[14] == expected
+
+
+def test_occurred_at_omitted_stores_none(monkeypatch):
+    conn = FakeConnection()
+    _patch_note_deps(monkeypatch, conn)
+    monkeypatch.setattr(notes.time, "time", lambda: NOW)
+    asyncio.run(save_note("distilled content", tags=["test"]))
+    assert conn.insert_args[14] is None
 
 
 def test_occurred_at_omitted_uses_current_time(monkeypatch):
@@ -157,6 +166,9 @@ def test_save_memory_forwards_occurred_at_to_save_note(monkeypatch):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -183,6 +195,9 @@ def test_save_memory_omitted_occurred_at_forwards_none(monkeypatch):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -212,6 +227,9 @@ def test_save_memory_malformed_occurred_at_400(monkeypatch):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -235,6 +253,9 @@ def test_save_memory_future_occurred_at_400(monkeypatch):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):
@@ -260,6 +281,9 @@ def test_save_memory_episode_kind_delegates_to_save_note(monkeypatch):
         supersedes=None,
         namespace="default",
         occurred_at=None,
+        conversation_id=None,
+        turn_start=None,
+        turn_end=None,
         author=None,
         allow_similar=False,
     ):

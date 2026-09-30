@@ -176,6 +176,10 @@ def _row(**overrides):
         "ts_last_active": AUG_12,
         "namespace": "default",
         "archived_at": None,
+        "conversation_id": None,
+        "source_turn_start": None,
+        "source_turn_end": None,
+        "occurred_at": None,
     }
     row.update(overrides)
     return row
