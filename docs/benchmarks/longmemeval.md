@@ -5,8 +5,10 @@ LongMemEval_S (Wu et al., 2024; MIT). An emulated agent distills each benchmark
 session into notes, the production content gate judges every note, the kept notes
 are stored through `save_note`, production search retrieves them, a model answers
 from the retrieved notes alone, and a judge grades the answer with the official
-LongMemEval grading prompts. Every chat-model stage uses one open-provider model,
-`glm-5.3-flash`.
+LongMemEval grading prompts. Extraction, answer, and judge run on `glm-5.3-flash`
+(`--backend zai`, the default) or in a headless Claude Code session
+(`--backend claude-code`, `claude-sonnet-5-5`); the content gate runs on the chat
+provider from `.env`.
 
 ## Subset
 
@@ -178,75 +180,54 @@ the manifest.
 
 ## Results
 
-The 100-question subset, one pass of every stage, graded by `glm-5.3-flash`.
+The 100-question subset with the gate off, one pass of every stage, answered and judged
+by `claude-sonnet-5-5` (`answer.py --backend claude-code --effort high`). Notes were
+extracted by Sonnet 5.5 under the personal extraction policy with the gate off, and
+budget-mode recall counts about 12.6 distinct sessions per packet against 1.6 under
+search, so the budget row and the search rows are not one-to-one comparable.
+
+| run | read | FUSED_TOP | recall_all@10 | ndcg_any@10 | QA accuracy | multi-session QA | mean hits per packet | mean packet chars |
+|---|---|---|---|---|---|---|---|---|
+| search, 90-day age decay before the reranker | top 10, floor 0.25 | 20 | 0.663 | 0.809 | 0.74 | 0.667 | 1.84 | 653 |
+| search | top 10, floor 0.25 | 20 | 0.779 | 0.863 | 0.81 | 0.667 | 1.98 | 699 |
+| budget (shipped) | `budget_tokens=4000` | 40 | 0.926 | 0.927 | 0.91 | 0.926 | 36.21 | 15,573 |
 
 ### QA accuracy
 
-| question_type | questions | gate-on | gate-off |
-|---|---|---|---|
-| overall | 100 | 0.590 | 0.760 |
-| knowledge-update | 15 | 0.467 | 0.600 |
-| multi-session | 27 | 0.556 | 0.815 |
-| single-session-assistant | 11 | 0.182 | 0.455 |
-| single-session-preference | 6 | 0.500 | 0.667 |
-| single-session-user | 14 | 1.000 | 1.000 |
-| temporal-reasoning | 27 | 0.667 | 0.815 |
-| abstention (included above) | 5 | 0.800 | 0.800 |
-
-`glm-5.3-flash` is not deterministic at temperature 0. A second answer and judge pass
-over the same packets scores gate-on 0.64 (9 of 100 verdicts differ from the first
-pass) and gate-off 0.72 (8 differ), so overall accuracy spreads by about 5 points from
-run to run.
+| question_type | questions | search, decay | search | budget |
+|---|---|---|---|---|
+| overall | 100 | 0.740 | 0.810 | 0.910 |
+| knowledge-update | 15 | 0.667 | 1.000 | 0.933 |
+| multi-session | 27 | 0.667 | 0.667 | 0.926 |
+| single-session-assistant | 11 | 0.455 | 0.545 | 0.545 |
+| single-session-preference | 6 | 1.000 | 1.000 | 1.000 |
+| single-session-user | 14 | 1.000 | 1.000 | 1.000 |
+| temporal-reasoning | 27 | 0.778 | 0.815 | 0.963 |
+| abstention (included above) | 5 | 1.000 | 1.000 | 0.800 |
 
 ### Retrieval
 
-Session-level metrics over the 95 non-abstention questions. No packet holds more than
-five distinct sessions, so every `@10` value equals its `@5` value.
+Session-level `recall_all@10` / `ndcg_any@10` over the 95 non-abstention questions.
 
-| question_type | questions | gate-on recall_all@5 | gate-on ndcg_any@5 | gate-off recall_all@5 | gate-off ndcg_any@5 |
-|---|---|---|---|---|---|
-| overall | 95 | 0.653 | 0.777 | 0.779 | 0.873 |
-| knowledge-update | 14 | 0.214 | 0.536 | 0.357 | 0.679 |
-| multi-session | 24 | 0.625 | 0.832 | 0.833 | 0.941 |
-| single-session-assistant | 11 | 0.545 | 0.545 | 0.727 | 0.727 |
-| single-session-preference | 6 | 0.667 | 0.667 | 0.833 | 0.833 |
-| single-session-user | 14 | 1.000 | 1.000 | 1.000 | 1.000 |
-| temporal-reasoning | 26 | 0.769 | 0.861 | 0.846 | 0.918 |
-
-| | gate-on | gate-off |
-|---|---|---|
-| zero-hit packets (of 100) | 12 | 6 |
-| zero-hit packets among the 95 scored | 10 | 4 |
-| mean hits per packet | 1.77 | 2.04 |
-| notes loaded | 10,203 | 12,800 |
-| similar acks | 46 | 74 |
-
-### Dated run
-
-| temporal-reasoning (27 questions) | accuracy | recall_all@5 | ndcg_any@5 | zero-hit packets |
+| question_type | questions | search, decay | search | budget |
 |---|---|---|---|---|
-| baseline | 0.667 (18) | 0.769 | 0.861 | 1 |
-| dated | 0.741 (20) | 0.769 | 0.861 | 1 |
+| overall | 95 | 0.663 / 0.809 | 0.779 / 0.863 | 0.926 / 0.927 |
+| knowledge-update | 14 | 0.143 / 0.571 | 0.857 / 0.929 | 1.000 / 1.000 |
+| multi-session | 24 | 0.667 / 0.878 | 0.667 / 0.878 | 0.958 / 0.975 |
+| single-session-assistant | 11 | 0.455 / 0.455 | 0.455 / 0.455 | 0.455 / 0.455 |
+| single-session-preference | 6 | 1.000 / 1.000 | 1.000 / 1.000 | 1.000 / 1.000 |
+| single-session-user | 14 | 1.000 / 1.000 | 1.000 / 1.000 | 1.000 / 1.000 |
+| temporal-reasoning | 26 | 0.769 / 0.875 | 0.808 / 0.880 | 1.000 / 0.986 |
 
-The dated run retrieves the same notes as the baseline for 26 of the 27 questions. One
-of its two extra correct answers comes from a question whose hits are identical in both
-runs, so the accuracy difference is within the run-to-run spread. The dated load
-acknowledges 32 similar notes.
+| | search, decay | search | budget |
+|---|---|---|---|
+| zero-hit packets (of 100) | 10 | 10 | 0 |
+| answer input tokens | 83,441 | 85,645 | 726,934 |
 
-### Write path
-
-| | value |
-|---|---|
-| extraction units | 4,742 (4 refused by the provider's content filter) |
-| notes | 12,813 (2.70 per unit; 737 units with no note) |
-| stored by the gate | 10,203 |
-| refused | 2,610 (20.4%): 2,597 by the gate, 13 by validation |
-| refused rate per question_type | 19.7% to 21.2% |
-
-### Judge audit
-
-The 20 seeded gate-on judgments were graded by hand: the judge agrees on 20 of 20
-(9 yes, 11 no).
+The budget packs at most `FUSED_TOP` reranked candidates: 86 of the 100 budget packets
+reach 3,800 estimated tokens or more, and hit counts range from 30 to 40. At
+`FUSED_TOP=20` the same budget returns all 20 candidates for every question, with
+identical `recall_all@10` and `ndcg_any@10` and QA 0.89 (multi-session 0.852).
 
 ## Comparability
 
