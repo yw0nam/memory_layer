@@ -121,7 +121,7 @@ class CodeChunk:
     embedding: Annotated[NDArray, VllmEmbedder()]
     start_line: int
     end_line: int
-    mtime: float  # commit time (epoch sec), used for time-decay scoring at query time
+    mtime: float  # commit time (epoch sec), the recency signal at query time
 
 
 @coco.lifespan

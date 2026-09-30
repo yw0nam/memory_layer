@@ -11,7 +11,8 @@ retrieval metrics, and the judge agreement rate.
 Runs: `baseline` (gate on), `gate-off` (`--gate off`: gate-refused notes loaded too), and
 `dated` (`--variant dated`: temporal-reasoning questions, date-prefixed embeddings). `--read
 prefetch` reads each question the way the prefetch hook does (top 5, score floor 0.6) instead
-of search_memory's defaults (top 10, floor 0.25) and prefixes the run name with `prefetch`.
+of search_memory's defaults (top 10, floor 0.25) and prefixes the run name with `prefetch`;
+`--read budget` packs hits up to a 4000-token budget (`budget_tokens`) and prefixes `budget`.
 
 CLI:
   uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH [--gate off]
@@ -57,12 +58,21 @@ SAVE_BACKOFF_SECONDS = 5.0
 METRIC_KS = (5, 10)
 VARIANTS = ("baseline", "dated")
 GATES = ("on", "off")
-RUNS = ("baseline", "gate-off", "dated", "prefetch", "prefetch-gate-off")
-# How many hits a reader keeps and the score floor it asks for: search_memory's defaults
-# and the values the prefetch hook sends.
+RUNS = (
+    "baseline",
+    "gate-off",
+    "dated",
+    "prefetch",
+    "prefetch-gate-off",
+    "budget",
+    "budget-gate-off",
+)
+# How a reader bounds its hits: search_memory's defaults, the values the prefetch hook
+# sends, and a token budget packed in rerank order.
 READ_SETTINGS = {
     "search": {"top_k": 10, "min_score": None},
     "prefetch": {"top_k": 5, "min_score": 0.6},
+    "budget": {"budget_tokens": 4000},
 }
 DATED_VARIANT_TYPES = ("temporal-reasoning",)
 STAGES = ("answer", "judge")
@@ -650,7 +660,8 @@ def run_name(variant: str, gate: str, read: str = "search") -> str:
 
 
 def read_setting(run: str) -> dict[str, Any]:
-    return READ_SETTINGS["prefetch" if run.startswith("prefetch") else "search"]
+    head = run.split("-", 1)[0]
+    return READ_SETTINGS[head if head in READ_SETTINGS else "search"]
 
 
 def run_suffix(run: str) -> str:
@@ -708,19 +719,23 @@ async def retrieve_question(
     )
     loaded = time.monotonic()
     setting = read_setting(run)
+    budget_tokens = setting.get("budget_tokens")
     hits = await _search_with_retry(
         question["question"],
         source="memory",
         namespaces=[namespace],
-        min_score=setting["min_score"],
+        min_score=setting.get("min_score"),
+        budget_tokens=budget_tokens,
     )
-    hits = hits[: setting["top_k"]]
+    if budget_tokens is None:
+        hits = hits[: setting["top_k"]]
     return {
         "question_id": question["question_id"],
         "question_type": question["question_type"],
         "question": question["question"],
         "question_date": question["question_date"],
         "run": run,
+        "budget_tokens": budget_tokens,
         "load": asdict(stats),
         "seconds": {"load": loaded - started, "search": time.monotonic() - loaded},
         "hits": [_hit_record(hit, provenance) for hit in hits],
@@ -748,7 +763,6 @@ def _retrieval_constants() -> dict[str, Any]:
         "FUSED_TOP": search.FUSED_TOP,
         "CANDIDATES_PER_SIGNAL": search.CANDIDATES_PER_SIGNAL,
         "PER_FILE_CAP": search.PER_FILE_CAP,
-        "TIME_DECAY_HALF_LIFE_DAYS": search.TIME_DECAY_HALF_LIFE_DAYS,
     }
 
 

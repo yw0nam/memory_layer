@@ -663,3 +663,38 @@ def test_search_time_bound_validation_errors_are_400(body):
     response = client.post("/search", json=body)
     assert response.status_code == 400
     assert set(response.json()) == {"error"}
+
+
+def test_search_forwards_budget_tokens_and_ignores_top_k(monkeypatch):
+    captured = {}
+    hits = [_hit(ref=f"f{i}.py:L1-L2", rrf=float(i)) for i in range(15)]
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return hits
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post("/search", json={"query": "hello", "top_k": 2, "budget_tokens": 800})
+    assert response.status_code == 200
+    assert captured["budget_tokens"] == 800
+    assert len(response.json()) == 15
+
+
+def test_search_omitted_budget_tokens_does_not_reach_search(monkeypatch):
+    captured = {}
+
+    async def fake_search(query, **options):
+        captured.update(options)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post("/search", json={"query": "hello"})
+    assert response.status_code == 200
+    assert "budget_tokens" not in captured
+
+
+@pytest.mark.parametrize("budget_tokens", [True, None, "100", 1.5, 0, 32001])
+def test_search_invalid_budget_tokens_400(budget_tokens):
+    response = client.post("/search", json={"query": "hello", "budget_tokens": budget_tokens})
+    assert response.status_code == 400
+    assert response.json()["error"] == "budget_tokens must be an integer between 1 and 32000"

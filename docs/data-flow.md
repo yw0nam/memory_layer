@@ -195,7 +195,7 @@ pull, remove, and index work is retried after an API restart.
 The code indexer mounts every subdirectory of `REPO_CACHE` as an independent codebase, so
 adding or removing a checkout adds or tears down its rows on the next run. Clones keep
 full history (`--filter=blob:none`, lazy blobs) precisely so each file carries its real
-last-commit time into time-decay scoring.
+last-commit time into the recency signal.
 
 `POST /repos` accepts http(s) URLs only, and rejects credentials embedded in the URL.
 Private repositories authenticate through the git credential store — see
@@ -224,15 +224,17 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
                         ▼
                 RRF   Σ w/(60 + rank)   w: vec 1.0 · fts 0.2 · rec 0.25
                         ▼
-                ⏳ time decay (90-day half-life)
+                per-file / per-session cap 3  → top 40
                         ▼
-                per-file / per-session cap 3  → top 20
+                🎯 rerank (vLLM)
                         ▼
-                🎯 rerank (vLLM) → top 10
-                        ▼
-                min_score floor (default 0.25, rerank scale only)
+                top 10 · min_score floor (default 0.25, rerank scale only)
+                  │ skipped when budget_tokens is set
                         ▼
                 code hits get ±40-line neighbour chunks as `context`
+                        ▼
+                budget_tokens set: hits in rerank order until the estimate
+                (chars / 4 of text + context) would exceed the budget
                         ▼
                     hits[]  ─────► in-process buffer
                                    (flushed on an interval)
@@ -248,9 +250,13 @@ cards ≤2000 (the ingest job fails if the summary runs longer). Code hits have 
 bound — CocoIndex's chunk_size is a target, not a limit — so the response still cuts them
 to 2000 chars. `score` is the rerank score, falling back to the
 fused RRF score. Hits below the min_score floor (default 0.25, request-adjustable, 0 disables)
-are dropped after reranking. `include_archived` surfaces archived rows and turns recency decay off for
-memory so they are not buried; code hits have no archived state and keep decaying. `/search`
-hits mark archived rows `"archived": true` since an archived note may have been superseded by
+are dropped after reranking. Age enters ranking only as the recency voter in the fusion, so an
+old row with a strong vector or BM25 rank reaches the reranker. `budget_tokens` (1–32000)
+replaces the count and the floor: every fused candidate is reranked, and hits come back in
+rerank order until the running estimate of the returned text (`max(1, chars // 4)` per hit,
+restored code context included) would exceed the budget, so a multi-fact question gets every
+relevant note that fits rather than ten. `include_archived` surfaces
+archived rows; `/search` hits mark archived rows `"archived": true` since an archived note may have been superseded by
 a newer one.
 
 The read path writes nothing to the database. Returned hit ids and per-chunk counters land
@@ -258,7 +264,7 @@ in an in-process buffer that a background task flushes every `HIT_FLUSH_INTERVAL
 (default 30) and on shutdown: one batched `retrieval_log` insert plus one deduplicated
 `hit_count` update, so repeated hits on a popular row collapse into a single `+ n`. Each
 `retrieval_log` row carries the request's narrowing options — `kind`, `tags`, `repo`, `since`,
-`until`, `min_score`, `author`, `namespaces`, `include_archived`, `top_k` — in a `filters`
+`until`, `min_score`, `budget_tokens`, `author`, `namespaces`, `include_archived`, `top_k` — in a `filters`
 jsonb column, so an empty result is attributable to the filters that produced it. The same
 cycle prunes `retrieval_log` rows older than `RETRIEVAL_LOG_RETENTION_DAYS` at startup and
 then at most hourly. An unclean stop loses at most one interval of counters, which only feed
@@ -352,7 +358,6 @@ last turn is a 400. MCP reaches it as `expand_source`.
                             archived_at set
                                    │
           excluded from search ◄───┴───► include_archived=true brings it back
-                                          (memory decay off, code decay on)
 ```
 
 `GET /admin/duplicates` lists near-duplicate pairs by cosine with each side's author,

@@ -225,10 +225,9 @@ def test_full_archive_and_note_lifecycle():
         restored_hits = [h for h in restored_search.json() if token in h["text"]]
         assert restored_hits
         assert all("archived" not in h for h in restored_hits)
-        # Restore returns the row to the active pool; default-search RANKING is
-        # not asserted because time decay legitimately buries a 200-day-old row.
-        # Active-pool membership is verified via /admin/notes below (it filters
-        # on archived_at IS NULL).
+        # Restore returns the row to the active pool; default-search ranking is
+        # not asserted here. Active-pool membership is verified via /admin/notes
+        # below (it filters on archived_at IS NULL).
 
         # ---- /admin/notes lists the aged seeded note ----
         notes = client.get("/admin/notes", params={"older_than_days": 100})

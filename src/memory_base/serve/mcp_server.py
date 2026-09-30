@@ -207,6 +207,7 @@ async def _search(
     until: str | None = None,
     min_score: float | None = None,
     author: str | None = None,
+    budget_tokens: int | None = None,
     ctx: "Context | None" = None,
 ) -> list[dict[str, Any]]:
     body: dict[str, Any] = {"query": query, "source": source, "top_k": top_k}
@@ -228,6 +229,8 @@ async def _search(
         body["min_score"] = min_score
     if author is not None:
         body["author"] = author
+    if budget_tokens is not None:
+        body["budget_tokens"] = budget_tokens
     return await _call(
         "POST",
         "/search",
@@ -243,6 +246,7 @@ async def search_all(
     include_archived: bool = False,
     namespace: str | None = None,
     min_score: float | None = None,
+    budget_tokens: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search both code and memory for the given query.
@@ -266,6 +270,11 @@ async def search_all(
 
     Hits scoring below `min_score` are dropped (default 0.25 on the 0-1 rerank
     relevance scale; pass 0 to disable).
+
+    `budget_tokens` (1-32000) switches to budget packing: hits come back in rerank
+    order until their estimated size (characters / 4, context included) would
+    exceed the budget, and `top_k` and `min_score` are ignored. Use it for
+    questions whose answer spans several notes.
     """
     return await _search(
         query,
@@ -274,6 +283,7 @@ async def search_all(
         include_archived=include_archived,
         namespace=namespace,
         min_score=min_score,
+        budget_tokens=budget_tokens,
         ctx=ctx,
     )
 
@@ -322,6 +332,7 @@ async def search_memory(
     until: str | None = None,
     min_score: float | None = None,
     author: str | None = None,
+    budget_tokens: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search only stored memory for the given query.
@@ -335,9 +346,9 @@ async def search_memory(
     chunks and CSV cards up to 2000).
 
     Archived memory is excluded by default. Set `include_archived` only when the
-    question is explicitly about superseded or historical content: it also drops
-    recency weighting, and the rows it adds carry "archived": true because they
-    may have been replaced by a newer note.
+    question is explicitly about superseded or historical content; the rows it
+    adds carry "archived": true because they may have been replaced by a newer
+    note.
 
     `namespace` narrows the search to one namespace the caller's API key can
     access; omitted, it covers every namespace the key can access. A
@@ -354,6 +365,11 @@ async def search_memory(
 
     Hits scoring below `min_score` are dropped (default 0.25 on the 0-1 rerank
     relevance scale; pass 0 to disable).
+
+    `budget_tokens` (1-32000) switches to budget packing: hits come back in rerank
+    order until their estimated size (characters / 4, context included) would
+    exceed the budget, and `top_k` and `min_score` are ignored. Use it for
+    questions whose answer spans several notes.
     """
     return await _search(
         query,
@@ -367,6 +383,7 @@ async def search_memory(
         until=until,
         min_score=min_score,
         author=author,
+        budget_tokens=budget_tokens,
         ctx=ctx,
     )
 

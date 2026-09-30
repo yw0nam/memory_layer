@@ -72,8 +72,8 @@ and lifts hybrid above vector-only.
   distilled English records. On non-English raw text the FTS leg contributes
   exact-token matching (identifiers, error strings, names) and the multilingual
   embedder carries semantic matching.
-- The recency RRF voter is a tie-breaker (weight 0.25); ranked recency
-  preference is enforced post-fusion by the time-decay multiplier.
+- The recency RRF voter is a tie-breaker (weight 0.25) and the only place age
+  enters ranking; no age multiplier runs after fusion.
 - The bm25 index scan streams candidates in score order and outer predicate
   filters (e.g. namespace) do not truncate it: a row ranked below thousands of
   foreign-namespace matches is still returned once the filter discards them

@@ -1,4 +1,4 @@
-"""Hybrid search: FTS + vector + time-decay signals fused with RRF, then reranked.
+"""Hybrid search: FTS + vector + recency signals fused with RRF, then reranked.
 
 CLI: uv run python -m memory_base.retrieval.search "your query" [--source code|memory|all]
 """
@@ -8,8 +8,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import math
-import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any
@@ -29,9 +27,8 @@ from memory_base.core.config import (
 RRF_K = 60
 CANDIDATES_PER_SIGNAL = 50
 PER_FILE_CAP = 3
-FUSED_TOP = 20
+FUSED_TOP = 40
 RERANK_TOP = 10
-TIME_DECAY_HALF_LIFE_DAYS = 90.0
 SEARCH_KINDS = ("doc", "note", "decision", "episode")
 # Reranker input budget; the API's TEXT_LIMIT is separate and bounds only code responses.
 RERANK_TEXT_LIMIT = 4000
@@ -42,8 +39,7 @@ CODE_BM25_INDEX = "code_chunks_bm25"
 # Reranker relevance floor (0..1, rerank-only): above junk (<=~0.01), below weak true hits (~0.29).
 MIN_SCORE = 0.25
 FTS_RRF_WEIGHT = 0.2
-# Recency is a tie-breaker ("when relevance is otherwise equal, the newer wins");
-# ranked recency itself is enforced post-fusion by the time-decay multiplier.
+# Recency is a tie-breaker ("when relevance is otherwise equal, the newer wins").
 TIEBREAK_RRF_WEIGHT = 0.25
 # BM25 index scans cap candidates at bm25_catalog.bm25_limit (100 by default) before filters.
 
@@ -411,25 +407,6 @@ async def _search_memory(
     return hits
 
 
-def _apply_time_decay(hits: list[Hit]) -> None:
-    """Multiply RRF score by exp decay on age — old answers lose to fresh ones."""
-    now = time.time()
-    for h in hits:
-        age_days = max(0.0, (now - h.ts) / 86400.0)
-        h.rrf *= math.pow(0.5, age_days / TIME_DECAY_HALF_LIFE_DAYS)
-
-
-def _decay_targets(hits: list[Hit], include_archived: bool) -> list[Hit]:
-    """Pick the hits recency decay still applies to.
-
-    Archival recall asks for old memory, so decay would bury exactly what was
-    requested. Code rows have no archived state and keep decaying either way.
-    """
-    if not include_archived:
-        return hits
-    return [h for h in hits if h.source == "code"]
-
-
 def _dedup_cap(hits: list[Hit]) -> list[Hit]:
     """Per-file/session cap for diversity, then take fused top."""
     hits.sort(key=lambda h: h.rrf, reverse=True)
@@ -456,6 +433,24 @@ def _apply_min_score(hits: list[Hit], min_score: float | None, rerank: bool) -> 
     if floor is None:
         return hits
     return [h for h in hits if h.score >= floor]
+
+
+def estimate_tokens(hit: Hit) -> int:
+    """Token estimate of what a hit returns: its text plus any restored context."""
+    # ponytail: chars/4, no tokenizer dependency.
+    return max(1, (len(hit.text) + len(hit.meta.get("context") or "")) // 4)
+
+
+def _pack_budget(hits: list[Hit], budget_tokens: int) -> list[Hit]:
+    """Hits in rank order until the next one would push the estimate past the budget."""
+    packed: list[Hit] = []
+    used = 0
+    for h in hits:
+        used += estimate_tokens(h)
+        if used > budget_tokens:
+            break
+        packed.append(h)
+    return packed
 
 
 def rerank_payload(model: str, query: str, texts: list[str]) -> dict:
@@ -500,7 +495,7 @@ async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
     for item in r.json()["results"]:
         hits[item["index"]].rerank_score = item["relevance_score"]
     hits.sort(key=lambda h: h.rerank_score or 0.0, reverse=True)
-    return hits[:RERANK_TOP]
+    return hits
 
 
 async def _restore_context(
@@ -537,9 +532,15 @@ async def search(
     until: str | None = None,
     min_score: float | None = None,
     author: str | None = None,
+    budget_tokens: int | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
-    """schema overrides PG_SCHEMA for this call; only the eval harness passes it."""
+    """Return ranked hits; schema overrides PG_SCHEMA and only the eval harness passes it.
+
+    Without budget_tokens: the top RERANK_TOP reranked hits above the score floor.
+    With it: every fused candidate in reranked order until the token estimate of the
+    returned text would exceed the budget; the floor and RERANK_TOP do not apply.
+    """
     kind, tags, repo, since_ts, until_ts = validate_search_options(
         source, kind, tags, repo, since, until, author
     )
@@ -565,13 +566,15 @@ async def search(
                 author=author,
                 schema=schema,
             )
-        _apply_time_decay(_decay_targets(hits, include_archived))
         hits = _dedup_cap(hits)
     if rerank:
         hits = await _rerank(query, hits)
-    hits = _apply_min_score(hits, min_score, rerank)
+    if budget_tokens is None:
+        hits = _apply_min_score(hits[:RERANK_TOP] if rerank else hits, min_score, rerank)
     async with db.acquire() as conn:
         await _restore_context(conn, hits, schema=schema)
+    if budget_tokens is not None:
+        hits = _pack_budget(hits, budget_tokens)
     return hits
 
 

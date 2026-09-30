@@ -1,12 +1,10 @@
 """Unit tests for the pure functions in src/search.py: no DB/network access.
 
-rrf_fuse, _apply_time_decay, and _dedup_cap operate purely on Hit objects /
+rrf_fuse and _dedup_cap operate purely on Hit objects /
 plain dicts, so they're exercised directly with hand-built inputs.
 """
 
 from __future__ import annotations
-
-import time
 
 import numpy as np
 import pytest
@@ -22,8 +20,6 @@ from memory_base.retrieval.search import (
     RRF_K,
     Hit,
     _apply_min_score,
-    _apply_time_decay,
-    _decay_targets,
     _dedup_cap,
     rerank_payload,
     rrf_fuse,
@@ -69,47 +65,6 @@ def test_rrf_fuse_none_weights_preserves_default_scores():
     assert rrf_fuse(lists, None) == rrf_fuse(lists)
 
 
-# ---- _apply_time_decay --------------------------------------------------
-
-
-def test_time_decay_half_life_90_days():
-    now = time.time()
-    fresh = Hit(source="code", ref="a", text="", ts=now, rrf=1.0)
-    ninety_days_old = Hit(source="code", ref="b", text="", ts=now - 90 * 86400, rrf=1.0)
-    _apply_time_decay([fresh, ninety_days_old])
-    assert fresh.rrf == pytest.approx(1.0, rel=1e-3)
-    assert ninety_days_old.rrf == pytest.approx(0.5, rel=1e-3)
-
-
-def test_time_decay_age_zero_means_no_decay():
-    now = time.time()
-    hit = Hit(source="code", ref="a", text="", ts=now, rrf=0.7)
-    _apply_time_decay([hit])
-    assert hit.rrf == pytest.approx(0.7, rel=1e-3)
-
-
-def test_time_decay_180_days_quarters_score():
-    now = time.time()
-    hit = Hit(source="code", ref="a", text="", ts=now - 180 * 86400, rrf=1.0)
-    _apply_time_decay([hit])
-    assert hit.rrf == pytest.approx(0.25, rel=1e-3)
-
-
-# ---- _decay_targets ------------------------------------------------------
-
-
-def test_decay_targets_are_every_hit_by_default():
-    code = Hit(source="code", ref="a", text="", ts=0.0, rrf=1.0)
-    memory = Hit(source="memory", ref="b", text="", ts=0.0, rrf=1.0)
-    assert _decay_targets([code, memory], include_archived=False) == [code, memory]
-
-
-def test_decay_targets_keep_code_when_archived_memory_is_included():
-    code = Hit(source="code", ref="a", text="", ts=0.0, rrf=1.0)
-    memory = Hit(source="memory", ref="b", text="", ts=0.0, rrf=1.0)
-    assert _decay_targets([code, memory], include_archived=True) == [code]
-
-
 # ---- _dedup_cap ----------------------------------------------------------
 
 
@@ -127,9 +82,9 @@ def test_dedup_cap_caps_same_file_to_per_file_cap():
 
 
 def test_dedup_cap_overall_fused_top_cap():
-    hits = [_hit(f"f{i}.py:L1", rrf=float(30 - i), filename=f"f{i}.py") for i in range(30)]
+    hits = [_hit(f"f{i}.py:L1", rrf=float(50 - i), filename=f"f{i}.py") for i in range(50)]
     out = _dedup_cap(hits)
-    assert len(out) == FUSED_TOP == 20
+    assert len(out) == FUSED_TOP == 40
 
 
 def test_dedup_cap_keeps_rrf_descending_order():
