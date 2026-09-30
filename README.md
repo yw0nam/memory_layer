@@ -79,7 +79,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 |---|---|---|
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
-| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
+| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, `kind`, the optional id of a prior note to archive (400 when the save would leave no active note), an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time), and an optional `conversation_id` with an inclusive 0-based `turn_start`/`turn_end` linking the note to a stored conversation source in the same namespace (400 when the source is missing, in another namespace, or shorter than the range); refused with 409 when the chat model judges the content a report of what a record elsewhere says (a tracker artefact, a progress update, or a file description), generic advice with no fact tied to this user, or filler (the error carries the reason and says to rewrite a fact that exists nowhere else as a note of its own, retrying at most once), and when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set; refused with 409 before any model call when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind`, `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
 | `POST` | `/conversations` | store a conversation source — refused whole with 400 when a turn carries a credential (the error names the turn and the credential type only); `origin` (e.g. `claude_code`, `hermes`), `external_session_id`, `started_at`/`ended_at` (epoch seconds), `turns` (a non-empty list of exactly `{role: user\|assistant, text}`), optional `namespace` (default the key's home); upserts by `(namespace, origin, external_session_id)` and returns `{id, created, turns}` (201 created, 200 replaced); a re-upload is the storing key's or an admin key's only (403), and once a note links to the source its turns are fixed — identical turns are a no-op, changed turns 409; over 2,000,000 chars of turn text is 413 |
@@ -136,7 +136,9 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,
-so `search` and `search_code` do not offer them; `repo` on `search_code` alone.
+so `search` and `search_code` do not offer them; `repo` on `search_code` alone;
+`budget_tokens` on `search` and `search_memory`, which returns hits in rerank order up to
+a token budget instead of `top_k` hits above `min_score`.
 `list_notes` reads notes by filters alone — no query, no embedding call — for
 deterministic reads like tag-scoped profile notes or a time window. `author` filters
 `search_memory` and `list_notes` to one agent's notes.

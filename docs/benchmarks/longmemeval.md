@@ -72,6 +72,17 @@ stay out of gate-off too, because `save_note` never stores them. Each run writes
 own files (`packets-gate-off.jsonl`, `answers-gate-off.jsonl`, and so on; the dated run
 uses `-dated`), and `score` reports every run present side by side.
 
+`--read` selects how each run reads the search:
+
+| read | search options | hits kept | run name |
+|---|---|---|---|
+| `search` (default) | production floor | first 10 | unprefixed |
+| `prefetch` | `min_score=0.6` | first 5 | `prefetch-…` |
+| `budget` | `budget_tokens=4000` | every packed hit | `budget-…` |
+
+A budget packet records its `budget_tokens`, and the manifest records the read setting
+of every run.
+
 ## Extraction
 
 The extractor is `glm-5.3-flash` on the z.ai endpoint resolved from `.env`
@@ -102,7 +113,7 @@ near-duplicate refusal would drop knowledge-update facts; each acknowledged neig
 counted as a similar ack). The gate is pinned open at load because its verdict was
 recorded at extraction. The question then runs through
 `search(question, source="memory", namespaces=[namespace])` with production rerank and
-the production score floor.
+the run's read setting.
 
 The harness links no note to a conversation source, so a note id hashes its content
 alone and identical notes from two sessions share one row; the harness keeps a
@@ -156,7 +167,7 @@ the manifest.
 - **Retrieval**: upstream's session-level `recall_all@k` (every answer session among the
   first k distinct sessions) and `ndcg_any@k` for k = 5 and 10, over the ordered
   distinct benchmark sessions of the hits (at most `RERANK_TOP` hits survive rerank and
-  the floor). The DCG is upstream's: rank 1 undiscounted and rank r >= 2 divided by
+  the floor under the `search` read; a `budget` read keeps as many as fit the budget). The DCG is upstream's: rank 1 undiscounted and rank r >= 2 divided by
   log2(r). Abstention questions are excluded. Zero-hit packets are counted.
 - **Write path**: notes per unit, refused-save rate overall and per `question_type`,
   refusals by cause (gate, validation, credential), similar acks, and extraction and

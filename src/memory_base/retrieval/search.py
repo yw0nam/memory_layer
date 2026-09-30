@@ -435,6 +435,24 @@ def _apply_min_score(hits: list[Hit], min_score: float | None, rerank: bool) -> 
     return [h for h in hits if h.score >= floor]
 
 
+def estimate_tokens(hit: Hit) -> int:
+    """Token estimate of what a hit returns: its text plus any restored context."""
+    # ponytail: chars/4, no tokenizer dependency.
+    return max(1, (len(hit.text) + len(hit.meta.get("context") or "")) // 4)
+
+
+def _pack_budget(hits: list[Hit], budget_tokens: int) -> list[Hit]:
+    """Hits in rank order until the next one would push the estimate past the budget."""
+    packed: list[Hit] = []
+    used = 0
+    for h in hits:
+        used += estimate_tokens(h)
+        if used > budget_tokens:
+            break
+        packed.append(h)
+    return packed
+
+
 def rerank_payload(model: str, query: str, texts: list[str]) -> dict:
     """Build the /rerank request body, templated for Qwen3 rerankers."""
     truncated = [text[:RERANK_TEXT_LIMIT] for text in texts]
@@ -477,7 +495,7 @@ async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
     for item in r.json()["results"]:
         hits[item["index"]].rerank_score = item["relevance_score"]
     hits.sort(key=lambda h: h.rerank_score or 0.0, reverse=True)
-    return hits[:RERANK_TOP]
+    return hits
 
 
 async def _restore_context(
@@ -514,9 +532,15 @@ async def search(
     until: str | None = None,
     min_score: float | None = None,
     author: str | None = None,
+    budget_tokens: int | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
-    """schema overrides PG_SCHEMA for this call; only the eval harness passes it."""
+    """Return ranked hits; schema overrides PG_SCHEMA and only the eval harness passes it.
+
+    Without budget_tokens: the top RERANK_TOP reranked hits above the score floor.
+    With it: every fused candidate in reranked order until the token estimate of the
+    returned text would exceed the budget; the floor and RERANK_TOP do not apply.
+    """
     kind, tags, repo, since_ts, until_ts = validate_search_options(
         source, kind, tags, repo, since, until, author
     )
@@ -545,9 +569,12 @@ async def search(
         hits = _dedup_cap(hits)
     if rerank:
         hits = await _rerank(query, hits)
-    hits = _apply_min_score(hits, min_score, rerank)
+    if budget_tokens is None:
+        hits = _apply_min_score(hits[:RERANK_TOP] if rerank else hits, min_score, rerank)
     async with db.acquire() as conn:
         await _restore_context(conn, hits, schema=schema)
+    if budget_tokens is not None:
+        hits = _pack_budget(hits, budget_tokens)
     return hits
 
 
