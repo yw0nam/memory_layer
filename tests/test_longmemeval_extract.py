@@ -444,3 +444,12 @@ def test_the_digest_and_personal_prompts_are_the_production_distill_prompts():
     messages = extract.build_messages(DATE_A, [{"role": "user", "content": "my bike"}], "digest")
     assert messages[0]["content"] == distill.EXTRACTION_SYSTEM_PROMPT
     assert "[0] user: my bike" in messages[1]["content"]
+
+
+def test_the_packaged_prompt_shas_are_pinned():
+    assert extract.prompt_sha256("digest") == (
+        "d36c16c1e5f1e23450d550ceacb5503edcdbf01f473f350cd2f98763261d24c1"
+    )
+    assert extract.prompt_sha256("personal") == (
+        "9609641776fd4d3c014da668bbb45c83ec12a74206957fb692c9b00f200e9c92"
+    )

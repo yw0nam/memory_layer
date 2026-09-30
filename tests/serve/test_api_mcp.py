@@ -166,4 +166,5 @@ def test_mcp_server_registers_expected_tools():
         "claim_message",
         "cancel_message",
         "expand_source",
+        "list_conversations",
     }

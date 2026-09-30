@@ -635,6 +635,7 @@ def test_mcp_tool_list_unaffected_by_supersede():
         "claim_message",
         "cancel_message",
         "expand_source",
+        "list_conversations",
     }
 
 

@@ -53,8 +53,9 @@ class _Tx:
 class FakeConn:
     """One conversation_sources row at most, plus whether a note references it."""
 
-    def __init__(self, source=None, *, referenced=False, registered=True):
+    def __init__(self, source=None, *, referenced=False, registered=True, sources=None):
         self.source = source
+        self.sources = sources or []
         self.referenced = referenced
         self.registered = registered
         self.statements: list[tuple[str, tuple]] = []
@@ -103,7 +104,7 @@ class FakeConn:
 
     async def fetch(self, query, *args):
         self._record(query, args)
-        return []
+        return self.sources if "conversation_sources" in query else []
 
     async def execute(self, query, *args):
         self._record(query, args)
@@ -596,6 +597,184 @@ def test_get_conversation_outside_the_readable_set_is_404(use, monkeypatch):
     assert response.status_code == 404
 
 
+def test_get_conversation_contains_matches_case_insensitively_keeping_indices(use):
+    use(FakeConn(_source()))
+    response = client.get(f"/conversations/{SOURCE_ID}?contains=RERANKER")
+    assert response.status_code == 200
+    assert response.json()["turns"] == [{"index": 0, **TURNS[0]}, {"index": 1, **TURNS[1]}]
+
+
+def test_get_conversation_contains_combines_with_the_turn_range(use):
+    use(FakeConn(_source()))
+    response = client.get(f"/conversations/{SOURCE_ID}?turn_start=1&contains=reranker")
+    assert response.status_code == 200
+    assert response.json()["turns"] == [{"index": 1, **TURNS[1]}]
+
+
+def test_get_conversation_contains_without_a_match_is_an_empty_200(use):
+    use(FakeConn(_source()))
+    response = client.get(f"/conversations/{SOURCE_ID}?contains=haproxy")
+    assert response.status_code == 200
+    assert response.json()["turns"] == []
+
+
+def test_get_conversation_empty_contains_keeps_every_turn(use):
+    use(FakeConn(_source()))
+    response = client.get(f"/conversations/{SOURCE_ID}?contains=")
+    assert [turn["index"] for turn in response.json()["turns"]] == [0, 1, 2]
+
+
+@pytest.mark.parametrize("contains", [3, ["reranker"], True])
+def test_get_conversation_non_string_contains_is_refused(use, contains):
+    use(FakeConn(_source()))
+    key = SimpleNamespace(permits=lambda namespace: True)
+    with pytest.raises(ValueError, match="contains must be a string"):
+        asyncio.run(conversations.get_conversation(SOURCE_ID, key, contains=contains))
+
+
+# ---- GET /conversations: the listing ---------------------------------------------
+
+
+LISTED = {
+    "id": SOURCE_ID,
+    "namespace": "default",
+    "origin": "claude_code",
+    "external_session_id": "sess-1",
+    "started_at": NOW,
+    "ended_at": NOW + 60,
+    "turn_count": 3,
+    "repo": "memory_base",
+    "preview": TURNS[0]["text"],
+}
+
+
+def test_list_conversations_issues_one_newest_first_query(use):
+    conn = use(FakeConn(sources=[LISTED]))
+    rows = asyncio.run(conversations.list_conversations(namespaces=None))
+    assert rows == [LISTED]
+    (query, args) = conn.sql("conversation_sources")[0]
+    assert len(conn.sql("conversation_sources")) == 1
+    assert "jsonb_array_length(turns) AS turn_count" in query
+    assert "metadata->>'repo' AS repo" in query
+    assert "AS preview" in query and ", 200) AS preview" in query
+    assert "t->>'role' = 'user'" in query
+    assert query.endswith("ORDER BY started_at DESC, id LIMIT $1")
+    assert args == (conversations.LIST_CONVERSATIONS_DEFAULT_LIMIT,)
+
+
+def test_list_conversations_binds_every_filter_before_the_limit(use):
+    conn = use(FakeConn())
+    asyncio.run(
+        conversations.list_conversations(
+            namespaces=["default", "team-a"],
+            since="2026-08-01",
+            until="2026-08-12",
+            origin="hermes",
+            limit=5,
+        )
+    )
+    (query, args) = conn.sql("conversation_sources")[0]
+    assert args == (5, ["default", "team-a"], 1785542400.0, 1786579200.0, "hermes")
+    where = query[query.rindex("WHERE") : query.rindex("ORDER BY")]
+    for predicate in (
+        "namespace = ANY($2::text[])",
+        "started_at >= $3",
+        "started_at < $4",
+        "origin = $5",
+    ):
+        assert predicate in where
+
+
+@pytest.mark.parametrize("limit", [0, 201, True, "5"])
+def test_list_conversations_rejects_a_limit_outside_1_to_200(use, limit):
+    conn = use(FakeConn())
+    with pytest.raises(ValueError, match="limit"):
+        asyncio.run(conversations.list_conversations(namespaces=None, limit=limit))
+    assert conn.statements == []
+
+
+@pytest.mark.parametrize("origin", ["", "  ", 3])
+def test_list_conversations_rejects_a_blank_or_non_string_origin(use, origin):
+    use(FakeConn())
+    with pytest.raises(ValueError, match="origin"):
+        asyncio.run(conversations.list_conversations(namespaces=None, origin=origin))
+
+
+def test_list_conversations_rejects_an_empty_window(use):
+    use(FakeConn())
+    with pytest.raises(ValueError, match="since"):
+        asyncio.run(
+            conversations.list_conversations(
+                namespaces=None, since="2026-08-02", until="2026-08-01"
+            )
+        )
+
+
+def test_get_conversations_returns_the_listing(use):
+    use(FakeConn(sources=[LISTED]))
+    response = client.get("/conversations")
+    assert response.status_code == 200
+    assert response.json() == [LISTED]
+
+
+@pytest.mark.parametrize(
+    "query", ["limit=x", "limit=0", "limit=201", "origin=", "since=nope", "until=2020-13-01"]
+)
+def test_get_conversations_bad_filters_are_400(use, query):
+    use(FakeConn())
+    response = client.get(f"/conversations?{query}")
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+@pytest.fixture
+def listing(monkeypatch):
+    calls: list[dict] = []
+
+    async def fake_list_conversations(**kwargs):
+        calls.append(kwargs)
+        return []
+
+    monkeypatch.setattr(conversations, "list_conversations", fake_list_conversations)
+    return calls
+
+
+def test_get_conversations_passes_the_filters_through(listing):
+    response = client.get(
+        "/conversations?since=2026-08-01&until=2026-08-12&origin=hermes"
+        "&namespace=default&namespace=team-a&limit=7"
+    )
+    assert response.status_code == 200
+    assert listing == [
+        {
+            "namespaces": ["default", "team-a"],
+            "since": "2026-08-01",
+            "until": "2026-08-12",
+            "origin": "hermes",
+            "limit": 7,
+        }
+    ]
+
+
+def test_get_conversations_admin_without_a_namespace_covers_every_namespace(listing):
+    assert client.get("/conversations").status_code == 200
+    assert listing[0]["namespaces"] is None
+    assert listing[0]["limit"] == conversations.LIST_CONVERSATIONS_DEFAULT_LIMIT
+
+
+def test_get_conversations_member_without_a_namespace_is_scoped_to_its_set(listing, monkeypatch):
+    member = _member_client(monkeypatch, allowed={"default"})
+    assert member.get("/conversations").status_code == 200
+    assert listing[0]["namespaces"] == ["default"]
+
+
+def test_get_conversations_member_outside_its_set_is_403(listing, monkeypatch):
+    member = _member_client(monkeypatch, allowed={"default"})
+    response = member.get("/conversations?namespace=team-b")
+    assert response.status_code == 403
+    assert listing == []
+
+
 # ---- build_note_row: conversation identity -------------------------------------
 
 
@@ -1071,3 +1250,54 @@ def test_mcp_expand_source_rejects_a_malformed_id_without_a_call(monkeypatch, ba
     _patch_mcp(monkeypatch, handler)
     with pytest.raises(ValueError, match="conversation_id"):
         asyncio.run(mcp_server.expand_source(bad))
+
+
+def test_mcp_expand_source_forwards_contains(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"id": CID, "turns": []})
+
+    _patch_mcp(monkeypatch, handler)
+    asyncio.run(mcp_server.expand_source(CID, turn_start=1, contains="HAProxy"))
+    assert captured["params"] == {"turn_start": "1", "contains": "HAProxy"}
+
+
+def test_mcp_list_conversations_gets_the_listing_with_its_filters(monkeypatch):
+    captured = {}
+    payload = [LISTED]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["params"] = request.url.params.multi_items()
+        return httpx.Response(200, json=payload)
+
+    _patch_mcp(monkeypatch, handler)
+    result = asyncio.run(
+        mcp_server.list_conversations(
+            since="2026-08-01", until="2026-08-12", origin="hermes", namespace="team-a", limit=7
+        )
+    )
+    assert (captured["method"], captured["path"]) == ("GET", "/conversations")
+    assert captured["params"] == [
+        ("since", "2026-08-01"),
+        ("until", "2026-08-12"),
+        ("origin", "hermes"),
+        ("namespace", "team-a"),
+        ("limit", "7"),
+    ]
+    assert result == payload
+
+
+def test_mcp_list_conversations_without_filters_sends_no_params(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = request.url.params.multi_items()
+        return httpx.Response(200, json=[])
+
+    _patch_mcp(monkeypatch, handler)
+    assert asyncio.run(mcp_server.list_conversations()) == []
+    assert captured["params"] == []
