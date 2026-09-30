@@ -36,7 +36,7 @@ class MemoryBaseClient:
     api_key: str
     timeout: float = 5.0
     top_k: int = 5
-    min_score: float = 0.6
+    min_score: float = 0.25
     transport: httpx.BaseTransport | None = None
 
     def _headers(self) -> dict[str, str]:
@@ -67,7 +67,8 @@ class MemoryBaseClient:
         return response.json()
 
     def build_prefetch(self, query: str) -> str:
-        """The header, then one line per hit for the cleaned query, truncated to budget.
+        """The header, then one line per hit for the cleaned query; hits that do not fit
+        are skipped.
 
         Hermes fences provider output in its own ``<memory-context>`` block and
         deletes any fence the provider emits, so this returns the block's body only.
@@ -75,15 +76,21 @@ class MemoryBaseClient:
         cleaned = clean_prefetch_query(query)
         if not cleaned:
             return ""
-        lines = [
-            f"- [{hit.get('date', '')}] {_FENCE_TAG.sub('[memory-context]', hit['text'])}"
-            for hit in self.search(cleaned)
-            if hit.get("text")
-        ]
-        body = _truncate_at_line_boundary(
-            "\n".join(lines), PREFETCH_CHAR_BUDGET - len(MEMORY_CONTEXT_HEADER) - 1
-        )
-        return f"{MEMORY_CONTEXT_HEADER}\n{body}" if body else ""
+        limit = PREFETCH_CHAR_BUDGET - len(MEMORY_CONTEXT_HEADER) - 1
+        lines: list[str] = []
+        used = 0
+        for hit in self.search(cleaned):
+            if not hit.get("text"):
+                continue
+            line = f"- [{hit.get('date', '')}] {_FENCE_TAG.sub('[memory-context]', hit['text'])}"
+            size = len(line) + (1 if lines else 0)
+            if used + size > limit:
+                continue
+            lines.append(line)
+            used += size
+        if not lines:
+            return ""
+        return f"{MEMORY_CONTEXT_HEADER}\n" + "\n".join(lines)
 
 
 def clean_prefetch_query(text: str) -> str:
@@ -138,11 +145,3 @@ def resolve_api_key(config: Mapping[str, Any], environ: Mapping[str, str]) -> st
         return str(configured)
     env_var = str(config.get("api_key_env") or DEFAULT_API_KEY_ENV)
     return environ.get(env_var, "")
-
-
-def _truncate_at_line_boundary(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    truncated = text[:limit]
-    cut = truncated.rfind("\n")
-    return truncated[:cut] if cut > 0 else ""

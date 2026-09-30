@@ -123,3 +123,10 @@ def test_session_end_before_initialize_does_nothing(plugin, monkeypatch):
     provider = _provider(plugin, monkeypatch, fake)
     provider.on_session_end(MESSAGES)
     assert fake.bodies == []
+
+
+def test_the_default_client_is_built_with_the_benchmarked_prefetch_floor(plugin, monkeypatch):
+    monkeypatch.setattr(plugin, "_load_plugin_config", lambda: {})
+    client = plugin.MemoryBaseProvider()._build_client()
+    assert client.min_score == 0.25
+    assert client.top_k == 5

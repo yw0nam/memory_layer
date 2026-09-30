@@ -79,7 +79,7 @@ uses `-dated`), and `score` reports every run present side by side.
 | read | search options | hits kept | run name |
 |---|---|---|---|
 | `search` (default) | production floor | first 10 | unprefixed |
-| `prefetch` | `min_score=0.6` | first 5 | `prefetch-…` |
+| `prefetch` | `min_score=0.25` | first 5 | `prefetch-…` |
 | `budget` | `budget_tokens=4000` | every packed hit | `budget-…` |
 | `candidates` | a budget no packet reaches | every fused candidate, in rerank order | `candidates-…` |
 

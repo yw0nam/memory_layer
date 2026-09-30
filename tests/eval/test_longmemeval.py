@@ -405,7 +405,7 @@ def test_the_prefetch_read_setting_names_its_own_runs():
     assert lme.packets_path(Path("d"), "prefetch-gate-off") == Path(
         "d/packets-prefetch-gate-off.jsonl"
     )
-    assert lme.read_setting("prefetch-gate-off") == {"top_k": 5, "min_score": 0.6}
+    assert lme.read_setting("prefetch-gate-off") == {"top_k": 5, "min_score": 0.25}
     assert lme.read_setting("gate-off") == {"top_k": 10, "min_score": None}
     assert set(lme.RUNS) >= {"prefetch", "prefetch-gate-off"}
 
@@ -438,7 +438,7 @@ def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(mon
     question = make_question("q1", "single-session-user", sessions=[("s1", D1)])
     packet = asyncio.run(lme.retrieve_question(question, {}, "prefetch-gate-off"))
     assert calls[0] == "off"
-    assert calls[1]["min_score"] == 0.6
+    assert calls[1]["min_score"] == 0.25
     assert [h["id"] for h in packet["hits"]] == ["n0", "n1", "n2", "n3", "n4"]
     packet = asyncio.run(lme.retrieve_question(question, {}, "baseline"))
     assert calls[2] == "on"

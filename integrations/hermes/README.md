@@ -56,7 +56,7 @@ Read from `memory.memory_base` in the Hermes profile's `config.yaml`:
 | `url`         | *(required)*              | memory-base REST API base URL              |
 | `timeout`     | `5`                        | request timeout, in seconds                 |
 | `top_k`       | `5`                        | max prefetch search results                 |
-| `min_score`   | `0.6`                      | relevance floor for prefetch search          |
+| `min_score`   | `0.25`                     | relevance floor for prefetch search          |
 | `api_key`     | *(none)*                   | API key value; takes precedence over `api_key_env` |
 | `api_key_env` | `MEMORY_BASE_API_KEY`     | env var holding the memory-base API key     |
 | `capture_namespace` | `personal`          | namespace sessions are captured into; must be registered and within the key's allowed set |
