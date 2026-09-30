@@ -748,7 +748,6 @@ def _retrieval_constants() -> dict[str, Any]:
         "FUSED_TOP": search.FUSED_TOP,
         "CANDIDATES_PER_SIGNAL": search.CANDIDATES_PER_SIGNAL,
         "PER_FILE_CAP": search.PER_FILE_CAP,
-        "TIME_DECAY_HALF_LIFE_DAYS": search.TIME_DECAY_HALF_LIFE_DAYS,
     }
 
 

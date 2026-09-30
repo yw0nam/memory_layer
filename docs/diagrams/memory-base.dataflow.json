@@ -173,7 +173,7 @@
       "id": "search",
       "type": "backend",
       "label": "Hybrid Search",
-      "sublabel": "RRF → decay → rerank",
+      "sublabel": "RRF → cap → rerank",
       "stage": 4,
       "row": 2,
       "tag": "POST /search"

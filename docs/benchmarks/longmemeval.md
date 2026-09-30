@@ -109,11 +109,9 @@ alone and identical notes from two sessions share one row; the harness keeps a
 note-to-sessions map, so a hit counts toward every session it came from. A packet hit's
 date is the note's `occurred_at`.
 
-The search's time decay multiplies fused scores by `0.5^(age/90 days)` of
-`ts_last_active`, which is each note's save time, not its session date. A question's
-notes are saved within one load in session-date order, so decay weighs them almost
-alike while the recency voter still ranks later sessions first. Decay affects only which
-candidates reach the reranker; the floor applies to rerank scores.
+Age enters the search only as the recency voter in the fusion, which ranks the
+candidates by date; it is relative, so ranking against wall clock matches ranking at the
+question date. The floor applies to rerank scores.
 
 The dated run embeds each note as `"{date}: {content}"` (ISO date of its session) while
 the stored text stays unchanged: the eval process rebinds `notes.embed_text` to a
@@ -254,7 +252,7 @@ from ShareGPT, whose provenance is unclear. The committed manifest
 ordered question ids with per-type and abstention counts, code revision, upstream
 commit, the sha256 of every prompt (extract, gate judge, answer, judge), model ids and
 parameters (extractor, gate, embedder, reranker, answerer, judge), `NOTE_SIMILAR_THRESHOLD`,
-`MIN_SCORE`, `RERANK_TOP`, `FUSED_TOP`, the decay half-life, the database image id and
+`MIN_SCORE`, `RERANK_TOP`, `FUSED_TOP`, the database image id and
 extensions, token totals for every model stage, counts, the judge agreement, and the
 sha256 of every jsonl artefact.
 

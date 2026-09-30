@@ -335,9 +335,9 @@ async def search_memory(
     chunks and CSV cards up to 2000).
 
     Archived memory is excluded by default. Set `include_archived` only when the
-    question is explicitly about superseded or historical content: it also drops
-    recency weighting, and the rows it adds carry "archived": true because they
-    may have been replaced by a newer note.
+    question is explicitly about superseded or historical content; the rows it
+    adds carry "archived": true because they may have been replaced by a newer
+    note.
 
     `namespace` narrows the search to one namespace the caller's API key can
     access; omitted, it covers every namespace the key can access. A
