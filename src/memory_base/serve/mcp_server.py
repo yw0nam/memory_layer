@@ -61,20 +61,22 @@ over the rows, and search never returns the rows themselves.
 """
 
 _WRITE_POLICY = """\
-Write rarely. A note earns its place when it captures what the next session would
-otherwise have to rediscover: a decision and the alternatives it rejected, a reproduced
-bug with its known fix, a non-obvious environment fact, an approach that failed and why.
-The status of a PR or issue, progress updates, and descriptions of what a file does are
-none of those — git and search_code already answer them, and stale copies only dilute
-retrieval. When a note goes out of date, supersede it rather than adding a second note
-that contradicts it. A save that lands next to a near-identical active note is refused
-with the neighbours listed; supersede the one it replaces, or pass allow_similar when it
-is a genuinely different fact. A note whose content is a restatement of a PR, issue, or
-commit, a progress update, or a description of what a file does is refused with the
-reason, and the verdict is final. If part of a refused note records something that exists
-nowhere else, rewrite that part to state the fact directly, without restating its source,
-and save it as a note of its own; if nothing does, store nothing. Retry at most once; if
-the rewrite is refused too, do not save it, and tell the user when one is present."""
+Write rarely. A note earns its place when it captures what the next conversation would
+otherwise have to ask again: a decision and the alternatives it rejected, a reproduced
+bug with its known fix, a non-obvious environment fact, an approach that failed and why —
+in coding sessions and personal chat alike, durable facts about the user included. Notes
+that report what a PR, issue, or commit says, progress updates, and descriptions of what
+a file does are none of those — git and search_code already answer them, and stale copies
+only dilute retrieval. When a note goes out of date, supersede it rather than adding a
+second note that contradicts it. A save that lands next to a near-identical active note
+is refused with the neighbours listed; supersede the one it replaces, or pass
+allow_similar when it is a genuinely different fact. A note whose content is a
+restatement of a PR, issue, or commit, a progress update, or a description of what a file
+does is refused with the reason, and the verdict is final. If part of a refused note
+records something that exists nowhere else, rewrite that part to state the fact directly,
+without restating its source, and save it as a note of its own; if nothing does, store
+nothing. Retry at most once; if the rewrite is refused too, do not save it, and tell the
+user when one is present."""
 
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never

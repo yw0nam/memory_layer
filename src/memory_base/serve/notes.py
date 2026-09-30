@@ -111,22 +111,35 @@ _VERDICT_SCHEMA = {
 }
 
 JUDGE_PROMPT = """\
-You decide whether a note belongs in a long-term memory store that later sessions read.
-The test is provenance, not usefulness. Accept a note only when what it records exists
-nowhere else — a conclusion and what it ruled out, a constraint or preference someone
-stated, an observed fact about the environment, a lesson from something that failed — and
-a future reader would need it in order to act well. Refuse a note that reports what a
-record held elsewhere says — its contents, scope, changes, or status — however detailed
-the report: that record is the source and the note is a copy. Version control, the
-tracker, the filesystem, and the running system are such records. Refuse what is bound to
-the moment it was written: progress, status, a narration of what was done. A copy that
-also carries something its source does not state still fails; that part belongs in a note
-of its own. Judge the content alone; where the note is stored, whom it concerns, and what
-domain it comes from are not your concern. An episode is the one kind that records a
-dated event, so being bound to its moment is never itself a reason to refuse one: judge an
-episode on provenance alone, accepting an event someone lived through and refusing one a
-tracker, version control, or the filesystem already records. State the deciding reason in
-one sentence."""
+You judge notes for a long-term memory of one user's conversations, coding sessions and
+personal chat alike. Accept a note when a future conversation would otherwise have to ask
+again and it records:
+
+- a durable fact about the user or the people, places, and things around them;
+- what the user has, uses, does regularly, likes, dislikes, or plans, with dates when stated;
+- a dated event the user took part in and its outcome;
+- a decision and the reason for it, or the alternatives it ruled out;
+- a specific answer the assistant gave that the user may ask for again — a recommendation, a
+  number, a list, a schedule, the defining facts of something written for the user;
+- a constraint, preference, environment fact, or lesson from a failure stated by a person;
+- how the user's systems behave in use — limits, schedules, failure modes, fixes — stated by
+  no record.
+
+Refuse a note reporting:
+
+- what a record held elsewhere says — version control, the tracker, the filesystem, the
+  running system — its contents, scope, changes, or status; the record is the source, the
+  note a copy;
+- progress, status, or a narration of what was done in a coding session;
+- what a file or function does;
+- generic advice or explanation true for anyone, with no fact tied to this user or this
+  conversation;
+- greetings, filler, or a restated question.
+
+A copy that carries what its source does not state still fails; that part goes in its own
+note. A failure's lesson is not session narration; the failure and its fix, stated outright,
+pass. An episode is judged only on provenance: lived by a person rather than recorded; its
+moment never refuses it. State the reason in one sentence."""
 
 
 async def judge_note_content(content: str, kind: str) -> ContentVerdict:

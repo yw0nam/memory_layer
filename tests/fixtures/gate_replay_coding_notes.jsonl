@@ -5,7 +5,7 @@
 {"content": "Decision: the nightly job runs at 03:40 UTC, not midnight, because the upstream export finishes at 03:30 and a midnight run always ingested yesterday's file twice.", "kind": "decision", "expect": "accept"}
 {"content": "Decision: this deployment pins Postgres 16 because pg_textsearch ships as a shared library built for that major; version 15 was ruled out when the preload failed on it.", "kind": "decision", "expect": "accept"}
 {"content": "Decision: the public API is versioned under /v2 only; /v1 was rejected because its response envelope cannot express per-namespace errors without breaking existing clients.", "kind": "decision", "expect": "accept"}
-{"content": "Decision: the eval replay samples queries that returned hits or were empty by turn, logged since the 2026-08-28 cutoff, chosen so cron ticks cannot dominate the sample; sampling every row was rejected as noisy.", "kind": "decision", "expect": "accept"}
+{"content": "Decision: the migration runs one transaction per batch rather than one for the whole file, because a failure then costs one batch of retries instead of a full re-run; the whole-file transaction was ruled out after a failed run cost four hours.", "kind": "decision", "expect": "accept"}
 {"content": "The team's convention is ruff with line length 100; black and isort stay out of this repo by choice.", "kind": "note", "expect": "accept"}
 {"content": "The client requires that all customer data stay in the eu-central-1 region; US regions are out by policy.", "kind": "note", "expect": "accept"}
 {"content": "Deployment must run on the air-gapped cluster: no image pulls from Docker Hub at runtime, everything is vendored.", "kind": "note", "expect": "accept"}
