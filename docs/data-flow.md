@@ -224,7 +224,7 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
                         ▼
                 RRF   Σ w/(60 + rank)   w: vec 1.0 · fts 0.2 · rec 0.25
                         ▼
-                per-file / per-session cap 3  → top 20
+                per-file / per-session cap 3  → top 40
                         ▼
                 🎯 rerank (vLLM)
                         ▼
