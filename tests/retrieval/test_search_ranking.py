@@ -128,6 +128,17 @@ def test_an_old_memory_with_a_strong_vector_rank_reaches_the_reranker(run_search
     assert hits[0].meta["id"] == "old-note"
 
 
+def test_forty_fused_candidates_reach_the_reranker(run_search):
+    now = time.time()
+    rows = [memory_row(f"cand-{i:02d}", now - i * 60) for i in range(45)]
+    reranker = FakeReranker({})
+
+    run_search(FakeConn(memory_vec=rows), reranker, source="memory")
+
+    assert len(reranker.documents) == 40
+    assert all(any(f"cand-{i:02d} body" in d for d in reranker.documents) for i in range(40))
+
+
 def test_the_multiplicative_age_decay_is_gone():
     assert not hasattr(search, "TIME_DECAY_HALF_LIFE_DAYS")
     assert not hasattr(search, "_apply_time_decay")
