@@ -57,7 +57,7 @@ class FakeClient:
         self.bodies.append(body)
         if self.error is not None:
             raise self.error
-        return {"id": "conv:1", "created": True, "job_id": "j"}
+        return {"id": "conv:1", "created": True, "turns": 2}
 
 
 def _provider(plugin, monkeypatch, fake, config=None):

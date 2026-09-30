@@ -41,8 +41,9 @@ client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 async def _cleanup() -> None:
     conn = await asyncpg.connect(db_url())
     try:
-        for table in ("conversation_sources", "jobs"):
-            await conn.execute(f'DELETE FROM "{PG_SCHEMA}".{table} WHERE namespace = $1', NAMESPACE)
+        await conn.execute(
+            f'DELETE FROM "{PG_SCHEMA}".conversation_sources WHERE namespace = $1', NAMESPACE
+        )
         await conn.execute(f'DELETE FROM "{PG_SCHEMA}".namespaces WHERE name = $1', NAMESPACE)
     finally:
         await conn.close()
@@ -100,8 +101,8 @@ def test_captured_sessions_are_listed_by_time_and_searched_within_one(namespace)
     }
     stored = client.post("/conversations", json=newer)
     assert stored.status_code == 201, stored.json()
-    assert stored.json()["created"] is True and stored.json()["turns"] == 4
     newer_id = stored.json()["id"]
+    assert stored.json() == {"id": newer_id, "created": True, "turns": 4}
     stored_older = client.post("/conversations", json=older)
     assert stored_older.status_code == 201, stored_older.json()
     older_id = stored_older.json()["id"]
@@ -137,5 +138,5 @@ def test_captured_sessions_are_listed_by_time_and_searched_within_one(namespace)
         "/conversations", json={**newer, "turns": [*TURNS, *MORE], "ended_at": now}
     )
     assert extended.status_code == 200, extended.json()
-    assert extended.json()["created"] is False and extended.json()["turns"] == 6
+    assert extended.json() == {"id": newer_id, "created": False, "turns": 6}
     assert _listed(origin="claude_code")[0]["turn_count"] == 6

@@ -170,7 +170,7 @@ class FakeServer:
                         "body": json.loads(self.rfile.read(length)),
                     }
                 )
-                payload = json.dumps({"id": "conv:1", "created": True, "job_id": "j"}).encode()
+                payload = json.dumps({"id": "conv:1", "created": True, "turns": 2}).encode()
                 self.send_response(server.status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
@@ -258,6 +258,8 @@ def test_the_session_is_posted_as_one_conversation(monkeypatch, hook_env, server
     (row,) = _log_rows(hook_env)
     assert row["decision"] == "uploaded"
     assert row["turns"] == 2
+    assert row["conversation_id"] == "conv:1"
+    assert "job_id" not in row
 
 
 def test_the_namespace_comes_from_the_environment(monkeypatch, hook_env, server):

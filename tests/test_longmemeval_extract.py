@@ -435,14 +435,14 @@ def test_the_personal_prompt_carries_the_personal_policy_without_the_store_nothi
     assert len({extract.prompt_sha256(p) for p in ("agent", "digest", "personal")}) == 3
 
 
-def test_the_digest_and_personal_prompts_are_the_production_distill_prompts():
-    from memory_base.serve import distill
+def test_the_digest_and_personal_prompts_are_the_packaged_extraction_prompts():
+    from memory_base.eval import extraction
 
-    assert extract.PROMPTS["digest"] == distill.load_prompt("digest")
-    assert extract.PROMPTS["personal"] == distill.load_prompt("personal")
-    assert extract.parse_extraction is distill.parse_extraction
+    assert extract.PROMPTS["digest"] == extraction.load_prompt("digest")
+    assert extract.PROMPTS["personal"] == extraction.load_prompt("personal")
+    assert extract.parse_extraction is extraction.parse_extraction
     messages = extract.build_messages(DATE_A, [{"role": "user", "content": "my bike"}], "digest")
-    assert messages[0]["content"] == distill.EXTRACTION_SYSTEM_PROMPT
+    assert messages[0]["content"] == extraction.EXTRACTION_SYSTEM_PROMPT
     assert "[0] user: my bike" in messages[1]["content"]
 
 

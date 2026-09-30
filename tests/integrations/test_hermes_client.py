@@ -387,11 +387,11 @@ def test_store_conversation_posts_the_body_and_returns_the_reply():
         seen["path"] = request.url.path
         seen["key"] = request.headers["X-API-Key"]
         seen["body"] = json.loads(request.content)
-        return httpx.Response(201, json={"id": "conv:1", "created": True, "job_id": "j"})
+        return httpx.Response(201, json={"id": "conv:1", "created": True, "turns": 2})
 
     client = _client(handler)
     reply = client.store_conversation({"origin": "hermes", "turns": []})
-    assert reply == {"id": "conv:1", "created": True, "job_id": "j"}
+    assert reply == {"id": "conv:1", "created": True, "turns": 2}
     assert seen == {
         "path": "/conversations",
         "key": "secret-key",
