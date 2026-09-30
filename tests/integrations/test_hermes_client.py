@@ -155,6 +155,42 @@ def test_build_prefetch_truncates_to_2000_chars_at_line_boundary():
     assert result.splitlines()[-1].endswith(tuple(f"-{i}" for i in range(10)))
 
 
+def test_build_prefetch_skips_an_oversize_hit_and_keeps_filling_with_later_hits():
+    hits = [
+        {"date": "2026-01-01", "text": "y" * 2000},
+        {"date": "2026-02-02", "text": "first short"},
+        {"date": "2026-03-03", "text": "second short"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=hits)
+
+    result = _client(handler).build_prefetch("q")
+    assert result.splitlines() == [
+        MEMORY_CONTEXT_HEADER,
+        "- [2026-02-02] first short",
+        "- [2026-03-03] second short",
+    ]
+
+
+def test_an_oversize_hit_between_short_ones_does_not_empty_the_block():
+    hits = [
+        {"date": "2026-02-02", "text": "first short"},
+        {"date": "2026-01-01", "text": "y" * 2000},
+        {"date": "2026-03-03", "text": "second short"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=hits)
+
+    result = _client(handler).build_prefetch("q")
+    assert result.splitlines() == [
+        MEMORY_CONTEXT_HEADER,
+        "- [2026-02-02] first short",
+        "- [2026-03-03] second short",
+    ]
+
+
 def test_build_prefetch_returns_empty_when_first_line_alone_exceeds_limit():
     hits = [{"date": "2026-08-01", "text": "y" * 3000}]
 

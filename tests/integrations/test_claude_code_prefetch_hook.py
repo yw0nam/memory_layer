@@ -104,6 +104,41 @@ def test_block_truncates_at_line_boundary():
         assert not line.endswith("x") or line.endswith("x" * 400)
 
 
+def test_block_skips_an_oversize_hit_and_keeps_filling_with_later_hits():
+    block = build_context_block(
+        [
+            {"date": "2026-01-01", "text": "x" * 1500},
+            {"date": "2026-02-02", "text": "first short"},
+            {"date": "2026-03-03", "text": "second short"},
+        ]
+    )
+    assert block.splitlines()[2:] == [
+        "- [2026-02-02] first short",
+        "- [2026-03-03] second short",
+        "</memory-context>",
+    ]
+
+
+def test_an_oversize_hit_between_short_ones_does_not_empty_the_block():
+    block = build_context_block(
+        [
+            {"date": "2026-02-02", "text": "first short"},
+            {"date": "2026-01-01", "text": "x" * 1500},
+            {"date": "2026-03-03", "text": "second short"},
+        ]
+    )
+    assert block.splitlines()[2:] == [
+        "- [2026-02-02] first short",
+        "- [2026-03-03] second short",
+        "</memory-context>",
+    ]
+
+
+def test_block_empty_when_no_hit_fits():
+    hits = [{"date": "2026-01-01", "text": "x" * 1500} for _ in range(3)]
+    assert build_context_block(hits) == ""
+
+
 # ---- run_hook --------------------------------------------------------------
 
 
@@ -221,6 +256,21 @@ def test_search_request_carries_no_namespace_filter(monkeypatch):
     assert captured["url"] == "http://memory.test/search"
     assert "namespaces" not in captured["body"]
     assert captured["body"]["source"] == "memory"
+
+
+def test_search_request_carries_the_pinned_top_k_and_min_score(monkeypatch):
+    import urllib.request
+
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = json.loads(request.data)
+        return _Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    prefetch_hook._fetch_from_server("http://memory.test", "key")("q")
+    assert captured["body"]["top_k"] == 3
+    assert captured["body"]["min_score"] == 0.4
 
 
 def test_fetch_timeout_leaves_room_for_a_cold_start_search(monkeypatch):
