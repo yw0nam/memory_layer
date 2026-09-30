@@ -257,6 +257,22 @@ def test_post_conversation_at_the_text_cap_is_accepted(use):
     assert response.status_code == 201
 
 
+# Uppercase on purpose: the AWS detector matches the canonical key shape only.
+AWS_KEY = "AKIA" + "Q" * 16
+
+
+def test_post_conversation_with_a_credential_in_a_turn_is_refused_whole(use):
+    conn = use(FakeConn())
+    turns = [*TURNS, {"role": "user", "text": f"the deploy key is {AWS_KEY}, use it"}]
+    response = client.post("/conversations", json={**BODY, "turns": turns})
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert "turn 3" in error
+    assert "AWS" in error
+    assert AWS_KEY not in error
+    assert conn.statements == []
+
+
 # ---- POST /conversations: namespace access -------------------------------------
 
 
@@ -766,6 +782,25 @@ def test_four_linked_notes_from_one_conversation_all_reach_the_reranker(monkeypa
     asyncio.run(search_module.search("linked fact", source="memory"))
     assert len(reranked) == 4
     assert {h.meta["id"] for h in reranked} == {row["id"] for row in rows}
+
+
+def test_list_notes_bounds_time_by_the_event_falling_back_to_the_save(monkeypatch):
+    class ListConn:
+        async def fetch(self, query, *args):
+            self.query = query
+            return []
+
+    conn = ListConn()
+
+    @asynccontextmanager
+    async def acquire(timeout=None):
+        yield conn
+
+    monkeypatch.setattr(notes.db, "acquire", acquire)
+    asyncio.run(notes.list_notes(since="2020-01-01", until="2020-01-01"))
+    assert "COALESCE(occurred_at, ts_last_active) >= $" in conn.query
+    assert "COALESCE(occurred_at, ts_last_active) < $" in conn.query
+    assert "ORDER BY ts_last_active DESC" in conn.query
 
 
 def test_list_notes_carries_the_link_fields(monkeypatch):

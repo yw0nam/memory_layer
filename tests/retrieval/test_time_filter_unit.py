@@ -73,12 +73,21 @@ def test_since_at_or_after_until_rejected():
 # ---- history_predicates -----------------------------------------------------
 
 
-def test_predicates_bound_ts_last_active():
+def test_predicates_bound_the_event_time_falling_back_to_the_save_time():
     predicates, args = history_predicates(
         include_archived=True, kind=None, tags=None, since=100.0, until=200.0
     )
-    assert predicates == "ts_last_active >= $2 AND ts_last_active < $3"
+    assert predicates == (
+        "COALESCE(occurred_at, ts_last_active) >= $2 AND COALESCE(occurred_at, ts_last_active) < $3"
+    )
     assert args == [100.0, 200.0]
+
+
+def test_aliased_time_predicates_qualify_both_columns():
+    predicates, _ = history_predicates(
+        include_archived=True, kind=None, tags=None, alias="m", since=100.0
+    )
+    assert predicates == "COALESCE(m.occurred_at, m.ts_last_active) >= $2"
 
 
 def test_time_clauses_number_after_the_other_filters():
@@ -91,8 +100,8 @@ def test_time_clauses_number_after_the_other_filters():
         until=2.0,
     )
     assert args == ["note", ["infra"], ["team-a"], 1.0, 2.0]
-    assert "ts_last_active >= $5" in predicates
-    assert "ts_last_active < $6" in predicates
+    assert "COALESCE(occurred_at, ts_last_active) >= $5" in predicates
+    assert "COALESCE(occurred_at, ts_last_active) < $6" in predicates
 
 
 def test_omitted_bounds_add_no_clause():

@@ -155,3 +155,42 @@ def test_a_note_linked_to_a_missing_source_is_refused(namespace):
     )
     assert response.status_code == 400
     assert "unknown conversation_id" in response.json()["error"]
+
+
+def test_an_episode_is_found_by_the_day_it_happened(namespace):
+    content = "The team moved the staging database to a dedicated host after an outage."
+    saved = client.post(
+        "/save_memory",
+        json={
+            "namespace": namespace,
+            "author": "claude-code",
+            "content": content,
+            "kind": "episode",
+            "tags": ["staging"],
+            "occurred_at": "2020-03-14",
+        },
+    )
+    assert saved.status_code == 200, saved.json()
+    note_id = saved.json()["id"]
+
+    def search(since: str, until: str) -> set[str]:
+        response = client.post(
+            "/search",
+            json={
+                "query": "staging database outage",
+                "source": "memory",
+                "namespaces": [namespace],
+                "since": since,
+                "until": until,
+                "min_score": 0,
+            },
+        )
+        assert response.status_code == 200, response.json()
+        return {hit["id"] for hit in response.json()}
+
+    assert note_id in search("2020-03-14", "2020-03-14")
+    listed = client.get(f"/notes?namespace={namespace}&since=2020-03-14&until=2020-03-14").json()
+    assert [note["id"] for note in listed] == [note_id]
+    assert listed[0]["date"] == "2020-03-14"
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    assert note_id not in search(today, today)
