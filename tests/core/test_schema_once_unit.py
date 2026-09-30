@@ -178,6 +178,36 @@ def test_ensure_schema_adds_the_shared_jobs_table(monkeypatch):
         assert column in sql
 
 
+def test_ensure_schema_drops_the_conversation_job_kind_and_the_distill_cursor(monkeypatch):
+    captured = {}
+
+    class RecordingConnection(FakeConnection):
+        async def execute(self, query, *args):
+            captured["sql"] = query
+            await super().execute(query, *args)
+
+    asyncio.run(schema.ensure_schema(RecordingConnection()))
+    sql = " ".join(captured["sql"].split())
+    delete = """DELETE FROM "test_schema".jobs WHERE kind = 'conversation';"""
+    kind_check = "ADD CONSTRAINT jobs_kind_check CHECK (kind IN ('document', 'repo'));"
+    assert delete in sql and kind_check in sql
+    assert sql.index(delete) < sql.index(kind_check)
+    for statement in (
+        '"test_schema".conversation_sources DROP COLUMN IF EXISTS distilled_through;',
+        '"test_schema".jobs DROP COLUMN IF EXISTS conversation_id;',
+        '"test_schema".jobs DROP COLUMN IF EXISTS result;',
+        'DROP INDEX IF EXISTS "test_schema".jobs__conversation_active;',
+        '"test_schema".jobs DROP CONSTRAINT IF EXISTS jobs_conversation_check;',
+    ):
+        assert statement in sql
+    assert "'conversation')" not in sql
+    assert (
+        'CREATE INDEX IF NOT EXISTS conversation_sources__started ON "test_schema"'
+        ".conversation_sources (started_at DESC);" in sql
+    )
+    assert "ADD COLUMN IF NOT EXISTS distilled_through" not in sql
+
+
 def test_rebinding_module_pg_schema_keeps_ddl_and_guard_in_sync(monkeypatch):
     """Rebinding schema.PG_SCHEMA, as eval/retrieval.py's _scratch_schema_scope does,
     must move both the DDL target and the once-guard's recorded name together."""

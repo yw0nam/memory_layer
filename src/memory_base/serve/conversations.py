@@ -1,12 +1,10 @@
 """Conversation sources: the user and assistant turns of one session, stored unembedded.
 
-A source is evidence a note points back to, read by address and turn range only:
-it is never embedded, never indexed for BM25, and never read by search. The id is
-derived from (namespace, origin, external_session_id), so re-uploading a session
-replaces its turns in place until a note references the source or a distill job has
-consumed some of them; from then on the stored turns are fixed and a re-upload may
-only append turns after them. Every upload admits a distill job inside the upload's
-transaction.
+A source is evidence a note points back to, read by address, turn range, and
+substring: it is never embedded, never indexed for BM25, and never read by search.
+The id is derived from (namespace, origin, external_session_id), so re-uploading a
+session replaces its turns in place until a note references the source; from then
+on the stored turns are fixed and a re-upload may only append turns after them.
 """
 
 from __future__ import annotations
@@ -15,21 +13,23 @@ import hashlib
 import json
 import math
 import time
-import uuid
 from typing import Any
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
-from memory_base.serve import job_store, namespaces
-from memory_base.serve.distill import ORIGIN_PROMPTS
+from memory_base.retrieval.search import normalize_time_range
+from memory_base.serve import namespaces
 
 CONVERSATION_MAX_CHARS = 2_000_000
 IDENTIFIER_MAX_CHARS = 256
 METADATA_MAX_BYTES = 2048
 TURN_ROLES = ("user", "assistant")
 TURN_KEYS = frozenset({"role", "text"})
+LIST_CONVERSATIONS_DEFAULT_LIMIT = 50
+LIST_CONVERSATIONS_MAX_LIMIT = 200
+PREVIEW_CHARS = 200
 
 
 class ConversationTooLarge(ValueError):
@@ -37,7 +37,7 @@ class ConversationTooLarge(ValueError):
 
 
 class ConversationConflict(Exception):
-    """A re-upload would change the stored turns of a referenced or distilled source."""
+    """A re-upload would change the stored turns of a referenced source."""
 
 
 class ConversationForbidden(Exception):
@@ -109,20 +109,6 @@ def validate_metadata(metadata: Any) -> str:
     return payload
 
 
-async def _admit(conn: Any, key: Any, namespace: str, origin: str, source_id: str) -> str | None:
-    if origin not in ORIGIN_PROMPTS:
-        return None
-    job = await job_store.admit_conversation(
-        job_id=uuid.uuid4().hex,
-        key_id=key.key_id,
-        key_label=key.label,
-        namespace=namespace,
-        conversation_id=source_id,
-        connection=conn,
-    )
-    return job.job_id
-
-
 async def store_conversation(
     key: Any,
     *,
@@ -134,10 +120,7 @@ async def store_conversation(
     turns: Any,
     metadata: Any = None,
 ) -> dict[str, Any]:
-    """Insert or update a source and admit its distill job; `created` says which happened.
-
-    `job_id` is null for an origin with no extraction prompt.
-    """
+    """Insert or update a source; `created` says which happened."""
     origin = _identifier(origin, "origin")
     external_session_id = _identifier(external_session_id, "external_session_id")
     started = _epoch(started_at, "started_at")
@@ -173,11 +156,10 @@ async def store_conversation(
                 key.label,
             )
             if status.endswith(" 1"):
-                job_id = await _admit(conn, key, namespace, origin, source_id)
-                return {**result, "created": True, "job_id": job_id}
+                return {**result, "created": True}
             existing = await conn.fetchrow(
                 f"""
-                SELECT created_by, turns, distilled_through
+                SELECT created_by, turns
                 FROM "{PG_SCHEMA}".conversation_sources
                 WHERE id = $1
                 FOR UPDATE
@@ -193,7 +175,7 @@ async def store_conversation(
                 stored = json.loads(stored)
             if stored != clean_turns:
                 if clean_turns[: len(stored)] != stored:
-                    await _refuse_rewrite(conn, source_id, existing["distilled_through"])
+                    await _refuse_rewrite(conn, source_id)
                 await conn.execute(
                     f"""
                     UPDATE "{PG_SCHEMA}".conversation_sources
@@ -206,18 +188,11 @@ async def store_conversation(
                     ended,
                     metadata_payload,
                 )
-            job_id = await _admit(conn, key, namespace, origin, source_id)
-    return {**result, "job_id": job_id}
+    return result
 
 
-async def _refuse_rewrite(conn: Any, source_id: str, distilled_through: int) -> None:
-    """A rewrite that is not an append is refused once notes or the distill cursor depend on it."""
-    if distilled_through > 0:
-        raise ConversationConflict(
-            f"conversation source {source_id} has {distilled_through} distilled turns, so its "
-            "stored turns cannot change; re-upload them unchanged with any new turns appended, "
-            "or store the changed session under a new external_session_id"
-        )
+async def _refuse_rewrite(conn: Any, source_id: str) -> None:
+    """A rewrite that is not an append is refused once notes depend on the source."""
     # A separate statement after the row lock sees notes committed while it waited.
     referenced = await conn.fetchval(
         f"""
@@ -249,12 +224,20 @@ async def get_conversation(
     *,
     turn_start: Any = None,
     turn_end: Any = None,
+    contains: Any = None,
 ) -> dict[str, Any]:
-    """A readable source with its turns sliced to [turn_start, turn_end], both inclusive."""
+    """A readable source with its turns sliced to [turn_start, turn_end], both inclusive.
+
+    A non-empty `contains` keeps only the sliced turns whose text contains it,
+    case-insensitively; each kept turn keeps its original index.
+    """
     start = _turn_bound(turn_start, "turn_start")
     end = _turn_bound(turn_end, "turn_end")
     if start is not None and end is not None and start > end:
         raise ValueError("turn_start must not be greater than turn_end")
+    if contains is not None and not isinstance(contains, str):
+        raise ValueError("contains must be a string")
+    needle = (contains or "").casefold()
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         row = await conn.fetchrow(
@@ -285,5 +268,79 @@ async def get_conversation(
         "external_session_id": row["external_session_id"],
         "started_at": row["started_at"],
         "ended_at": row["ended_at"],
-        "turns": [{"index": i, **turns[i]} for i in range(first, final + 1)],
+        "turns": [
+            {"index": i, **turns[i]}
+            for i in range(first, final + 1)
+            if needle in turns[i]["text"].casefold()
+        ],
     }
+
+
+def _listing_predicates(
+    namespaces: list[str] | None,
+    since: float | None,
+    until: float | None,
+    origin: str | None,
+) -> tuple[str, list[Any]]:
+    """Filter clauses over conversation_sources; placeholders start at $2, $1 being the limit."""
+    clauses: list[str] = []
+    args: list[Any] = []
+    for value, clause in (
+        (namespaces, "namespace = ANY(${}::text[])"),
+        (since, "started_at >= ${}"),
+        (until, "started_at < ${}"),
+        (origin, "origin = ${}"),
+    ):
+        if value is not None:
+            args.append(value)
+            clauses.append(clause.format(len(args) + 1))
+    return " AND ".join(clauses) or "true", args
+
+
+async def list_conversations(
+    *,
+    namespaces: list[str] | None,
+    since: str | None = None,
+    until: str | None = None,
+    origin: str | None = None,
+    limit: int = LIST_CONVERSATIONS_DEFAULT_LIMIT,
+) -> list[dict[str, Any]]:
+    """Sources newest first by start time, each with its turn count and first user turn cut short.
+
+    `namespaces` of None means every namespace (the caller resolves permission
+    scope before calling); `until` is exclusive.
+    """
+    since_ts, until_ts = normalize_time_range(since, until)
+    if origin is not None and (not isinstance(origin, str) or not origin.strip()):
+        raise ValueError("origin must be a non-empty string")
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not 1 <= limit <= LIST_CONVERSATIONS_MAX_LIMIT
+    ):
+        raise ValueError(f"limit must be an integer between 1 and {LIST_CONVERSATIONS_MAX_LIMIT}")
+    predicates, args = _listing_predicates(namespaces, since_ts, until_ts, origin)
+    # The page picks ids first so only the returned rows' turns are read.
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        rows = await conn.fetch(
+            f"""
+            SELECT s.id, s.namespace, s.origin, s.external_session_id, s.started_at, s.ended_at,
+                   jsonb_array_length(s.turns) AS turn_count,
+                   s.metadata->>'repo' AS repo,
+                   left((SELECT t->>'text'
+                         FROM jsonb_array_elements(s.turns) WITH ORDINALITY AS x(t, n)
+                         WHERE t->>'role' = 'user' ORDER BY n LIMIT 1), {PREVIEW_CHARS}) AS preview
+            FROM (
+              SELECT id FROM "{PG_SCHEMA}".conversation_sources
+              WHERE {predicates}
+              ORDER BY started_at DESC, id
+              LIMIT $1
+            ) AS page
+            JOIN "{PG_SCHEMA}".conversation_sources AS s ON s.id = page.id
+            ORDER BY s.started_at DESC, s.id
+            """,
+            limit,
+            *args,
+        )
+    return [dict(row) for row in rows]

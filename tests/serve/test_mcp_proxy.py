@@ -67,6 +67,7 @@ def test_tool_list_includes_document_ingestion():
         "claim_message",
         "cancel_message",
         "expand_source",
+        "list_conversations",
     }
 
 

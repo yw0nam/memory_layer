@@ -435,12 +435,21 @@ def test_the_personal_prompt_carries_the_personal_policy_without_the_store_nothi
     assert len({extract.prompt_sha256(p) for p in ("agent", "digest", "personal")}) == 3
 
 
-def test_the_digest_and_personal_prompts_are_the_production_distill_prompts():
-    from memory_base.serve import distill
+def test_the_digest_and_personal_prompts_are_the_packaged_extraction_prompts():
+    from memory_base.eval import extraction
 
-    assert extract.PROMPTS["digest"] == distill.load_prompt("digest")
-    assert extract.PROMPTS["personal"] == distill.load_prompt("personal")
-    assert extract.parse_extraction is distill.parse_extraction
+    assert extract.PROMPTS["digest"] == extraction.load_prompt("digest")
+    assert extract.PROMPTS["personal"] == extraction.load_prompt("personal")
+    assert extract.parse_extraction is extraction.parse_extraction
     messages = extract.build_messages(DATE_A, [{"role": "user", "content": "my bike"}], "digest")
-    assert messages[0]["content"] == distill.EXTRACTION_SYSTEM_PROMPT
+    assert messages[0]["content"] == extraction.EXTRACTION_SYSTEM_PROMPT
     assert "[0] user: my bike" in messages[1]["content"]
+
+
+def test_the_packaged_prompt_shas_are_pinned():
+    assert extract.prompt_sha256("digest") == (
+        "d36c16c1e5f1e23450d550ceacb5503edcdbf01f473f350cd2f98763261d24c1"
+    )
+    assert extract.prompt_sha256("personal") == (
+        "9609641776fd4d3c014da668bbb45c83ec12a74206957fb692c9b00f200e9c92"
+    )

@@ -31,9 +31,9 @@ matched the turn's query at `min_score`.
   `initialize` (or the latest `on_session_switch`) as `external_session_id`, and the
   `capture_namespace` namespace. A message's text is its string content or its text
   blocks; system and tool messages, tool calls, and non-text blocks are dropped, and a
-  session with fewer than two turns is not uploaded. The server distills the new turns
-  into notes with the personal memory prompt. A failed upload is logged as a warning and
-  never raised into Hermes.
+  session with fewer than two turns is not uploaded. The server stores the turns
+  unembedded as the evidence a note links to; `expand_source` and `list_conversations`
+  read them back. A failed upload is logged as a warning and never raised into Hermes.
 
 The provider never registers tools — the MCP server already exposes `search`/`search_memory`/
 `save_memory` for on-demand recall.

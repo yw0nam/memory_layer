@@ -2,7 +2,8 @@
 
 Pre-injects a per-turn semantic prefetch over the memory-base REST API into
 every conversation turn, and uploads each session's user and assistant turns
-at session end so the server distills them into notes.
+at session end, where the server stores them unembedded as the evidence a note
+can link to.
 
 Config via config.yaml (memory.memory_base):
   url                — memory-base REST API base URL (required)

@@ -53,8 +53,9 @@ class _Tx:
 class FakeConn:
     """One conversation_sources row at most, plus whether a note references it."""
 
-    def __init__(self, source=None, *, referenced=False, registered=True):
+    def __init__(self, source=None, *, referenced=False, registered=True, sources=None):
         self.source = source
+        self.sources = sources or []
         self.referenced = referenced
         self.registered = registered
         self.statements: list[tuple[str, tuple]] = []
@@ -84,7 +85,6 @@ class FakeConn:
             return {
                 "created_by": self.source["created_by"],
                 "turns": json.dumps(self.source["turns"]),
-                "distilled_through": self.source.get("distilled_through", 0),
             }
         if "jsonb_array_length" in query:
             return {
@@ -103,7 +103,7 @@ class FakeConn:
 
     async def fetch(self, query, *args):
         self._record(query, args)
-        return []
+        return self.sources if "conversation_sources" in query else []
 
     async def execute(self, query, *args):
         self._record(query, args)
@@ -133,29 +133,8 @@ async def _noop(conn):
     return None
 
 
-class FakeAdmission:
-    """Records each distill job admission and the connection it ran on."""
-
-    def __init__(self):
-        self.calls: list[dict] = []
-        self.error: BaseException | None = None
-
-    async def __call__(self, **kwargs):
-        self.calls.append(kwargs)
-        if self.error is not None:
-            raise self.error
-        return SimpleNamespace(job_id=f"job-{len(self.calls)}")
-
-
 @pytest.fixture
-def admission(monkeypatch):
-    fake = FakeAdmission()
-    monkeypatch.setattr(conversations.job_store, "admit_conversation", fake)
-    return fake
-
-
-@pytest.fixture
-def use(monkeypatch, admission):
+def use(monkeypatch):
     def _use(conn):
         @asynccontextmanager
         async def acquire(timeout=None):
@@ -341,7 +320,7 @@ def test_post_conversation_by_its_creator_replaces_an_unreferenced_source(use, m
     changed = [*TURNS, {"role": "assistant", "text": "one more turn"}]
     response = member.post("/conversations", json={**BODY, "turns": changed})
     assert response.status_code == 200
-    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4, "job_id": "job-1"}
+    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4}
     assert len(conn.sql("SET turns")) == 1
 
 
@@ -352,7 +331,7 @@ def test_post_conversation_creates_a_new_source(use):
     conn = use(FakeConn())
     response = client.post("/conversations", json=BODY)
     assert response.status_code == 201
-    assert response.json() == {"id": SOURCE_ID, "created": True, "turns": 3, "job_id": "job-1"}
+    assert response.json() == {"id": SOURCE_ID, "created": True, "turns": 3}
     (insert,) = conn.sql("INSERT INTO")
     assert "conversation_sources" in insert[0]
     assert "ON CONFLICT (namespace, origin, external_session_id)" in insert[0]
@@ -366,21 +345,20 @@ def test_post_conversation_replaces_an_unreferenced_source(use):
     changed = [*TURNS, {"role": "assistant", "text": "a fourth turn"}]
     response = client.post("/conversations", json={**BODY, "turns": changed, "ended_at": NOW + 120})
     assert response.status_code == 200
-    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4, "job_id": "job-1"}
+    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4}
     (update,) = conn.sql("SET turns")
     assert update[1][0] == SOURCE_ID
     assert json.loads(update[1][1]) == changed
     assert update[1][3] == NOW + 120
 
 
-def test_post_conversation_refuses_changed_turns_once_a_note_references_it(use, admission):
+def test_post_conversation_refuses_changed_turns_once_a_note_references_it(use):
     conn = use(FakeConn(_source(), referenced=True))
     changed = [TURNS[0], {"role": "assistant", "text": "rewritten evidence"}, TURNS[2]]
     response = client.post("/conversations", json={**BODY, "turns": changed})
     assert response.status_code == 409
     assert "referenced" in response.json()["error"]
     assert conn.sql("SET turns") == []
-    assert admission.calls == []
 
 
 def test_post_conversation_refuses_a_shorter_upload_of_a_referenced_source(use):
@@ -390,49 +368,37 @@ def test_post_conversation_refuses_a_shorter_upload_of_a_referenced_source(use):
     assert conn.sql("SET turns") == []
 
 
-def test_post_conversation_refuses_changed_turns_once_turns_are_distilled(use):
-    conn = use(FakeConn(_source(distilled_through=2)))
-    changed = [TURNS[0], {"role": "assistant", "text": "rewritten evidence"}, TURNS[2]]
-    response = client.post("/conversations", json={**BODY, "turns": changed})
-    assert response.status_code == 409
-    assert "distilled" in response.json()["error"]
-    assert conn.sql("SET turns") == []
-
-
-def test_post_conversation_extends_a_referenced_source_by_appended_turns(use, admission):
-    conn = use(FakeConn(_source(distilled_through=3), referenced=True))
+def test_post_conversation_extends_a_referenced_source_by_appended_turns(use):
+    conn = use(FakeConn(_source(), referenced=True))
     extended = [*TURNS, {"role": "assistant", "text": "a fourth turn"}]
     response = client.post(
         "/conversations", json={**BODY, "turns": extended, "ended_at": NOW + 120}
     )
     assert response.status_code == 200
-    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4, "job_id": "job-1"}
+    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 4}
     (update,) = conn.sql("SET turns")
     assert json.loads(update[1][1]) == extended
     assert update[1][3] == NOW + 120
-    assert len(admission.calls) == 1
 
 
-def test_an_upload_never_writes_the_distill_cursor(use):
-    conn = use(FakeConn(_source(distilled_through=3), referenced=True))
-    extended = [*TURNS, {"role": "assistant", "text": "a fourth turn"}]
-    assert client.post("/conversations", json={**BODY, "turns": extended}).status_code == 200
-    use(FakeConn())
-    assert client.post("/conversations", json=BODY).status_code == 201
-    written = [s for s in conn.statements if s[0].startswith(("INSERT", "UPDATE"))]
-    assert written
-    assert all("distilled_through" not in statement for statement, _ in written)
+def test_a_referenced_source_refuses_a_changed_upload_and_accepts_an_append(use):
+    changed = [TURNS[0], {"role": "assistant", "text": "rewritten evidence"}, TURNS[2]]
+    use(FakeConn(_source(), referenced=True))
+    assert client.post("/conversations", json={**BODY, "turns": changed}).status_code == 409
+    use(FakeConn(_source(), referenced=True))
+    appended = [*TURNS, {"role": "user", "text": "one more"}]
+    assert client.post("/conversations", json={**BODY, "turns": appended}).status_code == 200
 
 
 def test_post_conversation_identical_turns_on_a_referenced_source_is_a_no_op(use):
     conn = use(FakeConn(_source(), referenced=True))
     response = client.post("/conversations", json=BODY)
     assert response.status_code == 200
-    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 3, "job_id": "job-1"}
+    assert response.json() == {"id": SOURCE_ID, "created": False, "turns": 3}
     assert conn.sql("SET turns") == []
 
 
-# ---- POST /conversations: metadata and the distill job ---------------------------
+# ---- POST /conversations: metadata and the response ----------------------------
 
 
 def test_post_conversation_stores_the_client_metadata(use):
@@ -453,61 +419,32 @@ def test_post_conversation_rejects_bad_metadata(use, metadata):
     assert conn.statements == []
 
 
-def test_post_conversation_admits_a_distill_job_on_the_upload_connection(use, admission):
-    conn = use(FakeConn())
-    response = client.post("/conversations", json=BODY)
-    assert response.json()["job_id"] == "job-1"
-    (call,) = admission.calls
-    assert call["connection"] is conn
-    assert call["conversation_id"] == SOURCE_ID
-    assert call["namespace"] == "default"
-    assert (call["key_id"], call["key_label"]) == ("test-key-hash", "test")
+def test_post_conversation_replies_with_the_source_alone_and_queues_nothing(use):
+    new_conn = use(FakeConn())
+    created = client.post("/conversations", json=BODY)
+    same_conn = use(FakeConn(_source()))
+    same = client.post("/conversations", json=BODY)
+    grown_conn = use(FakeConn(_source()))
+    extended = [*TURNS, {"role": "assistant", "text": "a fourth turn"}]
+    grown = client.post("/conversations", json={**BODY, "turns": extended})
+    assert (created.status_code, same.status_code, grown.status_code) == (201, 200, 200)
+    assert created.json() == {"id": SOURCE_ID, "created": True, "turns": 3}
+    assert same.json() == {"id": SOURCE_ID, "created": False, "turns": 3}
+    assert grown.json() == {"id": SOURCE_ID, "created": False, "turns": 4}
+    for conn in (new_conn, same_conn, grown_conn):
+        assert not [q for q, _ in conn.statements if "jobs" in q]
+        assert not [q for q, _ in conn.statements if "distilled_through" in q]
 
 
-def test_a_failed_admission_fails_the_upload(use, admission):
-    use(FakeConn())
-    admission.error = RuntimeError("jobs table unavailable")
-    failing = TestClient(api.app, headers={"X-API-Key": "test-key"}, raise_server_exceptions=False)
-    response = failing.post("/conversations", json=BODY)
-    assert response.status_code == 500
-
-
-def test_an_origin_without_an_extraction_prompt_admits_no_job(use, admission):
+def test_post_conversation_accepts_any_origin(use):
     use(FakeConn())
     response = client.post("/conversations", json={**BODY, "origin": "codex"})
     assert response.status_code == 201
-    assert response.json()["job_id"] is None
-    assert admission.calls == []
-
-
-def test_get_conversation_job_returns_its_state(monkeypatch):
-    from memory_base.serve import distill, job_store
-
-    job = distill.ConversationJob(
-        job_id="job-9",
-        conversation_id=SOURCE_ID,
-        namespace="default",
-        key_id="k",
-        key_label="test",
-        status="succeeded",
-        result={"units": 2, "stored": 1, "refused": 1, "similar": 0},
-    )
-
-    async def get_job(job_id, *, kind):
-        assert kind == "conversation"
-        return job if job_id == "job-9" else None
-
-    monkeypatch.setattr(job_store, "get_job", get_job)
-    response = client.get("/conversations/jobs/job-9")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "succeeded"
-    assert body["result"] == {"units": 2, "stored": 1, "refused": 1, "similar": 0}
-    assert body["conversation_id"] == SOURCE_ID
-    assert "key_id" not in body
-    assert client.get("/conversations/jobs/nope").status_code == 404
-    member = _member_client(monkeypatch, allowed={"team-b"})
-    assert member.get("/conversations/jobs/job-9").status_code == 404
+    assert response.json() == {
+        "id": conversations.conversation_source_id("default", "codex", "sess-1"),
+        "created": True,
+        "turns": 3,
+    }
 
 
 def test_storing_a_source_never_calls_the_embedding_client(use, monkeypatch):
@@ -594,6 +531,188 @@ def test_get_conversation_outside_the_readable_set_is_404(use, monkeypatch):
     member = _member_client(monkeypatch, allowed={"default"})
     response = member.get(f"/conversations/{SOURCE_ID}?turn_end=9")
     assert response.status_code == 404
+
+
+def test_get_conversation_contains_matches_case_insensitively_keeping_indices(use):
+    use(FakeConn(_source()))
+    response = client.get(f"/conversations/{SOURCE_ID}?contains=RERANKER")
+    assert response.status_code == 200
+    assert response.json()["turns"] == [{"index": 0, **TURNS[0]}, {"index": 1, **TURNS[1]}]
+
+
+def test_get_conversation_contains_combines_with_the_turn_range(use):
+    use(FakeConn(_source()))
+    response = client.get(f"/conversations/{SOURCE_ID}?turn_start=1&contains=reranker")
+    assert response.status_code == 200
+    assert response.json()["turns"] == [{"index": 1, **TURNS[1]}]
+
+
+def test_get_conversation_contains_without_a_match_is_an_empty_200(use):
+    use(FakeConn(_source()))
+    response = client.get(f"/conversations/{SOURCE_ID}?contains=haproxy")
+    assert response.status_code == 200
+    assert response.json()["turns"] == []
+
+
+def test_get_conversation_empty_contains_keeps_every_turn(use):
+    use(FakeConn(_source()))
+    response = client.get(f"/conversations/{SOURCE_ID}?contains=")
+    assert [turn["index"] for turn in response.json()["turns"]] == [0, 1, 2]
+
+
+@pytest.mark.parametrize("contains", [3, ["reranker"], True])
+def test_get_conversation_non_string_contains_is_refused(use, contains):
+    use(FakeConn(_source()))
+    key = SimpleNamespace(permits=lambda namespace: True)
+    with pytest.raises(ValueError, match="contains must be a string"):
+        asyncio.run(conversations.get_conversation(SOURCE_ID, key, contains=contains))
+
+
+# ---- GET /conversations: the listing ---------------------------------------------
+
+
+LISTED = {
+    "id": SOURCE_ID,
+    "namespace": "default",
+    "origin": "claude_code",
+    "external_session_id": "sess-1",
+    "started_at": NOW,
+    "ended_at": NOW + 60,
+    "turn_count": 3,
+    "repo": "memory_base",
+    "preview": TURNS[0]["text"],
+}
+
+
+def test_list_conversations_issues_one_newest_first_query(use):
+    conn = use(FakeConn(sources=[LISTED]))
+    rows = asyncio.run(conversations.list_conversations(namespaces=None))
+    assert rows == [LISTED]
+    (query, args) = conn.sql("conversation_sources")[0]
+    assert len(conn.sql("conversation_sources")) == 1
+    assert "jsonb_array_length(s.turns) AS turn_count" in query
+    assert "metadata->>'repo' AS repo" in query
+    assert "AS preview" in query and ", 200) AS preview" in query
+    assert "t->>'role' = 'user'" in query
+    page = query[query.index("FROM (") : query.index(" ) AS page")]
+    assert page.endswith("WHERE true ORDER BY started_at DESC, id LIMIT $1")
+    assert "turns" not in page and "metadata" not in page
+    assert query.index(" ) AS page") < query.index("ON s.id = page.id")
+    assert query.endswith("ORDER BY s.started_at DESC, s.id")
+    assert args == (conversations.LIST_CONVERSATIONS_DEFAULT_LIMIT,)
+
+
+def test_list_conversations_binds_every_filter_before_the_limit(use):
+    conn = use(FakeConn())
+    asyncio.run(
+        conversations.list_conversations(
+            namespaces=["default", "team-a"],
+            since="2026-08-01",
+            until="2026-08-12",
+            origin="hermes",
+            limit=5,
+        )
+    )
+    (query, args) = conn.sql("conversation_sources")[0]
+    assert args == (5, ["default", "team-a"], 1785542400.0, 1786579200.0, "hermes")
+    where = query[query.index("FROM (") : query.index("LIMIT $1 ) AS page")]
+    for predicate in (
+        "namespace = ANY($2::text[])",
+        "started_at >= $3",
+        "started_at < $4",
+        "origin = $5",
+    ):
+        assert predicate in where
+
+
+@pytest.mark.parametrize("limit", [0, 201, True, "5"])
+def test_list_conversations_rejects_a_limit_outside_1_to_200(use, limit):
+    conn = use(FakeConn())
+    with pytest.raises(ValueError, match="limit"):
+        asyncio.run(conversations.list_conversations(namespaces=None, limit=limit))
+    assert conn.statements == []
+
+
+@pytest.mark.parametrize("origin", ["", "  ", 3])
+def test_list_conversations_rejects_a_blank_or_non_string_origin(use, origin):
+    use(FakeConn())
+    with pytest.raises(ValueError, match="origin"):
+        asyncio.run(conversations.list_conversations(namespaces=None, origin=origin))
+
+
+def test_list_conversations_rejects_an_empty_window(use):
+    use(FakeConn())
+    with pytest.raises(ValueError, match="since"):
+        asyncio.run(
+            conversations.list_conversations(
+                namespaces=None, since="2026-08-02", until="2026-08-01"
+            )
+        )
+
+
+def test_get_conversations_returns_the_listing(use):
+    use(FakeConn(sources=[LISTED]))
+    response = client.get("/conversations")
+    assert response.status_code == 200
+    assert response.json() == [LISTED]
+
+
+@pytest.mark.parametrize(
+    "query", ["limit=x", "limit=0", "limit=201", "origin=", "since=nope", "until=2020-13-01"]
+)
+def test_get_conversations_bad_filters_are_400(use, query):
+    use(FakeConn())
+    response = client.get(f"/conversations?{query}")
+    assert response.status_code == 400
+    assert "error" in response.json()
+
+
+@pytest.fixture
+def listing(monkeypatch):
+    calls: list[dict] = []
+
+    async def fake_list_conversations(**kwargs):
+        calls.append(kwargs)
+        return []
+
+    monkeypatch.setattr(conversations, "list_conversations", fake_list_conversations)
+    return calls
+
+
+def test_get_conversations_passes_the_filters_through(listing):
+    response = client.get(
+        "/conversations?since=2026-08-01&until=2026-08-12&origin=hermes"
+        "&namespace=default&namespace=team-a&limit=7"
+    )
+    assert response.status_code == 200
+    assert listing == [
+        {
+            "namespaces": ["default", "team-a"],
+            "since": "2026-08-01",
+            "until": "2026-08-12",
+            "origin": "hermes",
+            "limit": 7,
+        }
+    ]
+
+
+def test_get_conversations_admin_without_a_namespace_covers_every_namespace(listing):
+    assert client.get("/conversations").status_code == 200
+    assert listing[0]["namespaces"] is None
+    assert listing[0]["limit"] == conversations.LIST_CONVERSATIONS_DEFAULT_LIMIT
+
+
+def test_get_conversations_member_without_a_namespace_is_scoped_to_its_set(listing, monkeypatch):
+    member = _member_client(monkeypatch, allowed={"default"})
+    assert member.get("/conversations").status_code == 200
+    assert listing[0]["namespaces"] == ["default"]
+
+
+def test_get_conversations_member_outside_its_set_is_403(listing, monkeypatch):
+    member = _member_client(monkeypatch, allowed={"default"})
+    response = member.get("/conversations?namespace=team-b")
+    assert response.status_code == 403
+    assert listing == []
 
 
 # ---- build_note_row: conversation identity -------------------------------------
@@ -1071,3 +1190,54 @@ def test_mcp_expand_source_rejects_a_malformed_id_without_a_call(monkeypatch, ba
     _patch_mcp(monkeypatch, handler)
     with pytest.raises(ValueError, match="conversation_id"):
         asyncio.run(mcp_server.expand_source(bad))
+
+
+def test_mcp_expand_source_forwards_contains(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"id": CID, "turns": []})
+
+    _patch_mcp(monkeypatch, handler)
+    asyncio.run(mcp_server.expand_source(CID, turn_start=1, contains="HAProxy"))
+    assert captured["params"] == {"turn_start": "1", "contains": "HAProxy"}
+
+
+def test_mcp_list_conversations_gets_the_listing_with_its_filters(monkeypatch):
+    captured = {}
+    payload = [LISTED]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["params"] = request.url.params.multi_items()
+        return httpx.Response(200, json=payload)
+
+    _patch_mcp(monkeypatch, handler)
+    result = asyncio.run(
+        mcp_server.list_conversations(
+            since="2026-08-01", until="2026-08-12", origin="hermes", namespace="team-a", limit=7
+        )
+    )
+    assert (captured["method"], captured["path"]) == ("GET", "/conversations")
+    assert captured["params"] == [
+        ("since", "2026-08-01"),
+        ("until", "2026-08-12"),
+        ("origin", "hermes"),
+        ("namespace", "team-a"),
+        ("limit", "7"),
+    ]
+    assert result == payload
+
+
+def test_mcp_list_conversations_without_filters_sends_no_params(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = request.url.params.multi_items()
+        return httpx.Response(200, json=[])
+
+    _patch_mcp(monkeypatch, handler)
+    assert asyncio.run(mcp_server.list_conversations()) == []
+    assert captured["params"] == []
