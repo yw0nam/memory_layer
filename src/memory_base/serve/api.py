@@ -44,6 +44,7 @@ from memory_base.serve.http import error
 from memory_base.serve.http import json_body
 from memory_base.serve.notes import (
     CredentialNoteError,
+    NOTE_KINDS,
     LowSignalNoteError,
     SimilarNotesError,
     link_fields,
@@ -291,7 +292,7 @@ async def save_memory_route(request: Request) -> JSONResponse:
     try:
         result = await save_note(
             body.get("content", ""),
-            kind=body.get("kind", "note"),
+            kind=body.get("kind"),
             tags=body.get("tags"),
             supersedes=body.get("supersedes"),
             namespace=namespace,
@@ -637,6 +638,8 @@ async def admin_duplicates_route(request: Request) -> JSONResponse:
     except ValueError:
         return error("threshold must be a number")
     kind = request.query_params.get("kind") or None
+    if kind is not None and kind not in NOTE_KINDS:
+        return error(f"kind must be one of {NOTE_KINDS}")
     try:
         limit = int(request.query_params.get("limit", "50"))
     except ValueError:

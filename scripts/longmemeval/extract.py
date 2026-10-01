@@ -49,6 +49,7 @@ PROMPTS = {
     "digest": extraction.load_prompt("digest"),
     "personal": extraction.load_prompt("personal"),
 }
+EXTRACTED_KINDS = ("note", "decision", "episode")
 SYSTEM_PROMPT = (
     'Return only JSON: {"notes": [{"content": string, "kind": "note"|"decision"|"episode"}]}'
 )
@@ -223,12 +224,12 @@ def prepare_resume(data_dir: Path) -> set[tuple[str, str]]:
     return completed
 
 
-async def _judge_with_retry(gate: Gate, content: str, kind: str) -> tuple[Any, int]:
+async def _judge_with_retry(gate: Gate, content: str) -> tuple[Any, int]:
     from memory_base.serve.notes import ContentVerdict
 
     for attempt in range(GATE_ATTEMPTS):
         try:
-            return await gate(content, kind), attempt
+            return await gate(content, lme.NOTE_KIND), attempt
         except Exception as exc:
             if is_content_filter_refusal(exc):
                 # Production fails open when the gate cannot judge; the note is saved unjudged.
@@ -260,8 +261,8 @@ async def _complete_with_retry(client: Any, messages: list[dict[str, str]]):
 
 def _save_path_refusal(content: str, kind: str) -> str | None:
     """The refusal save_note would raise before its gate call, if any."""
-    if kind not in notes_module.NOTE_KINDS:
-        return f"validation: kind must be one of {notes_module.NOTE_KINDS}"
+    if kind not in EXTRACTED_KINDS:
+        return f"validation: kind must be one of {EXTRACTED_KINDS}"
     if len(content) > notes_module.NOTE_MAX_CHARS:
         return f"validation: content exceeds {notes_module.NOTE_MAX_CHARS} chars"
     secret_type = find_secret(content)
@@ -302,7 +303,7 @@ async def extract_unit(
         elif gate is None:
             outcome, reason = "unjudged", "gate off"
         else:
-            verdict, retries = await _judge_with_retry(gate, content, kind)
+            verdict, retries = await _judge_with_retry(gate, content)
             gate_calls += 1 + retries
             gate_retries += retries
             outcome, reason = ("stored" if verdict.accepted else "refused"), verdict.reason
@@ -433,7 +434,7 @@ def _extract_manifest(
         and {
             "provider": gate_provider.name,
             "model": gate_provider.model,
-            "judge_prompt_sha256": lme.prompt_sha(notes_module.JUDGE_PROMPT),
+            "judge_prompt_sha256": lme.prompt_sha(notes_module.PERSONAL_JUDGE_PROMPT),
         },
         "units": {
             "selected": len(units),

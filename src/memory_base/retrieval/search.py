@@ -29,7 +29,7 @@ CANDIDATES_PER_SIGNAL = 50
 PER_FILE_CAP = 3
 FUSED_TOP = 40
 RERANK_TOP = 10
-SEARCH_KINDS = ("doc", "note", "decision", "episode")
+SEARCH_KINDS = ("doc", "personal", "work")
 # Reranker input budget; the API's TEXT_LIMIT is separate and bounds only code responses.
 RERANK_TEXT_LIMIT = 4000
 NEIGHBOR_LINE_WINDOW = 40
