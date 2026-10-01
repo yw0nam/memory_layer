@@ -109,9 +109,8 @@ or to an archived note, which `restore_notes` brings back instead.
 
 A note's id is `note:<namespace>:<sha256(content)[:16]>`, the hash taken over its
 stripped content, so a re-save is an idempotent no-op. `session_id` is always the note's
-own id. `occurred_at` (ISO 8601, not in the future) records
-when the remembered event happened in its own column; `ts_last_active` is always the save
-time.
+own id. `occurred_at` (ISO 8601, not in the future) records when the remembered event
+happened in its own column; `ts_last_active` is always the save time.
 
 Every note records the agent that wrote it in `metadata.author`, drawn from the calling
 key's allowlist in `api_keys.authors`; a key with an empty allowlist cannot save. A note
@@ -380,6 +379,7 @@ column, no search index; a partial index serves the pending listing, and a uniqu
 internal — responses carry the report status only.
 
 `doc_rows` and `messages` are outside the retrieval contract: they are read by compute
-and by address, respectively, and are never granted to the SQL query role or returned by search ([ADR-0001](adr/0001-table-rows-third-read-contract.md),
+and by address, respectively, and are never granted to the SQL query role or returned by
+search ([ADR-0001](adr/0001-table-rows-third-read-contract.md),
 [ADR-0002](adr/0002-messages-addressed-once-claimed-lane.md)). Adding a source means
 adding an adapter, not touching retrieval or serving.

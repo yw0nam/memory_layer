@@ -113,10 +113,9 @@ or `ts_last_active` when none is recorded: a bare date covers that whole day, an
 values are read as UTC.
 
 A memory hit carries the stored row's `id` (the note id `supersedes` takes), `kind`, and
-`tags`; a note saved with `supersedes` carries the archived
-note's id as `supersedes`, in hits and in `GET /notes` rows; a supersede save whose
-content matches an active note archives the target without recording a pointer on it.
-`date` is the note's
+`tags`; a note saved with `supersedes` carries the archived note's id as `supersedes`,
+in hits and in `GET /notes` rows; a supersede save whose content matches an active note
+archives the target without recording a pointer on it. `date` is the note's
 `occurred_at` when recorded, else its save time. Code hits carry `repo` and optional
 `context` instead. `GET /notes` rows carry the same date.
 
