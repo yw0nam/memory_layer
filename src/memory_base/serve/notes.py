@@ -43,19 +43,6 @@ def note_date(occurred_at: float | None, ts_last_active: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
-def link_fields(
-    conversation_id: str | None, turn_start: int | None, turn_end: int | None
-) -> dict[str, Any]:
-    """A note's link to its conversation source, with only the parts that are set."""
-    fields: dict[str, Any] = {}
-    if conversation_id is not None:
-        fields["conversation_id"] = conversation_id
-    if turn_start is not None:
-        fields["turn_start"] = turn_start
-        fields["turn_end"] = turn_end
-    return fields
-
-
 class SimilarNotesError(ValueError):
     """A new note landed next to near-identical active notes without resolving them."""
 
@@ -222,27 +209,6 @@ async def _content_gate(row: dict[str, Any]) -> None:
         raise LowSignalNoteError(verdict.reason, row["kind"])
 
 
-def _turn_range(
-    conversation_id: Any, turn_start: Any, turn_end: Any
-) -> tuple[str | None, int | None, int | None]:
-    if conversation_id is not None and (
-        not isinstance(conversation_id, str) or not conversation_id.strip()
-    ):
-        raise ValueError("conversation_id must be a non-empty string")
-    if turn_start is None and turn_end is None:
-        return conversation_id, None, None
-    if conversation_id is None:
-        raise ValueError("turn_start/turn_end require a conversation_id")
-    if turn_start is None or turn_end is None:
-        raise ValueError("turn_start and turn_end must be given together")
-    for bound in (turn_start, turn_end):
-        if isinstance(bound, bool) or not isinstance(bound, int):
-            raise ValueError("turn_start and turn_end must be integers")
-    if not 0 <= turn_start <= turn_end:
-        raise ValueError("turn_start must satisfy 0 <= turn_start <= turn_end")
-    return conversation_id, turn_start, turn_end
-
-
 def build_note_row(
     content: str,
     kind: str,
@@ -251,15 +217,11 @@ def build_note_row(
     namespace: str = DEFAULT_NAMESPACE,
     author: str | None = None,
     *,
-    conversation_id: str | None = None,
-    turn_start: int | None = None,
-    turn_end: int | None = None,
     occurred_at: float | None = None,
 ) -> dict[str, Any]:
     """Validate a note and map it to memory_chunks columns (no embedding).
 
-    The id hashes the conversation id with the content, so identical text from
-    two conversations stays two notes, and is qualified by the namespace.
+    The id is `note:{namespace}:{sha256(content)[:16]}` over the stripped content.
     """
     content = content.strip()
     if not content:
@@ -268,13 +230,11 @@ def build_note_row(
         raise ValueError(f"content exceeds {NOTE_MAX_CHARS} chars")
     if kind not in NOTE_KINDS:
         raise ValueError(f"kind must be one of {NOTE_KINDS}")
-    conversation_id, turn_start, turn_end = _turn_range(conversation_id, turn_start, turn_end)
     normalized_tags = normalize_tags([] if tags is None else tags)
     metadata: dict[str, Any] = {"tags": normalized_tags}
     if author is not None:
         metadata["author"] = author
-    identity = f"{conversation_id or ''}\n{content}"
-    note_id = f"note:{namespace}:{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
+    note_id = f"note:{namespace}:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
     return {
         "id": note_id,
         "source_type": "agent_note",
@@ -285,34 +245,8 @@ def build_note_row(
         "distilled": content,
         "timestamp": now,
         "metadata": metadata,
-        "conversation_id": conversation_id,
-        "turn_start": turn_start,
-        "turn_end": turn_end,
         "occurred_at": occurred_at,
     }
-
-
-async def _require_source(conn: Any, row: dict[str, Any], namespace: str) -> None:
-    """The linked source must exist in the note's namespace and hold the turn range."""
-    source = await conn.fetchrow(
-        f"""
-        SELECT namespace, jsonb_array_length(turns) AS turn_count
-        FROM "{PG_SCHEMA}".conversation_sources
-        WHERE id = $1
-        FOR SHARE
-        """,
-        row["conversation_id"],
-    )
-    if source is None or source["namespace"] != namespace:
-        raise ValueError(
-            f"unknown conversation_id {row['conversation_id']!r} in namespace {namespace!r}; "
-            "store the conversation source first"
-        )
-    if row["turn_end"] is not None and row["turn_end"] >= source["turn_count"]:
-        raise ValueError(
-            f"turn range {row['turn_start']}-{row['turn_end']} is outside conversation source "
-            f"{row['conversation_id']}'s {source['turn_count']} turns"
-        )
 
 
 async def save_note(
@@ -325,16 +259,12 @@ async def save_note(
     occurred_at: str | None = None,
     author: str | None = None,
     allow_similar: bool = False,
-    conversation_id: str | None = None,
-    turn_start: int | None = None,
-    turn_end: int | None = None,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory.
 
     `occurred_at` is an ISO 8601 date/datetime stored beside the save time, which
     stays the note's recency timestamp; a future or unparseable value raises
-    ValueError. `conversation_id` links the note to a stored conversation source
-    in the same namespace, optionally to its turns `turn_start`..`turn_end`.
+    ValueError.
     """
     now = time.time()
     occurred_ts = parse_time_bound(occurred_at) if occurred_at is not None else None
@@ -347,9 +277,6 @@ async def save_note(
         now,
         namespace,
         author,
-        conversation_id=conversation_id,
-        turn_start=turn_start,
-        turn_end=turn_end,
         occurred_at=occurred_ts,
     )
     secret_type = find_secret("\n".join([content, *(tags or [])]))
@@ -366,8 +293,6 @@ async def save_note(
         await ensure_schema_once(conn)
         async with conn.transaction():
             await namespaces.require_registered(conn, namespace)
-            if row["conversation_id"] is not None:
-                await _require_source(conn, row, namespace)
             if supersedes is not None:
                 exists = await conn.fetchval(
                     f"""
@@ -412,9 +337,8 @@ async def save_note(
                 f"""
                 INSERT INTO "{PG_SCHEMA}".memory_chunks
                   (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-                   distilled, embedding, ts_last_active, namespace, metadata,
-                   conversation_id, source_turn_start, source_turn_end, occurred_at)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb,$12,$13,$14,$15)
+                   distilled, embedding, ts_last_active, namespace, metadata, occurred_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb,$12)
                 ON CONFLICT (id) DO NOTHING
                 """,
                 row["id"],
@@ -428,9 +352,6 @@ async def save_note(
                 row["timestamp"],
                 namespace,
                 json.dumps(row["metadata"], ensure_ascii=False),
-                row["conversation_id"],
-                row["turn_start"],
-                row["turn_end"],
                 row["occurred_at"],
             )
             stored = status.endswith(" 1")
@@ -524,8 +445,7 @@ async def list_notes(
         rows = await conn.fetch(
             f"""
             SELECT id, chunk_kind AS kind, content_raw AS text, metadata,
-                   ts_last_active, namespace, archived_at, conversation_id,
-                   source_turn_start, source_turn_end, occurred_at
+                   ts_last_active, namespace, archived_at, occurred_at
             FROM "{PG_SCHEMA}".memory_chunks
             WHERE source_type = 'agent_note' AND {predicates}
             ORDER BY ts_last_active DESC
@@ -546,9 +466,6 @@ async def list_notes(
             "namespace": row["namespace"],
             "date": note_date(row["occurred_at"], row["ts_last_active"]),
         }
-        note.update(
-            link_fields(row["conversation_id"], row["source_turn_start"], row["source_turn_end"])
-        )
         if row["archived_at"] is not None:
             note["archived"] = True
         if metadata.get("archived_by") is not None:

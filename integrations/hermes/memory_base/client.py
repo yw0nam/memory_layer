@@ -1,10 +1,9 @@
-"""Pure REST client for the memory-base API's ``/search`` and ``/conversations`` routes.
+"""Pure REST client for the memory-base API's ``/search`` route.
 
 No Hermes imports — importable and testable standalone (stdlib + httpx only).
 Search swallows errors and returns an empty result instead of raising, since it
 runs inside a Hermes turn and must never block or crash a conversation on a
-memory-base outage. ``store_conversation`` raises, so its caller can log why a
-session was not captured.
+memory-base outage.
 """
 
 from __future__ import annotations
@@ -59,13 +58,6 @@ class MemoryBaseClient:
         )
         return data if isinstance(data, list) else []
 
-    def store_conversation(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Upload one session's turns; an HTTP or network failure raises."""
-        with httpx.Client(timeout=self.timeout, transport=self.transport) as client:
-            response = client.post(f"{self.url}/conversations", json=body, headers=self._headers())
-        response.raise_for_status()
-        return response.json()
-
     def build_prefetch(self, query: str) -> str:
         """The header, then one line per hit for the cleaned query; hits that do not fit
         are skipped.
@@ -109,33 +101,6 @@ def clean_prefetch_query(text: str) -> str:
     if any(marker in text for marker in _DESIRE_TICK_MARKERS):
         return ""
     return _CLIENT_CONTEXT_BLOCK.sub("", text).strip()
-
-
-def _message_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if not isinstance(content, list):
-        return ""
-    texts = [
-        block["text"].strip()
-        for block in content
-        if isinstance(block, dict)
-        and block.get("type") == "text"
-        and isinstance(block.get("text"), str)
-    ]
-    return "\n\n".join(text for text in texts if text)
-
-
-def conversation_turns(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """The user and assistant messages' text as {role, text}; tool traffic is dropped."""
-    turns = []
-    for message in messages:
-        if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
-            continue
-        text = _message_text(message.get("content"))
-        if text:
-            turns.append({"role": message["role"], "text": text})
-    return turns
 
 
 def resolve_api_key(config: Mapping[str, Any], environ: Mapping[str, str]) -> str:

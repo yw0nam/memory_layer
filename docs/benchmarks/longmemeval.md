@@ -126,8 +126,7 @@ recorded at extraction. The question then runs through
 `search(question, source="memory", namespaces=[namespace])` with production rerank and
 the run's read setting.
 
-The harness links no note to a conversation source, so a note id hashes its content
-alone and identical notes from two sessions share one row; the harness keeps a
+A note id hashes its content alone, so identical notes from two sessions share one row; the harness keeps a
 note-to-sessions map, so a hit counts toward every session it came from. A packet hit's
 date is the note's `occurred_at`.
 

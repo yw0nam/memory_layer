@@ -89,8 +89,6 @@ async def move_notes(ids: list[str], target_namespace: str) -> dict[str, list]:
 
     An id already present in the target namespace is left alone and reported skipped
     instead of overwriting it; an id that names no agent_note row is skipped the same way.
-    A note linked to a conversation source stays with its source, so the whole move is
-    refused with ValueError.
     """
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
@@ -98,17 +96,11 @@ async def move_notes(ids: list[str], target_namespace: str) -> dict[str, list]:
             await namespaces.require_registered(conn, target_namespace)
             existing = await conn.fetch(
                 f"""
-                SELECT id, conversation_id FROM "{PG_SCHEMA}".memory_chunks
+                SELECT id FROM "{PG_SCHEMA}".memory_chunks
                 WHERE source_type = 'agent_note' AND id = ANY($1::text[])
                 """,
                 ids,
             )
-            linked = sorted(row["id"] for row in existing if row["conversation_id"] is not None)
-            if linked:
-                raise ValueError(
-                    f"note(s) {', '.join(linked)} are linked to a conversation source; "
-                    "a linked note stays with its source"
-                )
             found = {row["id"] for row in existing}
             moved: list[dict[str, str]] = []
             skipped: list[str] = []

@@ -1,9 +1,7 @@
 """memory_base Hermes memory plugin — MemoryProvider interface.
 
 Pre-injects a per-turn semantic prefetch over the memory-base REST API into
-every conversation turn, and uploads each session's user and assistant turns
-at session end, where the server stores them unembedded as the evidence a note
-can link to.
+every conversation turn.
 
 Config via config.yaml (memory.memory_base):
   url                — memory-base REST API base URL (required)
@@ -12,14 +10,11 @@ Config via config.yaml (memory.memory_base):
   min_score          — relevance floor for prefetch search (default: 0.25)
   api_key            — API key value, takes precedence over api_key_env (optional)
   api_key_env        — env var holding the API key (default: MEMORY_BASE_API_KEY)
-  capture_namespace  — namespace sessions are captured into (default: personal)
 """
 
 from __future__ import annotations
 
-import logging
 import os
-import time
 from typing import Any
 
 from agent.memory_provider import MemoryProvider
@@ -29,10 +24,6 @@ from . import client
 _DEFAULT_TIMEOUT = 5
 _DEFAULT_TOP_K = 5
 _DEFAULT_MIN_SCORE = 0.25
-_DEFAULT_CAPTURE_NAMESPACE = "personal"
-_MIN_CAPTURE_TURNS = 2
-
-logger = logging.getLogger(__name__)
 
 
 def _load_plugin_config() -> dict[str, Any]:
@@ -49,13 +40,11 @@ def _load_plugin_config() -> dict[str, Any]:
 
 
 class MemoryBaseProvider(MemoryProvider):
-    """Semantic prefetch every turn; the session's turns are captured at its end."""
+    """Semantic prefetch every turn."""
 
     def __init__(self) -> None:
         self._config = _load_plugin_config()
         self._client: client.MemoryBaseClient | None = None
-        self._session_id = ""
-        self._session_started = 0.0
 
     @property
     def name(self) -> str:
@@ -82,8 +71,6 @@ class MemoryBaseProvider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._client = self._build_client()
-        self._session_id = session_id
-        self._session_started = time.time()
 
     def system_prompt_block(self) -> str:
         return ""
@@ -96,11 +83,7 @@ class MemoryBaseProvider(MemoryProvider):
         except Exception:
             return ""
 
-    def on_session_switch(self, new_session_id: str, **kwargs) -> None:
-        self._session_id = new_session_id
-        self._session_started = time.time()
-
-    # -- No tools, no per-turn writes; the whole session is captured at its end.
+    # -- No tools and no writes.
 
     def sync_turn(
         self,
@@ -111,28 +94,6 @@ class MemoryBaseProvider(MemoryProvider):
         messages: list[dict[str, Any]] | None = None,
     ) -> None:
         pass
-
-    def on_session_end(self, messages: list[dict[str, Any]]) -> None:
-        if not self._client or not self._session_id:
-            return
-        try:
-            turns = client.conversation_turns(messages)
-            if len(turns) < _MIN_CAPTURE_TURNS:
-                return
-            self._client.store_conversation(
-                {
-                    "origin": "hermes",
-                    "external_session_id": self._session_id,
-                    "namespace": str(
-                        self._config.get("capture_namespace") or _DEFAULT_CAPTURE_NAMESPACE
-                    ),
-                    "started_at": self._session_started,
-                    "ended_at": max(time.time(), self._session_started),
-                    "turns": turns,
-                }
-            )
-        except Exception as exc:
-            logger.warning("memory_base: session %s was not captured: %s", self._session_id, exc)
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         return []

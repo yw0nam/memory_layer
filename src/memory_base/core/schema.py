@@ -1,4 +1,4 @@
-"""Public database schema setup for memory chunks, conversation sources, and retrieval logging."""
+"""Public database schema setup for memory chunks and retrieval logging."""
 
 from __future__ import annotations
 
@@ -130,30 +130,13 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           ADD COLUMN IF NOT EXISTS namespace text NOT NULL DEFAULT 'default';
         ALTER TABLE {schema}.memory_chunks DROP COLUMN IF EXISTS idf_score;
         CREATE INDEX IF NOT EXISTS memory_chunks__namespace ON {schema}.memory_chunks (namespace);
-        ALTER TABLE {schema}.memory_chunks ADD COLUMN IF NOT EXISTS conversation_id text;
-        ALTER TABLE {schema}.memory_chunks ADD COLUMN IF NOT EXISTS source_turn_start int;
-        ALTER TABLE {schema}.memory_chunks ADD COLUMN IF NOT EXISTS source_turn_end int;
         ALTER TABLE {schema}.memory_chunks
           ADD COLUMN IF NOT EXISTS occurred_at double precision;
-        CREATE INDEX IF NOT EXISTS memory_chunks__conversation
-          ON {schema}.memory_chunks (conversation_id);
-        CREATE TABLE IF NOT EXISTS {schema}.conversation_sources (
-          id text PRIMARY KEY,
-          namespace text NOT NULL,
-          origin text NOT NULL,
-          external_session_id text NOT NULL,
-          started_at double precision NOT NULL,
-          ended_at double precision NOT NULL,
-          turns jsonb NOT NULL,
-          created_at double precision NOT NULL,
-          created_by text NOT NULL,
-          UNIQUE (namespace, origin, external_session_id)
-        );
-        ALTER TABLE {schema}.conversation_sources DROP COLUMN IF EXISTS distilled_through;
-        CREATE INDEX IF NOT EXISTS conversation_sources__started
-          ON {schema}.conversation_sources (started_at DESC);
-        ALTER TABLE {schema}.conversation_sources
-          ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb;
+        DROP INDEX IF EXISTS {schema}.memory_chunks__conversation;
+        ALTER TABLE {schema}.memory_chunks DROP COLUMN IF EXISTS conversation_id;
+        ALTER TABLE {schema}.memory_chunks DROP COLUMN IF EXISTS source_turn_start;
+        ALTER TABLE {schema}.memory_chunks DROP COLUMN IF EXISTS source_turn_end;
+        DROP TABLE IF EXISTS {schema}.conversation_sources;
         CREATE TABLE IF NOT EXISTS {schema}.doc_rows (
           namespace text NOT NULL,
           document_id text NOT NULL,

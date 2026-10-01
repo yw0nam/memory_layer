@@ -29,7 +29,6 @@ from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
 from memory_base.serve import access_log
 from memory_base.serve import admin
-from memory_base.serve import conversations
 from memory_base.serve import ingest_api
 from memory_base.serve import job_store
 from memory_base.serve import keys
@@ -47,7 +46,6 @@ from memory_base.serve.notes import (
     NOTE_KINDS,
     LowSignalNoteError,
     SimilarNotesError,
-    link_fields,
     note_date,
     save_note,
 )
@@ -74,9 +72,6 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
             # Memory text is bounded at write time; code chunks are not.
             "text": hit.text,
         }
-        out.update(
-            link_fields(hit.meta["conversation_id"], hit.meta["turn_start"], hit.meta["turn_end"])
-        )
     else:
         out = {
             "source": hit.source,
@@ -299,9 +294,6 @@ async def save_memory_route(request: Request) -> JSONResponse:
             occurred_at=body.get("occurred_at"),
             author=author,
             allow_similar=allow_similar,
-            conversation_id=body.get("conversation_id"),
-            turn_start=body.get("turn_start"),
-            turn_end=body.get("turn_end"),
         )
     except SimilarNotesError as exc:
         return JSONResponse({"error": str(exc), "similar": exc.similar}, status_code=409)
@@ -348,102 +340,6 @@ async def notes_list_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse(rows)
-
-
-CONVERSATION_BODY_FIELDS = frozenset(
-    {"namespace", "origin", "external_session_id", "started_at", "ended_at", "turns", "metadata"}
-)
-
-
-async def conversations_store_route(request: Request) -> JSONResponse:
-    """Store or extend a conversation source; namespace defaults to key.home."""
-    key = request.state.key
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    unknown = sorted(set(body) - CONVERSATION_BODY_FIELDS)
-    if unknown:
-        return error(f"unknown field(s): {', '.join(unknown)}")
-    namespace = body.get("namespace", key.home)
-    if not isinstance(namespace, str) or not namespace.strip():
-        return error("namespace must be a non-empty string")
-    if not key.permits(namespace):
-        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
-    try:
-        result = await conversations.store_conversation(
-            key,
-            namespace=namespace,
-            origin=body.get("origin"),
-            external_session_id=body.get("external_session_id"),
-            started_at=body.get("started_at"),
-            ended_at=body.get("ended_at"),
-            turns=body.get("turns"),
-            metadata=body.get("metadata"),
-        )
-    except conversations.ConversationTooLarge as exc:
-        return error(str(exc), 413)
-    except conversations.ConversationForbidden as exc:
-        return error(str(exc), 403)
-    except conversations.ConversationConflict as exc:
-        return error(str(exc), 409)
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(result, status_code=201 if result["created"] else 200)
-
-
-async def conversations_list_route(request: Request) -> JSONResponse:
-    """List conversation sources newest first by time filters alone, scoped like notes."""
-    key = request.state.key
-    params = request.query_params
-    try:
-        limit = int(params.get("limit", str(conversations.LIST_CONVERSATIONS_DEFAULT_LIMIT)))
-    except ValueError:
-        return error("limit must be an integer")
-    try:
-        requested_namespaces = normalize_namespaces(params.getlist("namespace") or None)
-    except ValueError as exc:
-        return error(str(exc))
-    if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
-        return error("requested namespaces are outside the caller's allowed set", 403)
-    scope = requested_namespaces
-    if scope is None and not key.is_admin:
-        scope = sorted(key.allowed)
-    try:
-        rows = await conversations.list_conversations(
-            namespaces=scope,
-            since=params.get("since"),
-            until=params.get("until"),
-            origin=params.get("origin"),
-            limit=limit,
-        )
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(rows)
-
-
-async def conversation_get_route(request: Request) -> JSONResponse:
-    """Read a conversation source's turns, optionally one inclusive turn range and a substring."""
-    params = request.query_params
-    bounds: dict[str, int | None] = {}
-    for name in ("turn_start", "turn_end"):
-        raw = params.get(name)
-        try:
-            bounds[name] = None if raw is None else int(raw)
-        except ValueError:
-            return error(f"{name} must be an integer")
-    try:
-        row = await conversations.get_conversation(
-            request.path_params["conversation_id"],
-            request.state.key,
-            **bounds,
-            contains=params.get("contains"),
-        )
-    except conversations.ConversationNotFound as exc:
-        return error(str(exc), 404)
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(row)
 
 
 def _admin_scope(key) -> list[str] | None:
@@ -841,9 +737,6 @@ app = Starlette(
         Route("/search", search_route, methods=["POST"]),
         Route("/save_memory", save_memory_route, methods=["POST"]),
         Route("/notes", notes_list_route, methods=["GET"]),
-        Route("/conversations", conversations_store_route, methods=["POST"]),
-        Route("/conversations", conversations_list_route, methods=["GET"]),
-        Route("/conversations/{conversation_id}", conversation_get_route, methods=["GET"]),
         Route("/messages", messages_send_route, methods=["POST"]),
         Route("/messages", messages_list_route, methods=["GET"]),
         Route("/messages/{message_id}/claim", message_claim_route, methods=["POST"]),

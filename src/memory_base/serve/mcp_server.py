@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import uuid
 from typing import Any, Mapping
 
@@ -42,7 +41,6 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
 REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
 API_KEY_HEADER = "x-api-key"
-CONVERSATION_ID_RE = re.compile(r"conv:[0-9a-f]{16}")
 
 # Served in the initialize response, so it is stated once per client session:
 # the store's invariants only. Per-consumer usage belongs to the consumer.
@@ -443,9 +441,6 @@ async def _save(
     allow_similar: bool,
     namespace: str | None,
     occurred_at: str | None,
-    conversation_id: str | None,
-    turn_start: int | None,
-    turn_end: int | None,
     ctx: Context | None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
@@ -460,12 +455,6 @@ async def _save(
         body["namespace"] = namespace
     if occurred_at is not None:
         body["occurred_at"] = occurred_at
-    if conversation_id is not None:
-        body["conversation_id"] = conversation_id
-    if turn_start is not None:
-        body["turn_start"] = turn_start
-    if turn_end is not None:
-        body["turn_end"] = turn_end
     return await _call(
         "POST",
         "/save_memory",
@@ -483,9 +472,6 @@ async def save_personal_memory(
     allow_similar: bool = False,
     namespace: str | None = None,
     occurred_at: str | None = None,
-    conversation_id: str | None = None,
-    turn_start: int | None = None,
-    turn_end: int | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Remember something about the user: their life, the people and things around them,
@@ -527,10 +513,8 @@ async def save_personal_memory(
     `tags` is required; the first tag names the subject so a later search can narrow to
     it. `author` names the saving agent and must be in the key's author allowlist.
     `occurred_at` (ISO 8601, not in the future) records when the remembered event
-    happened. `conversation_id` with `turn_start`/`turn_end` links the note to a captured
-    session in the same namespace. `namespace` defaults to the key's home namespace.
-    `stored` is False when identical content was already saved; `kind` is then the
-    stored note's kind.
+    happened. `namespace` defaults to the key's home namespace. `stored` is False when
+    identical content was already saved; `kind` is then the stored note's kind.
     """
     return await _save(
         "personal",
@@ -541,9 +525,6 @@ async def save_personal_memory(
         allow_similar,
         namespace,
         occurred_at,
-        conversation_id,
-        turn_start,
-        turn_end,
         ctx,
     )
 
@@ -557,9 +538,6 @@ async def save_work_memory(
     allow_similar: bool = False,
     namespace: str | None = None,
     occurred_at: str | None = None,
-    conversation_id: str | None = None,
-    turn_start: int | None = None,
-    turn_end: int | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Record work knowledge that code, version control, the tracker, and documentation
@@ -595,10 +573,8 @@ async def save_work_memory(
     `tags` is required; the first tag names the subject so a later search can narrow to
     it. `author` names the saving agent and must be in the key's author allowlist.
     `occurred_at` (ISO 8601, not in the future) records when the remembered event
-    happened. `conversation_id` with `turn_start`/`turn_end` links the note to a captured
-    session in the same namespace. `namespace` defaults to the key's home namespace.
-    `stored` is False when identical content was already saved; `kind` is then the
-    stored note's kind.
+    happened. `namespace` defaults to the key's home namespace. `stored` is False when
+    identical content was already saved; `kind` is then the stored note's kind.
     """
     return await _save(
         "work",
@@ -609,92 +585,7 @@ async def save_work_memory(
         allow_similar,
         namespace,
         occurred_at,
-        conversation_id,
-        turn_start,
-        turn_end,
         ctx,
-    )
-
-
-@mcp.tool()
-async def expand_source(
-    conversation_id: str,
-    turn_start: int | None = None,
-    turn_end: int | None = None,
-    contains: str | None = None,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Read the turns of a stored conversation source.
-
-    Pass a hit's or a listed session's `conversation_id`, and `turn_start`/`turn_end`
-    to read only those turns (an inclusive, 0-based range; omit both for the whole
-    conversation). `contains` keeps only the turns whose text contains it,
-    case-insensitively, within this one session; the range and `contains` combine,
-    and there is no search across sessions. An empty turns list means no turn
-    matched. Returns id, namespace, origin, external_session_id, started_at/ended_at
-    (epoch seconds), and turns, each with its original index, role ("user" or
-    "assistant"), and text. Conversation text never enters search. An unknown id,
-    or one outside the caller's namespaces, is an error.
-    """
-    if not CONVERSATION_ID_RE.fullmatch(conversation_id):
-        raise ValueError(f"conversation_id must look like conv:<16 hex>: {conversation_id!r}")
-    params: dict[str, int | str] = {}
-    if turn_start is not None:
-        params["turn_start"] = turn_start
-    if turn_end is not None:
-        params["turn_end"] = turn_end
-    if contains is not None:
-        params["contains"] = contains
-    return await _call(
-        "GET",
-        f"/conversations/{conversation_id}",
-        params=params,
-        headers=_auth_headers(ctx),
-    )
-
-
-@mcp.tool()
-async def list_conversations(
-    since: str | None = None,
-    until: str | None = None,
-    origin: str | None = None,
-    namespace: str | None = None,
-    limit: int | None = None,
-    ctx: Context | None = None,
-) -> list[dict[str, Any]]:
-    """List captured sessions by time — no search query, no relevance ranking.
-
-    A captured session is the user and assistant turns of one Claude Code or
-    Hermes session, uploaded at session end and stored unembedded as the evidence
-    a note links to; it is never searched. Returns up to `limit` sessions (default
-    50, max 200) newest first by start time, each with id, namespace, origin,
-    external_session_id, started_at/ended_at (epoch seconds), turn_count, repo
-    (the capturing client's repository, or null), and preview (the first user
-    turn, cut to 200 characters).
-
-    `since`/`until` are ISO 8601 dates or datetimes bounding the session's start
-    (a bare date covers that whole day; naive values are read as UTC). `origin`
-    is "claude_code" or "hermes". `namespace` narrows to one namespace the
-    caller's API key can access; omitted, it covers every namespace the key can
-    access. Read a listed session with `expand_source` by its id, optionally by
-    turn range or `contains`.
-    """
-    params: list[tuple[str, str]] = []
-    if since is not None:
-        params.append(("since", since))
-    if until is not None:
-        params.append(("until", until))
-    if origin is not None:
-        params.append(("origin", origin))
-    if namespace is not None:
-        params.append(("namespace", namespace))
-    if limit is not None:
-        params.append(("limit", str(limit)))
-    return await _call(
-        "GET",
-        "/conversations",
-        params=params,
-        headers=_auth_headers(ctx),
     )
 
 

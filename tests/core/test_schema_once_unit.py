@@ -205,7 +205,7 @@ def test_ensure_schema_drops_the_conversation_job_kind_and_the_distill_cursor(mo
     ):
         assert statement in sql
     assert "'conversation')" not in sql
-    assert "CREATE TABLE IF NOT EXISTS" not in sql.split("conversation_sources")[0][-60:]
+    assert 'CREATE TABLE IF NOT EXISTS "test_schema".conversation_sources' not in sql
     assert "ADD COLUMN IF NOT EXISTS conversation_id text;" not in sql
     assert "ADD COLUMN IF NOT EXISTS source_turn" not in sql
     assert "CREATE INDEX IF NOT EXISTS memory_chunks__conversation" not in sql
