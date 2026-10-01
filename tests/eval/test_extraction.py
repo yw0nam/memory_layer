@@ -7,12 +7,22 @@ import pytest
 from memory_base.eval import extraction
 
 
-def test_the_package_prompts_carry_the_turn_range_and_tags_contract():
-    for name in ("digest", "personal"):
-        prompt = extraction.load_prompt(name)
-        assert "turn_start" in prompt and "turn_end" in prompt and "tags" in prompt
-        assert "{date}" in prompt and "{session}" in prompt
+def test_the_digest_prompt_carries_the_turn_range_and_tags_contract():
+    prompt = extraction.load_prompt("digest")
+    assert "turn_start" in prompt and "turn_end" in prompt and "tags" in prompt
+    assert "{date}" in prompt and "{session}" in prompt
     assert "turn_start" in extraction.EXTRACTION_SYSTEM_PROMPT
+
+
+def test_the_personal_prompt_asks_for_content_only():
+    prompt = extraction.load_prompt("personal")
+    assert "{date}" in prompt and "{session}" in prompt
+    for field in ("turn_start", "tags", "kind", "episode"):
+        assert field not in prompt
+    assert extraction.PERSONAL_SYSTEM_PROMPT == 'Return only JSON: {"notes": [{"content": string}]}'
+    assert extraction.parse_extraction('{"notes": [{"content": "a"}]}') == [
+        {"content": "a", "kind": "note"}
+    ]
 
 
 def test_parse_units_keeps_well_typed_optional_fields_only():

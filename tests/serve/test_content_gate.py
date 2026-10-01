@@ -271,3 +271,15 @@ def test_save_tool_description_tells_agents_to_search_before_superseding(tool):
     description = _tools()[tool].description
     assert "search_memory the same subject" in description
     assert "archive them with archive_notes" in description
+
+
+def test_the_personal_gate_and_save_tool_keep_assistant_answers_only_for_a_stated_use():
+    clause = "a use the user stated in their own life"
+    assert clause in notes.PERSONAL_JUDGE_PROMPT
+    assert "a question alone does not establish such a use" in notes.PERSONAL_JUDGE_PROMPT
+    assert "something the assistant gave the user that they may want again" not in (
+        notes.PERSONAL_JUDGE_PROMPT
+    )
+    description = _tools()["save_personal_memory"].description
+    assert "for a use they stated in their own life" in description
+    assert "curiosity question is general knowledge" in description
