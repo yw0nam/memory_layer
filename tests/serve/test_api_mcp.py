@@ -39,9 +39,6 @@ MEMORY_META = {
     "id": "note:default:0000000000000000",
     "kind": "work",
     "tags": [],
-    "conversation_id": None,
-    "turn_start": None,
-    "turn_end": None,
     "occurred_at": None,
 }
 
@@ -127,6 +124,12 @@ def test_hit_to_dict_exposes_csv_columns_when_present():
     ]
 
 
+def test_memory_hit_dict_carries_no_conversation_link_keys():
+    meta = {**MEMORY_META, "conversation_id": "conv:0", "turn_start": 0, "turn_end": 1}
+    d = api.hit_to_dict(_hit(source="memory", meta=meta))
+    assert not {"conversation_id", "turn_start", "turn_end"} & set(d)
+
+
 # ---- MCP server in-process tool registration --------------------------------
 
 
@@ -166,6 +169,4 @@ def test_mcp_server_registers_expected_tools():
         "list_messages",
         "claim_message",
         "cancel_message",
-        "expand_source",
-        "list_conversations",
     }

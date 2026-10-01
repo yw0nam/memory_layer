@@ -67,8 +67,6 @@ def test_tool_list_includes_document_ingestion():
         "list_messages",
         "claim_message",
         "cancel_message",
-        "expand_source",
-        "list_conversations",
     }
 
 
@@ -752,3 +750,18 @@ def test_remove_document_404_raises_backend_error_message(monkeypatch):
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="document not found"):
         asyncio.run(mcp_server.remove_document("ghost.md"))
+
+
+def test_save_tool_schemas_offer_no_conversation_link():
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    async def _run():
+        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
+            result = await client.list_tools()
+            return {t.name: t for t in result.tools}
+
+    tools = asyncio.run(_run())
+    for name in ("save_personal_memory", "save_work_memory"):
+        properties = tools[name].inputSchema["properties"]
+        assert not {"conversation_id", "turn_start", "turn_end"} & set(properties)
+    assert not {"expand_source", "list_conversations"} & set(tools)
