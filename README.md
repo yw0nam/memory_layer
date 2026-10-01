@@ -24,11 +24,12 @@ listed by time and read back by id, turn range, or substring within one source.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  21 tools: search / search_code / search_memory / save_memory
-   │ mcp_server  │            list_notes / ingest_document / remove_document
-   └──────┬──────┘            query_table / ingest_repo / remove_repo / list_repos
-          │                   list_memory_duplicates / archive_notes /
-          │ HTTP              restore_notes / delete_notes / send_message /
+   ┌─────────────┐  22 tools: search / search_code / search_memory /
+   │ mcp_server  │            save_personal_memory / save_work_memory /
+   └──────┬──────┘            list_notes / ingest_document / remove_document
+          │                   query_table / ingest_repo / remove_repo / list_repos
+          │ HTTP              list_memory_duplicates / archive_notes /
+          │                   restore_notes / delete_notes / send_message /
           │                   list_messages / claim_message / cancel_message /
           │                   expand_source / list_conversations   (thin proxy, no logic)
           ▼
@@ -81,8 +82,8 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
-| `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, `kind`, the optional id of a prior note to archive (400 when the save would leave no active note), an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time), and an optional `conversation_id` with an inclusive 0-based `turn_start`/`turn_end` linking the note to a stored conversation source in the same namespace (400 when the source is missing, in another namespace, or shorter than the range); refused with 409 when the chat model judges the content a report of what a record elsewhere says (a tracker artefact, a progress update, or a file description), generic advice with no fact tied to this user, or filler (the error carries the reason and says to rewrite a fact that exists nowhere else as a note of its own, retrying at most once), and when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set; refused with 409 before any model call when the content or a tag carries a credential (the error names the credential type only) |
-| `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind`, `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
+| `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the required `kind` (`personal` or `work`, which picks the judge prompt), the optional id of a prior note to archive (400 when the save would leave no active note), an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time), and an optional `conversation_id` with an inclusive 0-based `turn_start`/`turn_end` linking the note to a stored conversation source in the same namespace (400 when the source is missing, in another namespace, or shorter than the range); refused with 409 when the chat model, judging with the prompt of the `kind`, finds a personal note that is not about the user (work knowledge, filler, generic advice) or a work note that copies a record held elsewhere, narrates progress, describes a file, states generic advice, or is too vague to act on (the error carries the reason and the recovery: move it to the other tool only when the content clearly belongs there, one rewrite in total, otherwise store nothing), and when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set; refused with 409 before any model call when the content or a tag carries a credential (the error names the credential type only) |
+| `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind` (`personal` or `work`), `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
 | `POST` | `/conversations` | store a conversation source — refused whole with 400 when a turn carries a credential (the error names the turn and the credential type only); `origin` (e.g. `claude_code`, `hermes`), `external_session_id`, `started_at`/`ended_at` (epoch seconds), `turns` (a non-empty list of exactly `{role: user\|assistant, text}`), optional `namespace` (default the key's home), optional `metadata` (a JSON object of at most 2 KB, e.g. `{repo, cwd}`); upserts by `(namespace, origin, external_session_id)` and returns `{id, created, turns}` (201 created, 200 updated); a re-upload is the storing key's or an admin key's only (403) and may always append turns after the stored ones, while changing a stored turn is 409 once a note links to the source; over 2,000,000 chars of turn text is 413 |
 | `GET` | `/conversations` | list conversation sources newest-first by start time without a query or embedding call — `since`/`until` bounding the session start (a bare-date `until` covers that whole day; a datetime `until` is exclusive), `origin`, repeated `namespace` (403 outside the key's set), `limit` (default 50, max 200); each row carries `id`, `namespace`, `origin`, `external_session_id`, `started_at`/`ended_at`, `turn_count`, `repo`, and `preview` (the first user turn, cut to 200 chars) |
 | `GET` | `/conversations/{id}` | a conversation source with `turns[{index, role, text}]`, optionally sliced to the inclusive `turn_start`/`turn_end` and filtered to the turns whose text contains `contains` (case-insensitive, within this one source; kept turns keep their indices, the filters combine, no match is an empty list); 404 when unknown or outside the caller's namespaces, 400 for a range past the last turn |
@@ -133,7 +134,7 @@ content matches an active note archives the target without recording a pointer o
 stdio by default; `MCP_TRANSPORT=sse|streamable-http` with `MCP_HOST`/`MCP_PORT` serves
 over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
-`search` · `search_code` · `search_memory` · `save_memory` · `list_notes` ·
+`search` · `search_code` · `search_memory` · `save_personal_memory` · `save_work_memory` · `list_notes` ·
 `ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
@@ -163,7 +164,7 @@ general message is operational and expires after `MESSAGE_TTL_DAYS`; a handoff s
 pending until it is claimed, superseded, or cancelled unless its sender gives an
 `expires_at`; a note is durable knowledge.
 
-`save_memory` takes `conversation_id`, `turn_start`, and `turn_end` to link a note to
+`save_personal_memory` and `save_work_memory` take `conversation_id`, `turn_start`, and `turn_end` to link a note to
 the turns it comes from; `expand_source` reads those turns back by a hit's
 `conversation_id`, optionally by range or a case-insensitive `contains` substring, and
 `list_conversations` lists stored sources by time. No tool stores a conversation source;
@@ -231,7 +232,7 @@ uv run python -m memory_base.serve.keys revoke <key-hash-prefix>
 ```
 
 `new` prints the plaintext key once — only its sha256 hash is stored. `--home` sets the
-namespace `save_memory` and document ingest default into (`default` when omitted);
+namespace the save tools and document ingest default into (`default` when omitted);
 minting fails if that namespace does not exist or is not accessible to the label.
 `revoke` takes an 8+ character prefix of the stored hash, as shown by `list`, and
 revokes every active key matching it.
