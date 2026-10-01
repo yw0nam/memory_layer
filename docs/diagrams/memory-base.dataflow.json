@@ -146,7 +146,7 @@
       "id": "memory_chunks",
       "type": "database",
       "label": "memory_chunks",
-      "sublabel": "note · decision · doc",
+      "sublabel": "personal · work · doc",
       "stage": 3,
       "row": 1,
       "tag": "halfvec(2048) HNSW + BM25"
