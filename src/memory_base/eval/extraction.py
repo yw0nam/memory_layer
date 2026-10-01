@@ -17,6 +17,7 @@ EXTRACTION_SYSTEM_PROMPT = (
     '"turn_start": integer, "turn_end": integer, "tags": [string, ...], '
     '"date": "YYYY-MM-DD" (episodes)}]}'
 )
+PERSONAL_SYSTEM_PROMPT = 'Return only JSON: {"notes": [{"content": string}]}'
 
 
 def load_prompt(name: str) -> str:

@@ -121,8 +121,11 @@ says something about the user or their life that a later conversation could use:
 - something that happened to the user or that they did, with its date and outcome;
 - plans, goals, commitments, and choices the user made, with dates and reasons when stated;
 - a change to something remembered earlier, with the new value and the old one;
-- something the assistant gave the user that they may want again — a recommendation, a
-  number, a list, a schedule, the defining facts of something written for them;
+- an answer the assistant gave for a use the user stated in their own life — a
+  recommendation, a number, a list, a schedule, or the defining facts of something
+  written for them; a question alone does not establish such a use, so an answer to a
+  curiosity question is general knowledge, and an answer for the user's job or project
+  is work knowledge;
 - a moment in the relationship between the user and the assistant.
 
 Refuse a note that is work knowledge rather than memory of the user:

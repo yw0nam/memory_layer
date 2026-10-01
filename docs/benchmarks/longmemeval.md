@@ -100,7 +100,11 @@ disabled, JSON output, with the committed prompt
 loaded as kind `personal`. `--prompt digest` and `--prompt personal` run the
 committed extraction prompts instead (`src/memory_base/eval/prompts/`), with each turn
 rendered as `[index] role: text` and the replies parsed by
-`memory_base.eval.extraction.parse_extraction`.
+`memory_base.eval.extraction.parse_extraction`. The personal prompt asks for content
+only (`{"notes": [{"content": string}]}`); its notes are labelled `note`. It keeps an
+answer the assistant gave only for a use the user stated in their own situation or plan,
+at most one such note per session, and leaves out curiosity Q&A and the results of
+processing pasted text.
 
 Each returned note then goes through the checks `save_note` applies before storing:
 label and length validation, the credential scan, and the content gate

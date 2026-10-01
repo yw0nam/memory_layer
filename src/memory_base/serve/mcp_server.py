@@ -475,15 +475,17 @@ async def save_personal_memory(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Remember something about the user: their life, the people and things around them,
-    what happened to them, what they like, plan, or chose, and what you gave them that
-    they may want again.
+    what happened to them, what they like, plan, or chose, and what you gave them for
+    their own life that they may want again.
 
     Save what you would want to recall in a later conversation with this user: a fact
     about them or someone close to them, a habit or possession, a preference and its
     reason, an event with its date and outcome, a plan or a choice, a change to something
     remembered before, a moment between you, or a recommendation, number, list, or
-    schedule you gave them. Use your judgment; a passing event or a mood is worth keeping
-    when it says something about the user. Do NOT save work knowledge here: a decision,
+    schedule you gave them for a use they stated in their own life (an answer to a
+    curiosity question is general knowledge; advice for their job or project is work
+    knowledge). Use your judgment; a passing event or a mood is worth keeping when it
+    says something about the user. Do NOT save work knowledge here: a decision,
     plan, convention, or status about a project or job, technical or not, a bug, fix, or
     environment fact, or the progress of a coding or work session goes to
     save_work_memory or send_message, and the gate refuses it here; how the user wants

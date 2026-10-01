@@ -57,7 +57,7 @@ SYSTEM_PROMPT = (
 SYSTEM_PROMPTS = {
     "agent": SYSTEM_PROMPT,
     "digest": extraction.EXTRACTION_SYSTEM_PROMPT,
-    "personal": extraction.EXTRACTION_SYSTEM_PROMPT,
+    "personal": extraction.PERSONAL_SYSTEM_PROMPT,
 }
 DEFAULT_MODEL = {"zai": "glm-5.3-flash", "claude-code": "claude-sonnet-5-5"}
 DEFAULT_CONCURRENCY = 5
