@@ -151,6 +151,7 @@ def test_loading_maps_each_note_back_to_every_session_it_came_from():
     assert calls[0][3] == "2023-05-20T02:21:00"
     bike = f"note:lme-q1:{hashlib.sha256(b'The user owns a red bike.').hexdigest()[:16]}"
     assert provenance[bike] == {units[0], units[1]}
+    assert all(c[1] == "personal" for c in calls)
     assert stats.submitted == 3
     assert stats.stored == 2
     assert stats.duplicates == 1
@@ -521,8 +522,55 @@ def test_gate_off_loading_adds_gate_refused_notes_but_not_save_path_refusals():
         )
     )
     assert [c[0] for c in calls] == ["Kept.", "Gate refused."]
+    assert all(c[1] == "personal" for c in calls)
     assert stats.gate_refused == 1
     assert stats.submitted == 2
+
+
+def test_loading_saves_every_extracted_label_as_personal_memory():
+    units = [("s1", "2023/05/20 (Sat) 02:21")]
+    notes_by_unit = {
+        units[0]: [
+            {"content": "A note.", "kind": "note", "gate": "stored"},
+            {"content": "A decision.", "kind": "decision", "gate": "stored"},
+            {"content": "An episode.", "kind": "episode", "gate": "stored"},
+            {"content": "Refused.", "kind": "note", "gate": "refused", "gate_reason": "plan"},
+        ]
+    }
+    calls = []
+    stats, _ = asyncio.run(
+        lme.load_question_notes("lme-q1", units, notes_by_unit, save=fake_save_note(calls))
+    )
+    assert [c[0] for c in calls] == ["A note.", "A decision.", "An episode."]
+    assert all(c[1] == "personal" for c in calls)
+    assert stats.invalid == 0
+    calls = []
+    asyncio.run(
+        lme.load_question_notes(
+            "lme-q1", units, notes_by_unit, save=fake_save_note(calls), gate="off"
+        )
+    )
+    assert len(calls) == 4
+    assert all(c[1] == "personal" for c in calls)
+
+
+def test_loading_with_a_writer_keeps_the_personal_kind():
+    units = [("s1", "2023/05/20 (Sat) 02:21")]
+    notes_by_unit = {units[0]: [{"content": "A decision.", "kind": "decision", "gate": "stored"}]}
+    seen = []
+
+    class Writer:
+        async def save(self, save, content, *, stats, date, **kwargs):
+            seen.append(kwargs)
+            return await save(content, **kwargs)
+
+    calls = []
+    asyncio.run(
+        lme.load_question_notes(
+            "lme-q1", units, notes_by_unit, save=fake_save_note(calls), writer=Writer()
+        )
+    )
+    assert [kwargs["kind"] for kwargs in seen] == ["personal"]
 
 
 def test_judge_audit_sample_is_seeded_and_carries_what_the_auditor_needs():

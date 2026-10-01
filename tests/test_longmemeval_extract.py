@@ -160,6 +160,56 @@ def test_with_the_gate_off_notes_are_recorded_unjudged_without_a_gate_call(tmp_p
     assert (session["stored"], session["gate_calls"]) == (0, 0)
 
 
+THREE_LABELS = [
+    {"content": "A note.", "kind": "note"},
+    {"content": "A decision.", "kind": "decision"},
+    {"content": "An episode.", "kind": "episode"},
+]
+
+
+def test_extraction_keeps_the_extractors_label_and_judges_every_note_as_personal(tmp_path):
+    judged = []
+
+    async def recording_gate(content, kind):
+        judged.append(kind)
+        return ContentVerdict(accepted=True, reason="judged")
+
+    run([unit("s1", DATE_A, "bike")], tmp_path, FakeClient({"bike": THREE_LABELS}), recording_gate)
+    assert judged == ["personal"] * 3
+    notes = extract.read_notes(tmp_path)
+    assert [n["kind"] for n in notes] == ["note", "decision", "episode"]
+    assert [n["gate"] for n in notes] == ["stored"] * 3
+
+
+def test_gate_off_keeps_every_extracted_label(tmp_path):
+    run([unit("s1", DATE_A, "bike")], tmp_path, FakeClient({"bike": THREE_LABELS}), gate=None)
+    notes = extract.read_notes(tmp_path)
+    assert [n["kind"] for n in notes] == ["note", "decision", "episode"]
+    assert [n["gate"] for n in notes] == ["unjudged"] * 3
+
+
+def test_the_manifest_hashes_the_personal_judge_prompt(tmp_path, monkeypatch):
+    from memory_base.eval import longmemeval as lme
+    from memory_base.serve import notes as notes_module
+
+    dataset = tmp_path / "dataset.json"
+    qid = single_session_dataset(dataset)
+    client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
+    client.model, client.provider = "glm-5.3-flash", "zai"
+    monkeypatch.setattr(extract.OpenAIExtractor, "from_env", lambda env, model: client)
+    monkeypatch.setattr(extract, "record_gate_usage", lambda: None)
+    monkeypatch.setattr(notes_module, "judge_note_content", accept)
+    manifest = tmp_path / "manifest.json"
+    extract.main(
+        ["--dataset", str(dataset), "--data-dir", str(tmp_path / "data"),
+         "--manifest", str(manifest), "--questions", qid, "--gate", "on"]
+    )  # fmt: skip
+    section = lme.read_manifest(manifest)["extract"]
+    assert section["gate"]["judge_prompt_sha256"] == lme.prompt_sha(
+        notes_module.PERSONAL_JUDGE_PROMPT
+    )
+
+
 def test_the_gate_off_flag_skips_the_gate_and_leaves_it_out_of_the_manifest(tmp_path, monkeypatch):
     from memory_base.eval import longmemeval as lme
     from memory_base.serve import notes as notes_module
