@@ -20,7 +20,7 @@ def memory_row(name: str, ts: float, text: str | None = None) -> dict:
     return {
         "id": name,
         "source_ref": name,
-        "chunk_kind": "note",
+        "chunk_kind": "work",
         "metadata": {},
         "distilled": text or f"{name} body",
         "content_raw": text or f"{name} body",

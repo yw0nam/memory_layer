@@ -36,7 +36,7 @@ matched the turn's query at `min_score`.
   read them back. A failed upload is logged as a warning and never raised into Hermes.
 
 The provider never registers tools — the MCP server already exposes `search`/`search_memory`/
-`save_memory` for on-demand recall.
+`save_personal_memory`/`save_work_memory` for on-demand recall.
 
 ## Layout
 

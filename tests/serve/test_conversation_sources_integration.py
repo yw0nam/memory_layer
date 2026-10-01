@@ -71,6 +71,7 @@ def _save(content: str, conversation_id: str, turn_start: int, turn_end: int) ->
             "namespace": NAMESPACE,
             "author": "claude-code",
             "content": content,
+            "kind": "work",
             "tags": ["staging"],
             "conversation_id": conversation_id,
             "turn_start": turn_start,
@@ -117,7 +118,7 @@ def test_linked_notes_carry_their_source_and_the_source_never_surfaces(namespace
     assert by_id[arch["id"]]["conversation_id"] == conversation_id
     assert (by_id[arch["id"]]["turn_start"], by_id[arch["id"]]["turn_end"]) == (0, 1)
     assert (by_id[drain["id"]]["turn_start"], by_id[drain["id"]]["turn_end"]) == (2, 2)
-    assert by_id[drain["id"]]["kind"] == "note"
+    assert by_id[drain["id"]]["kind"] == "work"
     assert by_id[drain["id"]]["tags"] == ["staging"]
 
     sliced = client.get(f"/conversations/{conversation_id}?turn_start=2&turn_end=2")
@@ -155,6 +156,7 @@ def test_a_note_linked_to_a_missing_source_is_refused(namespace):
             "namespace": namespace,
             "author": "claude-code",
             "content": NOTE_ARCH,
+            "kind": "work",
             "tags": ["staging"],
             "conversation_id": "conv:0000000000000000",
             "turn_start": 0,
@@ -173,7 +175,7 @@ def test_an_episode_is_found_by_the_day_it_happened(namespace):
             "namespace": namespace,
             "author": "claude-code",
             "content": content,
-            "kind": "episode",
+            "kind": "personal",
             "tags": ["staging"],
             "occurred_at": "2020-03-14",
         },

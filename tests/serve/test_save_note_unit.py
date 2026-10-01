@@ -84,7 +84,7 @@ def use(monkeypatch):
 
 
 def _save(**overrides):
-    fields = {"tags": ["test"], "namespace": "team-a"}
+    fields = {"tags": ["test"], "kind": "work", "namespace": "team-a"}
     fields.update(overrides)
     return asyncio.run(notes.save_note("prefer ruff for linting", **fields))
 

@@ -51,12 +51,12 @@ def test_search_memory_returns_no_hits_when_memory_chunks_table_is_missing():
     assert hits == []
 
 
-@pytest.mark.parametrize("kind", ["doc", "note", "decision"])
+@pytest.mark.parametrize("kind", ["doc", "personal", "work"])
 def test_memory_kind_filters_are_valid(kind):
     assert validate_search_options("memory", kind, None) == (kind, None, None, None, None)
 
 
-@pytest.mark.parametrize("kind", ["code", "", 1])
+@pytest.mark.parametrize("kind", ["code", "note", "decision", "", 1])
 def test_unknown_kind_filter_is_rejected(kind):
     with pytest.raises(ValueError, match="kind must be one of"):
         validate_search_options("memory", kind, None)
@@ -65,8 +65,8 @@ def test_unknown_kind_filter_is_rejected(kind):
 @pytest.mark.parametrize(
     ("source", "kind", "tags"),
     [
-        ("all", "note", None),
-        ("code", "decision", None),
+        ("all", "personal", None),
+        ("code", "work", None),
         ("all", None, ["infra"]),
         ("code", None, ["infra"]),
     ],
@@ -237,7 +237,7 @@ def test_memory_filters_are_inside_both_candidate_queries():
             conn,
             "query",
             "[1]",
-            kind="decision",
+            kind="work",
             tags=["infra", "database"],
         )
     )
@@ -249,8 +249,8 @@ def test_memory_filters_are_inside_both_candidate_queries():
         assert "metadata->'tags' ?|" in sql
         assert sql.index("chunk_kind =") < sql.index("LIMIT")
         assert sql.index("metadata->'tags' ?|") < sql.index("LIMIT")
-    assert vector_args == ("[1]", "decision", ["infra", "database"])
-    assert fts_args == ("query", "decision", ["infra", "database"])
+    assert vector_args == ("[1]", "work", ["infra", "database"])
+    assert fts_args == ("query", "work", ["infra", "database"])
 
 
 def test_memory_hit_uses_search_ref_and_carries_cap_fields():
@@ -316,7 +316,7 @@ def test_memory_hit_falls_back_to_source_ref():
     row = {
         "id": "note:1",
         "source_ref": "save_memory",
-        "chunk_kind": "note",
+        "chunk_kind": "work",
         "metadata": {},
         "distilled": "note",
         "content_raw": "note",
@@ -339,7 +339,7 @@ def test_memory_fusion_uses_vector_fts_and_recency_voters(monkeypatch):
         return {
             "id": cid,
             "source_ref": "save_memory",
-            "chunk_kind": "note",
+            "chunk_kind": "work",
             "metadata": {},
             "distilled": cid,
             "content_raw": cid,
@@ -411,14 +411,14 @@ def test_history_predicates_adds_author_clause():
 def test_history_predicates_author_clause_numbers_last():
     predicates, args = history_predicates(
         include_archived=False,
-        kind="note",
+        kind="work",
         tags=["infra"],
         namespaces=["team-a"],
         since=1.0,
         until=2.0,
         author="natsume",
     )
-    assert args == ["note", ["infra"], ["team-a"], 1.0, 2.0, "natsume"]
+    assert args == ["work", ["infra"], ["team-a"], 1.0, 2.0, "natsume"]
     assert "metadata->>'author' = $7" in predicates
 
 
@@ -434,7 +434,7 @@ def test_memory_hit_carries_the_author():
     row = {
         "id": "note:1",
         "source_ref": "save_memory",
-        "chunk_kind": "note",
+        "chunk_kind": "work",
         "metadata": {"author": "natsume"},
         "distilled": "note",
         "content_raw": "note",
@@ -456,7 +456,7 @@ def test_memory_hit_author_is_none_when_unrecorded():
     row = {
         "id": "note:1",
         "source_ref": "save_memory",
-        "chunk_kind": "note",
+        "chunk_kind": "work",
         "metadata": {},
         "distilled": "note",
         "content_raw": "note",

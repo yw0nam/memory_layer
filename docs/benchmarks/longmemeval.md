@@ -66,11 +66,10 @@ have a row for their current prompt.
 | dated | `--variant dated` | the 27 temporal-reasoning | gate-stored, embedded as `"{date}: {content}"` |
 
 Gate-on is the product number: it measures what an agent's memory holds after the
-content gate. The gate accepts what a future conversation would otherwise have to ask
-again — durable facts about the user, plans, dated episodes, decisions with their
-rejected alternatives, and answers worth keeping, personal and coding alike — and
-refuses copies of what a record elsewhere says, progress reports, and file
-descriptions. Gate-off loads refused notes as well, so it isolates extraction and
+content gate. Every note is judged by the personal-memory prompt, the one
+`save_personal_memory` uses: it accepts memory of the user — facts about them and the
+people around them, plans, dated episodes, preferences, and answers worth keeping — and
+refuses work knowledge, filler, and generic advice. Gate-off loads refused notes as well, so it isolates extraction and
 retrieval from the gate's policy. Notes refused by validation or the credential scan
 stay out of gate-off too, because `save_note` never stores them. Each run writes its
 own files (`packets-gate-off.jsonl`, `answers-gate-off.jsonl`, and so on; the dated run
@@ -96,15 +95,16 @@ grid point from the same candidates (see `read-settings.md`).
 The extractor is `glm-5.3-flash` on the z.ai endpoint resolved from `.env`
 (`resolve_llm_provider`; any other provider is refused), temperature 0, thinking
 disabled, JSON output, with the committed prompt
-`scripts/longmemeval/extract_prompt.txt`. Note kinds follow the `save_memory` contract
-(`note`, `decision`, `episode`). `--prompt digest` and `--prompt personal` run the
+`scripts/longmemeval/extract_prompt.txt`. Each note keeps the label the extractor gave it
+(`note`, `decision`, `episode`); every note is judged with the personal-memory prompt and
+loaded as kind `personal`. `--prompt digest` and `--prompt personal` run the
 committed extraction prompts instead (`src/memory_base/eval/prompts/`), with each turn
 rendered as `[index] role: text` and the replies parsed by
 `memory_base.eval.extraction.parse_extraction`.
 
 Each returned note then goes through the checks `save_note` applies before storing:
-kind and length validation, the credential scan, and the content gate
-(`judge_note_content`, the production judge prompt on the chat provider from `.env`).
+label and length validation, the credential scan, and the content gate
+(`judge_note_content` with the production personal-memory prompt on the chat provider from `.env`).
 The verdict is recorded as `stored` or `refused` with its reason. A gate call that fails
 is retried three times with backoff; a unit whose gate stays unavailable is not written
 and is retried by the next run, so no note carries an `unavailable` verdict. A session

@@ -27,8 +27,8 @@ GATE_FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _LIVE_JUDGE = notes.judge_note_content
 
 GATE_FIXTURES = {
-    "gate_replay_coding_notes.jsonl": "coding-agent notes",
-    "gate_replay_conversation_notes.jsonl": "conversation-memory notes",
+    "gate_replay_coding_notes.jsonl": ("coding-agent notes", "work"),
+    "gate_replay_conversation_notes.jsonl": ("conversation-memory notes", "personal"),
 }
 
 # One malformed provider response is not a verdict; the benchmark retries gate calls the same way.
@@ -165,8 +165,7 @@ def load_gate_fixture(name: str) -> list[dict]:
         if line.strip()
     ]
     for row in rows:
-        assert set(row) == {"content", "kind", "expect"}
-        assert row["kind"] in notes.NOTE_KINDS
+        assert set(row) == {"content", "expect"}
         assert row["expect"] in {"accept", "refuse"}
     return rows
 
@@ -176,20 +175,24 @@ def test_gate_fixtures_match_their_composition():
     conversation = load_gate_fixture("gate_replay_conversation_notes.jsonl")
     assert len(coding) == 44
     assert Counter(row["expect"] for row in coding) == {"accept": 30, "refuse": 14}
-    assert Counter(row["kind"] for row in conversation) == {"note": 8, "decision": 2, "episode": 2}
-    assert sum(row["expect"] == "refuse" for row in conversation) == 3
+    assert len(conversation) == 12
+    assert Counter(row["expect"] for row in conversation) == {"accept": 9, "refuse": 3}
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("name", sorted(GATE_FIXTURES), ids=lambda name: GATE_FIXTURES[name])
-def test_replay_gate_fixture_against_the_live_gate(name):
+@pytest.mark.parametrize(
+    ("name", "kind"),
+    [(name, kind) for name, (_, kind) in sorted(GATE_FIXTURES.items())],
+    ids=[label for _, (label, _) in sorted(GATE_FIXTURES.items())],
+)
+def test_replay_gate_fixture_against_the_live_gate(name, kind):
     rows = load_gate_fixture(name)
     mismatches: list[str] = []
     for row in rows:
         verdict, error = None, None
         for attempt in range(1, GATE_REPLAY_ATTEMPTS + 1):
             try:
-                verdict = asyncio.run(_LIVE_JUDGE(row["content"], row["kind"]))
+                verdict = asyncio.run(_LIVE_JUDGE(row["content"], kind))
                 break
             except Exception as exc:  # any judge failure is retryable here
                 error = exc

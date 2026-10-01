@@ -12,7 +12,7 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
    │                       │ 202 {job_id}                │ 202 {job_id}
    ▼                       ▼                             ▼
  validate ≤4000         MarkItDown worker            url validated
- kind ∈ note|decision|episode   (killable, 120 s)            free disk? → 507
+ kind ∈ personal|work           (killable, 120 s)            free disk? → 507
    │                       │                             │
    ▼                       ▼                             │
  credential scan        credential scan of the           │
@@ -37,7 +37,7 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
    ▼                       ▼                             ▼
 ┌──────────────────────────────────────┐      ┌────────────────────────┐
 │ memory.memory_chunks                 │      │ memory.code_chunks     │
-│ note │ decision │ episode │ doc      │      │ repo · file · L1-L40   │
+│ personal │ work │ doc                │      │ repo · file · L1-L40   │
 │ halfvec(2048) + HNSW + BM25          │      │ halfvec + HNSW + BM25  │
 └──────────────────────────────────────┘      └────────────────────────┘
         ▲                                                ▲
@@ -106,33 +106,31 @@ and an identical re-upload is refused the same way. Prose that quotes a literal
 `BEGIN … PRIVATE KEY` header is refused as a private key.
 
 A note is stored exactly as written — the server never rewrites one and writes no notes
-itself. Before embedding,
-every note passes the content gate: the chat model judges the text against two lists —
-a note is accepted when a future conversation would otherwise have to ask again and it
-records a durable fact about the user or the people, places, and things around them,
-what the user has, uses, does regularly, likes, dislikes, or plans, a dated event the
-user took part in, a decision with its reason or ruled-out alternatives, a specific
-answer the assistant gave that the user may ask for again, or a stated constraint,
-preference, environment fact, or lesson from a failure; it is refused when it reports
-what a record held elsewhere says (version control, the tracker, the filesystem, the
-running system), narrates progress in a coding session, describes what a file or
-function does, states generic advice true of anyone, or carries greetings, filler, or a
-restated question (an episode is judged on provenance alone: lived by a person rather
-than recorded) — and a note that fails is refused with HTTP
-409 carrying the reason and the recovery: rewrite a fact that exists nowhere else as a
-note of its own, retry at most once, otherwise store nothing. The verdict is final; a
-judge failure saves the note stamped `metadata.content_gate = "unavailable"`. A note
-landing next to
-active notes above `NOTE_SIMILAR_THRESHOLD` cosine is refused with HTTP 409 listing them,
-unless `supersedes` names one of them or `allow_similar` is set; an accepted override
-records the neighbours' ids in `metadata.similar_ack`. The response carries `similar[]`
-either way. A prior-note id in the payload archives that row; the replacement records
-the archived note's id as `metadata.supersedes`, which `GET /notes` rows and memory hits
-carry as `supersedes`. When the save's content is identical to an active note, the
-insert no-ops and the target is archived without a pointer written on the existing row.
-The save is refused with
-HTTP 400 when it would leave no active note — the content is identical to the note it
-names, or to an archived note, which `restore_notes` brings back instead.
+itself. Before embedding, every note passes the content gate, which judges it with the
+prompt of its kind: the personal prompt accepts what an assistant would want to remember
+about the user (who they are, what they have and do, like and worry about, what happened
+to them, their plans and choices, changes to earlier facts, what the assistant gave
+them, moments between them) and refuses work knowledge (session progress, what a record
+or file says, a decision, plan, convention, or status about a project or job), filler,
+and generic advice; the work prompt accepts, specifically enough to act on, a decision
+with its reason, a reproduced bug with its cause or fix, a non-obvious environment fact,
+a failed approach and why, or a working convention the user set, and refuses a copy of
+what a record says, progress or next steps, a file description, generic advice, the
+user's personal life, or filler; in both the refusal list wins, and a note carrying a
+separate fact of the other kind is refused with a reason to split it; a failure is
+refused with HTTP 409 carrying the reason and the kind's recovery (the other tool when
+the content clearly belongs there, one rewrite in total, otherwise store nothing). The
+verdict is final; a judge failure saves the note stamped `metadata.content_gate =
+"unavailable"`. A note landing next to active notes above `NOTE_SIMILAR_THRESHOLD`
+cosine is refused with HTTP 409 listing them, unless `supersedes` names one of them or
+`allow_similar` is set; an accepted override records the neighbours' ids in
+`metadata.similar_ack`. The response carries `similar[]` either way. A prior-note id in
+the payload archives that row; the replacement records the archived note's id as
+`metadata.supersedes`, which `GET /notes` rows and memory hits carry as `supersedes`.
+When the save's content is identical to an active note, the insert no-ops and the target
+is archived without a pointer written on the existing row. The save is refused with HTTP
+400 when it would leave no active note — the content is identical to the note it names,
+or to an archived note, which `restore_notes` brings back instead.
 
 A note's id is `note:<namespace>:<hash>`, the hash taken over its `conversation_id`
 (empty when unlinked) and its content, so a re-save is an idempotent no-op and identical
@@ -420,7 +418,7 @@ periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
 | `source_type` | `agent_note` · `document` |
 | `source_ref` | `save_memory` for an agent note, or the document id for a document chunk |
 | `session_id` | the note's own id, or the document id for a document chunk — the unit the search cap (`PER_FILE_CAP` per `(namespace, session_id)`) is keyed on |
-| `chunk_kind` | `note` · `decision` · `episode` · `doc` |
+| `chunk_kind` | `personal` · `work` · `doc` |
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active` | save time; recency ranking and decay, and `since`/`until` when `occurred_at` is null |

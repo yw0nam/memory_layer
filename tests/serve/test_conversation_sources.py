@@ -726,7 +726,7 @@ def _digest(text: str) -> str:
 
 
 def test_unlinked_note_id_hashes_an_empty_conversation_id():
-    row = build_note_row("prefer ruff for linting", "note", ["test"], NOW)
+    row = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
     assert row["id"] == f"note:default:{_digest(chr(10) + 'prefer ruff for linting')}"
     assert row["session_id"] == row["id"]
     assert row["conversation_id"] is None
@@ -734,26 +734,26 @@ def test_unlinked_note_id_hashes_an_empty_conversation_id():
 
 def test_linked_note_id_hashes_the_conversation_id_and_content():
     row = build_note_row(
-        "prefer ruff for linting", "note", ["test"], NOW, "team-a", conversation_id=CID
+        "prefer ruff for linting", "work", ["test"], NOW, "team-a", conversation_id=CID
     )
     assert row["id"] == f"note:team-a:{_digest(CID + chr(10) + 'prefer ruff for linting')}"
     assert row["conversation_id"] == CID
 
 
 def test_linked_note_keeps_its_own_id_as_session_id():
-    row = build_note_row("fact", "note", ["test"], NOW, conversation_id=CID)
+    row = build_note_row("fact", "work", ["test"], NOW, conversation_id=CID)
     assert row["session_id"] == row["id"]
 
 
 def test_identical_content_from_two_conversations_yields_two_ids():
-    a = build_note_row("same fact", "note", ["test"], NOW, conversation_id="conv:aaaa")
-    b = build_note_row("same fact", "note", ["test"], NOW, conversation_id="conv:bbbb")
+    a = build_note_row("same fact", "work", ["test"], NOW, conversation_id="conv:aaaa")
+    b = build_note_row("same fact", "work", ["test"], NOW, conversation_id="conv:bbbb")
     assert a["id"] != b["id"]
 
 
 def test_turn_range_lands_on_the_row():
     row = build_note_row(
-        "fact", "note", ["test"], NOW, conversation_id=CID, turn_start=0, turn_end=1
+        "fact", "work", ["test"], NOW, conversation_id=CID, turn_start=0, turn_end=1
     )
     assert (row["turn_start"], row["turn_end"]) == (0, 1)
 
@@ -776,7 +776,7 @@ def test_turn_range_validation(conversation_id, turn_start, turn_end, message):
     with pytest.raises(ValueError, match=message):
         build_note_row(
             "fact",
-            "note",
+            "work",
             ["test"],
             NOW,
             conversation_id=conversation_id,
@@ -786,7 +786,7 @@ def test_turn_range_validation(conversation_id, turn_start, turn_end, message):
 
 
 def test_occurred_at_has_its_own_field_and_timestamp_stays_now():
-    row = build_note_row("fact", "episode", ["test"], NOW, occurred_at=NOW - 86400)
+    row = build_note_row("fact", "personal", ["test"], NOW, occurred_at=NOW - 86400)
     assert row["occurred_at"] == NOW - 86400
     assert row["timestamp"] == NOW
 
@@ -813,7 +813,9 @@ def saving(use, monkeypatch):
 def test_save_note_links_to_a_stored_source(saving):
     conn = saving(FakeConn(_source()))
     result = asyncio.run(
-        notes.save_note("fact", tags=["test"], conversation_id=CID, turn_start=0, turn_end=1)
+        notes.save_note(
+            "fact", tags=["test"], kind="work", conversation_id=CID, turn_start=0, turn_end=1
+        )
     )
     assert result["stored"] is True
     (lookup,) = conn.sql("jsonb_array_length")
@@ -827,14 +829,14 @@ def test_save_note_links_to_a_stored_source(saving):
 def test_save_note_to_a_missing_source_writes_nothing(saving):
     conn = saving(FakeConn())
     with pytest.raises(ValueError, match="unknown conversation_id"):
-        asyncio.run(notes.save_note("fact", tags=["test"], conversation_id=CID))
+        asyncio.run(notes.save_note("fact", tags=["test"], kind="work", conversation_id=CID))
     assert conn.sql("INSERT") == []
 
 
 def test_save_note_to_a_source_in_another_namespace_writes_nothing(saving):
     conn = saving(FakeConn(_source(namespace="team-b")))
     with pytest.raises(ValueError, match="unknown conversation_id"):
-        asyncio.run(notes.save_note("fact", tags=["test"], conversation_id=CID))
+        asyncio.run(notes.save_note("fact", tags=["test"], kind="work", conversation_id=CID))
     assert conn.sql("INSERT") == []
 
 
@@ -842,7 +844,9 @@ def test_save_note_turn_end_past_the_source_is_refused(saving):
     conn = saving(FakeConn(_source()))
     with pytest.raises(ValueError, match="3 turns"):
         asyncio.run(
-            notes.save_note("fact", tags=["test"], conversation_id=CID, turn_start=2, turn_end=3)
+            notes.save_note(
+                "fact", tags=["test"], kind="work", conversation_id=CID, turn_start=2, turn_end=3
+            )
         )
     assert conn.sql("INSERT") == []
 
@@ -850,7 +854,7 @@ def test_save_note_turn_end_past_the_source_is_refused(saving):
 def test_save_note_occurred_at_is_stored_apart_from_the_save_time(saving, monkeypatch):
     conn = saving(FakeConn())
     monkeypatch.setattr(notes.time, "time", lambda: NOW)
-    asyncio.run(notes.save_note("fact", tags=["test"], occurred_at="2020-01-01"))
+    asyncio.run(notes.save_note("fact", tags=["test"], kind="work", occurred_at="2020-01-01"))
     (insert,) = conn.sql("INSERT INTO")
     assert insert[1][8] == NOW
     assert 1577836800.0 in insert[1][9:]
@@ -864,7 +868,7 @@ def test_save_memory_forwards_the_link_fields(monkeypatch):
 
     async def fake_save_note(content, **kwargs):
         captured.update(kwargs)
-        return {"id": "note:x", "kind": "note", "stored": True, "superseded": None, "similar": []}
+        return {"id": "note:x", "kind": "work", "stored": True, "superseded": None, "similar": []}
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
@@ -872,6 +876,7 @@ def test_save_memory_forwards_the_link_fields(monkeypatch):
         json={
             "author": "natsume",
             "content": "fact",
+            "kind": "work",
             "tags": ["test"],
             "conversation_id": CID,
             "turn_start": 0,
@@ -893,6 +898,7 @@ def test_save_memory_linked_to_a_missing_source_is_400(saving):
         json={
             "author": "natsume",
             "content": "fact",
+            "kind": "work",
             "tags": ["test"],
             "conversation_id": CID,
             "turn_start": 0,
@@ -910,7 +916,7 @@ def test_save_memory_linked_to_a_missing_source_is_400(saving):
 def _memory_hit(**meta):
     base = {
         "id": "note:default:abcdabcdabcdabcd",
-        "kind": "note",
+        "kind": "work",
         "tags": ["search"],
         "author": None,
         "namespace": "default",
@@ -928,7 +934,7 @@ def _memory_hit(**meta):
 def test_memory_hit_dict_carries_the_note_id_kind_and_tags():
     out = api.hit_to_dict(_memory_hit())
     assert out["id"] == "note:default:abcdabcdabcdabcd"
-    assert out["kind"] == "note"
+    assert out["kind"] == "work"
     assert out["tags"] == ["search"]
     assert "conversation_id" not in out
     assert "turn_start" not in out
@@ -961,7 +967,7 @@ def _memory_row(cid, **overrides):
     row = {
         "id": cid,
         "source_ref": "save_memory",
-        "chunk_kind": "note",
+        "chunk_kind": "work",
         "metadata": {"tags": ["search"]},
         "distilled": cid,
         "content_raw": cid,
@@ -1010,7 +1016,7 @@ def test_four_linked_notes_from_one_conversation_all_reach_the_reranker(monkeypa
     for index in range(4):
         note = build_note_row(
             f"linked fact number {index}",
-            "note",
+            "work",
             ["search"],
             NOW,
             conversation_id=CID,
@@ -1075,7 +1081,7 @@ def test_list_notes_carries_the_link_fields(monkeypatch):
             return [
                 {
                     "id": "note:default:1",
-                    "kind": "note",
+                    "kind": "work",
                     "text": "fact",
                     "metadata": {"tags": ["t"]},
                     "ts_last_active": NOW,
@@ -1102,7 +1108,7 @@ def test_list_notes_carries_the_link_fields(monkeypatch):
     assert note["date"] == "2020-01-01"
 
 
-# ---- MCP: save_memory link fields and expand_source ------------------------------
+# ---- MCP: save_work_memory link fields and expand_source ------------------------------
 
 
 def _patch_mcp(monkeypatch, handler):
@@ -1114,7 +1120,7 @@ def _patch_mcp(monkeypatch, handler):
     monkeypatch.setattr(mcp_server, "_client", fake_client)
 
 
-def test_mcp_save_memory_posts_the_link_fields(monkeypatch):
+def test_mcp_save_work_memory_posts_the_link_fields(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1123,7 +1129,7 @@ def test_mcp_save_memory_posts_the_link_fields(monkeypatch):
 
     _patch_mcp(monkeypatch, handler)
     asyncio.run(
-        mcp_server.save_memory(
+        mcp_server.save_work_memory(
             "fact", "natsume", tags=["t"], conversation_id=CID, turn_start=0, turn_end=1
         )
     )
@@ -1131,7 +1137,7 @@ def test_mcp_save_memory_posts_the_link_fields(monkeypatch):
     assert (captured["json"]["turn_start"], captured["json"]["turn_end"]) == (0, 1)
 
 
-def test_mcp_save_memory_omits_unset_link_fields(monkeypatch):
+def test_mcp_save_work_memory_omits_unset_link_fields(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1139,7 +1145,7 @@ def test_mcp_save_memory_omits_unset_link_fields(monkeypatch):
         return httpx.Response(200, json={"id": "note:x", "stored": True})
 
     _patch_mcp(monkeypatch, handler)
-    asyncio.run(mcp_server.save_memory("fact", "natsume", tags=["t"]))
+    asyncio.run(mcp_server.save_work_memory("fact", "natsume", tags=["t"]))
     assert not {"conversation_id", "turn_start", "turn_end"} & set(captured["json"])
 
 

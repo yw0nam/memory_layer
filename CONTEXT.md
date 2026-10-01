@@ -16,9 +16,9 @@ _Avoid_: record, entry, item, document (for the unit)
 An agent-authored memory, distilled by the agent before it arrives rather than extracted from a file.
 _Avoid_: memo, observation, fact
 
-**Decision**:
-A note recording a choice that was made and is expected to hold, as opposed to an observation.
-_Avoid_: ruling, conclusion
+**Kind**:
+The memory a note belongs to: `personal` (the user and their life, saved by `save_personal_memory`) or `work` (knowledge of the work, saved by `save_work_memory`); it picks the gate's judge prompt and narrows search and listing. A document chunk's kind is `doc`.
+_Avoid_: track, lane, category, type
 
 **Document**:
 An uploaded file that is converted and split into chunks. The whole file, never one of its pieces.

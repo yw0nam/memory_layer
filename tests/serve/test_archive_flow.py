@@ -60,7 +60,7 @@ async def _seed_row(
     embedding_lit: str,
     ts_last_active: float,
     last_hit_at: float | None = None,
-    chunk_kind: str = "note",
+    chunk_kind: str = "work",
 ) -> None:
     await conn.execute(
         f"""

@@ -58,6 +58,7 @@ DEFAULT_MANIFEST = REPO_ROOT / "docs" / "benchmarks" / "longmemeval-manifest.jso
 SUBSET_SEED = 0
 SUBSET_SIZE = 100
 NOTE_TAGS = ("longmemeval",)
+NOTE_KIND = "personal"
 NAMESPACE_PREFIX = "lme-"
 DB_LABEL = "memory-base-longmemeval"
 RETRIEVE_CONCURRENCY = 4
@@ -336,7 +337,7 @@ async def load_question_notes(
             token = NOTE_DATE.set(occurred_at[:10])
             kwargs = {
                 "tags": list(NOTE_TAGS),
-                "kind": note["kind"],
+                "kind": NOTE_KIND,
                 "namespace": namespace,
                 "occurred_at": occurred_at,
                 "allow_similar": True,

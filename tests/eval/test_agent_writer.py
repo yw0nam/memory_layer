@@ -14,7 +14,7 @@ from memory_base.eval import longmemeval as lme
 NAMESPACE = "lme-q1"
 SAVE_KWARGS = {
     "tags": ["longmemeval"],
-    "kind": "note",
+    "kind": "personal",
     "namespace": NAMESPACE,
     "occurred_at": "2023-05-20T02:21:00",
     "allow_similar": True,

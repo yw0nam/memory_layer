@@ -31,7 +31,7 @@ from memory_base.serve.namespaces import DEFAULT_NAMESPACE
 
 NOTE_MAX_CHARS = 4000
 NOTE_GATE_TIMEOUT_SECONDS = 20.0
-NOTE_KINDS = ("note", "decision", "episode")
+NOTE_KINDS = ("personal", "work")
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
 LIST_NOTES_DEFAULT_LIMIT = 50
 LIST_NOTES_MAX_LIMIT = 200
@@ -70,20 +70,33 @@ class SimilarNotesError(ValueError):
         )
 
 
+_RECOVERY = {
+    "personal": (
+        "Move it to save_work_memory only if it is clearly work knowledge, or to send_message "
+        "if it is state for the next session; otherwise rewrite it to state what it says about "
+        "the user. If the reason says to split it, save the part about the user with "
+        "save_personal_memory and the work part with save_work_memory. One rewrite in total, "
+        "whichever tool: if that is refused too, store nothing and tell the user when one is "
+        "present."
+    ),
+    "work": (
+        "Move it to save_personal_memory only if it is clearly about the user's life, or to "
+        "send_message if it is progress or next steps; otherwise rewrite the part that states "
+        "something no record holds, with its reason or outcome, and save it on its own. If the "
+        "reason says to split it, save the part about the user with save_personal_memory and "
+        "the work part with save_work_memory. One rewrite in total, whichever tool: if that is "
+        "refused too, store nothing and tell the user when one is present."
+    ),
+}
+
+
 class LowSignalNoteError(ValueError):
     """The content gate judged a note's content not worth storing."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, kind: str) -> None:
         self.reason = reason
-        super().__init__(
-            f"Refused by the content gate: {reason} If part of this note records something "
-            "that exists nowhere else (a decision and what it ruled out, a stated constraint "
-            "or preference, an observed environment fact, a lesson from a failure), rewrite it "
-            "to state that fact directly, without restating its source (PR, issue, commit, "
-            "file, tracker), and save that as a note of its own. If nothing in it does, store "
-            "nothing; that is the expected outcome. Retry at most once: if the rewrite is "
-            "refused too, do not save it, and tell the user when one is present."
-        )
+        self.kind = kind
+        super().__init__(f"Refused by the {kind}-memory gate: {reason} {_RECOVERY[kind]}")
 
 
 class CredentialNoteError(ValueError):
@@ -110,43 +123,88 @@ _VERDICT_SCHEMA = {
     "required": ["accepted", "reason"],
 }
 
-JUDGE_PROMPT = """\
-You judge notes for a long-term memory of one user's conversations, coding sessions and
-personal chat alike. Accept a note when a future conversation would otherwise have to ask
-again and it records:
+PERSONAL_JUDGE_PROMPT = """\
+You judge notes for the personal memory of one user: what an assistant who talks with
+them every day would want to remember about them. Judge generously. Accept a note that
+says something about the user or their life that a later conversation could use:
 
-- a durable fact about the user or the people, places, and things around them;
-- what the user has, uses, does regularly, likes, dislikes, or plans, with dates when stated;
-- a dated event the user took part in and its outcome;
-- a decision and the reason for it, or the alternatives it ruled out;
-- a specific answer the assistant gave that the user may ask for again — a recommendation, a
-  number, a list, a schedule, the defining facts of something written for the user;
-- a constraint, preference, environment fact, or lesson from a failure stated by a person;
-- how the user's systems behave in use — limits, schedules, failure modes, fixes — stated by
-  no record.
+- who the user is, and the people, pets, places, and things around them;
+- what the user has, uses, or does regularly, and how much or how often;
+- what the user likes, dislikes, prefers, feels, or worries about, and why when stated;
+- something that happened to the user or that they did, with its date and outcome;
+- plans, goals, commitments, and choices the user made, with dates and reasons when stated;
+- a change to something remembered earlier, with the new value and the old one;
+- something the assistant gave the user that they may want again — a recommendation, a
+  number, a list, a schedule, the defining facts of something written for them;
+- a moment in the relationship between the user and the assistant.
+
+Refuse a note that is work knowledge rather than memory of the user:
+
+- progress, status, or a narration of what was done in a coding or work session;
+- what version control, the tracker, a file, documentation, or a running system says —
+  its contents, scope, changes, or status;
+- what a file or function does, or how a codebase is built;
+- a technical decision, bug, fix, or environment fact about a project;
+- a decision, plan, convention, or status about a project or job, technical or not; how
+  the user wants to be talked to is a preference of the user, not of a project, and
+  stays accepted.
+- a note that carries two separate facts, one about the user's life and one of work
+  knowledge, each useful on its own; say in the reason that it must be split into a
+  personal note and a work note. A note about the user that mentions their work only as
+  context (how a work day felt, what they asked of the assistant) is not a mix.
+
+Also refuse greetings, filler, a restated question, and general knowledge or advice with
+no fact tied to this user.
+
+A note's moment never refuses it: a passing event, a mood, or a one-off plan is memory.
+The refusal list wins over the accept list. When the note is work knowledge, say so in
+the reason. State the reason in one sentence."""
+
+WORK_JUDGE_PROMPT = """\
+You judge notes for the work memory of one user's projects: knowledge a later session
+cannot recover from the code, version control, the tracker, documentation, or the running
+system, and would otherwise have to rediscover. Judge strictly. Accept a note only when it
+states, specifically enough to act on, one of:
+
+- a decision, with the reason for it or the alternatives it ruled out;
+- a reproduced bug or failure, with its cause or its known fix;
+- a non-obvious environment fact: how a machine, service, account, or tool behaves here —
+  its limits, schedules, or failure modes;
+- an approach that was tried and failed, and why;
+- a working convention, preference, or constraint the user set for how work is done.
+
+A qualifying note names what it is about (the project, system, or tool) and carries its
+reason, condition, or outcome. A decision without its reason, a lesson without the
+failure behind it, or a fact without where it holds is too vague: refuse it.
 
 Refuse a note reporting:
 
-- what a record held elsewhere says — version control, the tracker, the filesystem, the
-  running system — its contents, scope, changes, or status; the record is the source, the
-  note a copy;
-- progress, status, or a narration of what was done in a coding session;
-- what a file or function does;
-- generic advice or explanation true for anyone, with no fact tied to this user or this
-  conversation;
+- what a record held elsewhere says — version control, the tracker, a file,
+  documentation, the running system — its contents, scope, changes, or status; the record
+  is the source, the note a copy;
+- progress, status, next steps, or a narration of what was done in a session;
+- what a file or function does, or how the code is structured;
+- generic advice or explanation true of any project;
+- the user's personal life rather than their work;
+- a note that carries two separate facts, one of work knowledge and one about the user's
+  personal life, each useful on its own; say in the reason that it must be split into a
+  work note and a personal note. A personal fact given only as the reason or context for
+  a work decision or convention is not a mix;
 - greetings, filler, or a restated question.
 
-A copy that carries what its source does not state still fails; that part goes in its own
-note. A failure's lesson is not session narration; the failure and its fix, stated outright,
-pass. An episode is judged only on provenance: lived by a person rather than recorded; its
-moment never refuses it. State the reason in one sentence."""
+The refusal list wins over the accept list. A copy that carries what its source does not
+state still fails; that part goes in its own note. A failure's lesson is not session
+narration; the failure and its fix, stated outright, pass. State the reason in one
+sentence."""
+
+JUDGE_PROMPTS = {"personal": PERSONAL_JUDGE_PROMPT, "work": WORK_JUDGE_PROMPT}
 
 
 async def judge_note_content(content: str, kind: str) -> ContentVerdict:
     """Ask the chat model whether a note's content is worth keeping across sessions."""
     messages = [
-        {"role": "system", "content": JUDGE_PROMPT},
-        {"role": "user", "content": f"kind: {kind}\n\n{content}"},
+        {"role": "system", "content": JUDGE_PROMPTS[kind]},
+        {"role": "user", "content": content},
     ]
     verdict = await chat_json(messages, _VERDICT_SCHEMA, timeout=NOTE_GATE_TIMEOUT_SECONDS)
     return ContentVerdict(accepted=verdict["accepted"], reason=verdict["reason"])
@@ -161,7 +219,7 @@ async def _content_gate(row: dict[str, Any]) -> None:
         row["metadata"]["content_gate"] = "unavailable"
         return
     if not verdict.accepted:
-        raise LowSignalNoteError(verdict.reason)
+        raise LowSignalNoteError(verdict.reason, row["kind"])
 
 
 def _turn_range(
@@ -260,8 +318,8 @@ async def _require_source(conn: Any, row: dict[str, Any], namespace: str) -> Non
 async def save_note(
     content: str,
     *,
+    kind: str,
     tags: list[str],
-    kind: str = "note",
     supersedes: str | None = None,
     namespace: str = DEFAULT_NAMESPACE,
     occurred_at: str | None = None,
@@ -376,6 +434,12 @@ async def save_note(
                 row["occurred_at"],
             )
             stored = status.endswith(" 1")
+            stored_kind = row["kind"]
+            if not stored:
+                stored_kind = await conn.fetchval(
+                    f'SELECT chunk_kind FROM "{PG_SCHEMA}".memory_chunks WHERE id = $1',
+                    row["id"],
+                )
             if (
                 stored
                 and neighbours
@@ -414,7 +478,7 @@ async def save_note(
                 )
     return {
         "id": row["id"],
-        "kind": row["kind"],
+        "kind": stored_kind,
         "stored": stored,
         "superseded": supersedes,
         "similar": [n for n in neighbours if n["id"] != supersedes],

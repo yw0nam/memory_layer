@@ -68,10 +68,10 @@ def test_search_code_source_returns_code_hits_with_line_refs():
 
 def test_search_memory_source_returns_memory_hits():
     content = "integration-test pin: zzz_integ_marker 7f3a9b2c"
-    note_id = build_note_row(content, "note", ["test"], 1_700_000_000.0)["id"]
+    note_id = build_note_row(content, "work", ["test"], 1_700_000_000.0)["id"]
     asyncio.run(_delete_note(note_id))
     try:
-        asyncio.run(save_note(content, tags=["test"]))
+        asyncio.run(save_note(content, tags=["test"], kind="work"))
         hits = asyncio.run(search(content, source="memory", rerank=False))
         assert len(hits) >= 1
         assert all(h.source == "memory" for h in hits)
@@ -87,7 +87,7 @@ def test_notes_with_distinct_session_ids_are_not_capped_by_search():
     note_ids = []
     try:
         for content in contents:
-            result = asyncio.run(save_note(content, tags=["test"], allow_similar=True))
+            result = asyncio.run(save_note(content, tags=["test"], kind="work", allow_similar=True))
             note_ids.append(result["id"])
         hits = asyncio.run(search(marker, source="memory", rerank=False))
         assert len(hits) > PER_FILE_CAP

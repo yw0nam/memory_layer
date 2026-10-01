@@ -37,7 +37,7 @@ def _hit(
 
 MEMORY_META = {
     "id": "note:default:0000000000000000",
-    "kind": "note",
+    "kind": "work",
     "tags": [],
     "conversation_id": None,
     "turn_start": None,
@@ -131,7 +131,7 @@ def test_hit_to_dict_exposes_csv_columns_when_present():
 
 
 def test_mcp_server_registers_expected_tools():
-    """Verify tools/list exposes the search tools plus save_memory in-process.
+    """Verify tools/list exposes the search tools plus the two save tools in-process.
 
     Uses mcp.shared.memory.create_connected_server_and_client_session to spin
     up an in-memory client/server pair (no subprocess, no stdio). Listing
@@ -149,7 +149,8 @@ def test_mcp_server_registers_expected_tools():
         "search",
         "search_code",
         "search_memory",
-        "save_memory",
+        "save_personal_memory",
+        "save_work_memory",
         "query_table",
         "ingest_document",
         "ingest_repo",

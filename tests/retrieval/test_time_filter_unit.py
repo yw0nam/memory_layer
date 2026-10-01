@@ -93,13 +93,13 @@ def test_aliased_time_predicates_qualify_both_columns():
 def test_time_clauses_number_after_the_other_filters():
     predicates, args = history_predicates(
         include_archived=False,
-        kind="note",
+        kind="work",
         tags=["infra"],
         namespaces=["team-a"],
         since=1.0,
         until=2.0,
     )
-    assert args == ["note", ["infra"], ["team-a"], 1.0, 2.0]
+    assert args == ["work", ["infra"], ["team-a"], 1.0, 2.0]
     assert "COALESCE(occurred_at, ts_last_active) >= $5" in predicates
     assert "COALESCE(occurred_at, ts_last_active) < $6" in predicates
 
