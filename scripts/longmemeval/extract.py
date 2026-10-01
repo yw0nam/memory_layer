@@ -7,7 +7,8 @@ session-digest rules with the memory save policy), or "personal" (the session-di
 rules with the personal memory policy). "digest" and "personal" are the packaged
 extraction prompts (memory_base.eval.extraction), with their numbered-turn rendering
 and output contract; each returned note is then judged by the production content
-gate (after the same length, kind, and credential checks save_note applies first) and its
+gate (after the extractor's label check and the length and credential checks save_note
+applies first) and its
 verdict recorded, or recorded as "unjudged" with `--gate off`, which never calls the gate.
 <data-dir>/notes.jsonl holds one line per note, <data-dir>/sessions.jsonl one line per
 completed unit, zero-note units included. Rerunning resumes where it stopped.
@@ -260,7 +261,7 @@ async def _complete_with_retry(client: Any, messages: list[dict[str, str]]):
 
 
 def _save_path_refusal(content: str, kind: str) -> str | None:
-    """The refusal save_note would raise before its gate call, if any."""
+    """The label, length, or credential refusal that precedes the gate call, if any."""
     if kind not in EXTRACTED_KINDS:
         return f"validation: kind must be one of {EXTRACTED_KINDS}"
     if len(content) > notes_module.NOTE_MAX_CHARS:

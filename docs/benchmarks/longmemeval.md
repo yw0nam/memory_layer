@@ -66,11 +66,10 @@ have a row for their current prompt.
 | dated | `--variant dated` | the 27 temporal-reasoning | gate-stored, embedded as `"{date}: {content}"` |
 
 Gate-on is the product number: it measures what an agent's memory holds after the
-content gate. The gate accepts what a future conversation would otherwise have to ask
-again — durable facts about the user, plans, dated episodes, decisions with their
-rejected alternatives, and answers worth keeping, personal and coding alike — and
-refuses copies of what a record elsewhere says, progress reports, and file
-descriptions. Gate-off loads refused notes as well, so it isolates extraction and
+content gate. Every note is judged by the personal-memory prompt, the one
+`save_personal_memory` uses: it accepts memory of the user — facts about them and the
+people around them, plans, dated episodes, preferences, and answers worth keeping — and
+refuses work knowledge, filler, and generic advice. Gate-off loads refused notes as well, so it isolates extraction and
 retrieval from the gate's policy. Notes refused by validation or the credential scan
 stay out of gate-off too, because `save_note` never stores them. Each run writes its
 own files (`packets-gate-off.jsonl`, `answers-gate-off.jsonl`, and so on; the dated run

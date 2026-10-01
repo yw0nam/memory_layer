@@ -47,9 +47,9 @@ CONVERSATION_ID_RE = re.compile(r"conv:[0-9a-f]{16}")
 # Served in the initialize response, so it is stated once per client session:
 # the store's invariants only. Per-consumer usage belongs to the consumer.
 _SERVER_INSTRUCTIONS_OPENING = """\
-memory-base holds distilled knowledge in three lanes — notes (memory of the
-user and of the work), code (indexed repositories), and table rows (numbers, read with
-SQL) — plus an addressed message lane for one-time signals between sessions (never embedded, never
+memory-base holds distilled knowledge in three lanes — notes (memory of the user and of
+the work), code (indexed repositories), and table rows (numbers, read with SQL) — plus
+an addressed message lane for one-time signals between sessions (never embedded, never
 searched).
 
 Read first. Before starting a task or answering from recall, search_memory for earlier
@@ -74,20 +74,21 @@ nothing and tell the user when one is present."""
 
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
-searchable, listed while pending and consumed by claiming. At the start of a session, list_messages for your
-namespaces and claim_message each one you act on — a claim is exclusive, and it fires
-only when called, never automatically from a prefetch hook. send_message takes two
-shapes: a general message (status "info", no scope) addressed to a namespace, or — with
-a scope repo:<origin> or project:<organization>/<project> — a handoff, the latest
-snapshot of a work state statused in_progress, blocked, or completed. Whoever next works
-in that scope claims it; a new snapshot supersedes the pending one, and a completed
-handoff remains the delivered record of that state. A handoff stays pending until it is
-claimed, superseded, or cancelled unless its sender gives an expires_at; a general
-message expires after the server's default TTL. Keep the lanes straight: a note is
-durable knowledge, memory of the user or of the work, read again whenever it matches; a
-message is operational state and is consumed once. The note content gate does not apply
-to messages — that is what makes them the right carrier for progress signals the gate refuses, and the wrong place
-for anything meant to be read more than once."""
+searchable, listed while pending and consumed by claiming. At the start of a session,
+list_messages for your namespaces and claim_message each one you act on — a claim is
+exclusive, and it fires only when called, never automatically from a prefetch hook.
+send_message takes two shapes: a general message (status "info", no scope) addressed to
+a namespace, or — with a scope repo:<origin> or project:<organization>/<project> — a
+handoff, the latest snapshot of a work state statused in_progress, blocked, or
+completed. Whoever next works in that scope claims it; a new snapshot supersedes the
+pending one, and a completed handoff remains the delivered record of that state. A
+handoff stays pending until it is claimed, superseded, or cancelled unless its sender
+gives an expires_at; a general message expires after the server's default TTL. Keep the
+lanes straight: a note is durable knowledge, memory of the user or of the work, read
+again whenever it matches; a message is operational state and is consumed once. The note
+content gate does not apply to messages — that is what makes them the right carrier for
+progress signals the gate refuses, and the wrong place for anything meant to be read
+more than once."""
 
 _SERVER_INSTRUCTIONS_CLOSING = """\
 Work knowledge belongs in the key's home namespace. Personal context — schedule,
@@ -98,8 +99,8 @@ to, so that a later search can narrow to it.
 Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly
 coincides; read both sides, then either merge them into one note with
 save_personal_memory or save_work_memory (supersedes=...) or drop one with
-archive_notes. Every write and archive names its author. delete_notes is for rows that must never resurface; archiving is otherwise
-always preferred."""
+archive_notes. Every write and archive names its author. delete_notes is for rows that
+must never resurface; archiving is otherwise always preferred."""
 
 SERVER_INSTRUCTIONS = "\n\n".join(
     (

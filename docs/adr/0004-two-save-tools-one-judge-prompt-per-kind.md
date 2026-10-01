@@ -25,7 +25,7 @@ no kind parameter. The REST route stays one route, `POST /save_memory`, with a r
   a no-op that keeps the first kind, once the chosen tool's validation and gate pass.
 - The similar-note check, `allow_similar`, and supersede stay namespace-scoped across
   kinds; a supersede may name a note of either kind.
-- Existing rows were converted once at deploy by SQL: namespace `personal` or kind
+- Existing rows are converted once at deploy by SQL: namespace `personal` or kind
   `episode` became `personal`, everything else `work`.
 - Handoffs and progress stay on `send_message`.
 

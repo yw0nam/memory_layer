@@ -457,7 +457,7 @@ def test_server_instructions_route_each_memory_to_its_tool():
         "at most once",
     ):
         assert anchor in SERVER_INSTRUCTIONS
-    assert "save_memory" not in SERVER_INSTRUCTIONS.replace("search_memory", "")
+    assert "save_memory" not in SERVER_INSTRUCTIONS
 
 
 def test_server_instructions_carry_no_per_job_criteria():
@@ -535,7 +535,7 @@ def test_search_and_listing_filter_by_the_new_kinds():
                 assert response.status_code == 200, response.json()
             found = c.post(
                 "/search",
-                json={"query": marker, "source": "memory", "kind": "personal", "rerank": False},
+                json={"query": marker, "source": "memory", "kind": "personal"},
             )
             assert found.status_code == 200
             assert [hit["id"] for hit in found.json()] == [ids[0]]
