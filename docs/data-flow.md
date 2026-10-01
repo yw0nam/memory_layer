@@ -22,10 +22,9 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
    │                      bytes → no_op                  │
    │                       │                             │
    ▼                       ▼                             ▼
- id = sha256(conv_id    chunk 1500 / 2000 / 200      git clone --filter=blob:none
-   + content)           junk gate ✂                  + size watchdog (2 GiB)
- └ same → no-op            │                             │
-   │                       ▼                             ▼
+ id = sha256(content)   chunk 1500 / 2000 / 200      git clone --filter=blob:none
+ └ same → no-op         junk gate ✂                  + size watchdog (2 GiB)
+   │                       │                             │
    ▼                    doc rows ────┐               cocoindex update
  embed (vLLM)           caller tags  │               tree-sitter 1000 / 300
    │                       ▼         │                  │  mtime = commit time
@@ -44,7 +43,6 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
         └────── the write→read contract, with one more ──┘
                memory.doc_rows — tabular rows, SQL-only
                memory.messages — addressed signals, claim-only
-               memory.conversation_sources — session turns, by address
 
 ④ MESSAGE / HANDOFF
 POST /messages {subject, status, result, …}
@@ -63,29 +61,6 @@ POST /messages {subject, status, result, …}
  INSERT memory.messages (no embedding, no content gate)
  handoff: same transaction terminalizes older pending
  snapshots of the same namespace+scope+subject_key
-
-⑤ CONVERSATION SOURCE
-Claude Code SessionEnd hook ──┐   Hermes provider on_session_end
-  (integrations/claude_code/  │     (integrations/hermes/memory_base/)
-   capture_hook.py)           │        │
-                              ▼        ▼
-POST /conversations {origin, external_session_id, started_at, ended_at, turns, metadata}
-   │
-   ▼
- validate turns: non-empty, each exactly {role: user|assistant, text}
- total text ≤ 2,000,000 chars → else 413
- credential scan of every turn and of metadata (a JSON object ≤ 2 KB) → 400
-   │
-   ▼
- id = conv: + sha256(namespace, origin, external_session_id)[:16]
-   │
-   ▼
- INSERT memory.conversation_sources (no embedding, no search index)
- ON CONFLICT → stored turns a prefix of the new ones → append
-              identical → no write
-              otherwise → replace, unless a note links to the source → 409
-   │
-   ▼  201/200 {id, created, turns}
 ```
 
 Every note and document write starts with a deterministic credential scan
@@ -132,15 +107,10 @@ is archived without a pointer written on the existing row. The save is refused w
 400 when it would leave no active note — the content is identical to the note it names,
 or to an archived note, which `restore_notes` brings back instead.
 
-A note's id is `note:<namespace>:<hash>`, the hash taken over its `conversation_id`
-(empty when unlinked) and its content, so a re-save is an idempotent no-op and identical
-text from two conversations stays two notes. `session_id` is always the note's own id.
-A note may link to a stored conversation source with `conversation_id` and an inclusive
-0-based `turn_start`/`turn_end`; the save reads the source under a share lock in the
-insert's transaction and refuses with HTTP 400 when it is missing, lives in another
-namespace, or has no turn `turn_end`. `occurred_at` (ISO 8601, not in the future) records
-when the remembered event happened in its own column; `ts_last_active` is always the save
-time.
+A note's id is `note:<namespace>:<sha256(content)[:16]>`, the hash taken over its
+stripped content, so a re-save is an idempotent no-op. `session_id` is always the note's
+own id. `occurred_at` (ISO 8601, not in the future) records when the remembered event
+happened in its own column; `ts_last_active` is always the save time.
 
 Every note records the agent that wrote it in `metadata.author`, drawn from the calling
 key's allowlist in `api_keys.authors`; a key with an empty allowlist cannot save. A note
@@ -159,20 +129,6 @@ absolute https URLs, with credentials, localhost, private/loopback/link-local IP
 literals, and local paths rejected without fetching. An optional `idempotency_key`
 (unique per sender key) replays an identical effective request with 200 and refuses a
 different one with 409; deleting the row releases the key.
-
-A conversation source is the user and assistant turns of one agent session, posted by a
-capture hook; no MCP tool stores one. Each turn is exactly `{role, text}` with role
-`user` or `assistant`, so tool output never enters the table, and every turn passes the
-same credential scan as notes and documents: a hit refuses the whole upload with HTTP 400
-naming the turn and the detector type. The source is upserted by
-(`namespace`, `origin`, `external_session_id`) and records the storing key's label as
-`created_by`; a re-upload by another non-admin key is refused with 403. A re-upload whose
-turns start with the stored turns appends the rest and replaces the bounds and
-`metadata`, which is how a resumed session that ends again under the same id grows its
-source. Identical turns return `created: false` without a write. Any other change
-replaces the turns only while no note links to the source; otherwise it is refused with
-409, so a note's evidence never changes under it. The source itself is never embedded,
-gated, or indexed for search.
 
 Document uploads enter a durable Postgres backlog capped by `INGEST_BACKLOG_PER_KEY` and
 `INGEST_BACKLOG_MAX`. Two document workers dispatch fairly across API keys while serializing
@@ -253,8 +209,7 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
 ```
 
 Memory hits (notes, document chunks, CSV cards) carry the row's `id`, `kind`, and
-`tags`, plus `conversation_id` and `turn_start`/`turn_end` for a linked note and
-`supersedes` for a note that replaced one; `date` is
+`tags`, plus `supersedes` for a note that replaced one; `date` is
 the note's `occurred_at` when recorded, else `ts_last_active`. `since`/`until` bound the
 same event time, `COALESCE(occurred_at, ts_last_active)`, so an episode is found by the
 day it happened; recency voting and decay read `ts_last_active` alone. Memory hits carry their stored text whole; each is
@@ -346,25 +301,6 @@ sender's own, or any accessible one for an admin key. Terminal rows are invisibl
 the list and unclaimable; a stale superseded snapshot id gets 409, an unknown or
 out-of-scope id a 404.
 
-## Read path — conversation sources (`GET /conversations`, `GET /conversations/{id}`)
-
-A source is read by the `conversation_id` a hit carries, never by similarity:
-`GET /conversations/{id}?turn_start=&turn_end=` returns its provenance and the turns in
-the inclusive range as `{index, role, text}` (every turn when the range is omitted), and
-`?contains=` keeps only the turns whose text contains the string, case-insensitively —
-each kept turn keeps its original index, the filters combine, and no match is an empty
-list. A source outside the caller's namespaces is a 404, like an unknown id; a range
-past the last turn is a 400. MCP reaches it as `expand_source`.
-
-`GET /conversations` lists sources newest-first by start time with `since`/`until`
-bounding the session start (a bare-date `until` covers that whole day; a datetime
-`until` is exclusive), an exact `origin`, repeated `namespace`
-params (403 outside the caller's allowed set, like `/notes`), and a `limit` (default
-50, max 200). Each row carries `id`, `namespace`, `origin`, `external_session_id`,
-`started_at`/`ended_at`, `turn_count`, `repo`, and `preview` — the first user turn cut
-to 200 characters. No query, no embedding call, no ranking. MCP reaches it as
-`list_conversations`.
-
 ## Lifecycle loop
 
 ```
@@ -398,11 +334,9 @@ acts only with `{"confirm": true}`, and each is reachable over MCP as
 `list_memory_duplicates`, `archive_notes`, `restore_notes`, and `delete_notes`.
 `archive_notes` always names ids, so the message purge is a REST-only call.
 
-Namespace deletion counts messages and conversation sources as content: a namespace with
-messages — pending or terminal — or conversation sources cannot be unregistered until
-they are removed. `POST /admin/notes/move` rewrites a note's id to
-`note:<target>:<hash>` and refuses the whole move when a named note links to a
-conversation source, since a linked note stays with its source.
+Namespace deletion counts messages as content: a namespace with messages — pending or
+terminal — cannot be unregistered until they are removed. `POST /admin/notes/move`
+rewrites a note's id to `note:<target>:<hash>`.
 
 Retirement is manual: no scheduler runs in-process, so terminal rows survive until a
 caller runs the `/admin/archive` preview and confirm pass. A deployment that wants it
@@ -422,8 +356,6 @@ periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active` | save time; recency ranking and decay, and `since`/`until` when `occurred_at` is null |
-| `conversation_id` | the linked conversation source, indexed; null for unlinked notes and document chunks |
-| `source_turn_start` / `source_turn_end` | the inclusive linked turn range |
 | `occurred_at` | when the remembered event happened; a hit's `date` and the `since`/`until` bound |
 | `metadata` | jsonb: `tags`, `author`, `archived_by`, `supersedes`, `similar_ack`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
@@ -446,17 +378,8 @@ column, no search index; a partial index serves the pending listing, and a uniqu
 (`sender_key`, `idempotency_key`) backs idempotent sends. The lifecycle timestamps stay
 internal — responses carry the report status only.
 
-`memory.conversation_sources` — one agent session's turns: `id`
-(`conv:<hash>`), `namespace`, `origin` (e.g. `claude_code`, `hermes`),
-`external_session_id`, `started_at`/`ended_at` (epoch seconds), `turns` (jsonb list of
-`{role, text}`; a turn's index is its list position), `metadata` (jsonb, the client's own
-facts such as `repo` and `cwd`), `created_at`, `created_by`, unique on (`namespace`,
-`origin`, `external_session_id`), with a `started_at` index serving the listing. No
-embedding column, no BM25 or vector index, never read by search.
-
-`doc_rows`, `messages`, and `conversation_sources` are outside the retrieval contract:
-they are read by compute, by address, and — for conversation sources — listed by time
-and read by address, turn range, or substring within one source, respectively, and
-are never granted to the SQL query role or returned by search ([ADR-0001](adr/0001-table-rows-third-read-contract.md),
+`doc_rows` and `messages` are outside the retrieval contract: they are read by compute
+and by address, respectively, and are never granted to the SQL query role or returned by
+search ([ADR-0001](adr/0001-table-rows-third-read-contract.md),
 [ADR-0002](adr/0002-messages-addressed-once-claimed-lane.md)). Adding a source means
 adding an adapter, not touching retrieval or serving.

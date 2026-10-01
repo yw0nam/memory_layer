@@ -193,7 +193,11 @@ def test_ensure_schema_drops_the_conversation_job_kind_and_the_distill_cursor(mo
     assert delete in sql and kind_check in sql
     assert sql.index(delete) < sql.index(kind_check)
     for statement in (
-        '"test_schema".conversation_sources DROP COLUMN IF EXISTS distilled_through;',
+        'DROP TABLE IF EXISTS "test_schema".conversation_sources;',
+        'DROP INDEX IF EXISTS "test_schema".memory_chunks__conversation;',
+        '"test_schema".memory_chunks DROP COLUMN IF EXISTS conversation_id;',
+        '"test_schema".memory_chunks DROP COLUMN IF EXISTS source_turn_start;',
+        '"test_schema".memory_chunks DROP COLUMN IF EXISTS source_turn_end;',
         '"test_schema".jobs DROP COLUMN IF EXISTS conversation_id;',
         '"test_schema".jobs DROP COLUMN IF EXISTS result;',
         'DROP INDEX IF EXISTS "test_schema".jobs__conversation_active;',
@@ -201,11 +205,10 @@ def test_ensure_schema_drops_the_conversation_job_kind_and_the_distill_cursor(mo
     ):
         assert statement in sql
     assert "'conversation')" not in sql
-    assert (
-        'CREATE INDEX IF NOT EXISTS conversation_sources__started ON "test_schema"'
-        ".conversation_sources (started_at DESC);" in sql
-    )
-    assert "ADD COLUMN IF NOT EXISTS distilled_through" not in sql
+    assert 'CREATE TABLE IF NOT EXISTS "test_schema".conversation_sources' not in sql
+    assert "ADD COLUMN IF NOT EXISTS conversation_id text;" not in sql
+    assert "ADD COLUMN IF NOT EXISTS source_turn" not in sql
+    assert "CREATE INDEX IF NOT EXISTS memory_chunks__conversation" not in sql
 
 
 def test_rebinding_module_pg_schema_keeps_ddl_and_guard_in_sync(monkeypatch):

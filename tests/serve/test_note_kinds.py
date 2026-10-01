@@ -287,9 +287,6 @@ def test_save_memory_route_forwards_kind_to_save_note(monkeypatch, kind):
         supersedes=None,
         namespace="default",
         occurred_at=None,
-        conversation_id=None,
-        turn_start=None,
-        turn_end=None,
         author=None,
         allow_similar=False,
     ):

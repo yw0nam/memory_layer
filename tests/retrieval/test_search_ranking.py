@@ -28,9 +28,6 @@ def memory_row(name: str, ts: float, text: str | None = None) -> dict:
         "archived_at": None,
         "namespace": "default",
         "session_id": name,
-        "conversation_id": None,
-        "source_turn_start": None,
-        "source_turn_end": None,
         "occurred_at": None,
     }
 

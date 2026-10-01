@@ -1,8 +1,8 @@
 # Hermes memory provider
 
-`memory_base/` is a Hermes external memory provider. It prefetches notes into every turn
-and captures every session at its end. Nothing is injected by recency; every injected note
-matched the turn's query at `min_score`.
+`memory_base/` is a Hermes external memory provider. It prefetches notes into every turn.
+Nothing is injected by recency; every injected note matched the turn's query at
+`min_score`.
 
 - **Every turn** — runs a semantic search over memory (all kinds) with the profile's
   configured `top_k`/`min_score` and returns the hits as prefetched context. Returns
@@ -26,23 +26,14 @@ matched the turn's query at `min_score`.
   `DESIRE_STATE_DIR` names the prompt file that already tells it how to act, so a
   search over it returns a copy of that file at best; the turn is dropped whole.
 
-- **Every session end** — `on_session_end` uploads the session's user and assistant
-  messages to `POST /conversations` with `origin: "hermes"`, the session id Hermes gave
-  `initialize` (or the latest `on_session_switch`) as `external_session_id`, and the
-  `capture_namespace` namespace. A message's text is its string content or its text
-  blocks; system and tool messages, tool calls, and non-text blocks are dropped, and a
-  session with fewer than two turns is not uploaded. The server stores the turns
-  unembedded as the evidence a note links to; `expand_source` and `list_conversations`
-  read them back. A failed upload is logged as a warning and never raised into Hermes.
-
 The provider never registers tools — the MCP server already exposes `search`/`search_memory`/
 `save_personal_memory`/`save_work_memory` for on-demand recall.
 
 ## Layout
 
 - `memory_base/client.py` — pure REST client (stdlib + httpx only, no Hermes imports).
-  Talks to the memory-base API's `/search` and `/conversations` routes and turns Hermes
-  messages into conversation turns. Unit-tested from this repo under `tests/integrations/`.
+  Talks to the memory-base API's `/search` route. Unit-tested from this repo under
+  `tests/integrations/`.
 - `memory_base/__init__.py` — the Hermes-facing `MemoryProvider` subclass and `register(ctx)`
   entry point. Imports Hermes types at load time, so it only runs inside a Hermes process.
 - `memory_base/plugin.yaml` — plugin metadata (name, version, description, required env var).
@@ -59,7 +50,6 @@ Read from `memory.memory_base` in the Hermes profile's `config.yaml`:
 | `min_score`   | `0.25`                     | relevance floor for prefetch search          |
 | `api_key`     | *(none)*                   | API key value; takes precedence over `api_key_env` |
 | `api_key_env` | `MEMORY_BASE_API_KEY`     | env var holding the memory-base API key     |
-| `capture_namespace` | `personal`          | namespace sessions are captured into; must be registered and within the key's allowed set |
 
 The API key is `api_key` when set, otherwise the environment variable named by
 `api_key_env`.

@@ -1,5 +1,5 @@
 name: memory_base
 version: 2.1.0
-description: "Memory Base — semantic prefetch over the memory-base REST API, and session capture as linkable evidence."
+description: "Memory Base — semantic prefetch over the memory-base REST API."
 requires_env:
   - MEMORY_BASE_API_KEY

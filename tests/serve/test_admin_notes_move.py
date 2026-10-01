@@ -136,12 +136,10 @@ class FakeConnection:
         existing_notes=frozenset(),
         registered_namespaces=frozenset(),
         collisions=frozenset(),
-        linked=frozenset(),
     ):
         self.existing_notes = set(existing_notes)
         self.registered_namespaces = set(registered_namespaces)
         self.collisions = set(collisions)
-        self.linked = set(linked)
         self.updates: list[tuple] = []
 
     def transaction(self):
@@ -150,11 +148,8 @@ class FakeConnection:
     async def fetch(self, query, *args):
         if "source_type = 'agent_note'" in query:
             (ids,) = args
-            return [
-                {"id": i, "conversation_id": "conv:0000000000000000" if i in self.linked else None}
-                for i in ids
-                if i in self.existing_notes
-            ]
+            assert "conversation_id" not in query
+            return [{"id": i} for i in ids if i in self.existing_notes]
         return []
 
     async def fetchval(self, query, *args):
@@ -246,28 +241,3 @@ def test_move_notes_mixed_batch_reports_both_moved_and_skipped(monkeypatch):
         "moved": [{"old": ok_id, "new": "note:team-a:cccccccccccccccc"}],
         "skipped": [missing_id],
     }
-
-
-def test_move_notes_refuses_a_note_linked_to_a_conversation_source(monkeypatch):
-    linked_id = "note:default:cccccccccccccccc"
-    conn = FakeConnection(
-        existing_notes={DEFAULT_ID, linked_id},
-        registered_namespaces={"team-a"},
-        linked={linked_id},
-    )
-    _patch_admin_deps(monkeypatch, conn)
-    with pytest.raises(ValueError, match="stays with its source"):
-        asyncio.run(admin.move_notes([DEFAULT_ID, linked_id], "team-a"))
-    assert conn.updates == []
-
-
-def test_move_notes_route_maps_a_linked_note_to_400(monkeypatch):
-    async def fake_move_notes(ids, target_namespace):
-        raise ValueError("note note:default:c is linked to a conversation source")
-
-    monkeypatch.setattr(admin, "move_notes", fake_move_notes)
-    response = client.post(
-        "/admin/notes/move", json={"ids": ["note:default:c"], "namespace": "team-a"}
-    )
-    assert response.status_code == 400
-    assert "conversation source" in response.json()["error"]

@@ -61,9 +61,6 @@ def test_row_shape_exact_keys_no_embedding():
         "distilled",
         "timestamp",
         "metadata",
-        "conversation_id",
-        "turn_start",
-        "turn_end",
         "occurred_at",
     }
     assert "embedding" not in row

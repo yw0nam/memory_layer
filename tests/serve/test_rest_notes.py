@@ -9,6 +9,7 @@ Collection fails today: memory_base.serve.notes does not exist yet.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from contextlib import asynccontextmanager
 
@@ -42,6 +43,22 @@ def test_different_content_different_id():
 def test_id_format_note_prefix_16_hex():
     row = build_note_row("use pgvector halfvec for embeddings", "work", ["test"], NOW)
     assert ID_RE.match(row["id"]), row["id"]
+
+
+def test_id_is_the_namespace_and_sha256_of_the_stripped_content():
+    digest = hashlib.sha256(b"prefer ruff for linting").hexdigest()[:16]
+    row = build_note_row("  prefer ruff for linting\n", "work", ["test"], NOW, "team-a")
+    assert row["id"] == f"note:team-a:{digest}"
+
+
+def test_row_has_no_conversation_link_fields():
+    row = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
+    assert not {"conversation_id", "turn_start", "turn_end"} & set(row)
+
+
+def test_build_note_row_takes_no_conversation_link_arguments():
+    with pytest.raises(TypeError):
+        build_note_row("prefer ruff for linting", "work", ["test"], NOW, conversation_id="conv:0")
 
 
 # ---- id scheme: namespace qualification ------------------------------------
@@ -86,9 +103,6 @@ def test_row_shape_exact_keys_no_embedding():
         "distilled",
         "timestamp",
         "metadata",
-        "conversation_id",
-        "turn_start",
-        "turn_end",
         "occurred_at",
     }
     assert "embedding" not in row
@@ -141,9 +155,6 @@ async def _fake_save_note(
     supersedes=None,
     namespace="default",
     occurred_at=None,
-    conversation_id=None,
-    turn_start=None,
-    turn_end=None,
     author=None,
     allow_similar=False,
 ):

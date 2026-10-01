@@ -10,14 +10,10 @@ from __future__ import annotations
 
 import httpx
 
-import json
-
-import pytest
 
 from client import MEMORY_CONTEXT_HEADER
 from client import MemoryBaseClient
 from client import clean_prefetch_query
-from client import conversation_turns
 from client import resolve_api_key
 
 
@@ -348,60 +344,3 @@ def test_build_prefetch_skips_search_for_a_desire_tick():
 
     client = _client(handler)
     assert client.build_prefetch(RAW_DESIRE_TICK) == ""
-
-
-# ---- conversation capture --------------------------------------------------------
-
-
-def test_conversation_turns_keep_user_and_assistant_text_only():
-    messages = [
-        {"role": "system", "content": "You are Natsume."},
-        {"role": "user", "content": "My sister Emily moves to Busan next month."},
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [{"id": "c1", "function": {"name": "search"}}],
-        },
-        {"role": "tool", "tool_call_id": "c1", "content": "search results"},
-        {
-            "role": "assistant",
-            "content": [
-                {"type": "text", "text": "That is a big move."},
-                {"type": "image_url", "image_url": {"url": "data:..."}},
-                {"type": "text", "text": "Is she excited?"},
-            ],
-        },
-        {"role": "user", "content": "   "},
-        {"role": "user", "content": [{"type": "input_audio"}]},
-    ]
-    assert conversation_turns(messages) == [
-        {"role": "user", "text": "My sister Emily moves to Busan next month."},
-        {"role": "assistant", "text": "That is a big move.\n\nIs she excited?"},
-    ]
-
-
-def test_store_conversation_posts_the_body_and_returns_the_reply():
-    seen = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen["path"] = request.url.path
-        seen["key"] = request.headers["X-API-Key"]
-        seen["body"] = json.loads(request.content)
-        return httpx.Response(201, json={"id": "conv:1", "created": True, "turns": 2})
-
-    client = _client(handler)
-    reply = client.store_conversation({"origin": "hermes", "turns": []})
-    assert reply == {"id": "conv:1", "created": True, "turns": 2}
-    assert seen == {
-        "path": "/conversations",
-        "key": "secret-key",
-        "body": {"origin": "hermes", "turns": []},
-    }
-
-
-def test_store_conversation_raises_on_a_server_error():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, json={"error": "changed turns"})
-
-    with pytest.raises(httpx.HTTPStatusError):
-        _client(handler).store_conversation({"origin": "hermes"})
