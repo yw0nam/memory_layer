@@ -213,10 +213,10 @@ def test_admin_duplicates_custom_params_reach_admin(monkeypatch):
 
     monkeypatch.setattr(admin, "find_duplicates", fake_find_duplicates)
     response = client.get(
-        "/admin/duplicates", params={"threshold": "0.8", "kind": "agent_note", "limit": "5"}
+        "/admin/duplicates", params={"threshold": "0.8", "kind": "work", "limit": "5"}
     )
     assert response.status_code == 200
-    assert captured == {"threshold": 0.8, "kind": "agent_note", "limit": 5}
+    assert captured == {"threshold": 0.8, "kind": "work", "limit": 5}
 
 
 def test_admin_duplicates_non_numeric_threshold_400():

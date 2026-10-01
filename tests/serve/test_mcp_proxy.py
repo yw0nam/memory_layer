@@ -50,7 +50,8 @@ def test_tool_list_includes_document_ingestion():
         "search",
         "search_code",
         "search_memory",
-        "save_memory",
+        "save_personal_memory",
+        "save_work_memory",
         "query_table",
         "ingest_document",
         "ingest_repo",
@@ -69,45 +70,6 @@ def test_tool_list_includes_document_ingestion():
         "expand_source",
         "list_conversations",
     }
-
-
-def test_save_memory_schema_requires_content_author_tags():
-    from mcp.shared.memory import create_connected_server_and_client_session
-
-    async def _run():
-        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
-            result = await client.list_tools()
-            return {t.name: t for t in result.tools}
-
-    tools = asyncio.run(_run())
-    required = set(tools["save_memory"].inputSchema["required"])
-    assert {"tags", "content", "author"} <= required
-
-
-def test_save_memory_schema_has_optional_allow_similar_boolean():
-    from mcp.shared.memory import create_connected_server_and_client_session
-
-    async def _run():
-        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
-            result = await client.list_tools()
-            return {t.name: t for t in result.tools}
-
-    tools = asyncio.run(_run())
-    schema = tools["save_memory"].inputSchema
-    assert schema["properties"]["allow_similar"]["type"] == "boolean"
-    assert "allow_similar" not in schema["required"]
-
-
-def test_save_memory_schema_offers_no_content_gate_override():
-    from mcp.shared.memory import create_connected_server_and_client_session
-
-    async def _run():
-        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
-            result = await client.list_tools()
-            return {t.name: t for t in result.tools}
-
-    tools = asyncio.run(_run())
-    assert "allow_restatement" not in tools["save_memory"].inputSchema["properties"]
 
 
 # ---- search proxying --------------------------------------------------------
@@ -161,7 +123,7 @@ def test_search_memory_forwards_kind_and_tags(monkeypatch):
         mcp_server.search_memory(
             query="decision",
             top_k=4,
-            kind="decision",
+            kind="work",
             tags=["infra"],
         )
     )
@@ -169,7 +131,7 @@ def test_search_memory_forwards_kind_and_tags(monkeypatch):
         "query": "decision",
         "source": "memory",
         "top_k": 4,
-        "kind": "decision",
+        "kind": "work",
         "tags": ["infra"],
     }
 
@@ -226,7 +188,7 @@ def test_list_notes_gets_notes_with_repeated_params(monkeypatch):
     asyncio.run(
         mcp_server.list_notes(
             tags=["infra", "db"],
-            kind="decision",
+            kind="work",
             since="2026-08-01",
             until="2026-08-12",
             include_archived=True,
@@ -240,7 +202,7 @@ def test_list_notes_gets_notes_with_repeated_params(monkeypatch):
         [
             ("tags", "infra"),
             ("tags", "db"),
-            ("kind", "decision"),
+            ("kind", "work"),
             ("since", "2026-08-01"),
             ("until", "2026-08-12"),
             ("include_archived", "true"),
@@ -448,40 +410,16 @@ def test_search_returns_rest_response_body_unmodified(monkeypatch):
     assert result == hits
 
 
-# ---- save_memory proxying ---------------------------------------------------
+# ---- save tool proxying ---------------------------------------------------
 
 
-def test_save_memory_posts_to_save_memory_and_returns_body(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["path"] = request.url.path
-        captured["json"] = json.loads(request.content)
-        return httpx.Response(200, json={"id": "note:abc", "kind": "note", "stored": True})
-
-    _patch_client(monkeypatch, handler)
-    result = asyncio.run(
-        mcp_server.save_memory("distilled content", "natsume", kind="note", tags=["infra"])
-    )
-    assert captured["path"] == "/save_memory"
-    assert captured["json"] == {
-        "content": "distilled content",
-        "author": "natsume",
-        "kind": "note",
-        "tags": ["infra"],
-        "supersedes": None,
-        "allow_similar": False,
-    }
-    assert result == {"id": "note:abc", "kind": "note", "stored": True}
-
-
-def test_save_memory_400_response_raises_value_error_with_server_message(monkeypatch):
+def test_save_work_memory_400_response_raises_value_error_with_server_message(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": "content must not be empty"})
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="content must not be empty"):
-        asyncio.run(mcp_server.save_memory("", "natsume", tags=["test"]))
+        asyncio.run(mcp_server.save_work_memory("", "natsume", tags=["test"]))
 
 
 # ---- lifecycle tool proxying ------------------------------------------------
@@ -500,11 +438,11 @@ def test_list_memory_duplicates_gets_admin_duplicates(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     monkeypatch.setenv("MEMORY_API_KEY", "env-key")
-    result = asyncio.run(mcp_server.list_memory_duplicates(threshold=0.95, kind="note", limit=5))
+    result = asyncio.run(mcp_server.list_memory_duplicates(threshold=0.95, kind="work", limit=5))
     assert captured["method"] == "GET"
     assert captured["path"] == "/admin/duplicates"
     assert sorted(captured["params"]) == sorted(
-        [("threshold", "0.95"), ("kind", "note"), ("limit", "5")]
+        [("threshold", "0.95"), ("kind", "work"), ("limit", "5")]
     )
     assert captured["header"] == "env-key"
     assert result == payload

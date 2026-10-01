@@ -53,12 +53,12 @@ def test_list_notes_defaults(monkeypatch):
 def test_list_notes_forwards_every_filter(monkeypatch):
     captured = _capture_list_notes(monkeypatch)
     response = client.get(
-        "/notes?tags=infra&tags=db&kind=decision"
+        "/notes?tags=infra&tags=db&kind=work"
         "&since=2026-08-01&until=2026-08-12&limit=5&include_archived=true"
     )
     assert response.status_code == 200
     assert captured["tags"] == ["infra", "db"]
-    assert captured["kind"] == "decision"
+    assert captured["kind"] == "work"
     assert captured["since"] == "2026-08-01"
     assert captured["until"] == "2026-08-12"
     assert captured["limit"] == 5
@@ -170,7 +170,7 @@ def _patch_conn(monkeypatch, conn):
 def _row(**overrides):
     row = {
         "id": "note:abc",
-        "kind": "note",
+        "kind": "work",
         "text": "hello",
         "metadata": {"tags": ["infra"]},
         "ts_last_active": AUG_12,
@@ -201,7 +201,7 @@ def test_list_notes_maps_rows_to_response_shape(monkeypatch):
     assert rows == [
         {
             "id": "note:abc",
-            "kind": "note",
+            "kind": "work",
             "text": "hello",
             "tags": ["infra"],
             "author": None,
@@ -231,7 +231,7 @@ def test_list_notes_forwards_filters_into_predicates(monkeypatch):
     asyncio.run(
         notes.list_notes(
             tags=["Infra "],
-            kind="decision",
+            kind="work",
             namespaces=["team-a"],
             since="2026-08-01",
             until="2026-08-12",

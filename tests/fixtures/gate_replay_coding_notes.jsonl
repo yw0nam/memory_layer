@@ -1,44 +1,44 @@
-{"content": "Decision: rate-limit the webhook consumer with a token bucket rather than a fixed window, because bursts at the top of the minute starved single-tenant keys; the sliding-window and queue-first designs were rejected for that reason.", "kind": "decision", "expect": "accept"}
-{"content": "Decision: store user avatars on disk under /srv/avatars with content-hash names instead of S3 — the deployment has no outbound S3 access, and a bucket design was ruled out by that network policy.", "kind": "decision", "expect": "accept"}
-{"content": "Decision: the importer reads CSVs with a streaming parser, not pandas, because files up to 2 GB exhaust the container's memory when loaded whole; chunked DataFrame loading was tried and dropped for the same reason.", "kind": "decision", "expect": "accept"}
-{"content": "Decision: auth tokens live in httpOnly cookies rather than localStorage, to keep them out of reach of injected scripts; the header-storage variant was rejected after the XSS audit.", "kind": "decision", "expect": "accept"}
-{"content": "Decision: the nightly job runs at 03:40 UTC, not midnight, because the upstream export finishes at 03:30 and a midnight run always ingested yesterday's file twice.", "kind": "decision", "expect": "accept"}
-{"content": "Decision: this deployment pins Postgres 16 because pg_textsearch ships as a shared library built for that major; version 15 was ruled out when the preload failed on it.", "kind": "decision", "expect": "accept"}
-{"content": "Decision: the public API is versioned under /v2 only; /v1 was rejected because its response envelope cannot express per-namespace errors without breaking existing clients.", "kind": "decision", "expect": "accept"}
-{"content": "Decision: the migration runs one transaction per batch rather than one for the whole file, because a failure then costs one batch of retries instead of a full re-run; the whole-file transaction was ruled out after a failed run cost four hours.", "kind": "decision", "expect": "accept"}
-{"content": "The team's convention is ruff with line length 100; black and isort stay out of this repo by choice.", "kind": "note", "expect": "accept"}
-{"content": "The client requires that all customer data stay in the eu-central-1 region; US regions are out by policy.", "kind": "note", "expect": "accept"}
-{"content": "Deployment must run on the air-gapped cluster: no image pulls from Docker Hub at runtime, everything is vendored.", "kind": "note", "expect": "accept"}
-{"content": "The user prefers errors reported as RFC 7807 problem+json bodies, not ad-hoc JSON shapes.", "kind": "note", "expect": "accept"}
-{"content": "Company policy: every service exposes /healthz returning 200 without auth, or it does not pass the platform review.", "kind": "note", "expect": "accept"}
-{"content": "The reviewer requires migration scripts to be reversible before merge; an irreversible one needs a stated exception.", "kind": "note", "expect": "accept"}
-{"content": "The CI runner has only 2 CPU cores, so pytest-xdist with more than two workers slows the suite down.", "kind": "note", "expect": "accept"}
-{"content": "The staging database is re-seeded every night at 02:00 UTC, so row counts cached from staging are stale by morning.", "kind": "note", "expect": "accept"}
-{"content": "Docker on this machine denies binding ports below 1024, so the local stack maps the API to 18010.", "kind": "note", "expect": "accept"}
-{"content": "The corporate proxy rewrites TLS certificates, so pip only works against the internal index at pypi.internal.corp.", "kind": "note", "expect": "accept"}
-{"content": "Prod Postgres runs with max_connections=40; opening more than a handful of parallel pool connections starves the worker.", "kind": "note", "expect": "accept"}
-{"content": "Outbound webhooks from this network are throttled to about 10 requests per second by the gateway; bursts beyond that come back 429.", "kind": "note", "expect": "accept"}
-{"content": "Lesson: the OAuth flow silently failed because the redirect URI had a trailing slash the provider treats as a distinct URI; register and compare redirect URIs normalized.", "kind": "note", "expect": "accept"}
-{"content": "Reproduced bug: a dimension-mismatched halfvec embedding raises no error but returns garbage similarity; the fix is asserting the dimension before insert.", "kind": "note", "expect": "accept"}
-{"content": "Lesson: the parser choked on CSVs with a UTF-8 BOM; open with encoding utf-8-sig, not utf-8.", "kind": "note", "expect": "accept"}
-{"content": "The race between cache write and invalidation corrupted reads under load; the fix invalidates after commit, not before — invalidating before commit reintroduces stale reads on retry.", "kind": "note", "expect": "accept"}
-{"content": "Lesson: the webhook retries are at-least-once, so every handler must be idempotent; deduplication by event id fixed the double-charged invoices.", "kind": "note", "expect": "accept"}
-{"content": "The memory leak under gunicorn came from module-level httpx clients sharing a closed event loop; creating the client inside the worker's lifespan fixed it.", "kind": "note", "expect": "accept"}
-{"content": "Batching embeddings through a thread pool failed — the endpoint serves one request per connection and the pool serialized anyway; the async client with gather is what actually works.", "kind": "note", "expect": "accept"}
-{"content": "Relying on pg_trgm for the keyword lane lost short Korean queries; the pg_textsearch path is what the eval now measures.", "kind": "note", "expect": "accept"}
-{"content": "Serving table aggregates from the Card summary answered with stale numbers; only doc_rows through SQL returns current results.", "kind": "note", "expect": "accept"}
-{"content": "Auto-merging duplicate notes by cosine alone merged distinct facts; deduplication stays a curated decision based on list_memory_duplicates output.", "kind": "note", "expect": "accept"}
-{"content": "PR #512 'Add token bucket rate limiter' is open with two approvals and is waiting on CI.", "kind": "note", "expect": "refuse"}
-{"content": "Issue #88 'Importer OOMs on large CSVs' was closed on 2026-07-14 as fixed by PR #90.", "kind": "note", "expect": "refuse"}
-{"content": "Commit a17f3e2 bumped the dependency lockfile and touched 3 files last Tuesday.", "kind": "note", "expect": "refuse"}
-{"content": "The README now documents the /v2 endpoints; last updated 2026-08-01.", "kind": "note", "expect": "refuse"}
-{"content": "Milestone 3.2 is 70% complete, with 9 of 13 issues closed.", "kind": "note", "expect": "refuse"}
-{"content": "I migrated the parser to the streaming API today and the first two test suites pass.", "kind": "note", "expect": "refuse"}
-{"content": "Spent the session wiring up the token bucket; roughly half done, resuming tomorrow.", "kind": "note", "expect": "refuse"}
-{"content": "Finished the avatars-on-disk refactor and pushed the branch for review.", "kind": "note", "expect": "refuse"}
-{"content": "Currently debugging the flaky redirect test; not done yet.", "kind": "note", "expect": "refuse"}
-{"content": "src/importer/stream.py opens a CSV row iterator and yields one dict per row.", "kind": "note", "expect": "refuse"}
-{"content": "The rate_limiter.py module defines a token bucket with a per-key lock.", "kind": "note", "expect": "refuse"}
-{"content": "utils/time.py has helpers to parse ISO 8601 timestamps and coerce them to UTC.", "kind": "note", "expect": "refuse"}
-{"content": "conftest.py starts a throwaway Postgres container for integration tests and removes it at session end.", "kind": "note", "expect": "refuse"}
-{"content": "The AvatarStore class writes files under /srv/avatars and returns the content hash as the name.", "kind": "note", "expect": "refuse"}
+{"content": "Decision: rate-limit the webhook consumer with a token bucket rather than a fixed window, because bursts at the top of the minute starved single-tenant keys; the sliding-window and queue-first designs were rejected for that reason.", "expect": "accept"}
+{"content": "Decision: store user avatars on disk under /srv/avatars with content-hash names instead of S3 — the deployment has no outbound S3 access, and a bucket design was ruled out by that network policy.", "expect": "accept"}
+{"content": "Decision: the importer reads CSVs with a streaming parser, not pandas, because files up to 2 GB exhaust the container's memory when loaded whole; chunked DataFrame loading was tried and dropped for the same reason.", "expect": "accept"}
+{"content": "Decision: auth tokens live in httpOnly cookies rather than localStorage, to keep them out of reach of injected scripts; the header-storage variant was rejected after the XSS audit.", "expect": "accept"}
+{"content": "Decision: the nightly job runs at 03:40 UTC, not midnight, because the upstream export finishes at 03:30 and a midnight run always ingested yesterday's file twice.", "expect": "accept"}
+{"content": "Decision: this deployment pins Postgres 16 because pg_textsearch ships as a shared library built for that major; version 15 was ruled out when the preload failed on it.", "expect": "accept"}
+{"content": "Decision: the public API is versioned under /v2 only; /v1 was rejected because its response envelope cannot express per-namespace errors without breaking existing clients.", "expect": "accept"}
+{"content": "Decision: the migration runs one transaction per batch rather than one for the whole file, because a failure then costs one batch of retries instead of a full re-run; the whole-file transaction was ruled out after a failed run cost four hours.", "expect": "accept"}
+{"content": "The team's convention is ruff with line length 100; black and isort stay out of this repo by choice.", "expect": "accept"}
+{"content": "The client requires that all customer data stay in the eu-central-1 region; US regions are out by policy.", "expect": "accept"}
+{"content": "Deployment must run on the air-gapped cluster: no image pulls from Docker Hub at runtime, everything is vendored.", "expect": "accept"}
+{"content": "The user prefers errors reported as RFC 7807 problem+json bodies, not ad-hoc JSON shapes.", "expect": "accept"}
+{"content": "Company policy: every service exposes /healthz returning 200 without auth, or it does not pass the platform review.", "expect": "accept"}
+{"content": "The reviewer requires migration scripts to be reversible before merge; an irreversible one needs a stated exception.", "expect": "accept"}
+{"content": "The CI runner has only 2 CPU cores, so pytest-xdist with more than two workers slows the suite down.", "expect": "accept"}
+{"content": "The staging database is re-seeded every night at 02:00 UTC, so row counts cached from staging are stale by morning.", "expect": "accept"}
+{"content": "Docker on this machine denies binding ports below 1024, so the local stack maps the API to 18010.", "expect": "accept"}
+{"content": "The corporate proxy rewrites TLS certificates, so pip only works against the internal index at pypi.internal.corp.", "expect": "accept"}
+{"content": "Prod Postgres runs with max_connections=40; opening more than a handful of parallel pool connections starves the worker.", "expect": "accept"}
+{"content": "Outbound webhooks from this network are throttled to about 10 requests per second by the gateway; bursts beyond that come back 429.", "expect": "accept"}
+{"content": "Lesson: the OAuth flow silently failed because the redirect URI had a trailing slash the provider treats as a distinct URI; register and compare redirect URIs normalized.", "expect": "accept"}
+{"content": "Reproduced bug: a dimension-mismatched halfvec embedding raises no error but returns garbage similarity; the fix is asserting the dimension before insert.", "expect": "accept"}
+{"content": "Lesson: the parser choked on CSVs with a UTF-8 BOM; open with encoding utf-8-sig, not utf-8.", "expect": "accept"}
+{"content": "The race between cache write and invalidation corrupted reads under load; the fix invalidates after commit, not before — invalidating before commit reintroduces stale reads on retry.", "expect": "accept"}
+{"content": "Lesson: the webhook retries are at-least-once, so every handler must be idempotent; deduplication by event id fixed the double-charged invoices.", "expect": "accept"}
+{"content": "The memory leak under gunicorn came from module-level httpx clients sharing a closed event loop; creating the client inside the worker's lifespan fixed it.", "expect": "accept"}
+{"content": "Batching embeddings through a thread pool failed — the endpoint serves one request per connection and the pool serialized anyway; the async client with gather is what actually works.", "expect": "accept"}
+{"content": "Relying on pg_trgm for the keyword lane lost short Korean queries; the pg_textsearch path is what the eval now measures.", "expect": "accept"}
+{"content": "Serving table aggregates from the Card summary answered with stale numbers; only doc_rows through SQL returns current results.", "expect": "accept"}
+{"content": "Auto-merging duplicate notes by cosine alone merged distinct facts; deduplication stays a curated decision based on list_memory_duplicates output.", "expect": "accept"}
+{"content": "PR #512 'Add token bucket rate limiter' is open with two approvals and is waiting on CI.", "expect": "refuse"}
+{"content": "Issue #88 'Importer OOMs on large CSVs' was closed on 2026-07-14 as fixed by PR #90.", "expect": "refuse"}
+{"content": "Commit a17f3e2 bumped the dependency lockfile and touched 3 files last Tuesday.", "expect": "refuse"}
+{"content": "The README now documents the /v2 endpoints; last updated 2026-08-01.", "expect": "refuse"}
+{"content": "Milestone 3.2 is 70% complete, with 9 of 13 issues closed.", "expect": "refuse"}
+{"content": "I migrated the parser to the streaming API today and the first two test suites pass.", "expect": "refuse"}
+{"content": "Spent the session wiring up the token bucket; roughly half done, resuming tomorrow.", "expect": "refuse"}
+{"content": "Finished the avatars-on-disk refactor and pushed the branch for review.", "expect": "refuse"}
+{"content": "Currently debugging the flaky redirect test; not done yet.", "expect": "refuse"}
+{"content": "src/importer/stream.py opens a CSV row iterator and yields one dict per row.", "expect": "refuse"}
+{"content": "The rate_limiter.py module defines a token bucket with a per-key lock.", "expect": "refuse"}
+{"content": "utils/time.py has helpers to parse ISO 8601 timestamps and coerce them to UTC.", "expect": "refuse"}
+{"content": "conftest.py starts a throwaway Postgres container for integration tests and removes it at session end.", "expect": "refuse"}
+{"content": "The AvatarStore class writes files under /srv/avatars and returns the content hash as the name.", "expect": "refuse"}

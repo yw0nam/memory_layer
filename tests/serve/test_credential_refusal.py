@@ -100,7 +100,9 @@ def _mcp_through_rest(monkeypatch):
 def test_save_note_refuses_a_credential_before_the_gate_embedding_and_db(calls, log_lines):
     with pytest.raises(notes.CredentialNoteError) as refused:
         asyncio.run(
-            notes.save_note(f"deploy with {AWS_KEY} from the vault", tags=["deploy"], author="a")
+            notes.save_note(
+                f"deploy with {AWS_KEY} from the vault", tags=["deploy"], kind="work", author="a"
+            )
         )
     assert refused.value.secret_type == "AWS Access Key"
     assert isinstance(refused.value, ValueError)
@@ -114,14 +116,16 @@ def test_save_note_refuses_a_credential_before_the_gate_embedding_and_db(calls, 
 def test_save_note_refuses_a_credential_in_a_raw_tag(calls):
     with pytest.raises(notes.CredentialNoteError) as refused:
         asyncio.run(
-            notes.save_note("prefer ruff for linting", tags=["deploy", AWS_KEY], author="a")
+            notes.save_note(
+                "prefer ruff for linting", tags=["deploy", AWS_KEY], kind="work", author="a"
+            )
         )
     assert refused.value.secret_type == "AWS Access Key"
     assert calls.made == []
 
 
 def _save_memory_body(content, tags):
-    return {"content": content, "author": "claude-code", "tags": tags}
+    return {"content": content, "author": "claude-code", "kind": "work", "tags": tags}
 
 
 @pytest.mark.parametrize(
@@ -141,11 +145,11 @@ def test_rest_save_memory_maps_a_credential_to_409_without_echoing_it(calls, con
     assert calls.made == []
 
 
-def test_mcp_save_memory_surfaces_the_credential_refusal(monkeypatch, calls):
+def test_mcp_save_work_memory_surfaces_the_credential_refusal(monkeypatch, calls):
     _mcp_through_rest(monkeypatch)
     with pytest.raises(ValueError) as refused:
         asyncio.run(
-            mcp_server.save_memory(
+            mcp_server.save_work_memory(
                 content=f"the deploy key is {AWS_KEY}", author="claude-code", tags=["deploy"]
             )
         )

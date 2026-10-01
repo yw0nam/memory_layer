@@ -1,4 +1,4 @@
-"""Contract tests for the save_memory MCP tool (red-first).
+"""Contract tests for the save_work_memory MCP tool (red-first).
 
 Pure tests pin build_note_row's id scheme, row shape, and validation with no
 DB/embedder/network. Integration tests (marked ``integration``, skipped when the
@@ -19,7 +19,7 @@ import asyncpg
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.retrieval.search import search
 from memory_base.serve import namespaces
-from memory_base.serve.mcp_server import save_memory
+from memory_base.serve.mcp_server import save_work_memory
 from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0
@@ -30,19 +30,19 @@ ID_RE = re.compile(r"^note:default:[0-9a-f]{16}$")
 
 
 def test_same_content_same_id():
-    a = build_note_row("prefer ruff for linting", "note", ["test"], NOW)
-    b = build_note_row("prefer ruff for linting", "note", ["test"], NOW)
+    a = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
+    b = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
     assert a["id"] == b["id"]
 
 
 def test_different_content_different_id():
-    a = build_note_row("prefer ruff for linting", "note", ["test"], NOW)
-    b = build_note_row("prefer black for formatting", "note", ["test"], NOW)
+    a = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
+    b = build_note_row("prefer black for formatting", "work", ["test"], NOW)
     assert a["id"] != b["id"]
 
 
 def test_id_format_note_prefix_16_hex():
-    row = build_note_row("use pgvector halfvec for embeddings", "note", ["test"], NOW)
+    row = build_note_row("use pgvector halfvec for embeddings", "work", ["test"], NOW)
     assert ID_RE.match(row["id"]), row["id"]
 
 
@@ -50,7 +50,7 @@ def test_id_format_note_prefix_16_hex():
 
 
 def test_row_shape_exact_keys_no_embedding():
-    row = build_note_row("distilled memory content", "note", ["test"], NOW)
+    row = build_note_row("distilled memory content", "work", ["test"], NOW)
     assert set(row) == {
         "id",
         "source_type",
@@ -71,10 +71,10 @@ def test_row_shape_exact_keys_no_embedding():
 
 def test_row_field_values():
     content = "the burst gate uses a weighted signal sum"
-    row = build_note_row(content, "decision", ["test"], NOW)
+    row = build_note_row(content, "work", ["test"], NOW)
     assert row["source_type"] == "agent_note"
     assert row["source_ref"] == "save_memory"
-    assert row["kind"] == "decision"
+    assert row["kind"] == "work"
     assert row["session_id"] == row["id"]
     assert row["raw"] == content
     assert row["distilled"] == content
@@ -82,20 +82,20 @@ def test_row_field_values():
 
 
 def test_tags_land_in_metadata():
-    row = build_note_row("content with tags", "note", ["infra", "db"], NOW)
+    row = build_note_row("content with tags", "work", ["infra", "db"], NOW)
     assert row["metadata"] == {"tags": ["infra", "db"]}
 
 
 @pytest.mark.parametrize("missing_tags", [None, [], ["", "  "]])
 def test_missing_tags_rejected(missing_tags):
     with pytest.raises(ValueError, match="tags must be a non-empty list of strings"):
-        build_note_row("content without tags", "note", missing_tags, NOW)
+        build_note_row("content without tags", "work", missing_tags, NOW)
 
 
 def test_tags_are_normalized_and_deduplicated():
     row = build_note_row(
         "content with normalized tags",
-        "note",
+        "work",
         [" Infrastructure ", "DATABASE", "infrastructure", "  "],
         NOW,
     )
@@ -103,18 +103,18 @@ def test_tags_are_normalized_and_deduplicated():
 
 
 def test_author_lands_in_metadata():
-    row = build_note_row("content with an author", "note", ["test"], NOW, "default", "natsume")
+    row = build_note_row("content with an author", "work", ["test"], NOW, "default", "natsume")
     assert row["metadata"]["author"] == "natsume"
 
 
 def test_author_omitted_leaves_no_author_in_metadata():
-    row = build_note_row("content without an author", "note", ["test"], NOW)
+    row = build_note_row("content without an author", "work", ["test"], NOW)
     assert "author" not in row["metadata"]
 
 
 def test_author_does_not_participate_in_the_id():
-    a = build_note_row("shared content", "note", ["test"], NOW, "default", "natsume")
-    b = build_note_row("shared content", "note", ["test"], NOW, "default", "claude-code")
+    a = build_note_row("shared content", "work", ["test"], NOW, "default", "natsume")
+    b = build_note_row("shared content", "work", ["test"], NOW, "default", "claude-code")
     assert a["id"] == b["id"]
 
 
@@ -124,12 +124,12 @@ def test_author_does_not_participate_in_the_id():
 @pytest.mark.parametrize("bad", ["", "   ", "\n\t "])
 def test_empty_or_whitespace_content_rejected(bad):
     with pytest.raises(ValueError):
-        build_note_row(bad, "note", None, NOW)
+        build_note_row(bad, "work", None, NOW)
 
 
 def test_oversized_content_rejected():
     with pytest.raises(ValueError):
-        build_note_row("x" * 4001, "note", None, NOW)
+        build_note_row("x" * 4001, "work", None, NOW)
 
 
 def test_unknown_kind_rejected():
@@ -140,7 +140,7 @@ def test_unknown_kind_rejected():
 @pytest.mark.parametrize("tags", ["infra", {"infra": True}, [1], ["infra", None]])
 def test_malformed_tags_rejected(tags):
     with pytest.raises(ValueError, match="tags must be a non-empty list of strings"):
-        build_note_row("valid content", "note", tags, NOW)
+        build_note_row("valid content", "work", tags, NOW)
 
 
 # ---- integration: real DB + embedder --------------------------------------
@@ -177,10 +177,10 @@ async def _count(note_id: str) -> int:
 @pytest.mark.integration
 def test_save_memory_stores_row_in_db(rest_in_process):
     content = "save_memory integration: notes are stored without LLM distillation"
-    note_id = build_note_row(content, "note", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        result = asyncio.run(save_memory(content, "natsume", kind="note", tags=["pytest"]))
+        result = asyncio.run(save_work_memory(content, "natsume", tags=["pytest"]))
         assert result["id"] == note_id
         assert result["stored"] is True
 
@@ -188,7 +188,7 @@ def test_save_memory_stores_row_in_db(rest_in_process):
         assert row is not None
         assert row["source_type"] == "agent_note"
         assert row["source_ref"] == "save_memory"
-        assert row["chunk_kind"] == "note"
+        assert row["chunk_kind"] == "work"
         assert row["session_id"] == note_id
         assert row["content_raw"] == content
         assert row["distilled"] == content
@@ -199,11 +199,11 @@ def test_save_memory_stores_row_in_db(rest_in_process):
 @pytest.mark.integration
 def test_save_memory_duplicate_is_noop(rest_in_process):
     content = "save_memory integration: re-saving identical content is idempotent"
-    note_id = build_note_row(content, "note", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        first = asyncio.run(save_memory(content, "natsume", tags=["test"]))
-        second = asyncio.run(save_memory(content, "natsume", tags=["test"]))
+        first = asyncio.run(save_work_memory(content, "natsume", tags=["test"]))
+        second = asyncio.run(save_work_memory(content, "natsume", tags=["test"]))
         assert first["stored"] is True
         assert second["stored"] is False
         assert asyncio.run(_count(note_id)) == 1
@@ -214,10 +214,10 @@ def test_save_memory_duplicate_is_noop(rest_in_process):
 @pytest.mark.integration
 def test_saved_note_found_by_search(rest_in_process):
     content = "save_memory integration: pgvector halfvec powers hybrid retrieval search"
-    note_id = build_note_row(content, "note", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        asyncio.run(save_memory(content, "natsume", tags=["test"]))
+        asyncio.run(save_work_memory(content, "natsume", tags=["test"]))
         hits = asyncio.run(search(content, source="memory", rerank=False))
         assert any(h.meta.get("id") == note_id for h in hits)
     finally:
@@ -229,15 +229,19 @@ def test_same_content_two_namespaces_are_independent_rows():
     """Regression: identical content saved into two namespaces must not collide
     on id and silently no-op the second namespace's save (issue #81 review)."""
     content = "namespace independence regression: zzz_ns_dedup_marker unique text"
-    default_id = build_note_row(content, "note", ["test"], NOW, "default")["id"]
-    team_id = build_note_row(content, "note", ["test"], NOW, "team-ns-dedup-test")["id"]
+    default_id = build_note_row(content, "work", ["test"], NOW, "default")["id"]
+    team_id = build_note_row(content, "work", ["test"], NOW, "team-ns-dedup-test")["id"]
     assert default_id != team_id
 
     async def scenario():
         await namespaces.create_namespace("team-ns-dedup-test")
         try:
-            result_default = await save_note(content, tags=["test"], namespace="default")
-            result_team = await save_note(content, tags=["test"], namespace="team-ns-dedup-test")
+            result_default = await save_note(
+                content, tags=["test"], kind="work", namespace="default"
+            )
+            result_team = await save_note(
+                content, tags=["test"], kind="work", namespace="team-ns-dedup-test"
+            )
             assert result_default["stored"] is True
             assert result_team["stored"] is True
             assert await _count(default_id) == 1

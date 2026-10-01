@@ -151,11 +151,11 @@ def test_search_logs_retrieval_and_bumps_hit_columns_after_flush(client):
     the moment of this search.
     """
     content = "access-log integration pin: zzzaccesslogpin unique retrieval marker"
-    note_id = build_note_row(content, "note", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     client.portal.call(_delete_note, note_id)
     client.portal.call(_delete_retrieval_log, content)
     try:
-        client.portal.call(partial(save_note, content, tags=["test"]))
+        client.portal.call(partial(save_note, content, tags=["test"], kind="work"))
         t0 = time.time()
 
         response = client.post("/search", json={"query": content, "source": "memory", "top_k": 5})
@@ -193,7 +193,7 @@ def test_search_logs_the_filters_that_narrowed_it(client):
                 "query": content,
                 "source": "memory",
                 "top_k": 3,
-                "kind": "decision",
+                "kind": "work",
                 "tags": ["zzzfilterpin"],
                 "min_score": 0.9,
             },
@@ -205,7 +205,7 @@ def test_search_logs_the_filters_that_narrowed_it(client):
         log_row = client.portal.call(_fetch_latest_retrieval_log, content, "memory")
         assert log_row is not None
         filters = json.loads(log_row["filters"])
-        assert filters["kind"] == "decision"
+        assert filters["kind"] == "work"
         assert filters["tags"] == ["zzzfilterpin"]
         assert filters["min_score"] == 0.9
         assert filters["top_k"] == 3
@@ -229,11 +229,11 @@ async def _fetch_logged_hit_counts(query_text: str, note_id: str) -> int:
 def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
     """Two searches collapse into one batched bump that /admin/notes reports."""
     content = "access-log integration pin: zzzflushpin buffered counter advance marker"
-    note_id = build_note_row(content, "note", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     client.portal.call(_delete_note, note_id)
     client.portal.call(_delete_retrieval_log, content)
     try:
-        client.portal.call(partial(save_note, content, tags=["test"]))
+        client.portal.call(partial(save_note, content, tags=["test"], kind="work"))
         baseline = client.portal.call(_fetch_chunk, note_id)["hit_count"]
 
         for _ in range(2):
@@ -263,23 +263,25 @@ def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
 @pytest.mark.integration
 def test_save_memory_endpoint_roundtrip_and_dedup(client):
     content = "access-log integration pin: save_memory REST endpoint roundtrip dedup check"
-    note_id = build_note_row(content, "note", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     client.portal.call(_delete_note, note_id)
     try:
         first = client.post(
-            "/save_memory", json={"author": "natsume", "content": content, "tags": ["test"]}
+            "/save_memory",
+            json={"author": "natsume", "content": content, "kind": "work", "tags": ["test"]},
         )
         assert first.status_code == 200
         assert first.json() == {
             "id": note_id,
-            "kind": "note",
+            "kind": "work",
             "stored": True,
             "superseded": None,
             "similar": [],
         }
 
         second = client.post(
-            "/save_memory", json={"author": "natsume", "content": content, "tags": ["test"]}
+            "/save_memory",
+            json={"author": "natsume", "content": content, "kind": "work", "tags": ["test"]},
         )
         assert second.status_code == 200
         assert second.json()["id"] == note_id

@@ -115,7 +115,8 @@ def test_search_forwards_api_key_header(monkeypatch):
     assert captured["header"] == "secret"
 
 
-def test_save_memory_forwards_api_key_header(monkeypatch):
+@pytest.mark.parametrize("tool", ["save_personal_memory", "save_work_memory"])
+def test_save_tool_forwards_api_key_header(monkeypatch, tool):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -124,7 +125,7 @@ def test_save_memory_forwards_api_key_header(monkeypatch):
             200,
             json={
                 "id": "note:x",
-                "kind": "note",
+                "kind": "work",
                 "stored": True,
                 "superseded": None,
                 "similar": [],
@@ -133,7 +134,7 @@ def test_save_memory_forwards_api_key_header(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(mcp_server.save_memory("content", "natsume", tags=["test"], ctx=ctx))
+    asyncio.run(getattr(mcp_server, tool)("content", "natsume", tags=["test"], ctx=ctx))
     assert captured["header"] == "secret"
 
 
@@ -234,7 +235,7 @@ def test_search_explicit_namespace_sent_as_single_item_list(monkeypatch):
     assert captured["json"]["namespaces"] == ["team-a"]
 
 
-def test_save_memory_omitted_namespace_sends_no_namespace_key(monkeypatch):
+def test_save_work_memory_omitted_namespace_sends_no_namespace_key(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -243,7 +244,7 @@ def test_save_memory_omitted_namespace_sends_no_namespace_key(monkeypatch):
             200,
             json={
                 "id": "note:x",
-                "kind": "note",
+                "kind": "work",
                 "stored": True,
                 "superseded": None,
                 "similar": [],
@@ -251,11 +252,11 @@ def test_save_memory_omitted_namespace_sends_no_namespace_key(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.save_memory("content", "natsume", tags=["test"]))
+    asyncio.run(mcp_server.save_work_memory("content", "natsume", tags=["test"]))
     assert "namespace" not in captured["json"]
 
 
-def test_save_memory_explicit_namespace_forwarded(monkeypatch):
+def test_save_work_memory_explicit_namespace_forwarded(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -264,7 +265,7 @@ def test_save_memory_explicit_namespace_forwarded(monkeypatch):
             200,
             json={
                 "id": "note:x",
-                "kind": "note",
+                "kind": "work",
                 "stored": True,
                 "superseded": None,
                 "similar": [],
@@ -272,7 +273,9 @@ def test_save_memory_explicit_namespace_forwarded(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.save_memory("content", "natsume", tags=["test"], namespace="team-a"))
+    asyncio.run(
+        mcp_server.save_work_memory("content", "natsume", tags=["test"], namespace="team-a")
+    )
     assert captured["json"]["namespace"] == "team-a"
 
 
@@ -329,7 +332,12 @@ def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
     [
         pytest.param(lambda: mcp_server.search_memory(query="q"), id="search"),
         pytest.param(
-            lambda: mcp_server.save_memory("content", "natsume", tags=["test"]), id="save-memory"
+            lambda: mcp_server.save_personal_memory("content", "natsume", tags=["test"]),
+            id="save-personal-memory",
+        ),
+        pytest.param(
+            lambda: mcp_server.save_work_memory("content", "natsume", tags=["test"]),
+            id="save-work-memory",
         ),
         pytest.param(lambda: mcp_server.query_table("SELECT 1"), id="query-table"),
         pytest.param(
