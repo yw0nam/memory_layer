@@ -81,20 +81,18 @@ and an identical re-upload is refused the same way. Prose that quotes a literal
 `BEGIN … PRIVATE KEY` header is refused as a private key.
 
 A note is stored exactly as written — the server never rewrites one and writes no notes
-itself. Before embedding, every note passes the content gate, which judges it with the
-prompt of its kind: the personal prompt accepts what an assistant would want to remember
-about the user (who they are, what they have and do, like and worry about, what happened
-to them, their plans and choices, changes to earlier facts, what the assistant gave
-them, moments between them) and refuses work knowledge (session progress, what a record
-or file says, a decision, plan, convention, or status about a project or job), filler,
-and generic advice; the work prompt accepts, specifically enough to act on, a decision
-with its reason, a reproduced bug with its cause or fix, a non-obvious environment fact,
-a failed approach and why, or a working convention the user set, and refuses a copy of
-what a record says, progress or next steps, a file description, generic advice, the
-user's personal life, or filler; in both the refusal list wins, and a note carrying a
-separate fact of the other kind is refused with a reason to split it; a failure is
-refused with HTTP 409 carrying the reason and the kind's recovery (the other tool when
-the content clearly belongs there, one rewrite in total, otherwise store nothing). The
+itself. Before embedding, every note passes the content gate, which judges it with one
+prompt whatever its kind: it accepts what a later conversation or session could use —
+who the user is, what they have and do, like and worry about, what happened to them,
+their plans and choices, changes to earlier facts, what the assistant made or gave them,
+moments between them, and work knowledge no record holds (a decision with its reason, a
+reproduced bug with its cause or fix, a non-obvious environment fact, a failed approach
+and why, a working convention the user set) — and refuses low signal: session narration,
+progress or next steps, a copy of what a record held elsewhere says, a file description,
+generic advice, or filler. Something built in the conversation from facts no record holds
+is not a copy. The refusal list wins; the kind never refuses a note, nor does a mix of
+the user's life and work. A refusal is HTTP 409 carrying the reason and the recovery (one
+rewrite, or `send_message` for progress, otherwise store nothing). The
 verdict is final; a judge failure saves the note stamped `metadata.content_gate =
 "unavailable"`. A note landing next to active notes above `NOTE_SIMILAR_THRESHOLD`
 cosine is refused with HTTP 409 listing them, unless `supersedes` names one of them or

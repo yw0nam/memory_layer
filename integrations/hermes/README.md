@@ -27,7 +27,7 @@ Nothing is injected by recency; every injected note matched the turn's query at
   search over it returns a copy of that file at best; the turn is dropped whole.
 
 The provider never registers tools — the MCP server already exposes `search`/`search_memory`/
-`save_personal_memory`/`save_work_memory` for on-demand recall.
+`save_memory` for on-demand recall.
 
 ## Layout
 
