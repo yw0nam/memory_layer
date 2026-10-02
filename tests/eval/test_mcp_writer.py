@@ -201,3 +201,55 @@ def test_the_agent_runs_an_isolated_headless_session(monkeypatch, tmp_path):
     assert sent["cwd"] != str(tmp_path)
     assert record["num_turns"] == 4
     assert record["seconds"] >= 0
+
+
+def test_the_eval_api_gates_with_the_benchmark_key(monkeypatch):
+    spawned = {}
+
+    class Proc:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout):
+            return 0
+
+    def popen(argv, **kwargs):
+        spawned["env"] = kwargs["env"]
+        return Proc()
+
+    class Health:
+        status_code = 200
+
+    monkeypatch.setenv("ZAI_API_KEY", "production-key")
+    monkeypatch.setenv(mcp_writer.GATE_KEY_ENV, "benchmark-key")
+    monkeypatch.setattr(mcp_writer.subprocess, "Popen", popen)
+    monkeypatch.setattr(mcp_writer.httpx, "get", lambda *a, **k: Health())
+    with mcp_writer.EvalApi():
+        pass
+    assert spawned["env"]["ZAI_API_KEY"] == "benchmark-key"
+
+
+def test_questions_run_concurrently_up_to_the_limit(monkeypatch, tmp_path):
+    in_flight, peak, done = 0, 0, []
+
+    async def write_question(question, turns, writer, api_url, data_dir):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        done.append(question["question_id"])
+
+    monkeypatch.setattr(mcp_writer, "write_question", write_question)
+    monkeypatch.setattr(mcp_writer, "session_turns", lambda questions: {})
+    monkeypatch.setattr(mcp_writer, "session_units", lambda question: [])
+    questions = [{"question_id": f"q{i}"} for i in range(5)]
+    args = mcp_writer.build_parser().parse_args(
+        ["--dataset", "d.json", "--data-dir", str(tmp_path), "--concurrency", "2"]
+    )
+    asyncio.run(mcp_writer._write_all(questions, args, "http://127.0.0.1:1"))
+    assert peak == 2
+    assert sorted(done) == [f"q{i}" for i in range(5)]
