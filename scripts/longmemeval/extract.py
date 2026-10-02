@@ -70,7 +70,7 @@ CLAUDE_EXTRACT_TIMEOUT_SECONDS = 600.0
 # z.ai's content filter: a 400 with this code refuses the input itself, so a retry cannot pass.
 CONTENT_FILTER_CODE = "1301"
 
-Gate = Callable[[str, str], Awaitable[notes_module.ContentVerdict]]
+Gate = Callable[[str], Awaitable[notes_module.ContentVerdict]]
 
 # Token usage of the gate calls made for the unit running in the current task.
 _gate_usage: contextvars.ContextVar[dict[str, int] | None] = contextvars.ContextVar(
@@ -230,7 +230,7 @@ async def _judge_with_retry(gate: Gate, content: str) -> tuple[Any, int]:
 
     for attempt in range(GATE_ATTEMPTS):
         try:
-            return await gate(content, lme.NOTE_KIND), attempt
+            return await gate(content), attempt
         except Exception as exc:
             if is_content_filter_refusal(exc):
                 # Production fails open when the gate cannot judge; the note is saved unjudged.
@@ -435,7 +435,7 @@ def _extract_manifest(
         and {
             "provider": gate_provider.name,
             "model": gate_provider.model,
-            "judge_prompt_sha256": lme.prompt_sha(notes_module.PERSONAL_JUDGE_PROMPT),
+            "judge_prompt_sha256": lme.prompt_sha(notes_module.JUDGE_PROMPT),
         },
         "units": {
             "selected": len(units),

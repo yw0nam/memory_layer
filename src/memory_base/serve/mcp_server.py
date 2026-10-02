@@ -26,11 +26,12 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from typing import Any, Mapping
+from typing import Annotated, Any, Literal, Mapping
 
 import httpx
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import Field
 
 from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
 from memory_base.adapters.document import extension_for
@@ -59,17 +60,16 @@ over the rows, and search never returns the rows themselves.
 """
 
 _WRITE_POLICY = """\
-Write rarely. Pick the save tool by what is being remembered: something about the user
-(their life, their day, or a moment they shared with you, even during work) goes to
-save_personal_memory; work knowledge that code, version control, and the tracker cannot
-answer goes to save_work_memory; progress or state for the next session goes to
-send_message. Each save tool states its own bar and has its own gate. Before saving,
-search_memory the same subject; when the new note replaces one, supersede it rather than
-adding a note that contradicts it, and if other active notes state the same stale value,
-archive them with archive_notes. A refusal carries the reason: rewrite at most once in
-total, whichever tool, moving the note to the other save tool only when its content
-clearly belongs there; if the rewrite is refused too, store nothing and tell the user
-when one is present."""
+Write rarely. Save with save_memory and label the note with kind: "personal" for something
+about the user (their life, their day, or a moment they shared with you, even during
+work), "work" for work knowledge that code, version control, and the tracker cannot
+answer; progress or state for the next session goes to send_message. The kind only labels
+a note: a refusal means the note is low signal, never that it has the other kind. Before
+saving, search_memory the same subject; when the new note replaces one, supersede it
+rather than adding a note that contradicts it, and if other active notes state the same
+stale value, archive them with archive_notes. A refusal carries the reason: rewrite
+at most once; if the rewrite is refused too, store nothing and tell the user when one
+is present."""
 
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
@@ -96,9 +96,8 @@ one. A note's first tag names its subject, usually the repository or domain it b
 to, so that a later search can narrow to it.
 
 Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly
-coincides; read both sides, then either merge them into one note with
-save_personal_memory or save_work_memory (supersedes=...) or drop one with
-archive_notes. Every write and archive names its author. delete_notes is for rows that
+coincides; read both sides, then either merge them into one note with save_memory
+(supersedes=...) or drop one with archive_notes. Every write and archive names its author. delete_notes is for rows that
 must never resurface; archiving is otherwise always preferred."""
 
 SERVER_INSTRUCTIONS = "\n\n".join(
@@ -433,17 +432,78 @@ async def list_notes(
     )
 
 
-async def _save(
-    kind: str,
+@mcp.tool()
+async def save_memory(
     content: str,
-    author: str,
-    tags: list[str],
-    supersedes: str | None,
-    allow_similar: bool,
-    namespace: str | None,
-    occurred_at: str | None,
-    ctx: Context | None,
+    author: Annotated[
+        str, Field(description="The saving agent; must be in the key's author allowlist.")
+    ],
+    tags: Annotated[
+        list[str],
+        Field(
+            description="Required; the first tag names the subject so a later search can "
+            "narrow to it."
+        ),
+    ],
+    kind: Annotated[
+        Literal["personal", "work"],
+        Field(
+            description='"personal" (the user, their life, their day, moments with you) or '
+            '"work" (their work and projects); a label for search, never a reason to refuse.'
+        ),
+    ],
+    supersedes: Annotated[
+        str | None, Field(description="Id of the note this one replaces; that note is archived.")
+    ] = None,
+    allow_similar: Annotated[
+        bool,
+        Field(
+            description="True only when a near-identical active note records a genuinely "
+            "different fact."
+        ),
+    ] = False,
+    namespace: Annotated[
+        str | None, Field(description="Defaults to the key's home namespace.")
+    ] = None,
+    occurred_at: Annotated[
+        str | None,
+        Field(
+            description="ISO 8601, not in the future: when the remembered event happened; "
+            "pass it when the note records an event."
+        ),
+    ] = None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
+    """Remember the user and their work for later sessions.
+
+    `kind` labels the note for a later search: "personal" for the user, their life, their
+    day, and moments with you, even during work; "work" for their work and projects. The
+    label never decides whether a note is stored; a note touching both takes the label it
+    mostly serves.
+
+    Save what a later conversation or session would want: a fact about the user or someone
+    close to them, a habit or possession, a preference and its reason, an event with its
+    date and outcome, a plan or a choice, a change to something remembered before, a
+    moment between you, or something you made or gave them that they may want again (a
+    recommendation, number, list, or schedule, with its specifics). From their work, save
+    what code, version control, the tracker, and documentation cannot answer: a decision
+    and its reason, a reproduced bug and its fix, a non-obvious environment fact, an
+    approach that failed and why, or a convention the user set; a decision without its
+    reason is not worth keeping. Do NOT save progress or next steps of the current session
+    (send_message carries those), what a PR, issue, commit, file, or document already
+    says, what a file or function does, generic advice, greetings, or filler.
+
+    Write `content` in English whatever the conversation language, already distilled,
+    opening with the subject, standalone, with absolute dates ("on 2026-09-30", never
+    "yesterday"). A note carrying a credential is refused.
+
+    Before saving, search_memory the same subject. If the new note replaces one, pass
+    `supersedes` with its id and write the current value with the previous one stated,
+    e.g. "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)"; if other active notes
+    state the same stale value, archive them with archive_notes. A note refused as low
+    signal comes back with the reason; rewrite it once, and if that is refused too, store
+    nothing and tell the user when one is present.
+    """
     body: dict[str, Any] = {
         "content": content,
         "author": author,
@@ -461,132 +521,6 @@ async def _save(
         "/save_memory",
         json=body,
         headers=_auth_headers(ctx),
-    )
-
-
-@mcp.tool()
-async def save_personal_memory(
-    content: str,
-    author: str,
-    tags: list[str],
-    supersedes: str | None = None,
-    allow_similar: bool = False,
-    namespace: str | None = None,
-    occurred_at: str | None = None,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Remember the user: their life, their day, moments with you.
-
-    Save what you would want to recall in a later conversation with this user: a fact
-    about them or someone close to them, a habit or possession, a preference and its
-    reason, an event with its date and outcome, a plan or a choice, a change to something
-    remembered before, a moment between you, even one during work, or a recommendation,
-    number, list, or schedule you gave them that they may want again. Use your judgment; a passing event or a mood is worth keeping
-    when it says something about the user. Do NOT save work knowledge here: a decision,
-    plan, convention, or status about a project or job, technical or not, a bug, fix, or
-    environment fact, or the progress of a coding or work session goes to
-    save_work_memory or send_message, and the gate refuses it here; how the user wants
-    you to talk to them is a preference of the user and belongs here. Do NOT save
-    greetings, filler, a restated question, or general knowledge with no fact about the
-    user.
-
-    `content` MUST be written in English regardless of the conversation language, and be
-    already distilled (the server does no summarization). Open with the subject itself,
-    write it standalone, and use absolute dates ("on 2026-09-30", never "yesterday");
-    pass `occurred_at` when the note records an event.
-
-    Before saving, search_memory the same subject. If the new note replaces one, pass
-    `supersedes` with its id and write the current value with the previous one stated,
-    e.g. "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)"; if other active notes
-    state the same stale value, archive them with archive_notes. A save that lands next
-    to a near-identical active note is refused with the neighbours listed: supersede the
-    one it replaces, or pass `allow_similar=True` when it is a genuinely different fact.
-    A refused note comes back with the gate's reason. It may be rewritten once in total,
-    whichever tool: move it to the other save tool only when its content clearly belongs
-    there, otherwise rewrite the part that qualifies; a note refused as a mix of the
-    user's life and work knowledge is split, each part saved with its own tool. If that
-    is refused too, store nothing and tell the user when one is present. A note whose
-    content or tags carry a credential (an API key, token, private key, JWT, or password
-    in a URL) is refused; store the fact without the secret.
-
-    `tags` is required; the first tag names the subject so a later search can narrow to
-    it. `author` names the saving agent and must be in the key's author allowlist.
-    `occurred_at` (ISO 8601, not in the future) records when the remembered event
-    happened. `namespace` defaults to the key's home namespace. `stored` is False when
-    identical content was already saved; `kind` is then the stored note's kind.
-    """
-    return await _save(
-        "personal",
-        content,
-        author,
-        tags,
-        supersedes,
-        allow_similar,
-        namespace,
-        occurred_at,
-        ctx,
-    )
-
-
-@mcp.tool()
-async def save_work_memory(
-    content: str,
-    author: str,
-    tags: list[str],
-    supersedes: str | None = None,
-    allow_similar: bool = False,
-    namespace: str | None = None,
-    occurred_at: str | None = None,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Record work knowledge no code, commit, or tracker holds.
-
-    That is what code, version control, the tracker, and documentation cannot answer:
-    a decision and why, a reproduced bug and its fix, a non-obvious
-    environment fact, an approach that failed and why, or a convention the user set for
-    how work is done.
-
-    The bar is strict. Name what the note is about (the project, system, or tool) and
-    state its reason, condition, or outcome; a decision without its reason, or a lesson
-    without the failure behind it, is refused. Do NOT save what a PR, issue, commit,
-    file, or document already says, what a file or function does, progress or next steps
-    of the current session (send_message carries those to the next session), generic
-    advice, or anything about the user's personal life (save_personal_memory).
-
-    `content` MUST be written in English regardless of the conversation language, and be
-    already distilled (the server does no summarization). Open with the subject itself,
-    write it standalone, and use absolute dates.
-
-    Before saving, search_memory the same subject. If the new note replaces one, pass
-    `supersedes` with its id and write the current value with the previous one stated,
-    e.g. "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)"; if other active notes
-    state the same stale value, archive them with archive_notes. A save that lands next
-    to a near-identical active note is refused with the neighbours listed: supersede the
-    one it replaces, or pass `allow_similar=True` when it is a genuinely different fact.
-    A refused note comes back with the gate's reason. It may be rewritten once in total,
-    whichever tool: move it to the other save tool only when its content clearly belongs
-    there, otherwise rewrite the part that qualifies; a note refused as a mix of the
-    user's life and work knowledge is split, each part saved with its own tool. If that
-    is refused too, store nothing and tell the user when one is present. A note whose
-    content or tags carry a credential (an API key, token, private key, JWT, or password
-    in a URL) is refused; store the fact without the secret.
-
-    `tags` is required; the first tag names the subject so a later search can narrow to
-    it. `author` names the saving agent and must be in the key's author allowlist.
-    `occurred_at` (ISO 8601, not in the future) records when the remembered event
-    happened. `namespace` defaults to the key's home namespace. `stored` is False when
-    identical content was already saved; `kind` is then the stored note's kind.
-    """
-    return await _save(
-        "work",
-        content,
-        author,
-        tags,
-        supersedes,
-        allow_similar,
-        namespace,
-        occurred_at,
-        ctx,
     )
 
 
@@ -751,9 +685,8 @@ async def list_memory_duplicates(
 
     Read-only. Each pair carries both notes' id, kind, author, and text plus
     their cosine score, over the namespaces the caller's API key can access.
-    Read both sides before acting: merge them into one note with
-    `save_personal_memory` or `save_work_memory` with `supersedes`, or drop one with
-    `archive_notes`. `threshold` (default 0.9), `kind`, and `limit` (default 50) narrow the
+    Read both sides before acting: merge them into one note with `save_memory` with
+    `supersedes`, or drop one with `archive_notes`. `threshold` (default 0.9), `kind`, and `limit` (default 50) narrow the
     scan; `kind` is "personal" or "work".
     """
     params: list[tuple[str, str]] = []

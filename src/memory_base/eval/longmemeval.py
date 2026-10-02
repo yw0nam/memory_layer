@@ -705,7 +705,7 @@ def _hit_record(hit: Any, provenance: dict[str, set[tuple[str, str]]]) -> dict[s
     }
 
 
-async def _gate_pinned_open(content: str, kind: str):
+async def _gate_pinned_open(content: str):
     from memory_base.serve.notes import ContentVerdict
 
     return ContentVerdict(accepted=True, reason="verdict recorded at extraction")
