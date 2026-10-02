@@ -9,13 +9,17 @@ Save:
 4. Dated events the user took part in and their outcome: milestones, purchases, trips, achievements, counts and scores. Write the absolute date, resolving "yesterday" or "last week" against the session date.
 5. Plans, goals, and commitments, with their dates.
 6. Changes to an earlier fact: the new value and the old value it replaces.
-7. Specific answers for a use the user stated in their own situation, plan, or project, or the defining facts of original writing or collaborative roleplay the assistant produced for them. Remember which answer or content the user received for that use, including exact names, numbers, ratios, and fictional labels; attribute advice to the assistant and story facts to the fiction. A question alone does not establish a personal use. Exclude curiosity Q&A and the results of processing pasted text, even for the user's project.
-Save at most one item-7 note per session, combining only essential details of qualifying answers; omit details already saved in other notes.
-Do not save: greetings, filler, thanks; generic advice or explanations true for anyone; the assistant's reasoning or process; restatements of the question; a fact already saved from this session."
+7. Specific things the assistant gave that the user may ask for again: a named recommendation, a number, a list or schedule the assistant produced. Name the items.
+Do not save: greetings, filler, thanks; generic advice or explanations true for anyone; the assistant's reasoning or process; restatements of the question; a fact already saved from this session.
+Kinds: "episode" for a dated event (item 4); "decision" for a choice and its reason; "note" for everything else."
 
-Notes. Do not manufacture a summary to have something to store. Write each note as one English paragraph, under 4000 characters. Open with the subject itself (the person, thing, or fact), never with a date token or a reference to the session. Write it standalone: it will be read months later with no surrounding context, so no "as discussed above", no pronouns without antecedents, no reference to other sessions. Resolve relative dates against the session date; use YYYY-MM-DD only when the day is known, otherwise keep the known precision. Describe completed events and advice received in past tense; the conversation itself is not an event. Call the user "the user".
+Notes. Do not manufacture a summary to have something to store. Write each note as one English paragraph, under 4000 characters. Open with the subject itself (the person, thing, or fact), never with a date token or a reference to the session. Write it standalone: it will be read months later with no surrounding context, so no "as discussed above", no pronouns without antecedents, no reference to other sessions.
 
-User turns sometimes embed pasted logs, tool errors, or context blocks inline. That noise never belongs in a note; judge and write from the actual conversation around it. Content must arrive distilled, in English: never raw transcript text or quoted dialogue.
+Episodes. An episode is a dated event: something that happened on a specific day and whose outcome is worth recalling later. A session having happened is not an event. Write 1-3 English sentences, past tense, standalone, topic-first: subject, then the condition, then the outcome, in the form "On <YYYY-MM-DD>, <subject> <condition> - <outcome>." Write in plain third-person factual prose and call the user "the user".
+
+Links and tags. The session below lists each turn as "[index] role: text", where the index is the turn's absolute position in the whole conversation; it may start partway through a longer conversation. Give every note and episode turn_start and turn_end, the indices of the first and last turn it was distilled from, and tags: one to three short lowercase topic words naming what it is about, at least one. Give an episode its date as well, the day it happened in the form YYYY-MM-DD.
+
+User turns sometimes embed pasted logs, tool errors, or context blocks inline. That noise never belongs in a note or episode; judge and write from the actual conversation around it. Content must arrive distilled, in English: never raw transcript text or quoted dialogue.
 
 Session date: {date}
 Session:

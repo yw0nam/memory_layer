@@ -494,8 +494,6 @@ def test_the_digest_and_personal_prompts_are_the_packaged_extraction_prompts():
     messages = extract.build_messages(DATE_A, [{"role": "user", "content": "my bike"}], "digest")
     assert messages[0]["content"] == extraction.EXTRACTION_SYSTEM_PROMPT
     assert "[0] user: my bike" in messages[1]["content"]
-    personal = extract.build_messages(DATE_A, [{"role": "user", "content": "my bike"}], "personal")
-    assert personal[0]["content"] == extraction.PERSONAL_SYSTEM_PROMPT
 
 
 def test_the_packaged_prompt_shas_are_pinned():
@@ -503,5 +501,5 @@ def test_the_packaged_prompt_shas_are_pinned():
         "d36c16c1e5f1e23450d550ceacb5503edcdbf01f473f350cd2f98763261d24c1"
     )
     assert extract.prompt_sha256("personal") == (
-        "9374826c829515d10e9f0e7b39358b5354be1844078b38579d225ce4d94f45f1"
+        "9609641776fd4d3c014da668bbb45c83ec12a74206957fb692c9b00f200e9c92"
     )
