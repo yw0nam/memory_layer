@@ -5,7 +5,9 @@ is a stdio memory_base server talking to a throwaway REST API on a throwaway Pos
 with the content gate on. The agent sees the published instruction, the session date,
 and the transcript, and decides by itself what to save. Each question has its own
 namespace and key; its sessions run in date order, and earlier memory is reachable only
-through search. The run records every session's tool calls, saves, refusals, usage, and
+through search; questions run concurrently up to --concurrency. The content gate uses
+SUB_ZAI_API_KEY when set, so a benchmark does not share the production gate's rate
+limit. The run records every session's tool calls, saves, refusals, usage, and
 the notes it created, and exports each question's end-state notes with provenance.
 
     uv run python -m memory_base.eval.mcp_writer --dataset PATH --questions ID[,ID...]
@@ -58,6 +60,7 @@ INSTRUCTION = (
 )
 AUTHOR_LINE = f"Your author name for the memory tools is {AUTHOR}."
 SERVER_NAME = "memory-base"
+GATE_KEY_ENV = "SUB_ZAI_API_KEY"
 TOOL_PREFIX = f"mcp__{SERVER_NAME}__"
 SAVE_TOOLS = ("save_personal_memory", "save_work_memory")
 # The production REST port; the eval backend must never be reached through it.
@@ -281,6 +284,8 @@ class EvalApi:
             "LOG_DIR": str(state / "logs"),
             "COCOINDEX_DB": str(state / "cocoindex"),
         }
+        if os.environ.get(GATE_KEY_ENV):
+            env["ZAI_API_KEY"] = os.environ[GATE_KEY_ENV]
         self.proc = subprocess.Popen(argv, cwd=REPO_ROOT, env=env)
         deadline = time.monotonic() + API_BOOT_SECONDS
         while True:
@@ -400,14 +405,22 @@ async def _write_all(
 ) -> None:
     turns = session_turns(questions)
     writer = ClaudeCodeWriter(model=args.model)
-    for index, question in enumerate(questions, 1):
-        started = time.monotonic()
-        await write_question(question, turns, writer, api_url, args.data_dir)
-        print(
-            f"[{index}/{len(questions)}] {question['question_id']} "
-            f"({len(session_units(question))} sessions, {time.monotonic() - started:.0f}s)",
-            flush=True,
-        )
+    slots = asyncio.Semaphore(args.concurrency)
+    finished = 0
+
+    async def one(question: dict[str, Any]) -> None:
+        nonlocal finished
+        async with slots:
+            started = time.monotonic()
+            await write_question(question, turns, writer, api_url, args.data_dir)
+            finished += 1
+            print(
+                f"[{finished}/{len(questions)}] {question['question_id']} "
+                f"({len(session_units(question))} sessions, {time.monotonic() - started:.0f}s)",
+                flush=True,
+            )
+
+    await asyncio.gather(*(one(question) for question in questions))
 
 
 def run(args: argparse.Namespace) -> None:
@@ -425,6 +438,8 @@ def run(args: argparse.Namespace) -> None:
         "writer": {"harness": "claude-code", "model": args.model, "author": AUTHOR},
         "instruction": INSTRUCTION,
         "author_line": AUTHOR_LINE,
+        "gate_key": GATE_KEY_ENV if os.environ.get(GATE_KEY_ENV) else "ZAI_API_KEY",
+        "concurrency": args.concurrency,
         "run_id": secrets.token_hex(4),
     }
     append_jsonl(args.data_dir / "writer-runs.jsonl", [manifest])
@@ -445,6 +460,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR / "mcp-writer")
     parser.add_argument("--model", default="sonnet")
+    parser.add_argument("--concurrency", type=int, default=1, help="questions written at once")
     return parser
 
 
