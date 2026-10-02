@@ -59,16 +59,17 @@ over the rows, and search never returns the rows themselves.
 """
 
 _WRITE_POLICY = """\
-Write rarely. Pick the save tool by what is being remembered: something about the
-user and their life goes to save_personal_memory; work knowledge that code, version
-control, and the tracker cannot answer goes to save_work_memory; progress or state for
-the next session goes to send_message. Each save tool states its own bar and has its own
-gate. Before saving, search_memory the same subject; when the new note replaces one,
-supersede it rather than adding a note that contradicts it, and if other active notes
-state the same stale value, archive them with archive_notes. A refusal carries the
-reason: rewrite at most once in total, whichever tool, moving the note to the other save
-tool only when its content clearly belongs there; if the rewrite is refused too, store
-nothing and tell the user when one is present."""
+Write rarely. Pick the save tool by what is being remembered: something about the user
+(their life, their day, or a moment they shared with you, even during work) goes to
+save_personal_memory; work knowledge that code, version control, and the tracker cannot
+answer goes to save_work_memory; progress or state for the next session goes to
+send_message. Each save tool states its own bar and has its own gate. Before saving,
+search_memory the same subject; when the new note replaces one, supersede it rather than
+adding a note that contradicts it, and if other active notes state the same stale value,
+archive them with archive_notes. A refusal carries the reason: rewrite at most once in
+total, whichever tool, moving the note to the other save tool only when its content
+clearly belongs there; if the rewrite is refused too, store nothing and tell the user
+when one is present."""
 
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
@@ -474,15 +475,13 @@ async def save_personal_memory(
     occurred_at: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Remember something about the user: their life, the people and things around them,
-    what happened to them, what they like, plan, or chose, and what you gave them that
-    they may want again.
+    """Remember the user: their life, their day, moments with you.
 
     Save what you would want to recall in a later conversation with this user: a fact
     about them or someone close to them, a habit or possession, a preference and its
     reason, an event with its date and outcome, a plan or a choice, a change to something
-    remembered before, a moment between you, or a recommendation, number, list, or
-    schedule you gave them. Use your judgment; a passing event or a mood is worth keeping
+    remembered before, a moment between you, even one during work, or a recommendation,
+    number, list, or schedule you gave them that they may want again. Use your judgment; a passing event or a mood is worth keeping
     when it says something about the user. Do NOT save work knowledge here: a decision,
     plan, convention, or status about a project or job, technical or not, a bug, fix, or
     environment fact, or the progress of a coding or work session goes to
@@ -540,8 +539,10 @@ async def save_work_memory(
     occurred_at: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Record work knowledge that code, version control, the tracker, and documentation
-    cannot answer: a decision and why, a reproduced bug and its fix, a non-obvious
+    """Record work knowledge no code, commit, or tracker holds.
+
+    That is what code, version control, the tracker, and documentation cannot answer:
+    a decision and why, a reproduced bug and its fix, a non-obvious
     environment fact, an approach that failed and why, or a convention the user set for
     how work is done.
 
