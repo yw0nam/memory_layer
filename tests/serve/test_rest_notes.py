@@ -269,7 +269,7 @@ def _patch_note_deps(monkeypatch, conn):
     monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
     monkeypatch.setattr(notes, "ensure_schema_once", _noop)
 
-    async def accepted_judge(content, kind):
+    async def accepted_judge(content):
         return ContentVerdict(accepted=True, reason="durable knowledge")
 
     monkeypatch.setattr(notes, "judge_note_content", accepted_judge)

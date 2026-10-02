@@ -165,7 +165,7 @@ def test_schema_creates_messages_table_with_contracted_columns():
 def test_send_stores_rendered_content_without_touching_the_note_path(monkeypatch):
     marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
 
-    async def _no_gate(content, kind):
+    async def _no_gate(content):
         raise AssertionError("the note content gate must not run for messages")
 
     def _no_embed(*args, **kwargs):

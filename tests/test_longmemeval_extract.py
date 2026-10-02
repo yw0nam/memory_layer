@@ -34,7 +34,7 @@ class FakeClient:
         return json.dumps({"notes": []}), 100, 2
 
 
-async def accept(content, kind):
+async def accept(content):
     return ContentVerdict(accepted="chatter" not in content, reason="judged")
 
 
@@ -102,7 +102,7 @@ def test_gate_failures_are_retried_and_never_recorded_as_a_verdict(tmp_path, mon
     monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
     attempts = []
 
-    async def flaky(content, kind):
+    async def flaky(content):
         attempts.append(content)
         if len(attempts) < 3:
             raise TimeoutError("gate down")
@@ -120,7 +120,7 @@ def test_gate_failures_are_retried_and_never_recorded_as_a_verdict(tmp_path, mon
 def test_a_unit_whose_gate_stays_down_is_not_written(tmp_path, monkeypatch):
     monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
 
-    async def down(content, kind):
+    async def down(content):
         raise TimeoutError("gate down")
 
     client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
@@ -136,7 +136,7 @@ def test_a_gate_content_filter_refusal_stores_the_note_unjudged_like_production(
     monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
     attempts = []
 
-    async def filtered(content, kind):
+    async def filtered(content):
         attempts.append(content)
         raise provider_error("1301")
 
@@ -167,15 +167,15 @@ THREE_LABELS = [
 ]
 
 
-def test_extraction_keeps_the_extractors_label_and_judges_every_note_as_personal(tmp_path):
+def test_extraction_keeps_the_extractors_label_and_judges_every_note(tmp_path):
     judged = []
 
-    async def recording_gate(content, kind):
-        judged.append(kind)
+    async def recording_gate(content):
+        judged.append(content)
         return ContentVerdict(accepted=True, reason="judged")
 
     run([unit("s1", DATE_A, "bike")], tmp_path, FakeClient({"bike": THREE_LABELS}), recording_gate)
-    assert judged == ["personal"] * 3
+    assert len(judged) == 3
     notes = extract.read_notes(tmp_path)
     assert [n["kind"] for n in notes] == ["note", "decision", "episode"]
     assert [n["gate"] for n in notes] == ["stored"] * 3
@@ -205,9 +205,7 @@ def test_the_manifest_hashes_the_personal_judge_prompt(tmp_path, monkeypatch):
          "--manifest", str(manifest), "--questions", qid, "--gate", "on"]
     )  # fmt: skip
     section = lme.read_manifest(manifest)["extract"]
-    assert section["gate"]["judge_prompt_sha256"] == lme.prompt_sha(
-        notes_module.PERSONAL_JUDGE_PROMPT
-    )
+    assert section["gate"]["judge_prompt_sha256"] == lme.prompt_sha(notes_module.JUDGE_PROMPT)
 
 
 def test_the_gate_off_flag_skips_the_gate_and_leaves_it_out_of_the_manifest(tmp_path, monkeypatch):
@@ -220,7 +218,7 @@ def test_the_gate_off_flag_skips_the_gate_and_leaves_it_out_of_the_manifest(tmp_
     client.model, client.provider = "glm-5.3-flash", "zai"
     monkeypatch.setattr(extract.OpenAIExtractor, "from_env", lambda env, model: client)
 
-    async def never(content, kind):
+    async def never(content):
         raise AssertionError("gate called")
 
     monkeypatch.setattr(notes_module, "judge_note_content", never)
@@ -247,7 +245,7 @@ def test_invalid_extractor_output_is_retried_then_parsed(tmp_path, monkeypatch):
 def test_notes_the_save_path_would_refuse_are_refused_without_a_gate_call(tmp_path):
     gated = []
 
-    async def gate(content, kind):
+    async def gate(content):
         gated.append(content)
         return ContentVerdict(accepted=True, reason="fine")
 

@@ -50,8 +50,7 @@ def test_tool_list_includes_document_ingestion():
         "search",
         "search_code",
         "search_memory",
-        "save_personal_memory",
-        "save_work_memory",
+        "save_memory",
         "query_table",
         "ingest_document",
         "ingest_repo",
@@ -411,13 +410,13 @@ def test_search_returns_rest_response_body_unmodified(monkeypatch):
 # ---- save tool proxying ---------------------------------------------------
 
 
-def test_save_work_memory_400_response_raises_value_error_with_server_message(monkeypatch):
+def test_save_memory_400_response_raises_value_error_with_server_message(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": "content must not be empty"})
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="content must not be empty"):
-        asyncio.run(mcp_server.save_work_memory("", "natsume", tags=["test"]))
+        asyncio.run(mcp_server.save_memory("", "natsume", tags=["test"], kind="work"))
 
 
 # ---- lifecycle tool proxying ------------------------------------------------
@@ -761,7 +760,6 @@ def test_save_tool_schemas_offer_no_conversation_link():
             return {t.name: t for t in result.tools}
 
     tools = asyncio.run(_run())
-    for name in ("save_personal_memory", "save_work_memory"):
-        properties = tools[name].inputSchema["properties"]
-        assert not {"conversation_id", "turn_start", "turn_end"} & set(properties)
+    properties = tools["save_memory"].inputSchema["properties"]
+    assert not {"conversation_id", "turn_start", "turn_end"} & set(properties)
     assert not {"expand_source", "list_conversations"} & set(tools)

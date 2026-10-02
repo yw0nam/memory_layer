@@ -147,7 +147,7 @@ def only_integration_tests_reach_the_database(request, monkeypatch):
 
     from memory_base.serve import notes
 
-    async def accept(content, kind):
+    async def accept(content):
         return notes.ContentVerdict(accepted=True, reason="integration tests pin the gate open")
 
     monkeypatch.setattr(notes, "judge_note_content", accept)
