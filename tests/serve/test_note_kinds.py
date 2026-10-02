@@ -418,7 +418,7 @@ def test_save_tool_descriptions_state_their_criteria():
     personal = tools["save_personal_memory"].description
     work = tools["save_work_memory"].description
     for anchor in (
-        "Remember something about the user",
+        "a moment between you, even one during work,",
         "Do NOT save work knowledge here",
         "technical or not",
         "save_work_memory",
@@ -445,6 +445,20 @@ def test_save_tool_descriptions_state_their_criteria():
         assert "split, each part saved with its own tool" in " ".join(description.split())
 
 
+def test_save_tool_summaries_fit_a_tool_catalog():
+    # A deferring client shows the first sentence clipped to 60 characters.
+    tools = _tools()
+    first = {
+        name: re.match(r"(.+?[.!?])(?=\s|$)", " ".join(tools[name].description.split())).group(1)
+        for name in ("save_personal_memory", "save_work_memory")
+    }
+    assert first == {
+        "save_personal_memory": "Remember the user: their life, their day, moments with you.",
+        "save_work_memory": "Record work knowledge no code, commit, or tracker holds.",
+    }
+    assert all(len(sentence) <= 60 for sentence in first.values())
+
+
 def test_server_instructions_route_each_memory_to_its_tool():
     for anchor in (
         "save_personal_memory",
@@ -452,8 +466,9 @@ def test_server_instructions_route_each_memory_to_its_tool():
         "send_message",
         "Write rarely.",
         "at most once",
+        "a moment they shared with you, even during work",
     ):
-        assert anchor in SERVER_INSTRUCTIONS
+        assert anchor in " ".join(SERVER_INSTRUCTIONS.split())
     assert "save_memory" not in SERVER_INSTRUCTIONS
 
 
