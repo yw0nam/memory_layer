@@ -140,63 +140,6 @@ wrapper that reads the date the loader binds around each `save_note` call, and n
 in the server changes. It also moves near-duplicate neighbour scores, so similar acks
 are reported for both runs.
 
-### Agent writer
-
-`--writer agent` puts an emulated client agent in front of each save, the way a client
-agent decides supersedes; the decision stays in eval code and the server makes none.
-Per note, in date order within the question:
-
-```
-note (content, session date)
-   |
-   | search(content, source="memory", namespaces=[namespace], min_score=MIN_SCORE)
-   v
-top 5 candidates, in rerank order: [i] (YYYY-MM-DD) text
-   |  none -> plain save, no model call
-   v
-writer model (claude-sonnet-5-5, effort medium, headless Claude Code)
-   |  {"action": "new"}  -> plain save
-   |  {"action": "supersede", "index": i, "archive": [j, ...], "content": ...}
-   |       -> save the rewrite with supersedes=<candidate i id>,
-   |          then archive_rows([candidate j ids], namespaces=[namespace],
-   v          archived_by="lme-writer")
-LoadStats: agent_calls, superseded, archived, agent_errors
-```
-
-The rewrite states the current value and the previous value with their dates (for
-example "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)") and keeps the rest of
-the new note. `archive` is optional (default empty) and lists the other candidates that
-state the same stale value as candidate i, such as one fact extracted from two sessions;
-they are archived in the question namespace through `archive_rows`, the call behind the
-`archive_notes` tool, once the rewrite is saved. An `archive` entry that is not a
-candidate index, repeats, or equals `index` makes the reply malformed. A malformed reply
-or a failed call is retried up to three times; a search that fails, three failed
-attempts, or a rewrite that `save_note` refuses each count one agent error and save the
-original note plainly (archiving nothing), so every note still reaches the store. An
-archive call that fails counts one agent error and keeps the saved rewrite. A listed
-candidate whose id is the rewrite's own (the rewritten text hashes to that row) is never
-archived. The rewrite's id maps to its own session and to every session of the notes it
-superseded or archived, so a hit on it counts toward the sessions of the values it
-replaced.
-`--writer-model` and `--writer-effort` choose another model or effort.
-
-| counter | counts |
-|---|---|
-| `agent_calls` | writer model calls, retries included |
-| `superseded` | notes saved as a rewrite with `supersedes` |
-| `archived` | candidate rows archived as stale duplicates of a superseded note |
-| `agent_errors` | notes saved plainly after a search, model, or rewrite failure, plus failed archive calls |
-
-Every packet row records its writer (`{"kind": "plain"}`, or the agent's kind, model,
-effort, and the sha256 of its prompts) and so does the manifest's retrieve section.
-`retrieve` refuses to run over a packets file whose rows carry another writer config,
-whether or not any question is pending. An agent run keeps its own data directory and
-manifest: before running it, the operator creates the new data directory and symlinks
-`notes.jsonl` and `sessions.jsonl` into it from the baseline data directory, and passes a
-manifest inside the new directory (for example `data/longmemeval-agent/manifest.json`),
-so its packets, answers, judgments, and retrieve section stay apart from the baseline's. The writer searches raw
-note text, so it runs on the baseline and gate-off variants; `--variant dated` is refused.
-
 ## Answer and judge
 
 `scripts/longmemeval/answer.py` is a client like the extractor: it builds its model
@@ -397,8 +340,7 @@ uv run python scripts/longmemeval/answer.py answer --dataset PATH
 uv run python scripts/longmemeval/answer.py judge --dataset PATH
 uv run python -m memory_base.eval.longmemeval audit-sample --dataset PATH
 uv run python -m memory_base.eval.longmemeval score --dataset PATH
-uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH --gate off --read candidates \
-    --writer agent --data-dir data/longmemeval-agent --manifest data/longmemeval-agent/manifest.json
+uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH --gate off --read candidates
 uv run python scripts/longmemeval/answer.py judge-hits --dataset PATH --gate off --read candidates --backend claude-code
 uv run python -m memory_base.eval.longmemeval frontier --dataset PATH --gate off --read candidates
 ```

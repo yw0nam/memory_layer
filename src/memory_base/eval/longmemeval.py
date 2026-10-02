@@ -14,15 +14,11 @@ prefetch` reads each question the way the prefetch hook does (top 5, score floor
 of search_memory's defaults (top 10, floor 0.25) and prefixes the run name with `prefetch`;
 `--read budget` packs hits up to a 4000-token budget (`budget_tokens`) and prefixes `budget`;
 `--read candidates` keeps every fused candidate in rerank order for memory_base.eval.read_sweep
-and prefixes `candidates`. `--writer agent` saves each note through an emulated client agent
-that may supersede an earlier note (memory_base.eval.agent_writer); `frontier` reports
-evidence coverage and junk per read cell from a candidates run's hit judgments
-(memory_base.eval.hit_judge).
+and prefixes `candidates`. `frontier` reports evidence coverage and junk per read cell from a
+candidates run's hit judgments (memory_base.eval.hit_judge).
 
 CLI:
   uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH [--gate off]
-  uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH --writer agent \
-      --data-dir DIR --manifest DIR/manifest.json
   uv run python -m memory_base.eval.longmemeval audit-sample --dataset PATH [--gate off]
   uv run python -m memory_base.eval.longmemeval score --dataset PATH
   uv run python -m memory_base.eval.longmemeval frontier --dataset PATH --gate off --read candidates
@@ -87,8 +83,6 @@ READ_SETTINGS = {
     "candidates": {"budget_tokens": CANDIDATES_BUDGET},
 }
 DATED_VARIANT_TYPES = ("temporal-reasoning",)
-WRITERS = ("plain", "agent")
-PLAIN_WRITER = {"kind": "plain"}
 STAGES = ("answer", "judge")
 JUDGE_AUDIT_SIZE = 20
 JUDGE_AUDIT_SEED = 0
@@ -282,10 +276,6 @@ class LoadStats:
     credential_refused: int = 0
     invalid: int = 0
     gate_refused: int = 0
-    agent_calls: int = 0
-    superseded: int = 0
-    archived: int = 0
-    agent_errors: int = 0
 
 
 SaveNote = Callable[..., Awaitable[dict[str, Any]]]
@@ -312,7 +302,6 @@ async def load_question_notes(
     notes_by_unit: dict[tuple[str, str], list[dict[str, Any]]],
     save: SaveNote | None = None,
     gate: str = "on",
-    writer: Any = None,
 ) -> tuple[LoadStats, dict[str, set[tuple[str, str]]]]:
     """Save the units' notes in order and map note ids to their units.
 
@@ -343,12 +332,7 @@ async def load_question_notes(
                 "allow_similar": True,
             }
             try:
-                if writer is None:
-                    result = await _save_with_retry(save, note["content"], **kwargs)
-                else:
-                    result = await writer.save(
-                        save, note["content"], stats=stats, date=occurred_at[:10], **kwargs
-                    )
+                result = await _save_with_retry(save, note["content"], **kwargs)
             except notes_module.CredentialNoteError:
                 stats.credential_refused += 1
                 continue
@@ -360,9 +344,6 @@ async def load_question_notes(
             finally:
                 NOTE_DATE.reset(token)
             provenance[result["id"]].add(unit)
-            # A rewrite also stands for the notes it superseded or archived.
-            for replaced in [result.get("superseded"), *result.get("archived_ids", [])]:
-                provenance[result["id"]] |= provenance.get(replaced, set())
             if result["stored"]:
                 stats.stored += 1
             else:
@@ -734,7 +715,6 @@ async def retrieve_question(
     question: dict[str, Any],
     notes_by_unit: dict[tuple[str, str], list[dict[str, Any]]],
     run: str,
-    writer: Any = None,
 ) -> dict[str, Any]:
     from memory_base.eval.retrieval import _search_with_retry
     from memory_base.serve import namespaces
@@ -747,7 +727,6 @@ async def retrieve_question(
         session_units(question),
         notes_by_unit,
         gate="off" if run.endswith("gate-off") else "on",
-        writer=writer,
     )
     loaded = time.monotonic()
     setting = read_setting(run)
@@ -768,7 +747,6 @@ async def retrieve_question(
         "question_date": question["question_date"],
         "run": run,
         "budget_tokens": budget_tokens,
-        "writer": writer.config() if writer else PLAIN_WRITER,
         "load": asdict(stats),
         "seconds": {"load": loaded - started, "search": time.monotonic() - loaded},
         "hits": [_hit_record(hit, provenance) for hit in hits],
@@ -805,7 +783,6 @@ async def _retrieve_all(
     run: str,
     out_path: Path,
     db_url: str,
-    writer: Any,
 ) -> list[str]:
     from memory_base.core import db
 
@@ -816,7 +793,7 @@ async def _retrieve_all(
     async def one(question: dict[str, Any]) -> None:
         nonlocal done
         async with semaphore:
-            packet = await retrieve_question(question, notes_by_unit, run, writer)
+            packet = await retrieve_question(question, notes_by_unit, run)
             append_jsonl(out_path, [packet])
             done += 1
             print(
@@ -832,30 +809,10 @@ async def _retrieve_all(
     return extensions
 
 
-def _writer(args: argparse.Namespace) -> Any:
-    """The agent writer the flags select, or None for the plain save path."""
-    if args.writer == "plain":
-        return None
-    from memory_base.eval.agent_writer import WRITER_SYSTEM_PROMPT, AgentWriter
-    from memory_base.eval.claude_code import ClaudeCodeModel
-    from memory_base.eval.retrieval import _search_with_retry
-    from memory_base.serve.admin import archive_rows
-
-    model = ClaudeCodeModel(args.writer_model, args.writer_effort, WRITER_SYSTEM_PROMPT)
-    return AgentWriter(
-        model, _search_with_retry, archive_rows, args.writer_model, args.writer_effort
-    )
-
-
 def run_retrieve(args: argparse.Namespace) -> None:
     from memory_base.core.config import emb_model, rerank_model
     from memory_base.serve import notes
 
-    if args.writer == "agent" and args.variant == "dated":
-        raise SystemExit(
-            "the agent writer searches raw note text, so it runs on the baseline and gate-off "
-            "variants only"
-        )
     code = code_revision()
     run = run_name(args.variant, args.gate, args.read)
     dataset = load_dataset(args.dataset)
@@ -873,14 +830,6 @@ def run_retrieve(args: argparse.Namespace) -> None:
     done_ids = {row["question_id"] for row in existing}
     pending = [q for q in selected if q["question_id"] not in done_ids]
     print(f"questions: {len(selected)} selected, {len(pending)} pending ({run})")
-    writer = _writer(args)
-    config = writer.config() if writer else PLAIN_WRITER
-    other = next((row.get("writer") for row in existing if row.get("writer") != config), config)
-    if other != config:
-        raise SystemExit(
-            f"{out_path} holds packets written by writer {other}, not {config}; "
-            "give this writer its own --data-dir and --manifest"
-        )
 
     notes.judge_note_content = _gate_pinned_open
     if run == "dated":
@@ -890,7 +839,7 @@ def run_retrieve(args: argparse.Namespace) -> None:
         with throwaway_postgres() as database:
             image = database["image"]
             extensions = asyncio.run(
-                _retrieve_all(pending, notes_by_unit, run, out_path, database["url"], writer)
+                _retrieve_all(pending, notes_by_unit, run, out_path, database["url"])
             )
 
     packets = read_jsonl(out_path)
@@ -908,7 +857,6 @@ def run_retrieve(args: argparse.Namespace) -> None:
             "code": code,
             "gate": args.gate,
             "read": read_setting(run),
-            "writer": config,
             "db_image": image or previous.get("db_image"),
             "db_extensions": extensions or previous.get("db_extensions"),
             "embedder": emb_model(),
@@ -1171,8 +1119,6 @@ def run_frontier(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from memory_base.eval.agent_writer import WRITER_EFFORT, WRITER_MODEL
-
     parser = argparse.ArgumentParser(prog="python -m memory_base.eval.longmemeval")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -1190,9 +1136,6 @@ def build_parser() -> argparse.ArgumentParser:
     common(retrieve)
     run_flags(retrieve)
     retrieve.add_argument("--questions", type=lambda s: s.split(","), default=None)
-    retrieve.add_argument("--writer", choices=WRITERS, default="plain")
-    retrieve.add_argument("--writer-model", default=WRITER_MODEL)
-    retrieve.add_argument("--writer-effort", default=WRITER_EFFORT)
     audit = commands.add_parser("audit-sample", help="draw the seeded judge-audit sample")
     common(audit)
     run_flags(audit)
