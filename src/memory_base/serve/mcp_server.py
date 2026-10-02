@@ -62,9 +62,8 @@ _WRITE_POLICY = """\
 Write rarely. Pick the save tool by what is being remembered: something about the
 user (their life, their day, or a moment they shared with you, even during work) goes
 to save_personal_memory; work knowledge that code, version control, and the tracker
-cannot answer goes to save_work_memory; progress or state for
-the next session goes to send_message. Each save tool states its own bar and has its own
-gate. Before saving, search_memory the same subject; when the new note replaces one,
+cannot answer goes to save_work_memory; progress or state for the next session goes to
+send_message. Each save tool states its own bar and has its own gate. Before saving, search_memory the same subject; when the new note replaces one,
 supersede it rather than adding a note that contradicts it, and if other active notes
 state the same stale value, archive them with archive_notes. A refusal carries the
 reason: rewrite at most once in total, whichever tool, moving the note to the other save
