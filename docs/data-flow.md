@@ -330,6 +330,75 @@ Retirement is manual: no scheduler runs in-process, so terminal rows survive unt
 caller runs the `/admin/archive` preview and confirm pass. A deployment that wants it
 periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
 
+## Consolidation groups
+
+`GET /admin/consolidate/groups` finds groups of active agent notes that may state the
+same fact or rule, for an agent to judge. It changes no note and calls no model; only an
+admin key whose authors include `consolidator` may call it (403 otherwise). Every query
+parameter is optional and a bad, repeated, or out-of-range value is a 400:
+
+| parameter | range | default |
+|---|---|---|
+| `namespace` | repeatable; each a registered namespace | every registered namespace |
+| `threshold` | 0 < x ≤ 1 | 0.72 |
+| `neighbors` | 1–50 | 5 |
+| `max_group` | 2–20 | 6 |
+| `max_group_chars` | ≥ 500 | 12000 |
+| `limit` | 1–1000, groups returned per namespace | 200 |
+
+```
+ per namespace, one read-only REPEATABLE READ snapshot
+   active agent notes ──► exact nearest neighbours by stored embedding
+                          (index scans off, `neighbors` per note, no embedding call)
+                                   │ pairs with cosine ≥ threshold
+                                   ▼
+         pair listed in either note's `similar_ack` ──► ignored, counted `acknowledged`
+                                   │ unacknowledged pairs
+                                   ▼
+                     greedy clique packing, highest score first
+     a note joins a group only above the threshold with every member;
+     capped by max_group and max_group_chars; ties broken by id
+                                   │
+                   ┌───────────────┴───────────────┐
+                   ▼                               ▼
+              group (first `limit`)          note with an edge
+              → `groups`                     left out of every group
+                                             → `deferred` with a reason
+```
+
+An acknowledged pair is the writer's assertion that the two notes state distinct facts,
+so it is never an edge; each note's other pairs still group. A pair whose combined text
+exceeds `max_group_chars` is not grouped. Each note left out appears once in `deferred`
+with the first reason recorded for it while packing — `over max_group_chars` or
+`over max_group` — else `no clique` (its partners joined other groups). Groups are
+ordered by their highest edge score, then smallest member id; members by save time, then
+id; deferred notes by id.
+
+```
+{
+  "params": {"namespace": [...], "threshold", "neighbors", "max_group", "max_group_chars", "limit"},
+  "procedure_version": "1",
+  "namespaces": {
+    "<ns>": {
+      "active_notes": int, "pairs": int, "acknowledged": int,
+      "groups": [{"key", "min_score", "max_score",
+                  "members": [{"id", "kind", "author", "saved": "YYYY-MM-DD",
+                               "occurred_at": ISO 8601 or null, "tags",
+                               "supersedes": id or null, "text"}]}],
+      "deferred": [{"id", "reason"}],
+      "truncated": bool
+    }
+  }
+}
+```
+
+`pairs` counts every pair at or above the threshold, `acknowledged` the ones among them
+that were ignored. `truncated` is true when more groups existed than `limit`. A group's `key` is
+the sha256 of canonical JSON (sorted keys, no whitespace) of the procedure version, the
+namespace, and, per member sorted by id, its id, the sha256 of its text, kind, author,
+save time, `occurred_at`, sorted tags, and `supersedes`. It changes when membership or
+any of those fields changes.
+
 ## Storage
 
 `memory.memory_chunks` — one table for every non-code source.

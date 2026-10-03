@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 import uuid
@@ -29,6 +30,7 @@ from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
 from memory_base.serve import access_log
 from memory_base.serve import admin
+from memory_base.serve import consolidate
 from memory_base.serve import ingest_api
 from memory_base.serve import job_store
 from memory_base.serve import keys
@@ -543,6 +545,111 @@ async def admin_duplicates_route(request: Request) -> JSONResponse:
     return JSONResponse({"pairs": pairs})
 
 
+CONSOLIDATE_AUTHOR = "consolidator"
+
+
+def _scalar(request: Request, name: str, parse, default, valid, rule: str):
+    """One optional query value: parsed, range-checked, and given at most once."""
+    values = request.query_params.getlist(name)
+    if len(values) > 1:
+        raise ValueError(f"{name} must be given at most once")
+    if not values:
+        return default
+    try:
+        value = parse(values[0])
+    except ValueError:
+        raise ValueError(f"{name} must be {rule}") from None
+    if not valid(value):
+        raise ValueError(f"{name} must be {rule}")
+    return value
+
+
+async def admin_consolidate_groups_route(request: Request) -> JSONResponse:
+    """List groups of active notes that may state the same thing; changes no note."""
+    key = request.state.key
+    if not (key.is_admin and CONSOLIDATE_AUTHOR in key.authors):
+        return error(f"admin key with {CONSOLIDATE_AUTHOR!r} in its authors required", 403)
+    try:
+        threshold = _scalar(
+            request,
+            "threshold",
+            float,
+            consolidate.DEFAULT_THRESHOLD,
+            lambda x: (
+                math.isfinite(x) and consolidate.MIN_THRESHOLD < x <= consolidate.MAX_THRESHOLD
+            ),
+            f"a number in ({consolidate.MIN_THRESHOLD:g}, {consolidate.MAX_THRESHOLD:g}]",
+        )
+        neighbors = _scalar(
+            request,
+            "neighbors",
+            int,
+            consolidate.DEFAULT_NEIGHBORS,
+            lambda x: consolidate.MIN_NEIGHBORS <= x <= consolidate.MAX_NEIGHBORS,
+            f"an integer between {consolidate.MIN_NEIGHBORS} and {consolidate.MAX_NEIGHBORS}",
+        )
+        max_group = _scalar(
+            request,
+            "max_group",
+            int,
+            consolidate.DEFAULT_MAX_GROUP,
+            lambda x: consolidate.MIN_MAX_GROUP <= x <= consolidate.MAX_MAX_GROUP,
+            f"an integer between {consolidate.MIN_MAX_GROUP} and {consolidate.MAX_MAX_GROUP}",
+        )
+        max_group_chars = _scalar(
+            request,
+            "max_group_chars",
+            int,
+            consolidate.DEFAULT_MAX_GROUP_CHARS,
+            lambda x: x >= consolidate.MIN_MAX_GROUP_CHARS,
+            f"an integer of at least {consolidate.MIN_MAX_GROUP_CHARS}",
+        )
+        limit = _scalar(
+            request,
+            "limit",
+            int,
+            consolidate.DEFAULT_LIMIT,
+            lambda x: consolidate.MIN_LIMIT <= x <= consolidate.MAX_LIMIT,
+            f"an integer between {consolidate.MIN_LIMIT} and {consolidate.MAX_LIMIT}",
+        )
+    except ValueError as exc:
+        return error(str(exc))
+    requested = request.query_params.getlist("namespace")
+    if any(not name.strip() for name in requested):
+        return error("namespace must not be blank")
+    registered = {row["name"] for row in await namespaces.list_namespaces()}
+    unknown = sorted(set(requested) - registered)
+    if unknown:
+        return error(f"unregistered namespace: {', '.join(unknown)}")
+    names = sorted(set(requested or registered))
+    snapshots = await consolidate.read_snapshots(names, threshold, neighbors)
+    return JSONResponse(
+        {
+            "params": {
+                "namespace": names,
+                "threshold": threshold,
+                "neighbors": neighbors,
+                "max_group": max_group,
+                "max_group_chars": max_group_chars,
+                "limit": limit,
+            },
+            "procedure_version": consolidate.PROCEDURE_VERSION,
+            "namespaces": {
+                name: consolidate.namespace_report(
+                    name,
+                    pairs,
+                    notes,
+                    threshold=threshold,
+                    max_group=max_group,
+                    max_group_chars=max_group_chars,
+                    limit=limit,
+                )
+                for name, (pairs, notes) in snapshots.items()
+            },
+        }
+    )
+
+
 async def admin_archive_route(request: Request) -> JSONResponse:
     """Preview or archive cold notes and delete terminal messages, in scope.
 
@@ -760,6 +867,7 @@ app = Starlette(
         Route("/admin/notes/delete", admin_notes_delete_route, methods=["POST"]),
         Route("/admin/notes/move", admin_notes_move_route, methods=["POST"]),
         Route("/admin/duplicates", admin_duplicates_route, methods=["GET"]),
+        Route("/admin/consolidate/groups", admin_consolidate_groups_route, methods=["GET"]),
         Route("/admin/archive", admin_archive_route, methods=["POST"]),
         Route("/admin/restore", admin_restore_route, methods=["POST"]),
     ],

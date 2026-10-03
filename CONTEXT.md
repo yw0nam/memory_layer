@@ -84,6 +84,14 @@ _Avoid_: label, category, topic
 To replace a note with a newer one, archiving the old rather than deleting it. Superseded notes stay retrievable on request.
 _Avoid_: overwrite, replace, delete, revoke
 
+**Group**:
+A set of active notes in one namespace, every pair above the similarity threshold and none acknowledged as distinct through `similar_ack`, offered to an agent to judge whether they state the same thing. Built by `GET /admin/consolidate/groups`; a note is in at most one group.
+_Avoid_: cluster, duplicate set
+
+**Group key**:
+A hash over a group's members and each member's prompt-visible fields (text, kind, author, save time, event date, tags, supersedes) and the procedure version; it changes whenever any of them does.
+_Avoid_: group id, fingerprint
+
 **Distilled**:
 Reduced to its high-signal form before storage. The property that qualifies content for the store at all.
 _Avoid_: summarized, cleaned, processed
