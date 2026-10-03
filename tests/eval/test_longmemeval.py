@@ -426,7 +426,7 @@ def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(mon
         calls.append(kwargs)
         return [Hit(i) for i in range(7)]
 
-    async def load(namespace, units, notes_by_unit, gate, writer=None):
+    async def load(namespace, units, notes_by_unit, gate):
         calls.append(gate)
         return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(7)}
 
@@ -469,7 +469,7 @@ def test_a_budget_run_passes_the_budget_to_search_and_keeps_every_packed_hit(mon
         calls.append(kwargs)
         return [Hit(i) for i in range(12)]
 
-    async def load(namespace, units, notes_by_unit, gate, writer=None):
+    async def load(namespace, units, notes_by_unit, gate):
         return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(12)}
 
     async def create(namespace):
@@ -552,25 +552,6 @@ def test_loading_saves_every_extracted_label_as_personal_memory():
     )
     assert len(calls) == 4
     assert all(c[1] == "personal" for c in calls)
-
-
-def test_loading_with_a_writer_keeps_the_personal_kind():
-    units = [("s1", "2023/05/20 (Sat) 02:21")]
-    notes_by_unit = {units[0]: [{"content": "A decision.", "kind": "decision", "gate": "stored"}]}
-    seen = []
-
-    class Writer:
-        async def save(self, save, content, *, stats, date, **kwargs):
-            seen.append(kwargs)
-            return await save(content, **kwargs)
-
-    calls = []
-    asyncio.run(
-        lme.load_question_notes(
-            "lme-q1", units, notes_by_unit, save=fake_save_note(calls), writer=Writer()
-        )
-    )
-    assert [kwargs["kind"] for kwargs in seen] == ["personal"]
 
 
 def test_judge_audit_sample_is_seeded_and_carries_what_the_auditor_needs():
@@ -703,7 +684,6 @@ def test_retrieve_and_score_record_the_code_revision_from_the_start_of_the_run(
         "question_date": "2023/06/01 (Thu) 10:00",
         "hits": [],
         "load": {"submitted": 0},
-        "writer": lme.PLAIN_WRITER,
     }
     lme.append_jsonl(lme.packets_path(data_dir, "baseline"), [packet])
     manifest = tmp_path / "manifest.json"
@@ -785,49 +765,8 @@ def test_a_packet_hit_is_dated_by_the_note_occurred_at():
     assert record["date"] == "2023/05/20 (Sat) 02:21"
 
 
-class ConfigWriter:
-    def __init__(self, config):
-        self._config = config
-
-    def config(self):
-        return self._config
-
-
-def test_a_packet_records_the_writer_config_or_the_plain_writer(monkeypatch):
-    from memory_base.eval import retrieval
-    from memory_base.serve import namespaces
-
-    class Hit:
-        meta = {"id": "n0", "occurred_at": 1.0}
-        ts, score, text = 1.0, 0.9, "t"
-
-    seen = []
-
-    async def search(query, **kwargs):
-        return [Hit()]
-
-    async def load(namespace, units, notes_by_unit, gate, writer=None):
-        seen.append(writer)
-        return lme.LoadStats(), {"n0": {("s1", D1)}}
-
-    async def create(namespace):
-        pass
-
-    monkeypatch.setattr(retrieval, "_search_with_retry", search)
-    monkeypatch.setattr(lme, "load_question_notes", load)
-    monkeypatch.setattr(namespaces, "create_namespace", create)
-    question = make_question("q1", "multi-session", sessions=[("s1", D1)])
-    writer = ConfigWriter({"kind": "agent", "model": "m"})
-    packet = asyncio.run(lme.retrieve_question(question, {}, "gate-off", writer=writer))
-    assert seen == [writer]
-    assert packet["writer"] == {"kind": "agent", "model": "m"}
-    packet = asyncio.run(lme.retrieve_question(question, {}, "gate-off"))
-    assert seen[-1] is None
-    assert packet["writer"] == lme.PLAIN_WRITER == {"kind": "plain"}
-
-
-def retrieve_setup(tmp_path, monkeypatch, row_writer):
-    """A data dir whose packets file holds the first subset question with `row_writer`."""
+def retrieve_setup(tmp_path, monkeypatch):
+    """A data dir whose packets file holds the first subset question's packet."""
     from contextlib import contextmanager
 
     from memory_base.serve import notes
@@ -841,12 +780,12 @@ def retrieve_setup(tmp_path, monkeypatch, row_writer):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
 
-    def packet(qid, writer):
+    def packet(qid):
         row = {"question_id": qid, "question": "q?", "hits": [], "load": {"submitted": 0}}
         row["question_date"] = "2023/06/01 (Thu) 10:00"
-        return row if writer is None else {**row, "writer": writer}
+        return row
 
-    lme.append_jsonl(lme.packets_path(data_dir, "baseline"), [packet(done, row_writer)])
+    lme.append_jsonl(lme.packets_path(data_dir, "baseline"), [packet(done)])
     manifest = tmp_path / "manifest.json"
     common = ["--dataset", str(dataset_path), "--data-dir", str(data_dir)]
     common += ["--manifest", str(manifest)]
@@ -857,10 +796,9 @@ def retrieve_setup(tmp_path, monkeypatch, row_writer):
 
     retrieved = []
 
-    async def retrieve_all(pending_questions, notes_by_unit, run, out_path, db_url, writer):
-        config = writer.config() if writer else lme.PLAIN_WRITER
-        retrieved.append(config)
-        lme.append_jsonl(out_path, [packet(q["question_id"], config) for q in pending_questions])
+    async def retrieve_all(pending_questions, notes_by_unit, run, out_path, db_url):
+        retrieved.append([q["question_id"] for q in pending_questions])
+        lme.append_jsonl(out_path, [packet(q["question_id"]) for q in pending_questions])
         return []
 
     monkeypatch.setattr(notes, "judge_note_content", notes.judge_note_content)
@@ -870,72 +808,19 @@ def retrieve_setup(tmp_path, monkeypatch, row_writer):
     return common, done, pending, manifest, retrieved
 
 
-def agent_config():
-    from memory_base.eval import agent_writer as aw
-
-    return {
-        "kind": "agent",
-        "model": aw.WRITER_MODEL,
-        "effort": aw.WRITER_EFFORT,
-        "prompt_sha": lme.prompt_sha(aw.WRITER_SYSTEM_PROMPT + "\n" + aw.WRITER_PROMPT),
-    }
-
-
-@pytest.mark.parametrize(
-    ("row_writer", "flags"),
-    [
-        ({"kind": "agent", "model": "m"}, []),
-        (None, []),
-        ({"kind": "plain"}, ["--writer", "agent"]),
-    ],
-)
-def test_retrieve_refuses_to_add_packets_from_another_writer_config(
-    tmp_path, monkeypatch, row_writer, flags
-):
-    common, _, pending, manifest, retrieved = retrieve_setup(tmp_path, monkeypatch, row_writer)
-    with pytest.raises(SystemExit):
-        lme.main(["retrieve", *common, "--questions", pending, *flags])
-    assert retrieved == []
-
-
-@pytest.mark.parametrize(
-    ("row_writer", "flags"),
-    [({"kind": "plain"}, []), ("agent", ["--writer", "agent"])],
-)
-def test_retrieve_resumes_a_packets_file_written_by_the_same_writer_config(
-    tmp_path, monkeypatch, row_writer, flags
-):
-    config = agent_config() if row_writer == "agent" else row_writer
-    common, _, pending, manifest, retrieved = retrieve_setup(tmp_path, monkeypatch, config)
-    lme.main(["retrieve", *common, "--questions", pending, *flags])
-    assert retrieved == [config]
-    assert lme.read_manifest(manifest)["retrieve"]["writer"] == config
+def test_retrieve_resumes_a_packets_file_with_only_the_pending_questions(tmp_path, monkeypatch):
+    common, _, pending, manifest, retrieved = retrieve_setup(tmp_path, monkeypatch)
+    lme.main(["retrieve", *common, "--questions", pending])
+    assert retrieved == [[pending]]
+    assert "writer" not in lme.read_manifest(manifest)["retrieve"]
     assert len(lme.read_jsonl(lme.packets_path(tmp_path / "data", "baseline"))) == 2
 
 
-@pytest.mark.parametrize("row_writer", [{"kind": "agent", "model": "m"}, None])
-def test_retrieve_with_nothing_pending_still_refuses_another_writer_config(
-    tmp_path, monkeypatch, row_writer
-):
-    common, done, _, manifest, retrieved = retrieve_setup(tmp_path, monkeypatch, row_writer)
-    with pytest.raises(SystemExit):
-        lme.main(["retrieve", *common, "--questions", done])
-    assert retrieved == []
-    assert not manifest.exists()
-
-
-def test_retrieve_with_nothing_pending_records_the_matching_writer(tmp_path, monkeypatch):
-    common, done, _, manifest, retrieved = retrieve_setup(tmp_path, monkeypatch, {"kind": "plain"})
+def test_retrieve_with_nothing_pending_runs_no_questions(tmp_path, monkeypatch):
+    common, done, _, manifest, retrieved = retrieve_setup(tmp_path, monkeypatch)
     lme.main(["retrieve", *common, "--questions", done])
     assert retrieved == []
-    assert lme.read_manifest(manifest)["retrieve"]["writer"] == {"kind": "plain"}
-
-
-def test_the_agent_writer_refuses_the_dated_variant(tmp_path, monkeypatch):
-    common, _, pending, _, retrieved = retrieve_setup(tmp_path, monkeypatch, None)
-    with pytest.raises(SystemExit, match="baseline and gate-off"):
-        lme.main(["retrieve", *common, "--writer", "agent", "--variant", "dated"])
-    assert retrieved == []
+    assert lme.read_manifest(manifest)["retrieve"]["questions"] == 1
 
 
 def test_hit_judgments_live_beside_the_run_packets():
@@ -983,18 +868,3 @@ def test_frontier_prints_the_grid_for_the_selected_run(tmp_path, capsys):
     assert "| top_k | floor | coverage |" in out
     assert "Best cell" in out
     assert not (tmp_path / "report.md").exists()
-
-
-def test_the_agent_writer_flags_build_a_writer_over_production_search_and_archive():
-    import argparse
-
-    from memory_base.eval import retrieval
-    from memory_base.serve import admin
-
-    args = argparse.Namespace(writer="agent", writer_model="m", writer_effort="low")
-    writer = lme._writer(args)
-    assert writer.search is retrieval._search_with_retry
-    assert writer.archive is admin.archive_rows
-    assert (writer.model.model, writer.model.effort) == ("m", "low")
-    assert (writer.model_name, writer.effort) == ("m", "low")
-    assert lme._writer(argparse.Namespace(writer="plain")) is None
