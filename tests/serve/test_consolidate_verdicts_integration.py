@@ -17,6 +17,7 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
+from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api, auth, namespaces
 from memory_base.serve.notes import note_id, save_note
@@ -205,6 +206,8 @@ def undo(action_id):
 
 def concurrently(*bodies):
     async def run():
+        # The pool is created before the requests race: its lock binds to one event loop.
+        await db.get_pool()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app),
             base_url="http://testserver",
