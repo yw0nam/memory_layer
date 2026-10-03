@@ -19,7 +19,7 @@ from starlette.testclient import TestClient
 
 from memory_base.serve import api, notes
 from memory_base.serve.mcp_server import save_memory
-from memory_base.serve.notes import ContentVerdict, build_note_row, save_note
+from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0  # 2023-11-14T22:13:20Z
 
@@ -89,11 +89,6 @@ def _patch_note_deps(monkeypatch, conn):
     monkeypatch.setattr(notes, "embed_text", fake_embed_text)
     monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
     monkeypatch.setattr(notes, "ensure_schema_once", _noop)
-
-    async def accepted_judge(content):
-        return ContentVerdict(accepted=True, reason="durable knowledge")
-
-    monkeypatch.setattr(notes, "judge_note_content", accepted_judge)
 
 
 def test_occurred_at_is_stored_apart_from_the_save_time(monkeypatch):

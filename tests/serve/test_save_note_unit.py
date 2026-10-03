@@ -59,10 +59,6 @@ async def _noop(conn):
     return None
 
 
-async def _gate(row):
-    return None
-
-
 async def _embed(embedder, text):
     return [0.0] * 4
 
@@ -76,7 +72,6 @@ def use(monkeypatch):
 
         monkeypatch.setattr(notes.db, "acquire", acquire)
         monkeypatch.setattr(notes, "ensure_schema_once", _noop)
-        monkeypatch.setattr(notes, "_content_gate", _gate)
         monkeypatch.setattr(notes, "embed_text", _embed)
         return conn
 

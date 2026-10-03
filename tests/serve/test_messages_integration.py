@@ -159,19 +159,15 @@ def test_schema_creates_messages_table_with_contracted_columns():
     assert asyncio.run(_grants()) == 0
 
 
-# ---- write path: no embedding, no content gate, no search visibility ----------
+# ---- write path: no embedding, no search visibility ----------
 
 
 def test_send_stores_rendered_content_without_touching_the_note_path(monkeypatch):
     marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
 
-    async def _no_gate(content):
-        raise AssertionError("the note content gate must not run for messages")
-
     def _no_embed(*args, **kwargs):
         raise AssertionError("messages must never reach the embedding path")
 
-    monkeypatch.setattr(notes, "judge_note_content", _no_gate)
     monkeypatch.setattr(notes, "embed_text", _no_embed)
     try:
         response = _send(

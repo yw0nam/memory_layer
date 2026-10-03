@@ -152,9 +152,9 @@ def test_an_empty_reply_is_retried_and_never_recorded(tmp_path, monkeypatch):
 
 def test_each_run_reads_and_writes_its_own_files(tmp_path):
     questions = {"q1": make_question("q1")}
-    write_packets(tmp_path, ["q1"], run="gate-off")
-    run("answer", tmp_path, questions, FakeModel(), run_name="gate-off")
-    assert lme.stage_output_path(tmp_path, "answer", "gate-off").exists()
+    write_packets(tmp_path, ["q1"], run="prefetch")
+    run("answer", tmp_path, questions, FakeModel(), run_name="prefetch")
+    assert lme.stage_output_path(tmp_path, "answer", "prefetch").exists()
     assert not lme.stage_output_path(tmp_path, "answer", "baseline").exists()
 
 
@@ -205,7 +205,7 @@ def revisions_captured_in_order(monkeypatch):
     monkeypatch.setattr(lme, "code_revision", revision)
 
 
-CANDIDATES = "candidates-gate-off"
+CANDIDATES = "candidates"
 
 
 def hits_packet(qid, texts):
@@ -325,7 +325,7 @@ def test_the_judge_hits_stage_defaults_to_medium_effort_and_records_its_manifest
     manifest = tmp_path / "manifest.json"
     common = ["--dataset", str(dataset), "--data-dir", str(data_dir), "--manifest", str(manifest)]
     common += ["--backend", "claude-code"]
-    answer.main(["judge-hits", *common, "--gate", "off", "--read", "candidates"])
+    answer.main(["judge-hits", *common, "--read", "candidates"])
     made = RecordingClaudeCode.made[-1]
     assert (made.model, made.effort) == ("claude-sonnet-5-5", "medium")
     assert made.system_prompt == hit_judge.HIT_JUDGE_SYSTEM_PROMPT

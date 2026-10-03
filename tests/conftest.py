@@ -140,17 +140,9 @@ def pytest_sessionfinish(session, exitstatus):
 
 @pytest.fixture(autouse=True)
 def only_integration_tests_reach_the_database(request, monkeypatch):
-    """Unit tests see an unreachable DB_URL; integration tests get the chat-model gate pinned open."""
+    """Unit tests see an unreachable DB_URL."""
     if request.node.get_closest_marker("integration") is None:
         monkeypatch.setenv("DB_URL", OFFLINE_DB_URL)
-        return
-
-    from memory_base.serve import notes
-
-    async def accept(content):
-        return notes.ContentVerdict(accepted=True, reason="integration tests pin the gate open")
-
-    monkeypatch.setattr(notes, "judge_note_content", accept)
 
 
 @pytest.fixture(autouse=True)

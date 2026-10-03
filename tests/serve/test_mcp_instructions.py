@@ -47,8 +47,8 @@ def test_instructions_route_handoffs_to_scope_bound_state():
 
 
 def test_instructions_draw_the_message_vs_note_line():
-    # Operational one-time signal vs durable knowledge; the gate difference.
+    # Operational one-time signal vs durable knowledge.
     assert "durable knowledge" in SERVER_INSTRUCTIONS
     assert "one-time" in SERVER_INSTRUCTIONS
-    assert "content gate" in SERVER_INSTRUCTIONS
+    assert "the right carrier for progress and next steps" in " ".join(SERVER_INSTRUCTIONS.split())
     assert "never embedded" in SERVER_INSTRUCTIONS

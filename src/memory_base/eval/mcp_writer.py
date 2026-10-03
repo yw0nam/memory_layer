@@ -1,14 +1,13 @@
 """LongMemEval writer that saves through memory_base's real MCP tools.
 
 Each benchmark session goes to a fresh headless Claude Code process whose only MCP server
-is a stdio memory_base server talking to a throwaway REST API on a throwaway Postgres,
-with the content gate on. The agent sees the published instruction, the session date,
-and the transcript, and decides by itself what to save. Each question has its own
-namespace and key; its sessions run in date order, and earlier memory is reachable only
-through search; questions run concurrently up to --concurrency. The content gate uses
-SUB_ZAI_API_KEY when set, so a benchmark does not share the production gate's rate
-limit. The run records every session's tool calls, saves, refusals, usage, and
-the notes it created, and exports each question's end-state notes with provenance.
+is a stdio memory_base server talking to a throwaway REST API on a throwaway Postgres.
+The agent sees the published instruction, the session date, and the transcript, and
+decides by itself what to save. Each question has its own namespace and key; its sessions
+run in date order, and earlier memory is reachable only through search; questions run
+concurrently up to --concurrency. The run records every session's tool calls, saves,
+refusals, usage, and the notes it created, and exports each question's end-state notes
+with provenance.
 
     uv run python -m memory_base.eval.mcp_writer --dataset PATH --questions ID[,ID...]
 """
@@ -60,7 +59,6 @@ INSTRUCTION = (
 )
 AUTHOR_LINE = f"Your author name for the memory tools is {AUTHOR}."
 SERVER_NAME = "memory-base"
-GATE_KEY_ENV = "SUB_ZAI_API_KEY"
 TOOL_PREFIX = f"mcp__{SERVER_NAME}__"
 SAVE_TOOLS = ("save_memory",)
 # The production REST port; the eval backend must never be reached through it.
@@ -284,8 +282,6 @@ class EvalApi:
             "LOG_DIR": str(state / "logs"),
             "COCOINDEX_DB": str(state / "cocoindex"),
         }
-        if os.environ.get(GATE_KEY_ENV):
-            env["ZAI_API_KEY"] = os.environ[GATE_KEY_ENV]
         self.proc = subprocess.Popen(argv, cwd=REPO_ROOT, env=env)
         deadline = time.monotonic() + API_BOOT_SECONDS
         while True:
@@ -332,7 +328,6 @@ async def _rows(namespace: str) -> dict[str, dict[str, Any]]:
             "author": metadata.get("author"),
             "supersedes": metadata.get("supersedes"),
             "archived_by": metadata.get("archived_by"),
-            "content_gate": metadata.get("content_gate"),
             "tags": metadata.get("tags", []),
         }
     return out
@@ -375,7 +370,6 @@ async def write_question(
             evidence=session_id in evidence,
             created=created,
             archived=archived,
-            gate_unavailable=sum(after[i]["content_gate"] == "unavailable" for i in created),
             occurred_at=[after[i]["occurred_at"] for i in created],
         )
         append_jsonl(data_dir / SESSIONS_FILE, [record])
@@ -438,7 +432,6 @@ def run(args: argparse.Namespace) -> None:
         "writer": {"harness": "claude-code", "model": args.model, "author": AUTHOR},
         "instruction": INSTRUCTION,
         "author_line": AUTHOR_LINE,
-        "gate_key": GATE_KEY_ENV if os.environ.get(GATE_KEY_ENV) else "ZAI_API_KEY",
         "concurrency": args.concurrency,
         "run_id": secrets.token_hex(4),
     }

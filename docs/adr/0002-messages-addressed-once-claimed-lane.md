@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; the note content gate that defines the lane is superseded by ADR-0007
 
 ## Context
 

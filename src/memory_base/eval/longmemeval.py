@@ -2,26 +2,26 @@
 
 Notes come from scripts/longmemeval/extract.py, an emulated agent outside the server.
 `retrieve` loads each selected question's notes into its own namespace of a throwaway
-Postgres built from db.Dockerfile through the production save_note path (gate pinned
-open, its verdict already recorded at extraction), then runs production search.
+Postgres built from db.Dockerfile through the production save_note path, then runs
+production search.
 scripts/longmemeval/answer.py answers and judges the packets; `audit-sample` draws the
 seeded judgments a person grades by hand, and `score` reports QA accuracy, session-level
 retrieval metrics, and the judge agreement rate.
 
-Runs: `baseline` (gate on), `gate-off` (`--gate off`: gate-refused notes loaded too), and
-`dated` (`--variant dated`: temporal-reasoning questions, date-prefixed embeddings). `--read
-prefetch` reads each question the way the prefetch hook does (top 5, score floor 0.25) instead
-of search_memory's defaults (top 10, floor 0.25) and prefixes the run name with `prefetch`;
-`--read budget` packs hits up to a 4000-token budget (`budget_tokens`) and prefixes `budget`;
-`--read candidates` keeps every fused candidate in rerank order for memory_base.eval.read_sweep
-and prefixes `candidates`. `frontier` reports evidence coverage and junk per read cell from a
-candidates run's hit judgments (memory_base.eval.hit_judge).
+Runs: `baseline` and `dated` (`--variant dated`: temporal-reasoning questions, date-prefixed
+embeddings). `--read prefetch` reads each question the way the prefetch hook does (top 5,
+score floor 0.25) instead of search_memory's defaults (top 10, floor 0.25) and prefixes the
+run name with `prefetch`; `--read budget` packs hits up to a 4000-token budget
+(`budget_tokens`) and prefixes `budget`; `--read candidates` keeps every fused candidate in
+rerank order for memory_base.eval.read_sweep and prefixes `candidates`. `frontier` reports
+evidence coverage and junk per read cell from a candidates run's hit judgments
+(memory_base.eval.hit_judge).
 
 CLI:
-  uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH [--gate off]
-  uv run python -m memory_base.eval.longmemeval audit-sample --dataset PATH [--gate off]
+  uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH
+  uv run python -m memory_base.eval.longmemeval audit-sample --dataset PATH
   uv run python -m memory_base.eval.longmemeval score --dataset PATH
-  uv run python -m memory_base.eval.longmemeval frontier --dataset PATH --gate off --read candidates
+  uv run python -m memory_base.eval.longmemeval frontier --dataset PATH --read candidates
 """
 
 from __future__ import annotations
@@ -62,16 +62,7 @@ SAVE_ATTEMPTS = 3
 SAVE_BACKOFF_SECONDS = 5.0
 METRIC_KS = (5, 10)
 VARIANTS = ("baseline", "dated")
-GATES = ("on", "off")
-RUNS = (
-    "baseline",
-    "gate-off",
-    "dated",
-    "prefetch",
-    "prefetch-gate-off",
-    "budget",
-    "budget-gate-off",
-)
+RUNS = ("baseline", "dated", "prefetch", "budget")
 # A budget no packet reaches, so a search returns every fused candidate in rerank order.
 CANDIDATES_BUDGET = 10**9
 # How a reader bounds its hits: search_memory's defaults, the values the prefetch hook
@@ -91,15 +82,10 @@ SESSIONS_FILE = "sessions.jsonl"
 SESSION_TOTALS = (
     "in_tok",
     "out_tok",
-    "gate_in_tok",
-    "gate_out_tok",
-    "gate_calls",
-    "gate_retries",
     "extract_retries",
     "extract_seconds",
     "seconds",
 )
-REFUSAL_CAUSES = ("validation:", "credential:")
 DATASET_DATE_RE = re.compile(r"^(\d{4})/(\d{2})/(\d{2}) \(\w{3}\) (\d{2}):(\d{2})$")
 
 # The session date (ISO) of the note being saved; read by the dated-embedding variant only.
@@ -275,7 +261,6 @@ class LoadStats:
     similar_acks: int = 0
     credential_refused: int = 0
     invalid: int = 0
-    gate_refused: int = 0
 
 
 SaveNote = Callable[..., Awaitable[dict[str, Any]]]
@@ -301,14 +286,13 @@ async def load_question_notes(
     units: Sequence[tuple[str, str]],
     notes_by_unit: dict[tuple[str, str], list[dict[str, Any]]],
     save: SaveNote | None = None,
-    gate: str = "on",
 ) -> tuple[LoadStats, dict[str, set[tuple[str, str]]]]:
     """Save the units' notes in order and map note ids to their units.
 
-    With the gate on only gate-stored notes load; with it off gate-refused notes load too,
-    while notes refused by validation or the credential scan never do (save_note would
-    refuse them). A note id is a content hash, so identical notes from two sessions
-    collide on one row; the returned provenance maps that row to both.
+    Only notes the extraction stored load; notes refused by validation or the credential
+    scan never do (save_note would refuse them). A note id is a content hash, so identical
+    notes from two sessions collide on one row; the returned provenance maps that row to
+    both.
     """
     from memory_base.serve import notes as notes_module
     from memory_base.serve.namespaces import NamespaceError
@@ -319,10 +303,9 @@ async def load_question_notes(
     for unit in units:
         occurred_at = iso_datetime(unit[1])
         for note in notes_by_unit.get(unit, []):
-            if not loadable(note, gate):
+            if note["outcome"] != "stored":
                 continue
             stats.submitted += 1
-            stats.gate_refused += note["gate"] == "refused"
             token = NOTE_DATE.set(occurred_at[:10])
             kwargs = {
                 "tags": list(NOTE_TAGS),
@@ -351,12 +334,6 @@ async def load_question_notes(
             if result["similar"]:
                 stats.similar_acks += 1
     return stats, dict(provenance)
-
-
-def loadable(note: dict[str, Any], gate: str) -> bool:
-    if note["gate"] == "stored":
-        return True
-    return gate == "off" and not note["gate_reason"].startswith(REFUSAL_CAUSES)
 
 
 def dated_embed_text(embed: Callable[[Any, str], Awaitable[str]]):
@@ -567,7 +544,7 @@ def judge_agreement(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def gate_rates(
+def refusal_rates(
     question_ids: Sequence[str],
     questions: dict[str, dict[str, Any]],
     notes: Sequence[dict[str, Any]],
@@ -578,7 +555,7 @@ def gate_rates(
     for note in notes:
         unit = (note["session_id"], note["date"])
         total[unit] += 1
-        refused[unit] += note["gate"] == "refused"
+        refused[unit] += note["outcome"] == "refused"
 
     def rate(units: Iterable[tuple[str, str]]) -> dict[str, Any]:
         units = list(units)
@@ -653,17 +630,11 @@ async def _prepare_schema(url: str, deadline_seconds: float = 90) -> list[str]:
     return [f"{row['extname']} {row['extversion']}" for row in rows]
 
 
-def run_name(variant: str, gate: str, read: str = "search") -> str:
-    """The run a variant, gate and read setting select; gate-off runs only the baseline variant."""
-    if gate == "on":
-        run = variant
-    elif variant != "baseline":
-        raise ValueError("the gate-off run covers the baseline variant only")
-    else:
-        run = "gate-off"
+def run_name(variant: str, read: str = "search") -> str:
+    """The run a variant and read setting select."""
     if read == "search":
-        return run
-    return read if run == "baseline" else f"{read}-{run}"
+        return variant
+    return read if variant == "baseline" else f"{read}-{variant}"
 
 
 def read_setting(run: str) -> dict[str, Any]:
@@ -705,12 +676,6 @@ def _hit_record(hit: Any, provenance: dict[str, set[tuple[str, str]]]) -> dict[s
     }
 
 
-async def _gate_pinned_open(content: str):
-    from memory_base.serve.notes import ContentVerdict
-
-    return ContentVerdict(accepted=True, reason="verdict recorded at extraction")
-
-
 async def retrieve_question(
     question: dict[str, Any],
     notes_by_unit: dict[tuple[str, str], list[dict[str, Any]]],
@@ -726,7 +691,6 @@ async def retrieve_question(
         namespace,
         session_units(question),
         notes_by_unit,
-        gate="off" if run.endswith("gate-off") else "on",
     )
     loaded = time.monotonic()
     setting = read_setting(run)
@@ -814,7 +778,7 @@ def run_retrieve(args: argparse.Namespace) -> None:
     from memory_base.serve import notes
 
     code = code_revision()
-    run = run_name(args.variant, args.gate, args.read)
+    run = run_name(args.variant, args.read)
     dataset = load_dataset(args.dataset)
     dataset_sha = sha256_file(args.dataset)
     subset = select_subset(dataset)
@@ -831,7 +795,6 @@ def run_retrieve(args: argparse.Namespace) -> None:
     pending = [q for q in selected if q["question_id"] not in done_ids]
     print(f"questions: {len(selected)} selected, {len(pending)} pending ({run})")
 
-    notes.judge_note_content = _gate_pinned_open
     if run == "dated":
         notes.embed_text = dated_embed_text(notes.embed_text)
     image = extensions = None
@@ -855,7 +818,6 @@ def run_retrieve(args: argparse.Namespace) -> None:
         section,
         {
             "code": code,
-            "gate": args.gate,
             "read": read_setting(run),
             "db_image": image or previous.get("db_image"),
             "db_extensions": extensions or previous.get("db_extensions"),
@@ -926,7 +888,7 @@ def _usage(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
 
 
 def run_audit_sample(args: argparse.Namespace) -> None:
-    run = run_name(args.variant, args.gate, args.read)
+    run = run_name(args.variant, args.read)
     out_path = judge_audit_path(args.data_dir, run)
     if out_path.exists():
         raise SystemExit(f"{out_path} exists; it may hold hand labels, so it is not replaced")
@@ -955,11 +917,7 @@ def _extraction_summary(
         if (row["session_id"], row["date"]) in units
     ]
     reasons = Counter(
-        note["gate_reason"].split(":", 1)[0]
-        if note["gate_reason"].startswith(REFUSAL_CAUSES)
-        else "gate"
-        for note in notes
-        if note["gate"] == "refused"
+        note["reason"].split(":", 1)[0] for note in notes if note["outcome"] == "refused"
     )
     totals = Counter()
     for row in sessions:
@@ -984,7 +942,7 @@ def _extraction_summary(
         "tokens": dict(totals),
         "seconds_per_unit": spread("seconds"),
         "extract_seconds_per_unit": spread("extract_seconds"),
-        "gate": gate_rates(question_ids, questions, notes),
+        "refusals": refusal_rates(question_ids, questions, notes),
     }
 
 
@@ -1060,7 +1018,7 @@ def render_report(report: dict[str, Any]) -> str:
         "| group | notes | refused | refused rate |",
         "|---|---|---|---|",
     ]
-    for group, row in extraction["gate"].items():
+    for group, row in extraction["refusals"].items():
         lines.append(
             f"| {group} | {row['notes']} | {row['refused']} | {_fmt(row['refused_rate'])} |"
         )
@@ -1111,7 +1069,7 @@ def run_score(args: argparse.Namespace) -> None:
 def run_frontier(args: argparse.Namespace) -> None:
     from memory_base.eval import hit_judge
 
-    run = run_name(args.variant, args.gate, args.read)
+    run = run_name(args.variant, args.read)
     questions = {q["question_id"]: q for q in load_dataset(args.dataset)}
     packets = list(_packets_by_id(args.data_dir, run).values())
     judgments = read_jsonl(hit_judgments_path(args.data_dir, run))
@@ -1129,7 +1087,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     def run_flags(sub: argparse.ArgumentParser) -> None:
         sub.add_argument("--variant", choices=VARIANTS, default="baseline")
-        sub.add_argument("--gate", choices=GATES, default="on")
         sub.add_argument("--read", choices=tuple(READ_SETTINGS), default="search")
 
     retrieve = commands.add_parser("retrieve", help="load notes and search per question")

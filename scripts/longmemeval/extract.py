@@ -6,15 +6,14 @@ with one committed prompt: "agent" (a personal assistant's memory writer), "dige
 session-digest rules with the memory save policy), or "personal" (the session-digest
 rules with the personal memory policy). "digest" and "personal" are the packaged
 extraction prompts (memory_base.eval.extraction), with their numbered-turn rendering
-and output contract; each returned note is then judged by the production content
-gate (after the extractor's label check and the length and credential checks save_note
-applies first) and its
-verdict recorded, or recorded as "unjudged" with `--gate off`, which never calls the gate.
+and output contract; each returned note is recorded "stored", or "refused" with the
+reason when the extractor's label check or the length and credential checks save_note
+applies would refuse it.
 <data-dir>/notes.jsonl holds one line per note, <data-dir>/sessions.jsonl one line per
 completed unit, zero-note units included. Rerunning resumes where it stopped.
 
 Usage:
-  uv run python scripts/longmemeval/extract.py --dataset PATH [--data-dir DIR] [--gate off]
+  uv run python scripts/longmemeval/extract.py --dataset PATH [--data-dir DIR]
   ... --prompt digest --backend claude-code --model claude-sonnet-5-5 --effort high
 """
 
@@ -22,11 +21,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextvars
 import json
 import os
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -62,7 +60,6 @@ SYSTEM_PROMPTS = {
 DEFAULT_MODEL = {"zai": "glm-5.3-flash", "claude-code": "claude-sonnet-5-5"}
 DEFAULT_CONCURRENCY = 5
 EXTRACT_ATTEMPTS = 3
-GATE_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 5.0
 EXTRACT_TIMEOUT_SECONDS = 180.0
 # A thinking session reads the whole transcript before it answers.
@@ -70,16 +67,9 @@ CLAUDE_EXTRACT_TIMEOUT_SECONDS = 600.0
 # z.ai's content filter: a 400 with this code refuses the input itself, so a retry cannot pass.
 CONTENT_FILTER_CODE = "1301"
 
-Gate = Callable[[str], Awaitable[notes_module.ContentVerdict]]
-
-# Token usage of the gate calls made for the unit running in the current task.
-_gate_usage: contextvars.ContextVar[dict[str, int] | None] = contextvars.ContextVar(
-    "lme_gate_usage", default=None
-)
-
 
 class UnitFailed(RuntimeError):
-    """A unit could not be extracted or judged; nothing is written, so a rerun retries it."""
+    """A unit could not be extracted; nothing is written, so a rerun retries it."""
 
 
 class ProviderRefused(RuntimeError):
@@ -182,28 +172,6 @@ def _strip_fence(text: str) -> str:
     return text.strip()
 
 
-def record_gate_usage() -> None:
-    """Wrap the server's chat client factory so gate token usage reaches the unit's counter."""
-    factory = llm._openai_client
-
-    def recording_client(provider: llm.LlmProvider) -> AsyncOpenAI:
-        client = factory(provider)
-        create = client.chat.completions.create
-
-        async def create_and_record(**kwargs: Any) -> Any:
-            response = await create(**kwargs)
-            usage = _gate_usage.get()
-            if usage is not None and response.usage is not None:
-                usage["in"] += response.usage.prompt_tokens
-                usage["out"] += response.usage.completion_tokens
-            return response
-
-        client.chat.completions.create = create_and_record
-        return client
-
-    llm._openai_client = recording_client
-
-
 def read_notes(data_dir: Path) -> list[dict[str, Any]]:
     return lme.read_jsonl(Path(data_dir) / NOTES_FILE)
 
@@ -225,23 +193,6 @@ def prepare_resume(data_dir: Path) -> set[tuple[str, str]]:
     return completed
 
 
-async def _judge_with_retry(gate: Gate, content: str) -> tuple[Any, int]:
-    from memory_base.serve.notes import ContentVerdict
-
-    for attempt in range(GATE_ATTEMPTS):
-        try:
-            return await gate(content), attempt
-        except Exception as exc:
-            if is_content_filter_refusal(exc):
-                # Production fails open when the gate cannot judge; the note is saved unjudged.
-                reason = "content gate unavailable: content_filter"
-                return ContentVerdict(accepted=True, reason=reason), attempt
-            if attempt == GATE_ATTEMPTS - 1:
-                raise UnitFailed(f"content gate unavailable: {exc!r}") from exc
-            await asyncio.sleep(RETRY_BACKOFF_SECONDS * 2**attempt)
-    raise AssertionError("unreachable")
-
-
 async def _complete_with_retry(client: Any, messages: list[dict[str, str]]):
     in_tok = out_tok = 0
     for attempt in range(EXTRACT_ATTEMPTS):
@@ -261,7 +212,7 @@ async def _complete_with_retry(client: Any, messages: list[dict[str, str]]):
 
 
 def _save_path_refusal(content: str, kind: str) -> str | None:
-    """The label, length, or credential refusal that precedes the gate call, if any."""
+    """The label, length, or credential refusal save_note would apply, if any."""
     if kind not in EXTRACTED_KINDS:
         return f"validation: kind must be one of {EXTRACTED_KINDS}"
     if len(content) > notes_module.NOTE_MAX_CHARS:
@@ -278,11 +229,8 @@ async def extract_unit(
     turns: Sequence[dict[str, Any]],
     *,
     client: Any,
-    gate: Gate | None,
     prompt: str = "agent",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    usage = {"in": 0, "out": 0}
-    _gate_usage.set(usage)
     started = time.monotonic()
     try:
         raw_notes, in_tok, out_tok, extract_retries = await _complete_with_retry(
@@ -292,43 +240,30 @@ async def extract_unit(
         return [], _refused_session(session_id, date, client, started, str(refusal))
     extracted = time.monotonic()
     rows: list[dict[str, Any]] = []
-    gate_calls = gate_retries = 0
     for note in raw_notes:
         content = note["content"].strip()
         if not content:
             continue
         kind = note["kind"]
         reason = _save_path_refusal(content, kind)
-        if reason is not None:
-            outcome = "refused"
-        elif gate is None:
-            outcome, reason = "unjudged", "gate off"
-        else:
-            verdict, retries = await _judge_with_retry(gate, content)
-            gate_calls += 1 + retries
-            gate_retries += retries
-            outcome, reason = ("stored" if verdict.accepted else "refused"), verdict.reason
+        outcome = "stored" if reason is None else "refused"
         rows.append(
             {
                 "session_id": session_id,
                 "date": date,
                 "content": content,
                 "kind": kind,
-                "gate": outcome,
-                "gate_reason": reason,
+                "outcome": outcome,
+                "reason": reason,
             }
         )
     session = {
         "session_id": session_id,
         "date": date,
         "notes": len(rows),
-        "stored": sum(row["gate"] == "stored" for row in rows),
+        "stored": sum(row["outcome"] == "stored" for row in rows),
         "in_tok": in_tok,
         "out_tok": out_tok,
-        "gate_in_tok": usage["in"],
-        "gate_out_tok": usage["out"],
-        "gate_calls": gate_calls,
-        "gate_retries": gate_retries,
         "extract_retries": extract_retries,
         "extract_seconds": round(extracted - started, 3),
         "seconds": round(time.monotonic() - started, 3),
@@ -360,7 +295,6 @@ async def extract_units(
     data_dir: Path,
     *,
     client: Any,
-    gate: Gate | None,
     concurrency: int = DEFAULT_CONCURRENCY,
     prompt: str = "agent",
 ) -> dict[str, Any]:
@@ -379,9 +313,7 @@ async def extract_units(
     async def one(unit: tuple[str, str], turns: Sequence[dict[str, Any]]) -> None:
         async with semaphore:
             try:
-                rows, session = await extract_unit(
-                    *unit, turns, client=client, gate=gate, prompt=prompt
-                )
+                rows, session = await extract_unit(*unit, turns, client=client, prompt=prompt)
             except UnitFailed as exc:
                 summary["failed"] += 1
                 failures.append(f"{unit[0]} {unit[1]}: {exc}")
@@ -416,7 +348,6 @@ def _extract_manifest(
     units = {(sid, date) for sid, date, _ in _units_for(selected)}
     sessions = [s for s in read_sessions(args.data_dir) if (s["session_id"], s["date"]) in units]
     notes = [n for n in read_notes(args.data_dir) if (n["session_id"], n["date"]) in units]
-    gate_provider = None if args.gate == "off" else llm.resolve_llm_provider(os.environ)
     totals = {name: sum(s[name] for s in sessions) for name in lme.SESSION_TOTALS}
     return {
         "code": code,
@@ -431,12 +362,6 @@ def _extract_manifest(
             "prompt_sha256": prompt_sha256(args.prompt),
             "concurrency": args.concurrency,
         },
-        "gate": gate_provider
-        and {
-            "provider": gate_provider.name,
-            "model": gate_provider.model,
-            "judge_prompt_sha256": lme.prompt_sha(notes_module.JUDGE_PROMPT),
-        },
         "units": {
             "selected": len(units),
             "completed": len(sessions),
@@ -445,8 +370,8 @@ def _extract_manifest(
         },
         "notes": {
             "total": len(notes),
-            "stored": sum(n["gate"] == "stored" for n in notes),
-            "refused": sum(n["gate"] == "refused" for n in notes),
+            "stored": sum(n["outcome"] == "stored" for n in notes),
+            "refused": sum(n["outcome"] == "refused" for n in notes),
         },
         "totals": totals,
         "notes_sha256": lme.sha256_file(args.data_dir / NOTES_FILE),
@@ -463,7 +388,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--backend", choices=tuple(DEFAULT_MODEL), default="zai")
     parser.add_argument("--model")
     parser.add_argument("--effort", default="high")
-    parser.add_argument("--gate", choices=lme.GATES, default="on")
     parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     parser.add_argument("--questions", type=lambda s: s.split(","), default=None)
     args = parser.parse_args(argv)
@@ -479,8 +403,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.backend == "zai"
         else ClaudeCodeExtractor(model, args.effort)
     )
-    if args.gate == "on":
-        record_gate_usage()
     units = _units_for(selected)
     print(f"questions: {len(selected)}, units: {len(units)}", flush=True)
     summary = asyncio.run(
@@ -488,7 +410,6 @@ def main(argv: Sequence[str] | None = None) -> None:
             units,
             args.data_dir,
             client=client,
-            gate=notes_module.judge_note_content if args.gate == "on" else None,
             concurrency=args.concurrency,
             prompt=args.prompt,
         )

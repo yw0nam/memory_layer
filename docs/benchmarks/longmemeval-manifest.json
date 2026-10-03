@@ -131,11 +131,6 @@
       "prompt_sha256": "a8a93e2fd0ce6c0babfc94eeaa4a592df5a831a23b0f9bbfa1e1ab4c11cf2f16",
       "concurrency": 8
     },
-    "gate": {
-      "provider": "zai",
-      "model": "glm-5.3-flash",
-      "judge_prompt_sha256": "ba95a8fe23fdc95be1de1f6eaab62e32bc8074ca3606792ca91dfe1b4f550415"
-    },
     "units": {
       "selected": 4742,
       "completed": 4742,
@@ -144,29 +139,24 @@
     },
     "notes": {
       "total": 8475,
-      "stored": 5868,
-      "refused": 2607
+      "stored": 8475,
+      "refused": 0
     },
+    "provenance": "Note counts are derived from the recorded extraction under the current save-path checks; notes_sha256 and sessions_sha256 identify the original artefact files, whose per-note outcomes come from an earlier save path.",
     "totals": {
       "in_tok": 23001533,
       "out_tok": 2694776,
-      "gate_in_tok": 4449071,
-      "gate_out_tok": 755752,
-      "gate_calls": 8758,
-      "gate_retries": 283,
       "extract_retries": 12,
-      "extract_seconds": 35185.765,
-      "seconds": 71772.143
+      "extract_seconds": 35185.765
     },
     "notes_sha256": "0ade084dfbe529daf4fda1a3da762f798802d94eb37ee304b5ed27be33540c98",
     "sessions_sha256": "960de428527cb3575a38992d4dad7d3ea802d177560911bf2a5b7966de71b904"
   },
-  "retrieve-budget-gate-off": {
+  "retrieve-budget": {
     "code": {
       "commit": "1fd42074e7e455391d61ce34ba786942bfdee2a7",
       "dirty": true
     },
-    "gate": "off",
     "read": {
       "budget_tokens": 4000
     },
@@ -194,8 +184,7 @@
       "duplicates": 0,
       "similar_acks": 178,
       "credential_refused": 0,
-      "invalid": 0,
-      "gate_refused": 2607
+      "invalid": 0
     },
     "zero_hit_packets": 0,
     "packets_sha256": "8307ee9267b4d32a4def5d5f8fd40494f7bb518904bc5137a99f6928ede7e4c8",
@@ -253,7 +242,7 @@
       "zero_hit_packets_scored": 0
     }
   },
-  "answer-budget-gate-off": {
+  "answer-budget": {
     "code": {
       "commit": "ea669555f53abd2c0f54a72353a1136c8f852788",
       "dirty": true
@@ -273,7 +262,7 @@
     "seconds": 487.512,
     "output_sha256": "00000ae056ef033e5949374e60c4ba8c450180875a4eab76637867548b93eeef"
   },
-  "judge-budget-gate-off": {
+  "judge-budget": {
     "code": {
       "commit": "ea669555f53abd2c0f54a72353a1136c8f852788",
       "dirty": true
@@ -321,72 +310,61 @@
       "units_extracted": 4742,
       "notes": 8475,
       "notes_per_unit": 1.7872205820328975,
+      "provenance": "Note counts and refusals are derived from the recorded extraction under the current save-path checks; artefacts_sha256 identifies the original artefact files.",
       "zero_note_units": 1068,
       "provider_refused_units": 0,
-      "refused_by": {
-        "gate": 2607
-      },
+      "refused_by": {},
       "tokens": {
         "in_tok": 23001533,
         "out_tok": 2694776,
-        "gate_in_tok": 4449071,
-        "gate_out_tok": 755752,
-        "gate_calls": 8758,
-        "gate_retries": 283,
         "extract_retries": 12,
-        "extract_seconds": 35185.765000000014,
-        "seconds": 71772.14300000019
-      },
-      "seconds_per_unit": {
-        "mean": 15.135416069169127,
-        "median": 14.099,
-        "max": 82.36
+        "extract_seconds": 35185.765000000014
       },
       "extract_seconds_per_unit": {
         "mean": 7.420026360185576,
         "median": 7.179,
         "max": 35.363
       },
-      "gate": {
+      "refusals": {
         "overall": {
           "notes": 8475,
-          "refused": 2607,
-          "refused_rate": 0.30761061946902657
+          "refused": 0,
+          "refused_rate": 0.0
         },
         "knowledge-update": {
           "notes": 1344,
-          "refused": 400,
-          "refused_rate": 0.2976190476190476
+          "refused": 0,
+          "refused_rate": 0.0
         },
         "multi-session": {
           "notes": 2284,
-          "refused": 699,
-          "refused_rate": 0.30604203152364273
+          "refused": 0,
+          "refused_rate": 0.0
         },
         "single-session-assistant": {
           "notes": 879,
-          "refused": 301,
-          "refused_rate": 0.3424345847554039
+          "refused": 0,
+          "refused_rate": 0.0
         },
         "single-session-preference": {
           "notes": 519,
-          "refused": 149,
-          "refused_rate": 0.28709055876685935
+          "refused": 0,
+          "refused_rate": 0.0
         },
         "single-session-user": {
           "notes": 1190,
-          "refused": 337,
-          "refused_rate": 0.28319327731092436
+          "refused": 0,
+          "refused_rate": 0.0
         },
         "temporal-reasoning": {
           "notes": 2259,
-          "refused": 721,
-          "refused_rate": 0.3191677733510403
+          "refused": 0,
+          "refused_rate": 0.0
         }
       }
     },
     "runs": {
-      "budget-gate-off": {
+      "budget": {
         "questions": 100,
         "qa": {
           "abstention": {
@@ -490,8 +468,7 @@
           "duplicates": 0,
           "similar_acks": 178,
           "credential_refused": 0,
-          "invalid": 0,
-          "gate_refused": 2607
+          "invalid": 0
         },
         "similar_acks_per_question": 1.78,
         "answer_usage": {
@@ -515,10 +492,10 @@
       }
     },
     "artefacts_sha256": {
-      "answers-budget-gate-off.jsonl": "00000ae056ef033e5949374e60c4ba8c450180875a4eab76637867548b93eeef",
-      "judgments-budget-gate-off.jsonl": "6cbdfe54e433256d20b65ee2ca34d31519d03552b212c54571f3de2c240f7292",
+      "answers-budget.jsonl": "00000ae056ef033e5949374e60c4ba8c450180875a4eab76637867548b93eeef",
+      "judgments-budget.jsonl": "6cbdfe54e433256d20b65ee2ca34d31519d03552b212c54571f3de2c240f7292",
       "notes.jsonl": "0ade084dfbe529daf4fda1a3da762f798802d94eb37ee304b5ed27be33540c98",
-      "packets-budget-gate-off.jsonl": "8307ee9267b4d32a4def5d5f8fd40494f7bb518904bc5137a99f6928ede7e4c8",
+      "packets-budget.jsonl": "8307ee9267b4d32a4def5d5f8fd40494f7bb518904bc5137a99f6928ede7e4c8",
       "sessions.jsonl": "960de428527cb3575a38992d4dad7d3ea802d177560911bf2a5b7966de71b904"
     }
   }

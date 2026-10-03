@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; the content gate's judge prompt is superseded by ADR-0007
 
 ## Context
 

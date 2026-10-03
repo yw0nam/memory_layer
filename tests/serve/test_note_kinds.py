@@ -1,11 +1,11 @@
 """Contract tests for the personal and work note kinds (red-first).
 
 Notes are saved through one MCP tool, ``save_memory``, whose required ``kind``
-(``personal`` / ``work``) labels the note for search and listing; one content
-gate judges every note for low signal whatever its kind. ``POST /save_memory``
-requires ``kind``; reads accept only these kinds.
+(``personal`` / ``work``) labels the note for search and listing and never decides
+whether it is stored. ``POST /save_memory`` requires ``kind``; reads accept only these
+kinds.
 
-Unit sections follow tests/serve/test_content_gate.py's FakeConnection pattern
+Unit sections follow tests/serve/test_save_without_gate.py's FakeConnection pattern
 (no DB, no network). Integration sections run the real stack in-process.
 """
 
@@ -26,15 +26,10 @@ from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import admin, api, mcp_server, notes
 from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
 from memory_base.serve.notes import (
-    JUDGE_PROMPT,
     NOTE_KINDS,
-    ContentVerdict,
-    LowSignalNoteError,
     build_note_row,
-    judge_note_content,
     save_note,
 )
-from test_content_gate import _assert_refusal_text
 
 NOW = 1_700_000_000.0
 KIND_ERROR = "kind must be one of ('personal', 'work')"
@@ -87,7 +82,7 @@ async def _noop(conn):
     return None
 
 
-def _patch_note_deps(monkeypatch, conn, judge=None):
+def _patch_note_deps(monkeypatch, conn):
     @asynccontextmanager
     async def acquire(timeout=None):
         yield conn
@@ -96,14 +91,10 @@ def _patch_note_deps(monkeypatch, conn, judge=None):
         conn.embeds.append(text)
         return "[0]"
 
-    async def accepted_judge(content):
-        return ContentVerdict(accepted=True, reason="durable knowledge")
-
     monkeypatch.setattr(notes.db, "acquire", acquire)
     monkeypatch.setattr(notes, "embed_text", fake_embed_text)
     monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
     monkeypatch.setattr(notes, "ensure_schema_once", _noop)
-    monkeypatch.setattr(notes, "judge_note_content", judge or accepted_judge)
 
 
 def test_save_note_requires_a_kind():
@@ -116,11 +107,7 @@ def test_save_note_requires_a_kind():
 @pytest.mark.parametrize("kind", [True, ["work"], {"k": 1}, "note", "decision", "episode", "other"])
 def test_save_note_rejects_a_malformed_kind(monkeypatch, kind):
     conn = FakeConnection()
-
-    async def never_called(content):
-        raise AssertionError("the gate must not run for a malformed kind")
-
-    _patch_note_deps(monkeypatch, conn, judge=never_called)
+    _patch_note_deps(monkeypatch, conn)
     with pytest.raises(ValueError, match=re.escape(KIND_ERROR)):
         asyncio.run(save_note("distilled content", tags=["test"], kind=kind))
     assert conn.embeds == []
@@ -128,113 +115,25 @@ def test_save_note_rejects_a_malformed_kind(monkeypatch, kind):
 
 
 @pytest.mark.parametrize("kind", ["personal", "work"])
-def test_the_gate_judges_the_content_whatever_its_kind(monkeypatch, kind):
+def test_either_kind_is_stored_with_its_label(monkeypatch, kind):
     conn = FakeConnection()
-    seen = []
-
-    async def recording_judge(content):
-        seen.append(content)
-        return ContentVerdict(accepted=True, reason="durable knowledge")
-
-    _patch_note_deps(monkeypatch, conn, judge=recording_judge)
+    _patch_note_deps(monkeypatch, conn)
     result = asyncio.run(save_note("distilled content", tags=["test"], kind=kind))
-    assert seen == ["distilled content"]
+    assert conn.embeds == ["distilled content"]
     assert result["stored"] is True
     assert result["kind"] == kind
 
 
-def test_judge_uses_the_one_prompt(monkeypatch):
-    captured = {}
-
-    async def fake_chat_json(messages, schema, *, timeout):
-        captured["messages"] = messages
-        captured["schema"] = schema
-        captured["timeout"] = timeout
-        return {"accepted": True, "reason": "ok"}
-
-    monkeypatch.setattr(notes, "chat_json", fake_chat_json)
-    verdict = asyncio.run(judge_note_content("distilled content"))
-    assert verdict == ContentVerdict(accepted=True, reason="ok")
-    assert [m["role"] for m in captured["messages"]] == ["system", "user"]
-    assert captured["messages"][0]["content"] == JUDGE_PROMPT
-    assert captured["messages"][1]["content"] == "distilled content"
-    assert captured["schema"]["required"] == ["accepted", "reason"]
-    assert captured["timeout"] == notes.NOTE_GATE_TIMEOUT_SECONDS
-
-
-@pytest.mark.parametrize("kind", ["personal", "work"])
-def test_judge_failure_fails_open_for_either_kind(monkeypatch, kind):
-    conn = FakeConnection()
-
-    async def failing_judge(content):
-        raise TimeoutError("chat timed out")
-
-    _patch_note_deps(monkeypatch, conn, judge=failing_judge)
-    result = asyncio.run(save_note("distilled content", tags=["test"], kind=kind))
-    assert result["stored"] is True
-    assert json.loads(conn.insert_args[10])["content_gate"] == "unavailable"
-
-
-@pytest.mark.parametrize("kind", ["personal", "work"])
-def test_a_refusal_is_low_signal_and_never_names_another_tool(monkeypatch, kind):
-    conn = FakeConnection()
-
-    async def refusing_judge(content):
-        return ContentVerdict(accepted=False, reason="session narration")
-
-    _patch_note_deps(monkeypatch, conn, judge=refusing_judge)
-    with pytest.raises(LowSignalNoteError) as exc_info:
-        asyncio.run(save_note("distilled content", tags=["test"], kind=kind))
-    assert exc_info.value.reason == "session narration"
-    _assert_refusal_text(str(exc_info.value), "session narration")
-    assert conn.embeds == []
-    assert conn.insert_args is None
-
-
-def test_the_judge_prompt_refuses_low_signal_and_never_a_kind():
-    assert NOTE_KINDS == ("personal", "work")
-    text = " ".join(JUDGE_PROMPT.split())
-    assert text.endswith("State the reason in one sentence.")
-    for anchor in (
-        "Refuse a note that is low signal",
-        "progress, status, next steps, or a narration",
-        "has no source but the note and is not a copy",
-        "generic advice or explanation with no fact tied to this user or their work",
-        "never refuses it, and neither does a note that mixes the two",
-        "A failure's lesson is not session narration.",
-        "The refusal list wins over the accept list.",
-    ):
-        assert anchor in text
-    for stale in ("must be split into", "is not a mix", "Judge strictly.", "Judge generously."):
-        assert stale not in text
-
-
 def test_identical_content_through_the_other_kind_returns_the_stored_kind(monkeypatch):
     conn = FakeConnection(insert_status="INSERT 0 0", stored_kind="work")
-    judged = []
-
-    async def recording_judge(content):
-        judged.append(content)
-        return ContentVerdict(accepted=True, reason="durable knowledge")
-
-    _patch_note_deps(monkeypatch, conn, judge=recording_judge)
+    _patch_note_deps(monkeypatch, conn)
     result = asyncio.run(save_note("distilled content", tags=["test"], kind="personal"))
     assert result["stored"] is False
     assert result["kind"] == "work"
-    assert judged == ["distilled content"]
 
 
-def test_identical_content_still_passes_the_gate(monkeypatch):
-    conn = FakeConnection(insert_status="INSERT 0 0")
-
-    async def refusing_judge(content):
-        return ContentVerdict(accepted=False, reason="not for this gate")
-
-    _patch_note_deps(monkeypatch, conn, judge=refusing_judge)
-    with pytest.raises(LowSignalNoteError):
-        asyncio.run(save_note("distilled content", tags=["test"], kind="personal"))
-    assert conn.insert_args is None
-    assert conn.kind_reads == 0
+def test_the_kinds_are_personal_and_work():
+    assert NOTE_KINDS == ("personal", "work")
 
 
 def test_the_kind_does_not_enter_the_note_id():
@@ -295,22 +194,6 @@ def test_save_memory_route_forwards_kind_to_save_note(monkeypatch, kind):
     )
     assert response.status_code == 200
     assert captured["kind"] == kind
-
-
-@pytest.mark.parametrize("kind", ["personal", "work"])
-def test_low_signal_refusal_maps_to_409_with_the_refusal_text(monkeypatch, kind):
-    async def fake_save_note(content, **kwargs):
-        raise LowSignalNoteError("session narration")
-
-    monkeypatch.setattr(api, "save_note", fake_save_note)
-    response = client.post(
-        "/save_memory",
-        json={"author": "natsume", "content": "distilled text", "tags": ["test"], "kind": kind},
-    )
-    assert response.status_code == 409
-    body = response.json()
-    assert body["reason"] == "session narration"
-    _assert_refusal_text(body["error"], "session narration")
 
 
 def test_duplicates_route_rejects_an_unknown_kind(monkeypatch):
@@ -382,7 +265,7 @@ def test_save_memory_parameters_carry_their_notes_in_the_schema():
         "namespace",
     ):
         assert properties[name].get("description"), name
-    assert "never a reason to refuse" in properties["kind"]["description"]
+    assert "never decides whether the note is stored" in properties["kind"]["description"]
     assert "first tag names the subject" in properties["tags"]["description"]
     assert "author allowlist" in properties["author"]["description"]
 
@@ -412,21 +295,6 @@ def test_save_memory_posts_the_kind_it_is_given(monkeypatch, kind):
     assert result == {"id": "note:abc", "kind": kind, "stored": True}
 
 
-def test_save_memory_surfaces_the_gate_refusal(monkeypatch):
-    refusal = LowSignalNoteError("session narration")
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, json={"error": str(refusal), "reason": refusal.reason})
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError) as exc_info:
-        asyncio.run(
-            mcp_server.save_memory("distilled content", "natsume", tags=["test"], kind="work")
-        )
-    assert str(exc_info.value) == str(refusal)
-    _assert_refusal_text(str(exc_info.value), "session narration")
-
-
 def test_save_memory_description_states_both_bars_and_the_label():
     description = " ".join(_tools()["save_memory"].description.split())
     for anchor in (
@@ -440,10 +308,16 @@ def test_save_memory_description_states_both_bars_and_the_label():
         "English",
         "search_memory the same subject",
         "archive them with archive_notes",
-        "rewrite it once",
+        "The server stores a note once it passes the validation, credential, and near-duplicate "
+        "checks",
     ):
         assert anchor in description
-    for stale in ("save_personal_memory", "save_work_memory", "the other save tool"):
+    for stale in (
+        "save_personal_memory",
+        "save_work_memory",
+        "the other save tool",
+        "rewrite it once",
+    ):
         assert stale not in description
 
 
@@ -473,13 +347,16 @@ def test_server_instructions_name_the_save_tool_and_the_kind_as_a_label():
         "save_memory",
         "send_message",
         "Write rarely.",
-        "at most once",
         "a moment they shared with you, even during work",
-        "The kind only labels a note: a refusal means the note is low signal, never that it "
-        "has the other kind.",
+        "The kind only labels a note and never decides whether it is stored.",
     ):
         assert anchor in flat
-    for stale in ("save_personal_memory", "save_work_memory", "the other save tool"):
+    for stale in (
+        "save_personal_memory",
+        "save_work_memory",
+        "the other save tool",
+        "at most once",
+    ):
         assert stale not in flat
 
 

@@ -1,13 +1,8 @@
-"""Unit coverage for the notes replay labeling script's pure logic, plus the
-live content-gate replay over the labelled note fixtures."""
+"""Unit coverage for the notes replay labeling script's pure logic."""
 
 from __future__ import annotations
 
-import asyncio
-import json
-import time
 from collections import Counter
-from pathlib import Path
 
 import pytest
 from label_notes_replay import (
@@ -19,21 +14,6 @@ from label_notes_replay import (
     parse_label,
     sample_half,
 )
-
-from memory_base.serve import notes
-
-GATE_FIXTURE_DIR = Path(__file__).parent / "fixtures"
-# Captured before tests/conftest.py pins the gate open for integration tests.
-_LIVE_JUDGE = notes.judge_note_content
-
-GATE_FIXTURES = {
-    "gate_replay_coding_notes.jsonl": "coding-agent notes",
-    "gate_replay_conversation_notes.jsonl": "conversation-memory notes",
-}
-
-# One malformed provider response is not a verdict; the benchmark retries gate calls the same way.
-GATE_REPLAY_ATTEMPTS = 3
-GATE_REPLAY_BACKOFF_SECONDS = 2.0
 
 
 def make_row(log_id: int, shape: str, *, hit_ids: tuple[str, ...] = ()) -> LogRow:
@@ -153,59 +133,3 @@ def test_write_report_and_spotcheck_render_every_class(tmp_path):
     assert "A          1        50.0" in report
     assert "mean original_hits_judged_relevant: 1.000" in report
     assert (tmp_path / "spotcheck.md").read_text().count("## log ") == 3
-
-
-# ---- live content-gate replay ------------------------------------------------
-
-
-def load_gate_fixture(name: str) -> list[dict]:
-    rows = [
-        json.loads(line)
-        for line in (GATE_FIXTURE_DIR / name).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    for row in rows:
-        assert set(row) == {"content", "expect"}
-        assert row["expect"] in {"accept", "refuse"}
-    return rows
-
-
-def test_gate_fixtures_match_their_composition():
-    coding = load_gate_fixture("gate_replay_coding_notes.jsonl")
-    conversation = load_gate_fixture("gate_replay_conversation_notes.jsonl")
-    assert len(coding) == 44
-    assert Counter(row["expect"] for row in coding) == {"accept": 30, "refuse": 14}
-    assert len(conversation) == 12
-    assert Counter(row["expect"] for row in conversation) == {"accept": 9, "refuse": 3}
-
-
-@pytest.mark.integration
-@pytest.mark.parametrize(
-    "name", sorted(GATE_FIXTURES), ids=[GATE_FIXTURES[name] for name in sorted(GATE_FIXTURES)]
-)
-def test_replay_gate_fixture_against_the_live_gate(name):
-    rows = load_gate_fixture(name)
-    mismatches: list[str] = []
-    for row in rows:
-        verdict, error = None, None
-        for attempt in range(1, GATE_REPLAY_ATTEMPTS + 1):
-            try:
-                verdict = asyncio.run(_LIVE_JUDGE(row["content"]))
-                break
-            except Exception as exc:  # any judge failure is retryable here
-                error = exc
-                if attempt < GATE_REPLAY_ATTEMPTS:
-                    time.sleep(GATE_REPLAY_BACKOFF_SECONDS)
-        if verdict is None:
-            mismatches.append(
-                f"judge failed {GATE_REPLAY_ATTEMPTS} attempts: {error!r}\n  note: {row['content']}"
-            )
-        elif verdict.accepted != (row["expect"] == "accept"):
-            mismatches.append(
-                f"expected {row['expect']}, got accepted={verdict.accepted}: {verdict.reason}\n"
-                f"  note: {row['content']}"
-            )
-    assert not mismatches, (
-        f"{len(mismatches)}/{len(rows)} notes diverge from the fixture labels:\n"
-        + "\n".join(mismatches)
-    )
