@@ -30,6 +30,16 @@ NOTE_KINDS = ("personal", "work")
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
 LIST_NOTES_DEFAULT_LIMIT = 50
 LIST_NOTES_MAX_LIMIT = 200
+# Written when a note is archived by a save, an archive, or a consolidation; a restore clears them.
+ARCHIVE_LINEAGE_FIELDS = ("archived_by", "replaced_by", "consolidated_into")
+LINEAGE_FIELDS = (
+    "supersedes",
+    *ARCHIVE_LINEAGE_FIELDS,
+    "merged_from",
+    "merged_dates",
+    "consolidation_action",
+    "undone_action",
+)
 
 
 def note_date(occurred_at: float | None, ts_last_active: float) -> str:
@@ -62,6 +72,38 @@ class CredentialNoteError(ValueError):
         )
 
 
+def note_id(namespace: str, content: str) -> str:
+    """`note:{namespace}:{sha256(content)[:16]}` over the stripped content."""
+    return f"note:{namespace}:{hashlib.sha256(content.strip().encode()).hexdigest()[:16]}"
+
+
+INSERT_NOTE_SQL = f"""
+INSERT INTO "{PG_SCHEMA}".memory_chunks
+  (id, source_type, source_ref, chunk_kind, session_id, content_raw,
+   distilled, embedding, ts_last_active, namespace, metadata, occurred_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb,$12)
+ON CONFLICT (id) DO NOTHING
+"""
+
+
+def insert_note_args(row: dict[str, Any], embedding: str, namespace: str) -> tuple[Any, ...]:
+    """The INSERT_NOTE_SQL arguments for a `build_note_row` row."""
+    return (
+        row["id"],
+        row["source_type"],
+        row["source_ref"],
+        row["kind"],
+        row["session_id"],
+        row["raw"],
+        row["distilled"],
+        embedding,
+        row["timestamp"],
+        namespace,
+        json.dumps(row["metadata"], ensure_ascii=False),
+        row["occurred_at"],
+    )
+
+
 def build_note_row(
     content: str,
     kind: str,
@@ -87,13 +129,13 @@ def build_note_row(
     metadata: dict[str, Any] = {"tags": normalized_tags}
     if author is not None:
         metadata["author"] = author
-    note_id = f"note:{namespace}:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
+    row_id = note_id(namespace, content)
     return {
-        "id": note_id,
+        "id": row_id,
         "source_type": "agent_note",
         "source_ref": "save_memory",
         "kind": kind,
-        "session_id": note_id,
+        "session_id": row_id,
         "raw": content,
         "distilled": content,
         "timestamp": now,
@@ -186,25 +228,7 @@ async def save_note(
             if supersedes is not None:
                 row["metadata"]["supersedes"] = supersedes
             status = await conn.execute(
-                f"""
-                INSERT INTO "{PG_SCHEMA}".memory_chunks
-                  (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-                   distilled, embedding, ts_last_active, namespace, metadata, occurred_at)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::halfvec,$9,$10,$11::jsonb,$12)
-                ON CONFLICT (id) DO NOTHING
-                """,
-                row["id"],
-                row["source_type"],
-                row["source_ref"],
-                row["kind"],
-                row["session_id"],
-                row["raw"],
-                row["distilled"],
-                embedding,
-                row["timestamp"],
-                namespace,
-                json.dumps(row["metadata"], ensure_ascii=False),
-                row["occurred_at"],
+                INSERT_NOTE_SQL, *insert_note_args(row, embedding, namespace)
             )
             stored = status.endswith(" 1")
             stored_kind = row["kind"]
@@ -241,13 +265,15 @@ async def save_note(
                     f"""
                     UPDATE "{PG_SCHEMA}".memory_chunks
                     SET archived_at = $2,
-                        metadata = metadata || jsonb_build_object('archived_by', $4::text)
+                        metadata = metadata
+                          || jsonb_build_object('archived_by', $4::text, 'replaced_by', $5::text)
                     WHERE id = $1 AND namespace = $3
                     """,
                     supersedes,
                     row["timestamp"],
                     namespace,
                     author,
+                    row["id"],
                 )
     return {
         "id": row["id"],
@@ -320,9 +346,8 @@ async def list_notes(
         }
         if row["archived_at"] is not None:
             note["archived"] = True
-        if metadata.get("archived_by") is not None:
-            note["archived_by"] = metadata["archived_by"]
-        if metadata.get("supersedes") is not None:
-            note["supersedes"] = metadata["supersedes"]
+        for field in LINEAGE_FIELDS:
+            if metadata.get(field) is not None:
+                note[field] = metadata[field]
         out.append(note)
     return out

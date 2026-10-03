@@ -101,3 +101,13 @@ def test_save_note_into_an_unregistered_namespace_writes_nothing(use):
     with pytest.raises(namespaces.NamespaceError):
         _save()
     assert conn.sql("INSERT") == []
+
+
+def test_a_supersede_records_the_replacement_on_the_replaced_note(use):
+    conn = use(RecordingConn())
+    result = _save(supersedes="note:team-a:old", author="claude-code")
+    [archive] = conn.sql("SET archived_at")
+    assert "'replaced_by'" in archive[0] and "'archived_by'" in archive[0]
+    assert result["id"] in archive[1]
+    assert "note:team-a:old" in archive[1]
+    assert archive[2] >= 1

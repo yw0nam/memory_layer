@@ -39,6 +39,7 @@ from memory_base.serve import namespaces
 from memory_base.serve import notes
 from memory_base.serve import repos
 from memory_base.serve import tables
+from memory_base.serve import verdicts
 from memory_base.serve.auth import ApiKeyAuthMiddleware
 from memory_base.serve.http import TEXT_LIMIT
 from memory_base.serve.http import error
@@ -564,11 +565,17 @@ def _scalar(request: Request, name: str, parse, default, valid, rule: str):
     return value
 
 
+def _consolidator_denied(key) -> JSONResponse | None:
+    if key.is_admin and CONSOLIDATE_AUTHOR in key.authors:
+        return None
+    return error(f"admin key with {CONSOLIDATE_AUTHOR!r} in its authors required", 403)
+
+
 async def admin_consolidate_groups_route(request: Request) -> JSONResponse:
     """List groups of active notes that may state the same thing; changes no note."""
-    key = request.state.key
-    if not (key.is_admin and CONSOLIDATE_AUTHOR in key.authors):
-        return error(f"admin key with {CONSOLIDATE_AUTHOR!r} in its authors required", 403)
+    denied = _consolidator_denied(request.state.key)
+    if denied is not None:
+        return denied
     try:
         threshold = _scalar(
             request,
@@ -637,17 +644,84 @@ async def admin_consolidate_groups_route(request: Request) -> JSONResponse:
             "namespaces": {
                 name: consolidate.namespace_report(
                     name,
-                    pairs,
-                    notes,
+                    snapshot,
                     threshold=threshold,
                     max_group=max_group,
                     max_group_chars=max_group_chars,
                     limit=limit,
                 )
-                for name, (pairs, notes) in snapshots.items()
+                for name, snapshot in snapshots.items()
             },
         }
     )
+
+
+async def admin_consolidate_verdicts_route(request: Request) -> JSONResponse:
+    """Validate and apply (or plan, on a dry run) verdicts on issued groups, each alone."""
+    key = request.state.key
+    denied = _consolidator_denied(key)
+    if denied is not None:
+        return denied
+    try:
+        body = await json_body(request)
+    except Exception as exc:
+        return error(f"invalid JSON body: {exc}")
+    registered = {row["name"] for row in await namespaces.list_namespaces()}
+    try:
+        batch = verdicts.parse_batch(body, registered)
+    except verdicts.RequestError as exc:
+        return error(str(exc))
+    if batch.author not in key.authors:
+        return error(f"author {batch.author!r} is not permitted for this key", 403)
+    return JSONResponse({"results": await verdicts.process_batch(batch)})
+
+
+async def admin_consolidate_undo_route(request: Request) -> JSONResponse:
+    """Reverse one consolidation action: 404 unknown, 409 refused with nothing changed."""
+    key = request.state.key
+    denied = _consolidator_denied(key)
+    if denied is not None:
+        return denied
+    try:
+        body = await json_body(request)
+    except Exception as exc:
+        return error(f"invalid JSON body: {exc}")
+    try:
+        action_id, author = verdicts.parse_undo(body)
+    except verdicts.RequestError as exc:
+        return error(str(exc))
+    if author not in key.authors:
+        return error(f"author {author!r} is not permitted for this key", 403)
+    try:
+        result = await verdicts.undo(action_id, author)
+    except verdicts.UndoNotFound as exc:
+        return error(str(exc), 404)
+    except verdicts.UndoRefused as exc:
+        return error(str(exc), 409)
+    return JSONResponse(result)
+
+
+async def admin_consolidate_actions_route(request: Request) -> JSONResponse:
+    """List consolidation actions newest first with the notes they reference."""
+    denied = _consolidator_denied(request.state.key)
+    if denied is not None:
+        return denied
+    try:
+        filters = {
+            name: _scalar(request, name, str, None, lambda x: bool(x.strip()), "non-blank")
+            for name in ("namespace", "run_id", "note_id")
+        }
+        limit = _scalar(
+            request,
+            "limit",
+            int,
+            verdicts.DEFAULT_ACTIONS_LIMIT,
+            lambda x: 1 <= x <= verdicts.MAX_ACTIONS_LIMIT,
+            f"an integer between 1 and {verdicts.MAX_ACTIONS_LIMIT}",
+        )
+    except ValueError as exc:
+        return error(str(exc))
+    return JSONResponse(await verdicts.list_actions(**filters, limit=limit))
 
 
 async def admin_archive_route(request: Request) -> JSONResponse:
@@ -868,6 +942,9 @@ app = Starlette(
         Route("/admin/notes/move", admin_notes_move_route, methods=["POST"]),
         Route("/admin/duplicates", admin_duplicates_route, methods=["GET"]),
         Route("/admin/consolidate/groups", admin_consolidate_groups_route, methods=["GET"]),
+        Route("/admin/consolidate/verdicts", admin_consolidate_verdicts_route, methods=["POST"]),
+        Route("/admin/consolidate/undo", admin_consolidate_undo_route, methods=["POST"]),
+        Route("/admin/consolidate/actions", admin_consolidate_actions_route, methods=["GET"]),
         Route("/admin/archive", admin_archive_route, methods=["POST"]),
         Route("/admin/restore", admin_restore_route, methods=["POST"]),
     ],

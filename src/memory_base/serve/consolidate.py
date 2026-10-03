@@ -59,6 +59,12 @@ FROM "{PG_SCHEMA}".memory_chunks
 WHERE source_type = 'agent_note' AND archived_at IS NULL AND namespace = $1
 """
 
+JUDGED_SQL = f"""
+SELECT group_key, member_ids, undone_at IS NOT NULL AS undone
+FROM "{PG_SCHEMA}".consolidation_actions
+WHERE namespace = $1
+"""
+
 
 @dataclass(frozen=True)
 class Note:
@@ -93,6 +99,14 @@ class Deferred:
     reason: str
 
 
+@dataclass(frozen=True)
+class Snapshot:
+    pairs: list[Pair]
+    notes: dict[str, Note]
+    judged_keys: frozenset[str]
+    undone_members: frozenset[tuple[str, ...]]
+
+
 def _note(row: Any) -> Note:
     metadata = metadata_dict(row["metadata"])
     return Note(
@@ -108,36 +122,47 @@ def _note(row: Any) -> Note:
     )
 
 
-async def candidate_pairs(
+async def read_pairs(
     conn: Any, namespace: str, threshold: float, neighbors: int
 ) -> tuple[list[Pair], dict[str, Note]]:
     """Exact nearest-neighbour pairs among one namespace's active agent notes.
 
-    Returns the pairs at or above `threshold` and every active note in the namespace,
-    read from one repeatable-read snapshot.
+    Returns the pairs at or above `threshold` and every active note in the namespace.
+    The caller owns the transaction and has applied EXACT_SEARCH_SETTINGS in it.
     """
-    async with conn.transaction(isolation="repeatable_read", readonly=True):
-        for statement in EXACT_SEARCH_SETTINGS:
-            await conn.execute(statement)
-        rows = await conn.fetch(PAIRS_SQL, namespace, neighbors, threshold)
-        notes = {row["id"]: _note(row) for row in await conn.fetch(NOTES_SQL, namespace)}
+    rows = await conn.fetch(PAIRS_SQL, namespace, neighbors, threshold)
+    notes = {row["id"]: _note(row) for row in await conn.fetch(NOTES_SQL, namespace)}
     best: dict[tuple[str, str], float] = {}
     for row in rows:
         ends = (min(row["a_id"], row["b_id"]), max(row["a_id"], row["b_id"]))
-        best[ends] = max(best.get(ends, row["score"]), row["score"])
+        if ends[0] in notes and ends[1] in notes:
+            best[ends] = max(best.get(ends, row["score"]), row["score"])
     pairs = [Pair(a, b, score) for (a, b), score in sorted(best.items())]
     return pairs, notes
 
 
 async def read_snapshots(
     namespaces: list[str], threshold: float, neighbors: int
-) -> dict[str, tuple[list[Pair], dict[str, Note]]]:
-    """Each namespace's pairs and notes, on one connection released before the caller builds."""
+) -> dict[str, Snapshot]:
+    """Each namespace's pairs, notes, and judged groups, one repeatable-read snapshot each.
+
+    Read on one connection that is released before the caller builds the response.
+    """
+    snapshots: dict[str, Snapshot] = {}
     async with db.acquire() as conn:
-        return {
-            namespace: await candidate_pairs(conn, namespace, threshold, neighbors)
-            for namespace in namespaces
-        }
+        for namespace in namespaces:
+            async with conn.transaction(isolation="repeatable_read", readonly=True):
+                for statement in EXACT_SEARCH_SETTINGS:
+                    await conn.execute(statement)
+                pairs, notes = await read_pairs(conn, namespace, threshold, neighbors)
+                judged = await conn.fetch(JUDGED_SQL, namespace)
+            snapshots[namespace] = Snapshot(
+                pairs,
+                notes,
+                frozenset(row["group_key"] for row in judged),
+                frozenset(tuple(sorted(row["member_ids"])) for row in judged if row["undone"]),
+            )
+    return snapshots
 
 
 def _acknowledged(pair: Pair, notes: dict[str, Note]) -> bool:
@@ -254,48 +279,64 @@ def _day(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
+def iso(ts: float | None) -> str | None:
+    """An epoch timestamp as an ISO 8601 UTC string; None stays None."""
+    return None if ts is None else datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
 def _member(note: Note) -> dict[str, Any]:
     return {
         "id": note.id,
         "kind": note.kind,
         "author": note.author,
         "saved": _day(note.saved),
-        "occurred_at": None
-        if note.occurred_at is None
-        else datetime.fromtimestamp(note.occurred_at, tz=timezone.utc).isoformat(),
+        "occurred_at": iso(note.occurred_at),
         "tags": list(note.tags),
         "supersedes": note.supersedes,
         "text": note.text,
     }
 
 
+def group_entry(namespace: str, group: Group, notes: dict[str, Note]) -> dict[str, Any]:
+    """One group as the groups endpoint returns it, members by save time then id."""
+    return {
+        "key": group_key(namespace, (notes[i] for i in group.members)),
+        "min_score": group.min_score,
+        "max_score": group.max_score,
+        "members": [
+            _member(notes[i]) for i in sorted(group.members, key=lambda i: (notes[i].saved, i))
+        ],
+    }
+
+
 def namespace_report(
     namespace: str,
-    pairs: list[Pair],
-    notes: dict[str, Note],
+    snapshot: Snapshot,
     *,
     threshold: float,
     max_group: int,
     max_group_chars: int,
     limit: int,
 ) -> dict[str, Any]:
-    """One namespace's section of the response: groups up to `limit`, and deferrals."""
-    groups, deferred = build_groups(pairs, notes, threshold, max_group, max_group_chars)
+    """One namespace's section of the response: unjudged groups up to `limit`, and deferrals.
+
+    A group is judged when a verdict is recorded under its key, or when its members are
+    exactly those of an undone action.
+    """
+    notes = snapshot.notes
+    groups, deferred = build_groups(snapshot.pairs, notes, threshold, max_group, max_group_chars)
+    entries = [group_entry(namespace, g, notes) for g in groups]
+    fresh = [
+        entry
+        for g, entry in zip(groups, entries)
+        if entry["key"] not in snapshot.judged_keys and g.members not in snapshot.undone_members
+    ]
     return {
         "active_notes": len(notes),
-        "pairs": len(pairs),
-        "acknowledged": acknowledged_pairs(pairs, notes),
-        "groups": [
-            {
-                "key": group_key(namespace, (notes[i] for i in g.members)),
-                "min_score": g.min_score,
-                "max_score": g.max_score,
-                "members": [
-                    _member(notes[i]) for i in sorted(g.members, key=lambda i: (notes[i].saved, i))
-                ],
-            }
-            for g in groups[:limit]
-        ],
+        "pairs": len(snapshot.pairs),
+        "acknowledged": acknowledged_pairs(snapshot.pairs, notes),
+        "cached": len(entries) - len(fresh),
+        "groups": fresh[:limit],
         "deferred": [{"id": d.id, "reason": d.reason} for d in deferred],
-        "truncated": len(groups) > limit,
+        "truncated": len(fresh) > limit,
     }

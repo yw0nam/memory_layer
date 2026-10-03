@@ -567,6 +567,15 @@ def test_restore_rows_clears_archived_by(monkeypatch):
     assert "metadata = metadata - 'archived_by'" in query
 
 
+def test_restore_rows_clears_the_lineage_of_the_archive(monkeypatch):
+    conn = RecordingConnection()
+    _patch_admin_conn(monkeypatch, conn)
+    asyncio.run(admin.restore_rows(["note:a"]))
+    query, _ = conn.queries[0]
+    for field in ("archived_by", "replaced_by", "consolidated_into"):
+        assert f"- '{field}'" in query
+
+
 def test_rows_by_ids_reports_archived_by(monkeypatch):
     conn = RecordingConnection(rows=[{"id": "note:a", "archived_by": "natsume"}])
     _patch_admin_conn(monkeypatch, conn)

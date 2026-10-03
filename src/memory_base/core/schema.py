@@ -192,6 +192,31 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         );
         ALTER TABLE {schema}.api_keys
           ADD COLUMN IF NOT EXISTS authors text[] NOT NULL DEFAULT '{{}}';
+        CREATE TABLE IF NOT EXISTS {schema}.consolidation_actions (
+          id bigserial PRIMARY KEY,
+          idempotency_key text NOT NULL UNIQUE,
+          payload_hash text NOT NULL,
+          run_id text NOT NULL,
+          namespace text NOT NULL,
+          action text NOT NULL CHECK (action IN ('keep', 'retire', 'merge')),
+          group_key text NOT NULL UNIQUE,
+          member_ids text[] NOT NULL,
+          archived_ids text[] NOT NULL,
+          survivor_ids text[] NOT NULL,
+          replacement_id text,
+          replacement_created boolean NOT NULL DEFAULT false,
+          prior jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+          applied_at double precision NOT NULL,
+          author text NOT NULL,
+          model text,
+          reason text NOT NULL,
+          result jsonb NOT NULL,
+          undone_at double precision,
+          undone_by text,
+          undo_result jsonb
+        );
+        CREATE INDEX IF NOT EXISTS consolidation_actions__run
+          ON {schema}.consolidation_actions (namespace, run_id);
         CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
           id bigserial PRIMARY KEY,
           query text NOT NULL,

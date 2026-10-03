@@ -353,9 +353,10 @@ class FakeTransaction:
 
 
 class FakeConnection:
-    def __init__(self, pair_rows, note_rows):
+    def __init__(self, pair_rows, note_rows, action_rows=()):
         self.pair_rows = pair_rows
         self.note_rows = note_rows
+        self.action_rows = list(action_rows)
         self.transactions = []
         self.executed = []
         self.fetched = []
@@ -371,6 +372,8 @@ class FakeConnection:
     async def fetch(self, query, *args):
         assert self.transactions, "reads must run inside the snapshot transaction"
         self.fetched.append((query, args))
+        if "consolidation_actions" in query:
+            return self.action_rows
         return self.pair_rows if "<=>" in query else self.note_rows
 
 
@@ -476,6 +479,7 @@ def test_route_resolves_defaults_and_every_registered_namespace(consolidator, fa
         "active_notes": 0,
         "pairs": 0,
         "acknowledged": 0,
+        "cached": 0,
         "groups": [],
         "deferred": [],
         "truncated": False,
@@ -643,3 +647,63 @@ def test_route_takes_its_bounds_from_the_module(
     response = client.get("/admin/consolidate/groups", params={param: rejected})
     assert response.status_code == 400
     assert str(value) in response.json()["error"]
+
+
+def _three_pairs(fake_db):
+    fake_db.note_rows = [
+        _note_row("note:default:a", "a", 1.0),
+        _note_row("note:default:b", "b", 2.0),
+        _note_row("note:default:c", "c", 3.0),
+        _note_row("note:default:d", "d", 4.0),
+        _note_row("note:default:e", "e", 5.0),
+        _note_row("note:default:f", "f", 6.0),
+    ]
+    fake_db.pair_rows = [
+        {"a_id": "note:default:a", "b_id": "note:default:b", "score": 0.95},
+        {"a_id": "note:default:c", "b_id": "note:default:d", "score": 0.90},
+        {"a_id": "note:default:e", "b_id": "note:default:f", "score": 0.80},
+    ]
+
+
+def _section(**params):
+    return client.get(
+        "/admin/consolidate/groups", params={"namespace": "default", **params}
+    ).json()["namespaces"]["default"]
+
+
+def _member_ids(section):
+    return [[m["id"] for m in g["members"]] for g in section["groups"]]
+
+
+def test_route_skips_a_group_whose_key_has_a_recorded_verdict(consolidator, fake_db):
+    _three_pairs(fake_db)
+    first = _section()["groups"][0]
+    fake_db.action_rows = [{"group_key": first["key"], "member_ids": ["x"], "undone": False}]
+    section = _section(limit="1")
+    assert section["cached"] == 1
+    assert _member_ids(section) == [["note:default:c", "note:default:d"]]
+    assert section["truncated"] is True
+    actions_query, actions_args = next(
+        f for f in fake_db.fetched if "consolidation_actions" in f[0]
+    )
+    assert actions_args == ("default",)
+    assert fake_db.transactions[-1] == {"isolation": "repeatable_read", "readonly": True}
+
+
+def test_route_skips_the_member_set_of_an_undone_action_across_procedure_versions(
+    monkeypatch, consolidator, fake_db
+):
+    _three_pairs(fake_db)
+    monkeypatch.setattr(consolidate, "PROCEDURE_VERSION", "2")
+    fake_db.action_rows = [
+        {"group_key": "an-old-key", "member_ids": ["note:default:d", "note:default:c"],
+         "undone": True},
+        {"group_key": "another-old-key", "member_ids": ["note:default:e", "note:default:f"],
+         "undone": False},
+    ]  # fmt: skip
+    section = _section()
+    assert section["cached"] == 1
+    assert _member_ids(section) == [
+        ["note:default:a", "note:default:b"],
+        ["note:default:e", "note:default:f"],
+    ]

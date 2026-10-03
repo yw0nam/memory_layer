@@ -89,9 +89,11 @@ near-duplicate refusal, and supersede. A note landing next to active notes above
 names one of them or `allow_similar` is set; an accepted override records the neighbours'
 ids in `metadata.similar_ack`. The response carries `similar[]` either way. A prior-note
 id in the payload archives that row; the replacement records the archived note's id as
-`metadata.supersedes`, which `GET /notes` rows and memory hits carry as `supersedes`.
+`metadata.supersedes`, which `GET /notes` rows and memory hits carry as `supersedes`, and
+the archived note records the replacement's id as `metadata.replaced_by`.
 When the save's content is identical to an active note, the insert no-ops and the target
-is archived without a pointer written on the existing row. The save is refused with HTTP
+is archived without a pointer written on the existing row; the target's `replaced_by`
+names that row. The save is refused with HTTP
 400 when it would leave no active note — the content is identical to the note it names,
 or to an archived note, which `restore_notes` brings back instead.
 
@@ -103,7 +105,7 @@ happened in its own column; `ts_last_active` is always the save time.
 Every note records the agent that wrote it in `metadata.author`, drawn from the calling
 key's allowlist in `api_keys.authors`; a key with an empty allowlist cannot save. A note
 archived by a save or by a targeted archive additionally carries `metadata.archived_by`,
-which a restore removes.
+which a restore removes together with `replaced_by` and `consolidated_into`.
 
 Messages are stored exactly as the renderer produced them — the server never
 summarizes, embeds, or gates them. A send without a scope is a general message
@@ -310,7 +312,7 @@ out-of-scope id a 404.
 
 `GET /admin/duplicates` lists near-duplicate pairs by cosine with each side's author,
 `GET /admin/notes` lists old agent notes, and `POST /admin/restore` clears `archived_at`
-and `metadata.archived_by`. `POST /admin/archive` archives the rows named by `ids`, or
+and `metadata.archived_by`, `replaced_by`, and `consolidated_into`. `POST /admin/archive` archives the rows named by `ids`, or
 the cold ones when `ids` is omitted; the no-ids preview distinguishes
 `notes_to_archive` from `messages_to_delete`, and the confirm pass archives the notes
 and deletes claimed, cancelled, superseded, and expired messages, which also releases
@@ -367,7 +369,11 @@ parameter is optional and a bad, repeated, or out-of-range value is a 400:
 ```
 
 An acknowledged pair is the writer's assertion that the two notes state distinct facts,
-so it is never an edge; each note's other pairs still group. A pair whose combined text
+so it is never an edge; each note's other pairs still group. A group already judged is
+not returned and is counted in `cached`: its key has a recorded verdict, or its members
+are exactly those of an undone action — the second match ignores the procedure version,
+so an undone group stays out after `PROCEDURE_VERSION` changes. Judged groups are removed
+before `limit` applies. A pair whose combined text
 exceeds `max_group_chars` is not grouped. Each note left out appears once in `deferred`
 with the first reason recorded for it while packing — `over max_group_chars` or
 `over max_group` — else `no clique` (its partners joined other groups). Groups are
@@ -380,7 +386,7 @@ id; deferred notes by id.
   "procedure_version": "1",
   "namespaces": {
     "<ns>": {
-      "active_notes": int, "pairs": int, "acknowledged": int,
+      "active_notes": int, "pairs": int, "acknowledged": int, "cached": int,
       "groups": [{"key", "min_score", "max_score",
                   "members": [{"id", "kind", "author", "saved": "YYYY-MM-DD",
                                "occurred_at": ISO 8601 or null, "tags",
@@ -397,7 +403,139 @@ that were ignored. `truncated` is true when more groups existed than `limit`. A 
 the sha256 of canonical JSON (sorted keys, no whitespace) of the procedure version, the
 namespace, and, per member sorted by id, its id, the sha256 of its text, kind, author,
 save time, `occurred_at`, sorted tags, and `supersedes`. It changes when membership or
-any of those fields changes.
+any of those fields changes. `PROCEDURE_VERSION` covers the grouping procedure and the
+verdict validator policy, and changes whenever either does.
+
+## Consolidation verdicts
+
+`POST /admin/consolidate/verdicts` applies an agent's judgement of issued groups. It
+takes the same key as the groups route (an admin key with `consolidator` in its authors),
+and the body's `author` must be one of the key's authors (403 otherwise). The server calls
+no model.
+
+| field | type / range | default |
+|---|---|---|
+| `run_id` | string, 1–100 chars | required |
+| `author` | string, one of the key's authors | required |
+| `model` | string or null; recorded, not checked | null |
+| `dry_run` | boolean | false |
+| `threshold`, `neighbors`, `max_group`, `max_group_chars` | as for the groups route; pass the values the groups were fetched with | as for the groups route |
+| `max_actions` | 1–500; retire and merge actions per `run_id` and namespace | 20 |
+| `verdicts` | 1–200 verdicts | required |
+
+A verdict is `namespace` (registered), `group_key`, `idempotency_key` (1–200 chars),
+`member_ids` (2–20), `action` (`keep` · `retire` · `merge`), `retire_ids` (retire only),
+`merged_text` (merge only), and `reason` (1–1000 chars). An unknown field, a wrong type, an
+out-of-range value, `retire_ids` or `merged_text` on another action, or an unregistered
+namespace refuses the whole request with 400 and processes no verdict.
+
+```
+ each verdict in order, on its own
+   preflight: read-only REPEATABLE READ snapshot, exact search, no locks
+       │ plan ──► duplicate · cached · stale · rejected   (returned as is)
+       │ valid plan
+       ├── dry_run ──► planned          (no write, no embedding call)
+       ▼
+   embed the merged text when the plan creates a replacement
+       ▼
+   one transaction
+     pg_advisory_xact_lock(namespace) ──► members, replacement id FOR UPDATE, by id
+     plan again on the current rows
+       terminal ──► returned as is
+       differs from the preflight plan ──► stale
+       same ──► replacement · archive members · action row ──► applied
+```
+
+The plan runs these checks in order; the first that fails decides the status.
+
+| # | check | status when it fails |
+|---|---|---|
+| 1 | no action has the `idempotency_key` | `duplicate` with the recorded result when the payload hash matches, else `rejected` |
+| 2 | no action has the `group_key`, and no undone action has exactly these members | `cached` |
+| 3 | `group_key` and the sorted `member_ids` equal a group that the groups procedure builds now from the request's group parameters (no `limit`, no cache filter) | `stale`, with `current_groups`: the current groups that share a member, in the groups-route shape |
+| 4 | retire or merge: fewer than `max_actions` retire and merge actions recorded for this `run_id` and namespace; keep is never capped and never counts | `rejected` (`action cap reached`) |
+| 5 | retire: `retire_ids` non-empty, without repeats, all members, and at least one member left | `rejected` |
+| 6 | merge: every member has one kind; `merged_text` passes the note validation (non-blank, at most 4000 chars) and the credential scan; the token check passes | `rejected` |
+
+A merge then resolves its replacement:
+
+| merged text | effect |
+|---|---|
+| equal to a member's text after stripping and collapsing whitespace runs | a retire of the other members into that member; `reason` says so |
+| hashes to an active agent note with the members' kind and exactly the stripped text, not a member | that note is reused and not changed |
+| hashes to an archived note | `rejected`: restore that note instead |
+| hashes to any other existing row | `rejected` |
+| hashes to no row | a new replacement note |
+
+The payload hash is the sha256 of the verdict as submitted plus `run_id`, `author`,
+`model`, and the four group parameters; `dry_run` and `max_actions` are outside it, so a
+dry run and the apply of one verdict share an idempotency key.
+
+An applied verdict writes, in one transaction: a new replacement through the note insert
+(`ON CONFLICT (id) DO NOTHING`; a conflict rolls the verdict back as `stale`) with the
+members' kind, the sorted union of their tags, the latest member `occurred_at`, the
+request's `author`, the apply time as its save time, and `merged_from`, `merged_dates`
+(`{id: {"saved", "occurred_at"}}`), and `consolidation_action` in its metadata; each
+archived member gets `archived_at` = the apply time, `archived_by`, and
+`consolidated_into` (the survivors, or the replacement); and the action row, with the
+archived members' metadata from before the change. A reused replacement and the survivors
+of a retire are not changed. A keep writes the action row only.
+
+Each verdict fails alone. An unexpected error while it is processed — the embedding call,
+or the database during its transaction — rolls that verdict back and returns it as
+`failed`, with the error's class and message (at most 300 characters) as the reason; the
+next verdict runs. `failed` is transient: the agent may resubmit the verdict with the same
+idempotency key.
+
+```
+{"results": [{"group_key", "status": "applied" | "planned" | "cached" | "duplicate" | "stale" | "rejected" | "failed",
+              "reason", "action_id" or null, "archived_ids", "survivor_ids",
+              "replacement_id" or null, "current_groups" or null}]}
+```
+
+The token check reads three kinds of token from each text, as exact strings:
+
+- numbers and dates: `2026-09-30`, `04:00`, `1,500`, `-5`, `0.72`, `1.5e3`; digits inside an
+  identifier (`abc123`, `note:x9`, `v2.0`) are not tokens, nor is a numbered-list marker
+  at the start of a line (`1.` or `2)` followed by whitespace);
+- the content of each backticked span;
+- names: a word other than `I` that starts with a capital and does not start a sentence
+  (text start, a newline, or whitespace after `.`, `!`, `?`, `:`, or a list marker; in
+  `foo.Bar`, `Bar` is a name), and any word with two or more capitals (`GLM`, `PR`, `iOS`,
+  `McDonald`).
+
+Every member's tokens must appear in the merged text, and every token of the merged text
+must appear in some member. It is a conservative filter, not proof of meaning: a changed
+name at the start of a sentence, a negation, names in scripts without case (Korean), and a
+changed version inside an identifier (`v2.0` → `v3.1`) pass it.
+
+## Consolidation undo and actions
+
+`POST /admin/consolidate/undo` takes `{"action_id": int, "author": str}` with the same
+authorization, and runs under the namespace lock with the touched rows locked.
+
+| case | response |
+|---|---|
+| unknown action | 404 |
+| action already undone | 200 with its recorded undo result |
+| keep action | 409, nothing to undo |
+| an archived note is gone, has another `archived_at`, or another `consolidated_into` | 409 with the reason; nothing changes |
+| a created replacement is gone or archived, an active note is reachable from it through `metadata.supersedes` links (through archived notes in between), or a retire or merge action not undone lists it as a member | 409 with the reason; nothing changes |
+| otherwise | 200: each archived note is active again with its metadata from before the action; a created replacement is archived with `archived_by` and `undone_action`; the action records `undone_at`, `undone_by`, and the result |
+
+A reused replacement and a retire's survivors are never checked or changed. An archive and
+restore of the replacement with no successor does not block the undo. The action row
+stays, so the group is not issued again.
+
+`GET /admin/consolidate/actions` lists actions newest first, with the same authorization.
+Each query parameter is optional and given at most once: `namespace`, `run_id`, `note_id`
+(matches member, archived, survivor, and replacement ids), and `limit` (1–500, default
+50). The response is `{"actions": [...], "notes": {id: ...}}`: every action column except
+the payload hash, with ISO 8601 times, and, for every note id the actions name, its full
+text, kind, author, save time, `occurred_at`, `archived`, and its lineage fields
+(`supersedes`, `replaced_by`, `consolidated_into`, `merged_from`, `merged_dates`,
+`consolidation_action`, `archived_by`, `undone_action`). A deleted or moved note is absent
+from `notes`, and an undo of an action that archived it fails with 409.
 
 ## Storage
 
@@ -414,7 +552,7 @@ any of those fields changes.
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active` | save time; recency ranking and decay, and `since`/`until` when `occurred_at` is null |
 | `occurred_at` | when the remembered event happened; a hit's `date` and the `since`/`until` bound |
-| `metadata` | jsonb: `tags`, `author`, `archived_by`, `supersedes`, `similar_ack`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
+| `metadata` | jsonb: `tags`, `author`, `archived_by`, `supersedes`, `replaced_by`, `similar_ack`, `consolidated_into`, `merged_from`, `merged_dates`, `consolidation_action`, `undone_action`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 
 `memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,
@@ -434,6 +572,15 @@ timestamptz lifecycle fields `created_at`, `claimed_at`, `cancelled_at`,
 column, no search index; a partial index serves the pending listing, and a unique partial index on
 (`sender_key`, `idempotency_key`) backs idempotent sends. The lifecycle timestamps stay
 internal — responses carry the report status only.
+
+`memory.consolidation_actions` — one row per accepted consolidation verdict: `id`,
+`idempotency_key` (unique), `payload_hash`, `run_id`, `namespace`, `action`
+(`keep` | `retire` | `merge`), `group_key` (unique; the verdict cache), `member_ids`,
+`archived_ids`, `survivor_ids`, `replacement_id`, `replacement_created`, `prior` (each
+archived note's metadata before the action), `applied_at` (the `archived_at` the action
+wrote), `author`, `model`, `reason`, `result` (the response returned on apply), and
+`undone_at`, `undone_by`, `undo_result`; indexed on (`namespace`, `run_id`). It is read
+only by the consolidation routes.
 
 `doc_rows` and `messages` are outside the retrieval contract: they are read by compute
 and by address, respectively, and are never granted to the SQL query role or returned by
