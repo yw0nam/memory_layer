@@ -9,6 +9,7 @@ from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.serve import namespaces
 from memory_base.serve.http import TEXT_LIMIT
+from memory_base.serve.notes import ARCHIVE_LINEAGE_FIELDS
 
 COLD_AGE_DAYS = int(os.getenv("COLD_AGE_DAYS", "180"))
 COLD_UNHIT_DAYS = int(os.getenv("COLD_UNHIT_DAYS", "90"))
@@ -269,12 +270,12 @@ async def restore_rows(ids: list[str], namespaces: list[str] | None = None) -> i
     Restoring clears the fields that recorded the archive: its author and the note that
     replaced or absorbed the row.
     """
+    cleared = "".join(f" - '{field}'" for field in ARCHIVE_LINEAGE_FIELDS)
     async with db.acquire() as conn:
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
-            SET archived_at = NULL,
-                metadata = metadata - 'archived_by' - 'replaced_by' - 'consolidated_into'
+            SET archived_at = NULL, metadata = metadata{cleared}
             WHERE id = ANY($1::text[])
               AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             """,

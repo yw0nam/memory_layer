@@ -30,6 +30,16 @@ NOTE_KINDS = ("personal", "work")
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
 LIST_NOTES_DEFAULT_LIMIT = 50
 LIST_NOTES_MAX_LIMIT = 200
+# Written when a note is archived by a save, an archive, or a consolidation; a restore clears them.
+ARCHIVE_LINEAGE_FIELDS = ("archived_by", "replaced_by", "consolidated_into")
+LINEAGE_FIELDS = (
+    "supersedes",
+    *ARCHIVE_LINEAGE_FIELDS,
+    "merged_from",
+    "merged_dates",
+    "consolidation_action",
+    "undone_action",
+)
 
 
 def note_date(occurred_at: float | None, ts_last_active: float) -> str:
@@ -336,9 +346,7 @@ async def list_notes(
         }
         if row["archived_at"] is not None:
             note["archived"] = True
-        if metadata.get("archived_by") is not None:
-            note["archived_by"] = metadata["archived_by"]
-        for field in ("supersedes", "replaced_by", "consolidated_into", "merged_from"):
+        for field in LINEAGE_FIELDS:
             if metadata.get(field) is not None:
                 note[field] = metadata[field]
         out.append(note)

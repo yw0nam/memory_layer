@@ -21,10 +21,15 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
-from memory_base.retrieval.search import metadata_dict
 from memory_base.serve import consolidate
 from memory_base.serve.consolidate import Note, Pair, build_groups, group_entry, group_key, iso
-from memory_base.serve.notes import INSERT_NOTE_SQL, build_note_row, insert_note_args, note_id
+from memory_base.serve.notes import (
+    INSERT_NOTE_SQL,
+    LINEAGE_FIELDS,
+    build_note_row,
+    insert_note_args,
+    note_id,
+)
 
 DEFAULT_MAX_ACTIONS = 20
 MIN_MAX_ACTIONS = 1
@@ -35,6 +40,7 @@ MAX_IDEMPOTENCY_KEY_CHARS = 200
 MAX_REASON_CHARS = 1000
 DEFAULT_ACTIONS_LIMIT = 50
 MAX_ACTIONS_LIMIT = 500
+MAX_FAILURE_CHARS = 300
 
 ACTIONS = ("keep", "retire", "merge")
 BATCH_FIELDS = frozenset(
@@ -64,17 +70,7 @@ VERDICT_FIELDS = frozenset(
     }
 )
 UNDO_FIELDS = frozenset({"action_id", "author"})
-LINEAGE_FIELDS = (
-    "supersedes",
-    "replaced_by",
-    "consolidated_into",
-    "merged_from",
-    "merged_dates",
-    "consolidation_action",
-    "archived_by",
-    "undone_action",
-)
-GROUP_KEY_CONSTRAINT = "consolidation_actions_group_key_key"
+IDEMPOTENCY_CONSTRAINT = "consolidation_actions_idempotency_key_key"
 REUSED_KEY = "idempotency key reused with a different payload"
 JUDGED = "group already judged"
 
@@ -135,7 +131,10 @@ WITH RECURSIVE successors(id, archived_at) AS (
 SELECT id FROM successors WHERE archived_at IS NULL ORDER BY id LIMIT 1
 """
 LATER_ACTION_SQL = f"""
-SELECT EXISTS(SELECT 1 FROM {_TABLE} WHERE undone_at IS NULL AND $1 = ANY(member_ids))
+SELECT EXISTS(
+  SELECT 1 FROM {_TABLE}
+  WHERE undone_at IS NULL AND action IN ('retire', 'merge') AND $1 = ANY(member_ids)
+)
 """
 RESTORE_PRIOR_SQL = f"UPDATE {_NOTES} SET archived_at = NULL, metadata = $2::jsonb WHERE id = $1"
 ARCHIVE_REPLACEMENT_SQL = f"""
@@ -253,6 +252,15 @@ class Plan:
     replacement_id: str | None
     replacement_created: bool
     reason: str | None
+
+
+def _jsonb(value: Any) -> Any:
+    """A jsonb column value as Python: asyncpg returns it as text, fakes may pass objects."""
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def _metadata(value: Any) -> dict[str, Any]:
+    return _jsonb(value) or {}
 
 
 # ---- request schema ---------------------------------------------------------
@@ -426,26 +434,35 @@ BACKTICK_RE = re.compile(r"`([^`]+)`")
 WORD_RE = re.compile(r"(?<![\w'\-])[^\W\d_][\w'\-]*")
 NAME_RE = re.compile(r"[A-Z][\w'\-]*")
 LIST_MARKER_RE = re.compile(r"[ \t]*(?:[-*+•]|\d+[.)])")
+NUMBERED_MARKER_RE = re.compile(r"^[ \t]*(\d+)[.)](?=\s)", re.MULTILINE)
 
 
 def _starts_sentence(text: str, start: int) -> bool:
     before = text[:start]
     stripped = before.rstrip()
-    if not stripped or stripped[-1] in ".!?:" or "\n" in before[len(stripped) :]:
+    gap = before[len(stripped) :]
+    if not stripped or "\n" in gap:
         return True
-    return bool(LIST_MARKER_RE.fullmatch(stripped[stripped.rfind("\n") + 1 :]))
+    if not gap:
+        return False
+    return stripped[-1] in ".!?:" or bool(
+        LIST_MARKER_RE.fullmatch(stripped[stripped.rfind("\n") + 1 :])
+    )
 
 
 def tokens(text: str) -> set[str]:
     """Numbers and dates, backticked spans, and names: the facts a merge must carry over.
 
-    A name is a capitalized word that does not start a sentence, or any word with two
-    or more capitals.
+    A name is a capitalized word other than `I` that does not start a sentence, or any
+    word with two or more capitals. A numbered-list marker is not a number.
     """
-    found = set(NUMBER_RE.findall(text))
+    markers = {m.start(1) for m in NUMBERED_MARKER_RE.finditer(text)}
+    found = {m.group() for m in NUMBER_RE.finditer(text) if m.start() not in markers}
     found.update(BACKTICK_RE.findall(text))
     for match in WORD_RE.finditer(text):
         word = match.group()
+        if word == "I":
+            continue
         if sum(c.isupper() for c in word) >= 2 or (
             NAME_RE.fullmatch(word) and not _starts_sentence(text, match.start())
         ):
@@ -641,7 +658,7 @@ def _merged_id(verdict: Verdict) -> str | None:
 async def load_state(conn: Any, verdict: Verdict, batch: Batch) -> State:
     """Read what `plan_verdict` needs, on the caller's transaction."""
     row = await conn.fetchrow(RECORDED_SQL, verdict.idempotency_key)
-    recorded = None if row is None else Recorded(row["payload_hash"], json.loads(row["result"]))
+    recorded = None if row is None else Recorded(row["payload_hash"], _jsonb(row["result"]))
     cached = None
     if await conn.fetchval(KEY_JUDGED_SQL, verdict.group_key):
         cached = JUDGED
@@ -684,6 +701,7 @@ async def apply_plan(
 ) -> dict[str, Any]:
     """Write a plan on the caller's transaction: replacement, archive, and action row.
 
+    `embedding` is the replacement's embedding, required when the plan creates one.
     Raises Rollback when the replacement id was taken concurrently.
     """
     now = time.time()
@@ -691,6 +709,8 @@ async def apply_plan(
     applied = _result(verdict, "applied", plan.reason, plan=plan, action_id=action_id)
     members = sorted(verdict.member_ids)
     if plan.replacement_created:
+        if embedding is None:
+            raise ValueError("a created replacement needs its embedding")
         row = replacement_row(verdict, batch, state.notes, now)
         row["metadata"]["merged_from"] = members
         row["metadata"]["merged_dates"] = {
@@ -712,7 +732,7 @@ async def apply_plan(
             batch.author,
             json.dumps(list(plan.survivor_ids)),
         )
-    prior = {i: metadata_dict(rows[i]["metadata"]) for i in plan.archived_ids}
+    prior = {i: _metadata(rows[i]["metadata"]) for i in plan.archived_ids}
     await conn.execute(
         INSERT_ACTION_SQL,
         action_id,
@@ -737,14 +757,10 @@ async def apply_plan(
     return applied
 
 
-async def _conflict(
-    conn: Any, verdict: Verdict, batch: Batch, exc: asyncpg.UniqueViolationError
-) -> dict[str, Any]:
-    if getattr(exc, "constraint_name", None) == GROUP_KEY_CONSTRAINT:
-        return _result(verdict, "cached", JUDGED)
+async def _idempotency_conflict(conn: Any, verdict: Verdict, batch: Batch) -> dict[str, Any]:
     row = await conn.fetchrow(RECORDED_SQL, verdict.idempotency_key)
     if row is not None and row["payload_hash"] == payload_hash(verdict, batch):
-        return {**json.loads(row["result"]), "status": "duplicate"}
+        return {**_jsonb(row["result"]), "status": "duplicate"}
     return _result(verdict, "rejected", REUSED_KEY)
 
 
@@ -787,12 +803,25 @@ async def process_verdict(verdict: Verdict, batch: Batch) -> dict[str, Any]:
         except Rollback as exc:
             return exc.result
         except asyncpg.UniqueViolationError as exc:
-            return await _conflict(conn, verdict, batch, exc)
+            if getattr(exc, "constraint_name", None) != IDEMPOTENCY_CONSTRAINT:
+                raise
+            return await _idempotency_conflict(conn, verdict, batch)
 
 
 async def process_batch(batch: Batch) -> list[dict[str, Any]]:
-    """Each verdict in order, alone: one verdict's failure never blocks the next."""
-    return [await process_verdict(verdict, batch) for verdict in batch.verdicts]
+    """Each verdict in order, alone: one verdict's failure never blocks the next.
+
+    An unexpected error (embedder, database) rolls its verdict back and becomes a
+    `failed` result naming the error; the verdict may be retried with the same key.
+    """
+    results = []
+    for verdict in batch.verdicts:
+        try:
+            results.append(await process_verdict(verdict, batch))
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"[:MAX_FAILURE_CHARS]
+            results.append(_result(verdict, "failed", reason))
+    return results
 
 
 # ---- undo -------------------------------------------------------------------
@@ -813,7 +842,7 @@ def undo_refusal(
             return f"note {archived_id} no longer exists"
         if row["archived_at"] != action["applied_at"]:
             return f"note {archived_id} was restored or archived again after the action"
-        if metadata_dict(row["metadata"]).get("consolidated_into") != survivors:
+        if _metadata(row["metadata"]).get("consolidated_into") != survivors:
             return f"note {archived_id} no longer records consolidated_into {survivors}"
     if action["replacement_created"]:
         replacement = action["replacement_id"]
@@ -840,7 +869,7 @@ async def undo(action_id: int, author: str) -> dict[str, Any]:
             await conn.execute(NAMESPACE_LOCK_SQL, namespace)
             action = await conn.fetchrow(ACTION_FOR_UPDATE_SQL, action_id)
             if action["undone_at"] is not None:
-                return json.loads(action["undo_result"])
+                return _jsonb(action["undo_result"])
             if action["action"] == "keep":
                 raise UndoRefused("nothing to undo")
             replacement = action["replacement_id"] if action["replacement_created"] else None
@@ -854,7 +883,7 @@ async def undo(action_id: int, author: str) -> dict[str, Any]:
             if refusal is not None:
                 raise UndoRefused(refusal)
             now = time.time()
-            prior = metadata_dict(action["prior"])
+            prior = _metadata(action["prior"])
             for archived_id in action["archived_ids"]:
                 await conn.execute(
                     RESTORE_PRIOR_SQL,
@@ -877,10 +906,6 @@ async def undo(action_id: int, author: str) -> dict[str, Any]:
 # ---- listing ----------------------------------------------------------------
 
 
-def _json(value: Any) -> Any:
-    return json.loads(value) if isinstance(value, str) else value
-
-
 def _action_entry(row: Any) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -894,20 +919,20 @@ def _action_entry(row: Any) -> dict[str, Any]:
         "survivor_ids": list(row["survivor_ids"]),
         "replacement_id": row["replacement_id"],
         "replacement_created": row["replacement_created"],
-        "prior": _json(row["prior"]),
+        "prior": _jsonb(row["prior"]),
         "applied_at": iso(row["applied_at"]),
         "author": row["author"],
         "model": row["model"],
         "reason": row["reason"],
-        "result": _json(row["result"]),
+        "result": _jsonb(row["result"]),
         "undone_at": iso(row["undone_at"]),
         "undone_by": row["undone_by"],
-        "undo_result": _json(row["undo_result"]),
+        "undo_result": _jsonb(row["undo_result"]),
     }
 
 
 def _note_entry(row: Any) -> dict[str, Any]:
-    metadata = metadata_dict(row["metadata"])
+    metadata = _metadata(row["metadata"])
     entry = {
         "kind": row["kind"],
         "author": metadata.get("author"),

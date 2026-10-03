@@ -399,9 +399,10 @@ async def list_notes(
     week"). Works without the embedding backend. Returns up to `limit` notes
     (default 50, max 200) newest-first, each with id, kind, text (truncated to
     2000 chars), tags, namespace, and date (YYYY-MM-DD), plus the lineage it
-    records: `supersedes`, `replaced_by` (the note that superseded it),
-    `consolidated_into` (the notes a consolidation folded it into), and
-    `merged_from` (the notes a consolidation merged into it).
+    records: `supersedes`, `archived_by`, `replaced_by` (the note that
+    superseded it), `consolidated_into` (the notes a consolidation folded it
+    into), `merged_from` and `merged_dates` (the notes a consolidation merged
+    into it), `consolidation_action`, and `undone_action`.
 
     `tags` matches notes carrying any of the given tags. `kind` is "personal" or
     "work". `since`/`until` are ISO 8601 dates or datetimes (a bare date
