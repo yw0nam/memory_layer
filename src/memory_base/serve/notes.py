@@ -6,15 +6,11 @@ import hashlib
 import json
 import os
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from loguru import logger
-
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
-from memory_base.core.llm import chat_json
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
 from memory_base.retrieval.search import (
@@ -30,7 +26,6 @@ from memory_base.serve.namespaces import DEFAULT_NAMESPACE
 
 
 NOTE_MAX_CHARS = 4000
-NOTE_GATE_TIMEOUT_SECONDS = 20.0
 NOTE_KINDS = ("personal", "work")
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
 LIST_NOTES_DEFAULT_LIMIT = 50
@@ -57,21 +52,6 @@ class SimilarNotesError(ValueError):
         )
 
 
-_REFUSAL_RECOVERY = (
-    "Rewrite it once to state what is worth keeping, or use send_message if it is progress "
-    "or state for the next session. If the rewrite is refused too, store nothing and tell "
-    "the user when one is present."
-)
-
-
-class LowSignalNoteError(ValueError):
-    """The content gate judged a note's content not worth storing."""
-
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-        super().__init__(f"Refused by the memory gate: {reason} {_REFUSAL_RECOVERY}")
-
-
 class CredentialNoteError(ValueError):
     """A note or one of its tags carries a credential."""
 
@@ -80,78 +60,6 @@ class CredentialNoteError(ValueError):
         super().__init__(
             f"note contains a credential ({secret_type}); store the fact without the secret"
         )
-
-
-@dataclass(frozen=True)
-class ContentVerdict:
-    """The chat model's judgement of one note's content."""
-
-    accepted: bool
-    reason: str
-
-
-_VERDICT_SCHEMA = {
-    "type": "object",
-    "properties": {"accepted": {"type": "boolean"}, "reason": {"type": "string"}},
-    "required": ["accepted", "reason"],
-}
-
-JUDGE_PROMPT = """\
-You judge notes for the long-term memory of one user, kept by the assistants and agents
-that work with them: memory of the user and their life, and knowledge of their work that
-a later session could not recover from the code, version control, the tracker,
-documentation, or the running system. Accept a note that a later conversation or session
-could use:
-
-- who the user is, the people, places, and things around them, what they have and do,
-  what they like or prefer and why, and how they want to be talked to;
-- something that happened to the user or that they did, with its date and outcome, and
-  their plans, goals, commitments, and choices;
-- a change to something remembered earlier, with the new value and the old one;
-- something the assistant made or gave the user that they may want again — a
-  recommendation, a number, a list, a schedule, an arrangement — with its specifics;
-- a decision about their work with its reason, a reproduced bug with its cause or fix, a
-  non-obvious fact about how a machine, service, account, or tool behaves here, an
-  approach that failed and why, or a convention the user set for how work is done;
-- a moment in the relationship between the user and the assistant.
-
-Refuse a note that is low signal:
-
-- progress, status, next steps, or a narration of what was done in a session;
-- a copy of what a record held elsewhere says — version control, the tracker, a file,
-  documentation, the running system — its contents, scope, changes, or status. Something
-  built in the conversation from facts no record holds has no source but the note and is
-  not a copy;
-- what a file or function does, or how a codebase is structured;
-- generic advice or explanation with no fact tied to this user or their work;
-- greetings, filler, or a restated question.
-
-Whether a note is about the user's life or their work never refuses it, and neither does
-a note that mixes the two. A passing event, a mood, or a one-off plan of the user is
-memory. A failure's lesson is not session narration. The refusal list wins over the
-accept list. State the reason in one sentence."""
-
-
-async def judge_note_content(content: str) -> ContentVerdict:
-    """Ask the chat model whether a note's content is worth keeping across sessions."""
-    messages = [
-        {"role": "system", "content": JUDGE_PROMPT},
-        {"role": "user", "content": content},
-    ]
-    verdict = await chat_json(messages, _VERDICT_SCHEMA, timeout=NOTE_GATE_TIMEOUT_SECONDS)
-    return ContentVerdict(accepted=verdict["accepted"], reason=verdict["reason"])
-
-
-async def _content_gate(row: dict[str, Any]) -> None:
-    """Refuse a low-signal note before it costs an embedding call; fail open."""
-    try:
-        verdict = await judge_note_content(row["raw"])
-    except Exception as exc:
-        logger.warning("content gate unavailable, saving anyway: {}", exc)
-        row["metadata"]["content_gate"] = "unavailable"
-        return
-    if not verdict.accepted:
-        raise LowSignalNoteError(verdict.reason)
 
 
 def build_note_row(
@@ -232,7 +140,6 @@ async def save_note(
             f"content is identical to the note it supersedes ({supersedes}), so there is "
             "nothing to replace; change the content or drop supersedes"
         )
-    await _content_gate(row)
     embedding = await embed_text(VllmEmbedder(), row["raw"])
     async with db.acquire() as conn:
         await ensure_schema_once(conn)

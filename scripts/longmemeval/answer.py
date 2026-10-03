@@ -12,9 +12,9 @@ fsynced line per question to answers[-run].jsonl or judgments[-run].jsonl in the
 a rerun skips every question whose current prompt already has a row.
 
 Usage:
-  uv run python scripts/longmemeval/answer.py answer --dataset PATH [--gate off | --variant dated]
-  uv run python scripts/longmemeval/answer.py judge --dataset PATH [--gate off | --variant dated]
-  uv run python scripts/longmemeval/answer.py judge-hits --dataset PATH --gate off --read candidates
+  uv run python scripts/longmemeval/answer.py answer --dataset PATH [--variant dated]
+  uv run python scripts/longmemeval/answer.py judge --dataset PATH [--variant dated]
+  uv run python scripts/longmemeval/answer.py judge-hits --dataset PATH --read candidates
   ... --backend claude-code --model claude-sonnet-5-5 --effort high
 """
 
@@ -267,7 +267,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--data-dir", type=Path, default=lme.DEFAULT_DATA_DIR)
     parser.add_argument("--manifest", type=Path, default=lme.DEFAULT_MANIFEST)
     parser.add_argument("--variant", choices=lme.VARIANTS, default="baseline")
-    parser.add_argument("--gate", choices=lme.GATES, default="on")
     parser.add_argument("--read", choices=tuple(lme.READ_SETTINGS), default="search")
     parser.add_argument("--backend", choices=BACKENDS, default="zai")
     parser.add_argument("--model")
@@ -277,7 +276,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     code = lme.code_revision()
     load_dotenv()
-    run = lme.run_name(args.variant, args.gate, args.read)
+    run = lme.run_name(args.variant, args.read)
     questions = {q["question_id"]: q for q in lme.load_dataset(args.dataset)}
     model = args.model or DEFAULT_MODEL[args.backend]
     effort = args.effort or ("medium" if args.stage == "judge-hits" else "high")

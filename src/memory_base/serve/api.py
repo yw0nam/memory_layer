@@ -44,7 +44,6 @@ from memory_base.serve.http import json_body
 from memory_base.serve.notes import (
     CredentialNoteError,
     NOTE_KINDS,
-    LowSignalNoteError,
     SimilarNotesError,
     note_date,
     save_note,
@@ -297,8 +296,6 @@ async def save_memory_route(request: Request) -> JSONResponse:
         )
     except SimilarNotesError as exc:
         return JSONResponse({"error": str(exc), "similar": exc.similar}, status_code=409)
-    except LowSignalNoteError as exc:
-        return JSONResponse({"error": str(exc), "reason": exc.reason}, status_code=409)
     except CredentialNoteError as exc:
         return error(str(exc), 409)
     except ValueError as exc:

@@ -64,12 +64,11 @@ Write rarely. Save with save_memory and label the note with kind: "personal" for
 about the user (their life, their day, or a moment they shared with you, even during
 work), "work" for work knowledge that code, version control, and the tracker cannot
 answer; progress or state for the next session goes to send_message. The kind only labels
-a note: a refusal means the note is low signal, never that it has the other kind. Before
-saving, search_memory the same subject; when the new note replaces one, supersede it
-rather than adding a note that contradicts it, and if other active notes state the same
-stale value, archive them with archive_notes. A refusal carries the reason: rewrite
-at most once; if the rewrite is refused too, store nothing and tell the user when one
-is present."""
+a note and never decides whether it is stored. The server stores a note once it passes
+the validation, credential, and near-duplicate checks, so what is worth keeping is your
+call. Before saving, search_memory the same subject; when the new note replaces one,
+supersede it rather than adding a note that contradicts it, and if other active notes
+state the same stale value, archive them with archive_notes."""
 
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
@@ -84,10 +83,9 @@ pending one, and a completed handoff remains the delivered record of that state.
 handoff stays pending until it is claimed, superseded, or cancelled unless its sender
 gives an expires_at; a general message expires after the server's default TTL. Keep the
 lanes straight: a note is durable knowledge, memory of the user or of the work, read
-again whenever it matches; a message is operational state and is consumed once. The note
-content gate does not apply to messages — that is what makes them the right carrier for
-progress signals the gate refuses, and the wrong place for anything meant to be read
-more than once."""
+again whenever it matches; a message is operational state and is consumed once. That
+makes a message the right carrier for progress and next steps, and the wrong place for
+anything meant to be read more than once."""
 
 _SERVER_INSTRUCTIONS_CLOSING = """\
 Work knowledge belongs in the key's home namespace. Personal context — schedule,
@@ -449,7 +447,8 @@ async def save_memory(
         Literal["personal", "work"],
         Field(
             description='"personal" (the user, their life, their day, moments with you) or '
-            '"work" (their work and projects); a label for search, never a reason to refuse.'
+            '"work" (their work and projects); a label for search that never decides whether the '
+            "note is stored."
         ),
     ],
     supersedes: Annotated[
@@ -500,9 +499,9 @@ async def save_memory(
     Before saving, search_memory the same subject. If the new note replaces one, pass
     `supersedes` with its id and write the current value with the previous one stated,
     e.g. "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)"; if other active notes
-    state the same stale value, archive them with archive_notes. A note refused as low
-    signal comes back with the reason; rewrite it once, and if that is refused too, store
-    nothing and tell the user when one is present.
+    state the same stale value, archive them with archive_notes. The server stores a note
+    once it passes the validation, credential, and near-duplicate checks, so what is worth
+    keeping is your call.
     """
     body: dict[str, Any] = {
         "content": content,

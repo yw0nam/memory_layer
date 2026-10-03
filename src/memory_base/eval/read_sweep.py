@@ -7,7 +7,7 @@ scores. A budget point with a floor drops candidates below it before packing. Ea
 then delivers the cut hits the way its client does: `search` returns them all, `claude-code`
 renders the prefetch hook's context block, and `hermes` renders the Hermes provider's prefetch.
 
-Corpora: the LongMemEval personal notes (`longmemeval retrieve --read candidates --gate off`
+Corpora: the LongMemEval personal notes (`longmemeval retrieve --read candidates`
 writes the candidate packets; `lme-probe` searches the probe prompts in one question's
 namespace), and the deployed corpus (`deployed` copies memory_chunks over a read-only
 connection into a throwaway Postgres on the current schema, then replays the labelled notes
@@ -43,8 +43,8 @@ PROBES_PATH = REPO_ROOT / "tests" / "fixtures" / "read_sweep_probes.jsonl"
 PREFETCH_HOOK_PATH = REPO_ROOT / "integrations" / "claude_code" / "prefetch_hook.py"
 HERMES_CLIENT_PATH = REPO_ROOT / "integrations" / "hermes" / "memory_base" / "client.py"
 CANDIDATES_BUDGET = lme.CANDIDATES_BUDGET
-CANDIDATES_RUN = lme.run_name("baseline", "off", "candidates")
-EXPORT_RUN = lme.run_name("baseline", "off")
+CANDIDATES_RUN = lme.run_name("baseline", "candidates")
+EXPORT_RUN = lme.run_name("baseline")
 PROBES_FILE = "probe-candidates.jsonl"
 REPORT_FILE = "read-sweep.json"
 TOP_KS = (3, 5, 10)
@@ -277,7 +277,6 @@ def read_only_url(url: str) -> str:
 async def probe_question(
     question: dict[str, Any],
     notes_by_unit: dict,
-    gate: str,
     probes: Sequence[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Load one question's notes and search every probe prompt in its namespace."""
@@ -286,7 +285,7 @@ async def probe_question(
 
     namespace = lme.NAMESPACE_PREFIX + question["question_id"]
     await namespaces.create_namespace(namespace)
-    await lme.load_question_notes(namespace, lme.session_units(question), notes_by_unit, gate=gate)
+    await lme.load_question_notes(namespace, lme.session_units(question), notes_by_unit)
     rows = []
     for probe in probes:
         hits = await retrieval._search_with_retry(
@@ -316,19 +315,14 @@ async def _probe_in_database(url: str, *args: Any) -> list[dict[str, Any]]:
 
 
 def run_lme_probe(args: argparse.Namespace) -> None:
-    from memory_base.serve import notes
-
     subset = lme.select_subset(lme.load_dataset(args.dataset))
     question = (
         subset[0] if args.question is None else lme.filter_questions(subset, [args.question])[0]
     )
     notes_by_unit, _ = lme._notes_by_unit(args.data_dir)
-    notes.judge_note_content = lme._gate_pinned_open
     with lme.throwaway_postgres() as database:
         rows = asyncio.run(
-            _probe_in_database(
-                database["url"], question, notes_by_unit, args.gate, load_probes(args.probes)
-            )
+            _probe_in_database(database["url"], question, notes_by_unit, load_probes(args.probes))
         )
     lme.write_jsonl_atomic(args.data_dir / PROBES_FILE, rows)
     print(f"{len(rows)} probes searched in lme-{question['question_id']}")
@@ -549,7 +543,6 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--dataset", type=Path, required=True)
     probe.add_argument("--data-dir", type=Path, required=True)
     probe.add_argument("--question", default=None)
-    probe.add_argument("--gate", choices=lme.GATES, default="off")
     probe.add_argument("--probes", type=Path, default=PROBES_PATH)
     deployed = commands.add_parser("deployed", help="replay labels and probes on a snapshot")
     deployed.add_argument("--out", type=Path, required=True)
