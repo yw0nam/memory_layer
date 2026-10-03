@@ -1,9 +1,9 @@
 """Contract tests for the personal and work note kinds (red-first).
 
-Notes are saved through two MCP tools, ``save_personal_memory`` and
-``save_work_memory``; each fixes the stored kind (``personal`` / ``work``) and
-is judged by the content gate with the prompt of its kind. ``POST /save_memory``
-requires ``kind``; reads accept only the new kinds.
+Notes are saved through one MCP tool, ``save_memory``, whose required ``kind``
+(``personal`` / ``work``) labels the note for search and listing; one content
+gate judges every note for low signal whatever its kind. ``POST /save_memory``
+requires ``kind``; reads accept only these kinds.
 
 Unit sections follow tests/serve/test_content_gate.py's FakeConnection pattern
 (no DB, no network). Integration sections run the real stack in-process.
@@ -26,7 +26,7 @@ from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import admin, api, mcp_server, notes
 from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
 from memory_base.serve.notes import (
-    JUDGE_PROMPTS,
+    JUDGE_PROMPT,
     NOTE_KINDS,
     ContentVerdict,
     LowSignalNoteError,
@@ -38,7 +38,7 @@ from test_content_gate import _assert_refusal_text
 
 NOW = 1_700_000_000.0
 KIND_ERROR = "kind must be one of ('personal', 'work')"
-SAVE_TOOLS = [("save_personal_memory", "personal"), ("save_work_memory", "work")]
+DESCRIPTION_LIMIT = 2048  # a client that shows a tool description or the instructions cuts here
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -96,7 +96,7 @@ def _patch_note_deps(monkeypatch, conn, judge=None):
         conn.embeds.append(text)
         return "[0]"
 
-    async def accepted_judge(content, kind):
+    async def accepted_judge(content):
         return ContentVerdict(accepted=True, reason="durable knowledge")
 
     monkeypatch.setattr(notes.db, "acquire", acquire)
@@ -117,7 +117,7 @@ def test_save_note_requires_a_kind():
 def test_save_note_rejects_a_malformed_kind(monkeypatch, kind):
     conn = FakeConnection()
 
-    async def never_called(content, kind):
+    async def never_called(content):
         raise AssertionError("the gate must not run for a malformed kind")
 
     _patch_note_deps(monkeypatch, conn, judge=never_called)
@@ -128,23 +128,22 @@ def test_save_note_rejects_a_malformed_kind(monkeypatch, kind):
 
 
 @pytest.mark.parametrize("kind", ["personal", "work"])
-def test_the_gate_receives_the_notes_kind(monkeypatch, kind):
+def test_the_gate_judges_the_content_whatever_its_kind(monkeypatch, kind):
     conn = FakeConnection()
     seen = []
 
-    async def recording_judge(content, kind):
-        seen.append((content, kind))
+    async def recording_judge(content):
+        seen.append(content)
         return ContentVerdict(accepted=True, reason="durable knowledge")
 
     _patch_note_deps(monkeypatch, conn, judge=recording_judge)
     result = asyncio.run(save_note("distilled content", tags=["test"], kind=kind))
-    assert seen == [("distilled content", kind)]
+    assert seen == ["distilled content"]
     assert result["stored"] is True
     assert result["kind"] == kind
 
 
-@pytest.mark.parametrize("kind", ["personal", "work"])
-def test_judge_uses_the_prompt_of_its_kind(monkeypatch, kind):
+def test_judge_uses_the_one_prompt(monkeypatch):
     captured = {}
 
     async def fake_chat_json(messages, schema, *, timeout):
@@ -154,10 +153,10 @@ def test_judge_uses_the_prompt_of_its_kind(monkeypatch, kind):
         return {"accepted": True, "reason": "ok"}
 
     monkeypatch.setattr(notes, "chat_json", fake_chat_json)
-    verdict = asyncio.run(judge_note_content("distilled content", kind))
+    verdict = asyncio.run(judge_note_content("distilled content"))
     assert verdict == ContentVerdict(accepted=True, reason="ok")
     assert [m["role"] for m in captured["messages"]] == ["system", "user"]
-    assert captured["messages"][0]["content"] == JUDGE_PROMPTS[kind]
+    assert captured["messages"][0]["content"] == JUDGE_PROMPT
     assert captured["messages"][1]["content"] == "distilled content"
     assert captured["schema"]["required"] == ["accepted", "reason"]
     assert captured["timeout"] == notes.NOTE_GATE_TIMEOUT_SECONDS
@@ -167,7 +166,7 @@ def test_judge_uses_the_prompt_of_its_kind(monkeypatch, kind):
 def test_judge_failure_fails_open_for_either_kind(monkeypatch, kind):
     conn = FakeConnection()
 
-    async def failing_judge(content, kind):
+    async def failing_judge(content):
         raise TimeoutError("chat timed out")
 
     _patch_note_deps(monkeypatch, conn, judge=failing_judge)
@@ -177,62 +176,58 @@ def test_judge_failure_fails_open_for_either_kind(monkeypatch, kind):
 
 
 @pytest.mark.parametrize("kind", ["personal", "work"])
-def test_refusal_text_names_the_other_tool(monkeypatch, kind):
+def test_a_refusal_is_low_signal_and_never_names_another_tool(monkeypatch, kind):
     conn = FakeConnection()
 
-    async def refusing_judge(content, kind):
-        return ContentVerdict(accepted=False, reason="not for this gate")
+    async def refusing_judge(content):
+        return ContentVerdict(accepted=False, reason="session narration")
 
     _patch_note_deps(monkeypatch, conn, judge=refusing_judge)
     with pytest.raises(LowSignalNoteError) as exc_info:
         asyncio.run(save_note("distilled content", tags=["test"], kind=kind))
-    assert exc_info.value.reason == "not for this gate"
-    assert exc_info.value.kind == kind
-    _assert_refusal_text(str(exc_info.value), "not for this gate", kind)
+    assert exc_info.value.reason == "session narration"
+    _assert_refusal_text(str(exc_info.value), "session narration")
     assert conn.embeds == []
     assert conn.insert_args is None
 
 
-def test_judge_prompts_state_their_contracts():
+def test_the_judge_prompt_refuses_low_signal_and_never_a_kind():
     assert NOTE_KINDS == ("personal", "work")
-    assert set(JUDGE_PROMPTS) == set(NOTE_KINDS)
-    flat = {kind: " ".join(prompt.split()) for kind, prompt in JUDGE_PROMPTS.items()}
-    for text in flat.values():
-        assert text.endswith("State the reason in one sentence.")
-        assert "must be split into" in text
-        assert "is not a mix" in text
-        for anchor in ("PR", "namespace", "file does", "session that produced"):
-            assert anchor not in text
-        assert not re.search(r"\bcommit\b", text)
-    for anchor in ("Judge generously.", "A note's moment never refuses it", "technical or not"):
-        assert anchor in flat["personal"]
+    text = " ".join(JUDGE_PROMPT.split())
+    assert text.endswith("State the reason in one sentence.")
     for anchor in (
-        "Judge strictly.",
-        "A copy that carries what its source does not state still fails",
-        "the failure and its fix, stated outright, pass",
+        "Refuse a note that is low signal",
+        "progress, status, next steps, or a narration",
+        "has no source but the note and is not a copy",
+        "generic advice or explanation with no fact tied to this user or their work",
+        "never refuses it, and neither does a note that mixes the two",
+        "A failure's lesson is not session narration.",
+        "The refusal list wins over the accept list.",
     ):
-        assert anchor in flat["work"]
+        assert anchor in text
+    for stale in ("must be split into", "is not a mix", "Judge strictly.", "Judge generously."):
+        assert stale not in text
 
 
-def test_identical_content_through_the_other_tool_returns_the_stored_kind(monkeypatch):
+def test_identical_content_through_the_other_kind_returns_the_stored_kind(monkeypatch):
     conn = FakeConnection(insert_status="INSERT 0 0", stored_kind="work")
     judged = []
 
-    async def recording_judge(content, kind):
-        judged.append(kind)
+    async def recording_judge(content):
+        judged.append(content)
         return ContentVerdict(accepted=True, reason="durable knowledge")
 
     _patch_note_deps(monkeypatch, conn, judge=recording_judge)
     result = asyncio.run(save_note("distilled content", tags=["test"], kind="personal"))
     assert result["stored"] is False
     assert result["kind"] == "work"
-    assert judged == ["personal"]
+    assert judged == ["distilled content"]
 
 
-def test_identical_content_still_passes_the_chosen_tools_gate(monkeypatch):
+def test_identical_content_still_passes_the_gate(monkeypatch):
     conn = FakeConnection(insert_status="INSERT 0 0")
 
-    async def refusing_judge(content, kind):
+    async def refusing_judge(content):
         return ContentVerdict(accepted=False, reason="not for this gate")
 
     _patch_note_deps(monkeypatch, conn, judge=refusing_judge)
@@ -303,9 +298,9 @@ def test_save_memory_route_forwards_kind_to_save_note(monkeypatch, kind):
 
 
 @pytest.mark.parametrize("kind", ["personal", "work"])
-def test_low_signal_refusal_maps_to_409_with_the_kinds_text(monkeypatch, kind):
+def test_low_signal_refusal_maps_to_409_with_the_refusal_text(monkeypatch, kind):
     async def fake_save_note(content, **kwargs):
-        raise LowSignalNoteError("not for this gate", kind)
+        raise LowSignalNoteError("session narration")
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
@@ -314,8 +309,8 @@ def test_low_signal_refusal_maps_to_409_with_the_kinds_text(monkeypatch, kind):
     )
     assert response.status_code == 409
     body = response.json()
-    assert body["reason"] == "not for this gate"
-    _assert_refusal_text(body["error"], "not for this gate", kind)
+    assert body["reason"] == "session narration"
+    _assert_refusal_text(body["error"], "session narration")
 
 
 def test_duplicates_route_rejects_an_unknown_kind(monkeypatch):
@@ -334,7 +329,7 @@ def test_duplicates_route_rejects_an_unknown_kind(monkeypatch):
     assert calls == ["work"]
 
 
-# ---- MCP: the two save tools ----------------------------------------------------
+# ---- MCP: the save tool ----------------------------------------------------------
 
 
 def _tools():
@@ -359,25 +354,41 @@ def _patch_client(monkeypatch, handler):
     monkeypatch.setattr(mcp_server, "_client", fake_client)
 
 
-def test_tool_list_offers_the_two_save_tools_and_no_save_memory():
+def test_tool_list_offers_one_save_tool():
     names = set(_tools())
-    assert {"save_personal_memory", "save_work_memory"} <= names
-    assert "save_memory" not in names
+    assert "save_memory" in names
+    assert not {"save_personal_memory", "save_work_memory"} & names
 
 
-@pytest.mark.parametrize("tool", ["save_personal_memory", "save_work_memory"])
-def test_save_tool_schemas_exclude_kind_and_track(tool):
-    schema = _tools()[tool].inputSchema
-    assert "kind" not in schema["properties"]
+def test_save_memory_schema_requires_a_kind_of_two_values():
+    schema = _tools()["save_memory"].inputSchema
+    assert {"content", "author", "tags", "kind"} <= set(schema["required"])
+    assert schema["properties"]["kind"]["enum"] == ["personal", "work"]
     assert "track" not in schema["properties"]
-    assert {"content", "author", "tags"} <= set(schema["required"])
     assert schema["properties"]["allow_similar"]["type"] == "boolean"
     assert "allow_similar" not in schema["required"]
     assert "allow_restatement" not in schema["properties"]
 
 
-@pytest.mark.parametrize(("tool", "kind"), SAVE_TOOLS)
-def test_each_save_tool_posts_its_fixed_kind(monkeypatch, tool, kind):
+def test_save_memory_parameters_carry_their_notes_in_the_schema():
+    properties = _tools()["save_memory"].inputSchema["properties"]
+    for name in (
+        "kind",
+        "tags",
+        "author",
+        "supersedes",
+        "allow_similar",
+        "occurred_at",
+        "namespace",
+    ):
+        assert properties[name].get("description"), name
+    assert "never a reason to refuse" in properties["kind"]["description"]
+    assert "first tag names the subject" in properties["tags"]["description"]
+    assert "author allowlist" in properties["author"]["description"]
+
+
+@pytest.mark.parametrize("kind", ["personal", "work"])
+def test_save_memory_posts_the_kind_it_is_given(monkeypatch, kind):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -386,7 +397,9 @@ def test_each_save_tool_posts_its_fixed_kind(monkeypatch, tool, kind):
         return httpx.Response(200, json={"id": "note:abc", "kind": kind, "stored": True})
 
     _patch_client(monkeypatch, handler)
-    result = asyncio.run(getattr(mcp_server, tool)("distilled content", "natsume", tags=["infra"]))
+    result = asyncio.run(
+        mcp_server.save_memory("distilled content", "natsume", tags=["infra"], kind=kind)
+    )
     assert captured["path"] == "/save_memory"
     assert captured["json"] == {
         "content": "distilled content",
@@ -399,77 +412,75 @@ def test_each_save_tool_posts_its_fixed_kind(monkeypatch, tool, kind):
     assert result == {"id": "note:abc", "kind": kind, "stored": True}
 
 
-@pytest.mark.parametrize(("tool", "kind"), SAVE_TOOLS)
-def test_each_save_tool_surfaces_the_gate_refusal(monkeypatch, tool, kind):
-    refusal = LowSignalNoteError("not for this gate", kind)
+def test_save_memory_surfaces_the_gate_refusal(monkeypatch):
+    refusal = LowSignalNoteError("session narration")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(409, json={"error": str(refusal), "reason": refusal.reason})
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError) as exc_info:
-        asyncio.run(getattr(mcp_server, tool)("distilled content", "natsume", tags=["test"]))
+        asyncio.run(
+            mcp_server.save_memory("distilled content", "natsume", tags=["test"], kind="work")
+        )
     assert str(exc_info.value) == str(refusal)
-    _assert_refusal_text(str(exc_info.value), "not for this gate", kind)
+    _assert_refusal_text(str(exc_info.value), "session narration")
 
 
-def test_save_tool_descriptions_state_their_criteria():
-    tools = _tools()
-    personal = tools["save_personal_memory"].description
-    work = tools["save_work_memory"].description
+def test_save_memory_description_states_both_bars_and_the_label():
+    description = " ".join(_tools()["save_memory"].description.split())
     for anchor in (
-        "a moment between you, even one during work,",
-        "Do NOT save work knowledge here",
-        "technical or not",
-        "save_work_memory",
+        "`kind` labels the note for a later search",
+        "The label never decides whether a note is stored",
+        "a moment between you, or something you made or gave them",
+        "a decision and its reason, a reproduced bug and its fix",
+        "a decision without its reason is not worth keeping",
+        "Do NOT save progress or next steps of the current session",
         "send_message",
         "English",
         "search_memory the same subject",
         "archive them with archive_notes",
-        "once in total",
+        "rewrite it once",
     ):
-        assert anchor in personal
-    for anchor in (
-        "Record work knowledge",
-        "The bar is strict",
-        "Do NOT save",
-        "save_personal_memory",
-        "send_message",
-        "English",
-        "search_memory the same subject",
-        "archive them with archive_notes",
-        "once in total",
-    ):
-        assert anchor in work
-    for description in (personal, work):
-        assert "split, each part saved with its own tool" in " ".join(description.split())
+        assert anchor in description
+    for stale in ("save_personal_memory", "save_work_memory", "the other save tool"):
+        assert stale not in description
 
 
-def test_save_tool_summaries_fit_a_tool_catalog():
+def test_save_tool_summary_fits_a_tool_catalog():
     # A deferring client shows the first sentence clipped to 60 characters.
-    tools = _tools()
-    first = {
-        name: re.match(r"(.+?[.!?])(?=\s|$)", " ".join(tools[name].description.split())).group(1)
-        for name in ("save_personal_memory", "save_work_memory")
-    }
-    assert first == {
-        "save_personal_memory": "Remember the user: their life, their day, moments with you.",
-        "save_work_memory": "Record work knowledge no code, commit, or tracker holds.",
-    }
-    assert all(len(sentence) <= 60 for sentence in first.values())
+    description = " ".join(_tools()["save_memory"].description.split())
+    first = re.match(r"(.+?[.!?])(?=\s|$)", description).group(1)
+    assert first == "Remember the user and their work for later sessions."
+    assert len(first) <= 60
 
 
-def test_server_instructions_route_each_memory_to_its_tool():
+def test_every_tool_description_fits_what_a_client_shows():
+    lengths = {name: len(tool.description or "") for name, tool in _tools().items()}
+    assert max(lengths.values()) <= DESCRIPTION_LIMIT, lengths
+
+
+def test_the_write_policy_fits_what_a_client_shows_of_the_instructions():
+    assert (
+        SERVER_INSTRUCTIONS.index(mcp_server._WRITE_POLICY) + len(mcp_server._WRITE_POLICY)
+        <= DESCRIPTION_LIMIT
+    )
+
+
+def test_server_instructions_name_the_save_tool_and_the_kind_as_a_label():
+    flat = " ".join(SERVER_INSTRUCTIONS.split())
     for anchor in (
-        "save_personal_memory",
-        "save_work_memory",
+        "save_memory",
         "send_message",
         "Write rarely.",
         "at most once",
         "a moment they shared with you, even during work",
+        "The kind only labels a note: a refusal means the note is low signal, never that it "
+        "has the other kind.",
     ):
-        assert anchor in " ".join(SERVER_INSTRUCTIONS.split())
-    assert "save_memory" not in SERVER_INSTRUCTIONS
+        assert anchor in flat
+    for stale in ("save_personal_memory", "save_work_memory", "the other save tool"):
+        assert stale not in flat
 
 
 def test_server_instructions_carry_no_per_job_criteria():
@@ -507,13 +518,15 @@ def _marker() -> str:
 
 
 @pytest.mark.integration
-def test_cross_tool_duplicate_is_a_no_op_that_keeps_the_first_kind(rest_in_process):
+def test_cross_kind_duplicate_is_a_no_op_that_keeps_the_first_kind(rest_in_process):
     content = f"note kinds integration pin {_marker()}: identical content through both tools"
     note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        first = asyncio.run(mcp_server.save_work_memory(content, "natsume", tags=["test"]))
-        second = asyncio.run(mcp_server.save_personal_memory(content, "natsume", tags=["test"]))
+        first = asyncio.run(mcp_server.save_memory(content, "natsume", tags=["test"], kind="work"))
+        second = asyncio.run(
+            mcp_server.save_memory(content, "natsume", tags=["test"], kind="personal")
+        )
         assert first["stored"] is True
         assert second["stored"] is False
         assert second["id"] == first["id"] == note_id
@@ -572,10 +585,12 @@ def test_cross_kind_supersede_archives_the_other_kinds_note(rest_in_process):
     new_id = build_note_row(new, "work", ["test"], NOW)["id"]
     asyncio.run(_delete(old_id, new_id))
     try:
-        saved_old = asyncio.run(mcp_server.save_work_memory(old, "natsume", tags=["test"]))
+        saved_old = asyncio.run(mcp_server.save_memory(old, "natsume", tags=["test"], kind="work"))
         assert saved_old["id"] == old_id
         saved_new = asyncio.run(
-            mcp_server.save_personal_memory(new, "natsume", tags=["test"], supersedes=old_id)
+            mcp_server.save_memory(
+                new, "natsume", tags=["test"], kind="personal", supersedes=old_id
+            )
         )
         assert saved_new["id"] == new_id
         assert saved_new["superseded"] == old_id

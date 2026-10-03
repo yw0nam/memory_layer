@@ -19,9 +19,9 @@ messages are the only things that cross sessions.
 
 ## Consequences
 
-- A fact the writer missed is a writer problem fixed at write time: the
-  `save_personal_memory` and `save_work_memory` instructions and the content gate's
-  judge prompt per kind (ADR-0004), not a stored session to mine later.
+- A fact the writer missed is a writer problem fixed at write time: the `save_memory`
+  instructions and the content gate's judge prompt (ADR-0006), not a stored session to
+  mine later.
 - There is no capture hook and no conversation endpoint; the Claude Code and Hermes
   integrations only prefetch notes into a session.
 - A note id is `note:{namespace}:{sha256(content)[:16]}`, taken over the stripped

@@ -324,7 +324,7 @@ def _patch_note_deps(monkeypatch, conn):
     monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
     monkeypatch.setattr(notes, "ensure_schema_once", noop)
 
-    async def accepted_judge(content, kind):
+    async def accepted_judge(content):
         return ContentVerdict(accepted=True, reason="durable knowledge")
 
     monkeypatch.setattr(notes, "judge_note_content", accepted_judge)
@@ -371,7 +371,7 @@ def test_supersede_of_the_note_with_identical_content_is_refused_before_gate_and
     _patch_note_deps(monkeypatch, conn)
     calls = []
 
-    async def counting_judge(content, kind):
+    async def counting_judge(content):
         calls.append("judge")
         return ContentVerdict(accepted=True, reason="durable knowledge")
 
@@ -548,7 +548,7 @@ def _patch_client(monkeypatch, handler):
     monkeypatch.setattr(mcp_server, "_client", fake_client)
 
 
-def test_mcp_save_work_memory_posts_supersedes_in_body(monkeypatch):
+def test_mcp_save_memory_posts_supersedes_in_body(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -566,8 +566,8 @@ def test_mcp_save_work_memory_posts_supersedes_in_body(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     result = asyncio.run(
-        mcp_server.save_work_memory(
-            "new content", "natsume", tags=None, supersedes="note:old0000000000"
+        mcp_server.save_memory(
+            "new content", "natsume", tags=None, supersedes="note:old0000000000", kind="work"
         )
     )
     assert captured["json"] == {
@@ -581,7 +581,7 @@ def test_mcp_save_work_memory_posts_supersedes_in_body(monkeypatch):
     assert result["superseded"] == "note:old0000000000"
 
 
-def test_mcp_save_work_memory_posts_supersedes_none_when_absent(monkeypatch):
+def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -598,7 +598,7 @@ def test_mcp_save_work_memory_posts_supersedes_none_when_absent(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.save_work_memory("new content", "natsume", tags=["test"]))
+    asyncio.run(mcp_server.save_memory("new content", "natsume", tags=["test"], kind="work"))
     assert captured["json"] == {
         "content": "new content",
         "author": "natsume",
@@ -609,7 +609,7 @@ def test_mcp_save_work_memory_posts_supersedes_none_when_absent(monkeypatch):
     }
 
 
-def test_mcp_save_work_memory_posts_allow_similar_true_when_passed(monkeypatch):
+def test_mcp_save_memory_posts_allow_similar_true_when_passed(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -627,18 +627,20 @@ def test_mcp_save_work_memory_posts_allow_similar_true_when_passed(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     asyncio.run(
-        mcp_server.save_work_memory("new content", "natsume", tags=["test"], allow_similar=True)
+        mcp_server.save_memory(
+            "new content", "natsume", tags=["test"], allow_similar=True, kind="work"
+        )
     )
     assert captured["json"]["allow_similar"] is True
 
 
-def test_mcp_save_work_memory_409_surfaces_backend_message(monkeypatch):
+def test_mcp_save_memory_409_surfaces_backend_message(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(409, json={"error": "Refused: 1 active note(s) say the same thing"})
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match=r"Refused: 1 active note\(s\) say the same thing"):
-        asyncio.run(mcp_server.save_work_memory("new content", "natsume", tags=["test"]))
+        asyncio.run(mcp_server.save_memory("new content", "natsume", tags=["test"], kind="work"))
 
 
 def test_mcp_tool_list_unaffected_by_supersede():
@@ -656,8 +658,7 @@ def test_mcp_tool_list_unaffected_by_supersede():
         "search",
         "search_code",
         "search_memory",
-        "save_personal_memory",
-        "save_work_memory",
+        "save_memory",
         "query_table",
         "ingest_document",
         "ingest_repo",

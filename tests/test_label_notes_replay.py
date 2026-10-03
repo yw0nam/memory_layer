@@ -27,8 +27,8 @@ GATE_FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _LIVE_JUDGE = notes.judge_note_content
 
 GATE_FIXTURES = {
-    "gate_replay_coding_notes.jsonl": ("coding-agent notes", "work"),
-    "gate_replay_conversation_notes.jsonl": ("conversation-memory notes", "personal"),
+    "gate_replay_coding_notes.jsonl": "coding-agent notes",
+    "gate_replay_conversation_notes.jsonl": "conversation-memory notes",
 }
 
 # One malformed provider response is not a verdict; the benchmark retries gate calls the same way.
@@ -181,18 +181,16 @@ def test_gate_fixtures_match_their_composition():
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    ("name", "kind"),
-    [(name, kind) for name, (_, kind) in sorted(GATE_FIXTURES.items())],
-    ids=[label for _, (label, _) in sorted(GATE_FIXTURES.items())],
+    "name", sorted(GATE_FIXTURES), ids=[GATE_FIXTURES[name] for name in sorted(GATE_FIXTURES)]
 )
-def test_replay_gate_fixture_against_the_live_gate(name, kind):
+def test_replay_gate_fixture_against_the_live_gate(name):
     rows = load_gate_fixture(name)
     mismatches: list[str] = []
     for row in rows:
         verdict, error = None, None
         for attempt in range(1, GATE_REPLAY_ATTEMPTS + 1):
             try:
-                verdict = asyncio.run(_LIVE_JUDGE(row["content"], kind))
+                verdict = asyncio.run(_LIVE_JUDGE(row["content"]))
                 break
             except Exception as exc:  # any judge failure is retryable here
                 error = exc

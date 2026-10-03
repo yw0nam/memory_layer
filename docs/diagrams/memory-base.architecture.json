@@ -64,7 +64,7 @@
       "id": "mcp",
       "type": "backend",
       "label": "MCP Server",
-      "sublabel": "20 tools · thin proxy",
+      "sublabel": "19 tools · thin proxy",
       "tag": "stdio | :8765",
       "pos": [
         275,
@@ -328,7 +328,7 @@
       "title": "One backend",
       "items": [
         "Every consumer reaches stored chunks through REST API :8010, never the database directly",
-        "The MCP server forwards 20 tools to REST and holds no logic of its own",
+        "The MCP server forwards 19 tools to REST and holds no logic of its own",
         "The API key decides namespace scope and document · repo ownership"
       ]
     },

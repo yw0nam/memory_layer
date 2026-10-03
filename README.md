@@ -21,9 +21,9 @@ instead of search.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  20 tools: search / search_code / search_memory /
-   │ mcp_server  │            save_personal_memory / save_work_memory /
-   └──────┬──────┘            list_notes / ingest_document / remove_document
+   ┌─────────────┐  19 tools: search / search_code / search_memory /
+   │ mcp_server  │            save_memory / list_notes /
+   └──────┬──────┘            ingest_document / remove_document
           │                   query_table / ingest_repo / remove_repo / list_repos
           │ HTTP              list_memory_duplicates / archive_notes /
           │                   restore_notes / delete_notes / send_message /
@@ -78,7 +78,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
-| `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the required `kind` (`personal` or `work`, which picks the judge prompt), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); refused with 409 when the chat model, judging with the prompt of the `kind`, finds a personal note that is not about the user (work knowledge, filler, generic advice) or a work note that copies a record held elsewhere, narrates progress, describes a file, states generic advice, or is too vague to act on (the error carries the reason and the recovery: move it to the other tool only when the content clearly belongs there, one rewrite in total, otherwise store nothing), and when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set; refused with 409 before any model call when the content or a tag carries a credential (the error names the credential type only) |
+| `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the required `kind` (`personal` or `work`, a label for search and listing), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); refused with 409 when the chat model, judging every note with one prompt whatever its `kind`, finds low signal — session narration, progress or next steps, a copy of a record held elsewhere, a file description, generic advice, or filler (the error carries the reason and the recovery: one rewrite, or `send_message` for progress, otherwise store nothing), and when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set; refused with 409 before any model call when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind` (`personal` or `work`), `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
 | `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, `author`, optional `idempotency_key` and `expires_at`; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
@@ -125,7 +125,7 @@ archives the target without recording a pointer on it. `date` is the note's
 stdio by default; `MCP_TRANSPORT=sse|streamable-http` with `MCP_HOST`/`MCP_PORT` serves
 over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
-`search` · `search_code` · `search_memory` · `save_personal_memory` · `save_work_memory` · `list_notes` ·
+`search` · `search_code` · `search_memory` · `save_memory` · `list_notes` ·
 `ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
@@ -212,7 +212,7 @@ uv run python -m memory_base.serve.keys revoke <key-hash-prefix>
 ```
 
 `new` prints the plaintext key once — only its sha256 hash is stored. `--home` sets the
-namespace the save tools and document ingest default into (`default` when omitted);
+namespace `save_memory` and document ingest default into (`default` when omitted);
 minting fails if that namespace does not exist or is not accessible to the label.
 `revoke` takes an 8+ character prefix of the stored hash, as shown by `list`, and
 revokes every active key matching it.

@@ -1,4 +1,4 @@
-"""Contract tests for the save_work_memory MCP tool (red-first).
+"""Contract tests for the save_memory MCP tool (red-first).
 
 Pure tests pin build_note_row's id scheme, row shape, and validation with no
 DB/embedder/network. Integration tests (marked ``integration``, skipped when the
@@ -19,7 +19,7 @@ import asyncpg
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.retrieval.search import search
 from memory_base.serve import namespaces
-from memory_base.serve.mcp_server import save_work_memory
+from memory_base.serve.mcp_server import save_memory
 from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0
@@ -177,7 +177,7 @@ def test_save_memory_stores_row_in_db(rest_in_process):
     note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        result = asyncio.run(save_work_memory(content, "natsume", tags=["pytest"]))
+        result = asyncio.run(save_memory(content, "natsume", tags=["pytest"], kind="work"))
         assert result["id"] == note_id
         assert result["stored"] is True
 
@@ -199,8 +199,8 @@ def test_save_memory_duplicate_is_noop(rest_in_process):
     note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        first = asyncio.run(save_work_memory(content, "natsume", tags=["test"]))
-        second = asyncio.run(save_work_memory(content, "natsume", tags=["test"]))
+        first = asyncio.run(save_memory(content, "natsume", tags=["test"], kind="work"))
+        second = asyncio.run(save_memory(content, "natsume", tags=["test"], kind="work"))
         assert first["stored"] is True
         assert second["stored"] is False
         assert asyncio.run(_count(note_id)) == 1
@@ -214,7 +214,7 @@ def test_saved_note_found_by_search(rest_in_process):
     note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        asyncio.run(save_work_memory(content, "natsume", tags=["test"]))
+        asyncio.run(save_memory(content, "natsume", tags=["test"], kind="work"))
         hits = asyncio.run(search(content, source="memory", rerank=False))
         assert any(h.meta.get("id") == note_id for h in hits)
     finally:

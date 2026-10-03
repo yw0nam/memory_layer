@@ -57,33 +57,19 @@ class SimilarNotesError(ValueError):
         )
 
 
-_RECOVERY = {
-    "personal": (
-        "Move it to save_work_memory only if it is clearly work knowledge, or to send_message "
-        "if it is state for the next session; otherwise rewrite it to state what it says about "
-        "the user. If the reason says to split it, save the part about the user with "
-        "save_personal_memory and the work part with save_work_memory. One rewrite in total, "
-        "whichever tool: if that is refused too, store nothing and tell the user when one is "
-        "present."
-    ),
-    "work": (
-        "Move it to save_personal_memory only if it is clearly about the user's life, or to "
-        "send_message if it is progress or next steps; otherwise rewrite the part that states "
-        "something no record holds, with its reason or outcome, and save it on its own. If the "
-        "reason says to split it, save the part about the user with save_personal_memory and "
-        "the work part with save_work_memory. One rewrite in total, whichever tool: if that is "
-        "refused too, store nothing and tell the user when one is present."
-    ),
-}
+_REFUSAL_RECOVERY = (
+    "Rewrite it once to state what is worth keeping, or use send_message if it is progress "
+    "or state for the next session. If the rewrite is refused too, store nothing and tell "
+    "the user when one is present."
+)
 
 
 class LowSignalNoteError(ValueError):
     """The content gate judged a note's content not worth storing."""
 
-    def __init__(self, reason: str, kind: str) -> None:
+    def __init__(self, reason: str) -> None:
         self.reason = reason
-        self.kind = kind
-        super().__init__(f"Refused by the {kind}-memory gate: {reason} {_RECOVERY[kind]}")
+        super().__init__(f"Refused by the memory gate: {reason} {_REFUSAL_RECOVERY}")
 
 
 class CredentialNoteError(ValueError):
@@ -110,87 +96,46 @@ _VERDICT_SCHEMA = {
     "required": ["accepted", "reason"],
 }
 
-PERSONAL_JUDGE_PROMPT = """\
-You judge notes for the personal memory of one user: what an assistant who talks with
-them every day would want to remember about them. Judge generously. Accept a note that
-says something about the user or their life that a later conversation could use:
+JUDGE_PROMPT = """\
+You judge notes for the long-term memory of one user, kept by the assistants and agents
+that work with them: memory of the user and their life, and knowledge of their work that
+a later session could not recover from the code, version control, the tracker,
+documentation, or the running system. Accept a note that a later conversation or session
+could use:
 
-- who the user is, and the people, pets, places, and things around them;
-- what the user has, uses, or does regularly, and how much or how often;
-- what the user likes, dislikes, prefers, feels, or worries about, and why when stated;
-- something that happened to the user or that they did, with its date and outcome;
-- plans, goals, commitments, and choices the user made, with dates and reasons when stated;
+- who the user is, the people, places, and things around them, what they have and do,
+  what they like or prefer and why, and how they want to be talked to;
+- something that happened to the user or that they did, with its date and outcome, and
+  their plans, goals, commitments, and choices;
 - a change to something remembered earlier, with the new value and the old one;
-- something the assistant gave the user that they may want again — a recommendation, a
-  number, a list, a schedule, the defining facts of something written for them;
+- something the assistant made or gave the user that they may want again — a
+  recommendation, a number, a list, a schedule, an arrangement — with its specifics;
+- a decision about their work with its reason, a reproduced bug with its cause or fix, a
+  non-obvious fact about how a machine, service, account, or tool behaves here, an
+  approach that failed and why, or a convention the user set for how work is done;
 - a moment in the relationship between the user and the assistant.
 
-Refuse a note that is work knowledge rather than memory of the user:
+Refuse a note that is low signal:
 
-- progress, status, or a narration of what was done in a coding or work session;
-- what version control, the tracker, a file, documentation, or a running system says —
-  its contents, scope, changes, or status;
-- what a file or function does, or how a codebase is built;
-- a technical decision, bug, fix, or environment fact about a project;
-- a decision, plan, convention, or status about a project or job, technical or not; how
-  the user wants to be talked to is a preference of the user, not of a project, and
-  stays accepted.
-- a note that carries two separate facts, one about the user's life and one of work
-  knowledge, each useful on its own; say in the reason that it must be split into a
-  personal note and a work note. A note about the user that mentions their work only as
-  context (how a work day felt, what they asked of the assistant) is not a mix.
-
-Also refuse greetings, filler, a restated question, and general knowledge or advice with
-no fact tied to this user.
-
-A note's moment never refuses it: a passing event, a mood, or a one-off plan is memory.
-The refusal list wins over the accept list. When the note is work knowledge, say so in
-the reason. State the reason in one sentence."""
-
-WORK_JUDGE_PROMPT = """\
-You judge notes for the work memory of one user's projects: knowledge a later session
-cannot recover from the code, version control, the tracker, documentation, or the running
-system, and would otherwise have to rediscover. Judge strictly. Accept a note only when it
-states, specifically enough to act on, one of:
-
-- a decision, with the reason for it or the alternatives it ruled out;
-- a reproduced bug or failure, with its cause or its known fix;
-- a non-obvious environment fact: how a machine, service, account, or tool behaves here —
-  its limits, schedules, or failure modes;
-- an approach that was tried and failed, and why;
-- a working convention, preference, or constraint the user set for how work is done.
-
-A qualifying note names what it is about (the project, system, or tool) and carries its
-reason, condition, or outcome. A decision without its reason, a lesson without the
-failure behind it, or a fact without where it holds is too vague: refuse it.
-
-Refuse a note reporting:
-
-- what a record held elsewhere says — version control, the tracker, a file,
-  documentation, the running system — its contents, scope, changes, or status; the record
-  is the source, the note a copy;
 - progress, status, next steps, or a narration of what was done in a session;
-- what a file or function does, or how the code is structured;
-- generic advice or explanation true of any project;
-- the user's personal life rather than their work;
-- a note that carries two separate facts, one of work knowledge and one about the user's
-  personal life, each useful on its own; say in the reason that it must be split into a
-  work note and a personal note. A personal fact given only as the reason or context for
-  a work decision or convention is not a mix;
+- a copy of what a record held elsewhere says — version control, the tracker, a file,
+  documentation, the running system — its contents, scope, changes, or status. Something
+  built in the conversation from facts no record holds has no source but the note and is
+  not a copy;
+- what a file or function does, or how a codebase is structured;
+- generic advice or explanation with no fact tied to this user or their work;
 - greetings, filler, or a restated question.
 
-The refusal list wins over the accept list. A copy that carries what its source does not
-state still fails; that part goes in its own note. A failure's lesson is not session
-narration; the failure and its fix, stated outright, pass. State the reason in one
-sentence."""
-
-JUDGE_PROMPTS = {"personal": PERSONAL_JUDGE_PROMPT, "work": WORK_JUDGE_PROMPT}
+Whether a note is about the user's life or their work never refuses it, and neither does
+a note that mixes the two. A passing event, a mood, or a one-off plan of the user is
+memory. A failure's lesson is not session narration. The refusal list wins over the
+accept list. State the reason in one sentence."""
 
 
-async def judge_note_content(content: str, kind: str) -> ContentVerdict:
+async def judge_note_content(content: str) -> ContentVerdict:
     """Ask the chat model whether a note's content is worth keeping across sessions."""
     messages = [
-        {"role": "system", "content": JUDGE_PROMPTS[kind]},
+        {"role": "system", "content": JUDGE_PROMPT},
         {"role": "user", "content": content},
     ]
     verdict = await chat_json(messages, _VERDICT_SCHEMA, timeout=NOTE_GATE_TIMEOUT_SECONDS)
@@ -200,13 +145,13 @@ async def judge_note_content(content: str, kind: str) -> ContentVerdict:
 async def _content_gate(row: dict[str, Any]) -> None:
     """Refuse a low-signal note before it costs an embedding call; fail open."""
     try:
-        verdict = await judge_note_content(row["raw"], row["kind"])
+        verdict = await judge_note_content(row["raw"])
     except Exception as exc:
         logger.warning("content gate unavailable, saving anyway: {}", exc)
         row["metadata"]["content_gate"] = "unavailable"
         return
     if not verdict.accepted:
-        raise LowSignalNoteError(verdict.reason, row["kind"])
+        raise LowSignalNoteError(verdict.reason)
 
 
 def build_note_row(

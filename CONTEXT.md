@@ -17,7 +17,7 @@ An agent-authored memory, distilled by the agent before it arrives rather than e
 _Avoid_: memo, observation, fact
 
 **Kind**:
-The memory a note belongs to: `personal` (the user: their life, their day, and moments with the agent, saved by `save_personal_memory`) or `work` (knowledge of the work, saved by `save_work_memory`); it picks the gate's judge prompt and narrows search and listing. A document chunk's kind is `doc`.
+The label a note carries: `personal` (the user: their life, their day, and moments with the agent) or `work` (knowledge of the work), chosen by the agent when it calls `save_memory`; it narrows search and listing and never decides whether the note is stored. A document chunk's kind is `doc`.
 _Avoid_: track, lane, category, type
 
 **Document**:

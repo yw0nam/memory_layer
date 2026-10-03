@@ -1,10 +1,9 @@
 """Contract tests for the note content gate (red-first).
 
-Before embedding, every note is judged by the chat model with the prompt of its
-kind: a refused note raises ``LowSignalNoteError``, whose message states the
-judge's reason and the kind's recovery — move the note to the other save tool
-only when it clearly belongs there, one rewrite in total — and offers no
-override. A judge failure saves the note stamped ``content_gate: "unavailable"``
+Before embedding, every note is judged by the chat model with one prompt that
+refuses low signal whatever the note's kind: a refused note raises
+``LowSignalNoteError``, whose message states the judge's reason and the recovery
+— rewrite it once, or carry progress on send_message — and offers no override. A judge failure saves the note stamped ``content_gate: "unavailable"``
 (fail-open).
 
 Pure/unit sections follow tests/serve/test_rest_notes.py's FakeConnection
@@ -26,7 +25,7 @@ from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
 from memory_base.serve.notes import (
     NOTE_GATE_TIMEOUT_SECONDS,
     ContentVerdict,
-    JUDGE_PROMPTS,
+    JUDGE_PROMPT,
     LowSignalNoteError,
     judge_note_content,
     save_note,
@@ -35,30 +34,23 @@ from memory_base.serve.notes import (
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 
-def _assert_refusal_text(message: str, reason: str, kind: str) -> None:
-    """The refusal states the reason, the other tool, then the rewrite limit; no override."""
-    other = "save_work_memory" if kind == "personal" else "save_personal_memory"
-    split = "If the reason says to split it"
-    assert f"{kind}-memory gate" in message
+def _assert_refusal_text(message: str, reason: str) -> None:
+    """The refusal states the reason, then the one rewrite; it never names another save tool."""
+    assert "memory gate" in message
     assert reason in message
-    assert other in message
     assert "send_message" in message
-    assert "One rewrite in total, whichever tool" in message
+    assert "Rewrite it once" in message
     assert "store nothing" in message
     assert "tell the user" in message
-    assert split in message
-    after_split = message[message.index(split) :]
-    assert "save_personal_memory" in after_split
-    assert "save_work_memory" in after_split
-    assert message.index(reason) < message.index(other) < message.index("One rewrite in total")
-    assert "allow_restatement" not in message
+    assert message.index(reason) < message.index("Rewrite it once")
+    for stale in ("save_personal_memory", "save_work_memory", "split", "allow_restatement"):
+        assert stale not in message
 
 
 # ---- judge_note_content -----------------------------------------------------
 
 
-@pytest.mark.parametrize("kind", ["personal", "work"])
-def test_judge_builds_the_prompt_of_the_kind_and_parses_the_verdict(monkeypatch, kind):
+def test_judge_builds_the_one_prompt_and_parses_the_verdict(monkeypatch):
     captured = {}
 
     async def fake_chat_json(messages, schema, *, timeout):
@@ -68,11 +60,11 @@ def test_judge_builds_the_prompt_of_the_kind_and_parses_the_verdict(monkeypatch,
         return {"accepted": False, "reason": "a progress update on the migration"}
 
     monkeypatch.setattr(notes, "chat_json", fake_chat_json)
-    verdict = asyncio.run(judge_note_content("migrated the parser today", kind))
+    verdict = asyncio.run(judge_note_content("migrated the parser today"))
     assert verdict == ContentVerdict(accepted=False, reason="a progress update on the migration")
     system, user = captured["messages"][0], captured["messages"][-1]
     assert system["role"] == "system"
-    assert system["content"] == JUDGE_PROMPTS[kind]
+    assert system["content"] == JUDGE_PROMPT
     assert user["role"] == "user"
     assert user["content"] == "migrated the parser today"
     assert captured["schema"] == {
@@ -134,7 +126,7 @@ def _patch_note_deps(monkeypatch, conn, judge=None):
         conn.embeds.append(text)
         return "[0]"
 
-    async def accepted_judge(content, kind):
+    async def accepted_judge(content):
         return ContentVerdict(accepted=True, reason="durable knowledge")
 
     monkeypatch.setattr(notes.db, "acquire", acquire)
@@ -147,14 +139,14 @@ def _patch_note_deps(monkeypatch, conn, judge=None):
 def test_save_note_refused_note_neither_embeds_nor_inserts(monkeypatch):
     conn = FakeConnection()
 
-    async def refusing_judge(content, kind):
+    async def refusing_judge(content):
         return ContentVerdict(accepted=False, reason="a progress update")
 
     _patch_note_deps(monkeypatch, conn, judge=refusing_judge)
     with pytest.raises(LowSignalNoteError) as exc_info:
         asyncio.run(save_note("migrated the parser today", tags=["test"], kind="work"))
     assert exc_info.value.reason == "a progress update"
-    _assert_refusal_text(str(exc_info.value), "a progress update", "work")
+    _assert_refusal_text(str(exc_info.value), "a progress update")
     assert conn.embeds == []
     assert conn.insert_args is None
 
@@ -162,7 +154,7 @@ def test_save_note_refused_note_neither_embeds_nor_inserts(monkeypatch):
 def test_a_personal_note_restating_an_artefact_is_refused(monkeypatch):
     conn = FakeConnection()
 
-    async def refusing_judge(content, kind):
+    async def refusing_judge(content):
         return ContentVerdict(accepted=False, reason="the tracker already records this")
 
     _patch_note_deps(monkeypatch, conn, judge=refusing_judge)
@@ -176,7 +168,7 @@ def test_judge_failure_stores_the_note_stamped_unavailable(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
 
-    async def failing_judge(content, kind):
+    async def failing_judge(content):
         raise TimeoutError("chat timed out")
 
     monkeypatch.setattr(notes, "judge_note_content", failing_judge)
@@ -200,7 +192,7 @@ def test_accepted_note_stamps_no_content_gate_key(monkeypatch):
 
 def test_save_memory_low_signal_note_error_maps_to_409(monkeypatch):
     async def fake_save_note(content, **kwargs):
-        raise LowSignalNoteError("a progress update on the migration", "work")
+        raise LowSignalNoteError("a progress update on the migration")
 
     monkeypatch.setattr(api, "save_note", fake_save_note)
     response = client.post(
@@ -210,7 +202,7 @@ def test_save_memory_low_signal_note_error_maps_to_409(monkeypatch):
     assert response.status_code == 409
     body = response.json()
     assert body["reason"] == "a progress update on the migration"
-    _assert_refusal_text(body["error"], "a progress update on the migration", "work")
+    _assert_refusal_text(body["error"], "a progress update on the migration")
 
 
 # ---- MCP proxy -----------------------------------------------------------------
@@ -225,8 +217,8 @@ def _patch_client(monkeypatch, handler):
     monkeypatch.setattr(mcp_server, "_client", fake_client)
 
 
-def test_mcp_save_work_memory_surfaces_the_content_gate_refusal_as_the_tool_error(monkeypatch):
-    refusal = LowSignalNoteError("the note restates PR #12", "work")
+def test_mcp_save_memory_surfaces_the_content_gate_refusal_as_the_tool_error(monkeypatch):
+    refusal = LowSignalNoteError("the note restates PR #12")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(409, json={"error": str(refusal), "reason": refusal.reason})
@@ -234,10 +226,12 @@ def test_mcp_save_work_memory_surfaces_the_content_gate_refusal_as_the_tool_erro
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError) as exc_info:
         asyncio.run(
-            mcp_server.save_work_memory("PR #12 changed the parser", "natsume", tags=["test"])
+            mcp_server.save_memory(
+                "PR #12 changed the parser", "natsume", tags=["test"], kind="work"
+            )
         )
     assert str(exc_info.value) == str(refusal)
-    _assert_refusal_text(str(exc_info.value), "the note restates PR #12", "work")
+    _assert_refusal_text(str(exc_info.value), "the note restates PR #12")
 
 
 # ---- instructions ----------------------------------------------------------------
@@ -266,8 +260,7 @@ def test_server_instructions_tell_agents_to_search_before_superseding():
     assert "archive them with archive_notes" in SERVER_INSTRUCTIONS
 
 
-@pytest.mark.parametrize("tool", ["save_personal_memory", "save_work_memory"])
-def test_save_tool_description_tells_agents_to_search_before_superseding(tool):
-    description = _tools()[tool].description
+def test_save_tool_description_tells_agents_to_search_before_superseding():
+    description = _tools()["save_memory"].description
     assert "search_memory the same subject" in description
     assert "archive them with archive_notes" in description

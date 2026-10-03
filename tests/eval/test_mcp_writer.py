@@ -28,7 +28,7 @@ INIT = _line(
     {
         "type": "system",
         "subtype": "init",
-        "tools": ["mcp__memory-base__search_memory", "mcp__memory-base__save_personal_memory"],
+        "tools": ["mcp__memory-base__search_memory", "mcp__memory-base__save_memory"],
         "mcp_servers": [{"name": "memory-base", "status": "connected"}],
     }
 )
@@ -75,38 +75,36 @@ def test_the_stream_becomes_a_session_record():
         INIT,
         _tool_use("t1", "mcp__memory-base__search_memory", {"query": "cat"}),
         _tool_result("t1", '{"result": []}'),
-        _tool_use("t2", "mcp__memory-base__save_personal_memory", {"content": "A"}),
+        _tool_use("t2", "mcp__memory-base__save_memory", {"content": "A"}),
         _tool_result("t2", json.dumps(saved)),
-        _tool_use("t3", "mcp__memory-base__save_personal_memory", {"content": "B"}),
+        _tool_use("t3", "mcp__memory-base__save_memory", {"content": "B"}),
         _tool_result("t3", [{"type": "text", "text": json.dumps(duplicate)}]),
-        _tool_use("t4", "mcp__memory-base__save_work_memory", {"content": "C"}),
-        _tool_result(
-            "t4", "Error executing tool save_work_memory: not for this gate", is_error=True
-        ),
+        _tool_use("t4", "mcp__memory-base__save_memory", {"content": "C"}),
+        _tool_result("t4", "Error executing tool save_memory: not for this gate", is_error=True),
         RESULT,
     ]
     record = mcp_writer.parse_stream(lines)
     assert record["tools"] == [
         "mcp__memory-base__search_memory",
-        "mcp__memory-base__save_personal_memory",
+        "mcp__memory-base__save_memory",
     ]
     assert record["mcp_servers"] == ["memory-base"]
     assert [call["name"] for call in record["tool_calls"]] == [
         "search_memory",
-        "save_personal_memory",
-        "save_personal_memory",
-        "save_work_memory",
+        "save_memory",
+        "save_memory",
+        "save_memory",
     ]
     assert record["saves"] == [
-        {"tool": "save_personal_memory", "id": "note:lme-q:a", "stored": True,
+        {"tool": "save_memory", "id": "note:lme-q:a", "stored": True,
          "superseded": "note:lme-q:b"},
-        {"tool": "save_personal_memory", "id": "note:lme-q:c", "stored": False,
+        {"tool": "save_memory", "id": "note:lme-q:c", "stored": False,
          "superseded": None},
     ]  # fmt: skip
     assert record["refusals"] == [
         {
-            "tool": "save_work_memory",
-            "error": "Error executing tool save_work_memory: not for this gate",
+            "tool": "save_memory",
+            "error": "Error executing tool save_memory: not for this gate",
         }
     ]
     assert record["usage"] == {
@@ -131,8 +129,8 @@ def test_a_stream_without_a_result_event_is_an_error():
 def test_provenance_follows_saves_supersedes_and_duplicates():
     provenance = {"note:b": {"s1"}, "note:c": {"s2"}}
     saves = [
-        {"tool": "save_personal_memory", "id": "note:a", "stored": True, "superseded": "note:b"},
-        {"tool": "save_personal_memory", "id": "note:c", "stored": False, "superseded": None},
+        {"tool": "save_memory", "id": "note:a", "stored": True, "superseded": "note:b"},
+        {"tool": "save_memory", "id": "note:c", "stored": False, "superseded": None},
     ]
     mcp_writer.record_provenance(provenance, "s3", saves, created=["note:a", "note:d"])
     assert provenance == {

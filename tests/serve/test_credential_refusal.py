@@ -145,12 +145,15 @@ def test_rest_save_memory_maps_a_credential_to_409_without_echoing_it(calls, con
     assert calls.made == []
 
 
-def test_mcp_save_work_memory_surfaces_the_credential_refusal(monkeypatch, calls):
+def test_mcp_save_memory_surfaces_the_credential_refusal(monkeypatch, calls):
     _mcp_through_rest(monkeypatch)
     with pytest.raises(ValueError) as refused:
         asyncio.run(
-            mcp_server.save_work_memory(
-                content=f"the deploy key is {AWS_KEY}", author="claude-code", tags=["deploy"]
+            mcp_server.save_memory(
+                content=f"the deploy key is {AWS_KEY}",
+                author="claude-code",
+                tags=["deploy"],
+                kind="work",
             )
         )
     assert "note contains a credential (AWS Access Key)" in str(refused.value)

@@ -18,7 +18,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api, notes
-from memory_base.serve.mcp_server import save_personal_memory
+from memory_base.serve.mcp_server import save_memory
 from memory_base.serve.notes import ContentVerdict, build_note_row, save_note
 
 NOW = 1_700_000_000.0  # 2023-11-14T22:13:20Z
@@ -90,7 +90,7 @@ def _patch_note_deps(monkeypatch, conn):
     monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
     monkeypatch.setattr(notes, "ensure_schema_once", _noop)
 
-    async def accepted_judge(content, kind):
+    async def accepted_judge(content):
         return ContentVerdict(accepted=True, reason="durable knowledge")
 
     monkeypatch.setattr(notes, "judge_note_content", accepted_judge)
@@ -314,7 +314,7 @@ def test_save_memory_personal_kind_delegates_to_save_note(monkeypatch):
     assert response.json()["kind"] == "personal"
 
 
-# ---- MCP: save_personal_memory posts occurred_at in body ----------------------------
+# ---- MCP: save_memory posts occurred_at in body -------------------------------------
 
 
 def _patch_client(monkeypatch, handler):
@@ -328,7 +328,7 @@ def _patch_client(monkeypatch, handler):
     monkeypatch.setattr(mcp_server, "_client", fake_client)
 
 
-def test_mcp_save_personal_memory_posts_occurred_at_in_body(monkeypatch):
+def test_mcp_save_memory_posts_occurred_at_in_body(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -346,18 +346,19 @@ def test_mcp_save_personal_memory_posts_occurred_at_in_body(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     asyncio.run(
-        save_personal_memory(
+        save_memory(
             "caught up with the team today",
             "natsume",
             tags=["test"],
             occurred_at="2023-06-01",
+            kind="personal",
         )
     )
     assert captured["json"]["occurred_at"] == "2023-06-01"
     assert captured["json"]["kind"] == "personal"
 
 
-def test_mcp_save_personal_memory_omits_occurred_at_when_not_given(monkeypatch):
+def test_mcp_save_memory_omits_occurred_at_when_not_given(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -374,5 +375,5 @@ def test_mcp_save_personal_memory_omits_occurred_at_when_not_given(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(save_personal_memory("plain note", "natsume", tags=["test"]))
+    asyncio.run(save_memory("plain note", "natsume", tags=["test"], kind="personal"))
     assert "occurred_at" not in captured["json"]
