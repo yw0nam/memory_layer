@@ -44,7 +44,7 @@ document: Claude Code headless, a Hermes cron agent, or another.
 |---|---|
 | frequency | once a day at 04:00 local time |
 | concurrency | one run at a time |
-| run id | `consolidate-YYYY-MM-DD` (1–100 characters); the action cap counts per run id, so a second run on one day uses a suffix, `consolidate-YYYY-MM-DD-2`, for a fresh cap |
+| run id | `consolidate-YYYY-MM-DD` (1–100 characters); one run per day; the action cap counts per run id, so the next day's run continues where the cap stopped, and no extra run starts to get past it |
 | mode | `dry-run` or `apply`, stated in the start instruction; absent means `dry-run` |
 
 The operator creates the schedule with their own agent platform. Generic shape, as a cron
