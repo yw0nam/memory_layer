@@ -85,7 +85,7 @@ To replace a note with a newer one, archiving the old rather than deleting it. S
 _Avoid_: overwrite, replace, delete, revoke
 
 **Group**:
-A set of active notes in one namespace, every pair above the similarity threshold, offered to an agent to judge whether they state the same thing. Built by `GET /admin/consolidate/groups`; a note is in at most one group.
+A set of active notes in one namespace, every pair above the similarity threshold and none acknowledged as distinct through `similar_ack`, offered to an agent to judge whether they state the same thing. Built by `GET /admin/consolidate/groups`; a note is in at most one group.
 _Avoid_: cluster, duplicate set
 
 **Group key**:

@@ -352,21 +352,27 @@ parameter is optional and a bad, repeated, or out-of-range value is a 400:
                           (index scans off, `neighbors` per note, no embedding call)
                                    │ pairs with cosine ≥ threshold
                                    ▼
+         pair listed in either note's `similar_ack` ──► ignored, counted `acknowledged`
+                                   │ unacknowledged pairs
+                                   ▼
                      greedy clique packing, highest score first
      a note joins a group only above the threshold with every member;
      capped by max_group and max_group_chars; ties broken by id
                                    │
-              ┌────────────────────┼─────────────────────┐
-              ▼                    ▼                     ▼
-   every member pair in      eligible group         note with an edge
-   `similar_ack`             (first `limit`)        left out of every group
-   → counted `acknowledged`  → `groups`             → `deferred` with a reason
+                   ┌───────────────┴───────────────┐
+                   ▼                               ▼
+              group (first `limit`)          note with an edge
+              → `groups`                     left out of every group
+                                             → `deferred` with a reason
 ```
 
-A pair whose combined text exceeds `max_group_chars` is not grouped. A note left out is
-deferred as `over max_group_chars`, `over max_group`, or `no clique` (its partners joined
-other groups). Groups are ordered by their highest edge score, then smallest member id;
-members by save time, then id.
+An acknowledged pair is the writer's assertion that the two notes state distinct facts,
+so it is never an edge; each note's other pairs still group. A pair whose combined text
+exceeds `max_group_chars` is not grouped. Each note left out appears once in `deferred`
+with the first reason recorded for it while packing — `over max_group_chars` or
+`over max_group` — else `no clique` (its partners joined other groups). Groups are
+ordered by their highest edge score, then smallest member id; members by save time, then
+id; deferred notes by id.
 
 ```
 {
@@ -379,14 +385,15 @@ members by save time, then id.
                   "members": [{"id", "kind", "author", "saved": "YYYY-MM-DD",
                                "occurred_at": ISO 8601 or null, "tags",
                                "supersedes": id or null, "text"}]}],
-      "deferred": [{"ids": [...], "reason"}],
+      "deferred": [{"id", "reason"}],
       "truncated": bool
     }
   }
 }
 ```
 
-`truncated` is true when more eligible groups existed than `limit`. A group's `key` is
+`pairs` counts every pair at or above the threshold, `acknowledged` the ones among them
+that were ignored. `truncated` is true when more groups existed than `limit`. A group's `key` is
 the sha256 of canonical JSON (sorted keys, no whitespace) of the procedure version, the
 namespace, and, per member sorted by id, its id, the sha256 of its text, kind, author,
 save time, `occurred_at`, sorted tags, and `supersedes`. It changes when membership or
