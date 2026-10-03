@@ -197,3 +197,39 @@ def test_profile_history_alone_keeps_a_namespace_registered():
         assert not asyncio.run(namespaces.namespace_exists(namespace))
     finally:
         asyncio.run(_drop(namespace))
+
+
+def test_a_user_profile_is_cleared_when_every_personal_note_is_archived():
+    namespace = f"it-profiles-{uuid.uuid4().hex[:8]}"
+    ids = asyncio.run(_seed(namespace))
+    try:
+        user = _write(
+            namespace, "user", _sources(namespace, "user")["source_hash"], content="Seoul."
+        )
+        assert user.json()["status"] == "written"
+        rules = _write(
+            namespace,
+            "work-rules",
+            _sources(namespace, "work-rules")["source_hash"],
+            note_ids=[ids["work"][0]],
+        )
+        assert rules.json()["status"] == "written"
+        for note_id in ids["personal"]:
+            asyncio.run(
+                _execute(
+                    f'UPDATE "{PG_SCHEMA}".memory_chunks SET archived_at = $2 WHERE id = $1',
+                    note_id,
+                    time.time(),
+                )
+            )
+        sources = _sources(namespace, "user")
+        assert sources["notes"] == []
+        assert sources["stale"] is True
+        cleared = _write(namespace, "user", sources["source_hash"], content="")
+        assert cleared.json() == {"status": "written", "version": 2, "chars": 0}
+        served = client.get("/profiles", params={"namespace": namespace}).json()
+        assert [p["slot"] for p in served] == ["work-rules"]
+        again = _write(namespace, "user", sources["source_hash"], content=" ")
+        assert again.json() == {"status": "unchanged", "version": 2}
+    finally:
+        asyncio.run(_drop(namespace))

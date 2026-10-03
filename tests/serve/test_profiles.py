@@ -562,10 +562,38 @@ def test_write_user_stores_the_stripped_content_with_every_eligible_note(consoli
 
 
 @pytest.mark.parametrize("content", ["", "   \n\t"])
-def test_write_user_refuses_blank_content(consolidator, fake_db, content):
+def test_write_user_refuses_blank_content_while_it_has_sources(consolidator, fake_db, content):
+    fake_db.add_note("note:default:a", "Lives in Seoul.", kind="personal")
     response = _put(**_user_body(fake_db, content=content))
     assert response.status_code == 400
     assert fake_db.profiles == []
+
+
+@pytest.mark.parametrize("content", ["", "   \n\t"])
+def test_write_user_without_sources_stores_blank_content_as_empty(consolidator, fake_db, content):
+    response = _put(**_user_body(fake_db, content=content))
+    assert response.status_code == 200
+    assert response.json() == {"status": "written", "version": 1, "chars": 0}
+    [row] = fake_db.profiles
+    assert row["content"] == ""
+    assert row["source_ids"] == []
+
+
+def test_a_user_profile_is_cleared_when_every_source_is_archived(consolidator, fake_db):
+    fake_db.add_note("note:default:a", "Lives in Seoul.", kind="personal")
+    assert _put(**_user_body(fake_db)).json()["status"] == "written"
+    assert [p["slot"] for p in client.get("/profiles").json()] == ["user"]
+    fake_db.notes[0]["archived_at"] = SAVED
+    sources = _sources("user")
+    assert sources["notes"] == []
+    assert sources["stale"] is True
+    cleared = _put(**_user_body(fake_db, content=""))
+    assert cleared.json() == {"status": "written", "version": 2, "chars": 0}
+    assert client.get("/profiles").json() == []
+    assert _sources("user")["stale"] is False
+    again = _put(**_user_body(fake_db, content=""))
+    assert again.json() == {"status": "unchanged", "version": 2}
+    assert len(fake_db.profiles) == 2
 
 
 def test_write_user_refuses_content_over_the_budget(consolidator, fake_db):
