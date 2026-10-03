@@ -4,7 +4,8 @@ A selective memory layer for coding agents: distilled notes, chunked documents, 
 code, and SQL-queryable tables in one pgvector store, served through a single REST API
 and an MCP server.
 
-Only high-signal content is embedded. Agent notes arrive already distilled, documents
+Only distilled content is embedded. Agent notes arrive already distilled by the writing
+agent and pass deterministic checks (format, credentials, near duplicates), documents
 pass through deterministic chunking and a junk gate before embedding, and code is
 chunked by tree-sitter. Raw transcripts and raw files are never embedded. Tabular
 documents keep their data rows as structured, never-embedded rows behind a read-only
@@ -78,7 +79,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
-| `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the required `kind` (`personal` or `work`, a label for search and listing), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); refused with 409 when the chat model, judging every note with one prompt whatever its `kind`, finds low signal — session narration, progress or next steps, a copy of a record held elsewhere, a file description, generic advice, or filler (the error carries the reason and the recovery: one rewrite, or `send_message` for progress, otherwise store nothing), and when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set; refused with 409 before any model call when the content or a tag carries a credential (the error names the credential type only) |
+| `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the required `kind` (`personal` or `work`, a label for search and listing), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); no chat model judges the note; refused with 409 when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set, and before embedding when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind` (`personal` or `work`), `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
 | `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, `author`, optional `idempotency_key` and `expires_at`; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
@@ -235,7 +236,7 @@ The MCP server needs the same header: over streamable HTTP it forwards the calle
 
 `.env` (gitignored) holds every endpoint and credential. Required to boot: `DB_URL`,
 `POSTGRES_PASSWORD`, `TABLES_QUERY_PASSWORD`, `DATA_ROOT`, and the embedding/rerank vLLM
-endpoints (`EMB_URL`/`EMB_MODEL`, `RERANK_URL`/`RERANK_MODEL`). The chat model is chosen by
+endpoints (`EMB_URL`/`EMB_MODEL`, `RERANK_URL`/`RERANK_MODEL`). The chat model, used to summarize a CSV into its card, is chosen by
 the first non-empty API key (`ZAI_API_KEY`, `OPENAI_API_KEY`, `CLAUDE_API_KEY`), falling back
 to the configured vLLM endpoint (`VLLM_URL`/`VLLM_MODEL`) when none is set. The full variable
 reference, optional tuning knobs, and private-repository credentials are documented in

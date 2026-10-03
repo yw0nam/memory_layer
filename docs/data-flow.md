@@ -58,7 +58,7 @@ POST /messages {subject, status, result, …}
  headings cannot escape; reject past 16 KiB — no truncation)
    │
    ▼
- INSERT memory.messages (no embedding, no content gate)
+ INSERT memory.messages (no embedding)
  handoff: same transaction terminalizes older pending
  snapshots of the same namespace+scope+subject_key
 ```
@@ -72,7 +72,7 @@ with no entropy or keyword detection and no model call. It recognizes provider A
 SendGrid, npm, PyPI, OpenAI, Anthropic, Google), private-key headers, JSON Web Tokens, and
 credentials embedded in URLs (`scheme://user:pass@host`). A hit refuses the write whole —
 nothing is redacted — and the reason names only the detector type, never the matched
-value. A note is scanned together with its raw tags before the content gate and refused
+value. A note is scanned together with its raw tags before embedding and refused
 with HTTP 409. A document upload's filename, `document_id`, `origin`, and tags are scanned
 before the job is admitted and refused with HTTP 400. The worker scans the extracted text
 — for a CSV, every header name and cell — before the same-bytes `no_op` check, the Card
@@ -81,24 +81,14 @@ and an identical re-upload is refused the same way. Prose that quotes a literal
 `BEGIN … PRIVATE KEY` header is refused as a private key.
 
 A note is stored exactly as written — the server never rewrites one and writes no notes
-itself. Before embedding, every note passes the content gate, which judges it with one
-prompt whatever its kind: it accepts what a later conversation or session could use —
-who the user is, what they have and do, like and worry about, what happened to them,
-their plans and choices, changes to earlier facts, what the assistant made or gave them,
-moments between them, and work knowledge no record holds (a decision with its reason, a
-reproduced bug with its cause or fix, a non-obvious environment fact, a failed approach
-and why, a working convention the user set) — and refuses low signal: session narration,
-progress or next steps, a copy of what a record held elsewhere says, a file description,
-generic advice, or filler. Something built in the conversation from facts no record holds
-is not a copy. The refusal list wins; the kind never refuses a note, nor does a mix of
-the user's life and work. A refusal is HTTP 409 carrying the reason and the recovery (one
-rewrite, or `send_message` for progress, otherwise store nothing). The
-verdict is final; a judge failure saves the note stamped `metadata.content_gate =
-"unavailable"`. A note landing next to active notes above `NOTE_SIMILAR_THRESHOLD`
-cosine is refused with HTTP 409 listing them, unless `supersedes` names one of them or
-`allow_similar` is set; an accepted override records the neighbours' ids in
-`metadata.similar_ack`. The response carries `similar[]` either way. A prior-note id in
-the payload archives that row; the replacement records the archived note's id as
+itself, and no chat model judges its content. What is worth keeping is the writing
+agent's call, guided by the `save_memory` description and the server instructions; the
+server applies only deterministic checks: validation, the credential scan, the
+near-duplicate refusal, and supersede. A note landing next to active notes above
+`NOTE_SIMILAR_THRESHOLD` cosine is refused with HTTP 409 listing them, unless `supersedes`
+names one of them or `allow_similar` is set; an accepted override records the neighbours'
+ids in `metadata.similar_ack`. The response carries `similar[]` either way. A prior-note
+id in the payload archives that row; the replacement records the archived note's id as
 `metadata.supersedes`, which `GET /notes` rows and memory hits carry as `supersedes`.
 When the save's content is identical to an active note, the insert no-ops and the target
 is archived without a pointer written on the existing row. The save is refused with HTTP

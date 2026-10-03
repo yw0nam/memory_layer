@@ -2,13 +2,12 @@
 
 End-to-end memory QA on the agent-distilled write path, measured on a subset of
 LongMemEval_S (Wu et al., 2024; MIT). An emulated agent distills each benchmark
-session into notes, the production content gate judges every note, the kept notes
-are stored through `save_note`, production search retrieves them, a model answers
+session into notes, the notes the save path accepts are stored through `save_note`,
+production search retrieves them, a model answers
 from the retrieved notes alone, and a judge grades the answer with the official
 LongMemEval grading prompts. Extraction, answer, and judge run on `glm-5.3-flash`
 (`--backend zai`, the default) or in a headless Claude Code session
-(`--backend claude-code`, `claude-sonnet-5-5`); the content gate runs on the chat
-provider from `.env`.
+(`--backend claude-code`, `claude-sonnet-5-5`).
 
 ## Subset
 
@@ -36,7 +35,7 @@ dataset json (path given on the command line)
    |
    | scripts/longmemeval/extract.py            emulated agent, outside the server
    v
-notes.jsonl      one line per note: session_id, date, content, kind, gate, gate_reason
+notes.jsonl      one line per note: session_id, date, content, kind, outcome, reason
 sessions.jsonl   one line per completed unit (zero-note units included): tokens, seconds
    |
    | memory_base.eval.longmemeval retrieve     throwaway Postgres, one namespace per question
@@ -61,19 +60,14 @@ have a row for their current prompt.
 
 | run | command flag | questions | notes loaded |
 |---|---|---|---|
-| gate-on (baseline) | none | all 100 | gate-stored |
-| gate-off | `--gate off` | all 100 | gate-stored and gate-refused |
-| dated | `--variant dated` | the 27 temporal-reasoning | gate-stored, embedded as `"{date}: {content}"` |
+| baseline | none | all 100 | every stored note |
+| dated | `--variant dated` | the 27 temporal-reasoning | every stored note, embedded as `"{date}: {content}"` |
 
-Gate-on is the product number: it measures what an agent's memory holds after the
-content gate. Every note is judged by the one prompt `save_memory` uses: it accepts
-memory of the user and knowledge of their work — facts about them and the people around
-them, plans, dated episodes, preferences, and answers worth keeping — and refuses low
-signal: narration, progress, copies of a record, generic advice, and filler. Gate-off loads refused notes as well, so it isolates extraction and
-retrieval from the gate's policy. Notes refused by validation or the credential scan
-stay out of gate-off too, because `save_note` never stores them. Each run writes its
-own files (`packets-gate-off.jsonl`, `answers-gate-off.jsonl`, and so on; the dated run
-uses `-dated`), and `score` reports every run present side by side.
+The baseline is the product number: it measures what an agent's memory holds when every
+extracted note the save path accepts is stored. Notes refused by validation or the
+credential scan are not loaded, because `save_note` never stores them. Each run writes
+its own files (the dated run uses `-dated`), and `score` reports every run present side
+by side.
 
 `--read` selects how each run reads the search:
 
@@ -96,22 +90,16 @@ The extractor is `glm-5.3-flash` on the z.ai endpoint resolved from `.env`
 (`resolve_llm_provider`; any other provider is refused), temperature 0, thinking
 disabled, JSON output, with the committed prompt
 `scripts/longmemeval/extract_prompt.txt`. Each note keeps the label the extractor gave it
-(`note`, `decision`, `episode`); every note is judged with the personal-memory prompt and
-loaded as kind `personal`. `--prompt digest` and `--prompt personal` run the
-committed extraction prompts instead (`src/memory_base/eval/prompts/`), with each turn
-rendered as `[index] role: text` and the replies parsed by
-`memory_base.eval.extraction.parse_extraction`.
+(`note`, `decision`, `episode`); every note is loaded as kind `personal`. `--prompt digest`
+and `--prompt personal` run the committed extraction prompts instead
+(`src/memory_base/eval/prompts/`), with each turn rendered as `[index] role: text` and the
+replies parsed by `memory_base.eval.extraction.parse_extraction`.
 
 Each returned note then goes through the checks `save_note` applies before storing:
-label and length validation, the credential scan, and the content gate
-(`judge_note_content` with the production personal-memory prompt on the chat provider from `.env`).
-The verdict is recorded as `stored` or `refused` with its reason. A gate call that fails
-is retried three times with backoff; a unit whose gate stays unavailable is not written
-and is retried by the next run, so no note carries an `unavailable` verdict. A session
-the provider's content filter refuses (z.ai error code 1301) is recorded as a completed
-unit with `provider_refused: "content_filter"` and contributes no notes. The
-production gate call sets no temperature, so its verdicts vary between runs; recording
-them once fixes them for every later stage.
+label and length validation and the credential scan. The outcome is recorded as `stored`,
+or `refused` with its reason. A session the provider's content filter refuses (z.ai
+error code 1301) is recorded as a completed unit with `provider_refused:
+"content_filter"` and contributes no notes.
 
 ## Retrieval
 
@@ -121,8 +109,7 @@ database is never touched. Per question it registers namespace `lme-<question_id
 saves the run's notes of the question's units in date order through `save_note` with
 `occurred_at` set to the session date, a constant tag, and `allow_similar=True` (a
 near-duplicate refusal would drop knowledge-update facts; each acknowledged neighbour is
-counted as a similar ack). The gate is pinned open at load because its verdict was
-recorded at extraction. The question then runs through
+counted as a similar ack). The question then runs through
 `search(question, source="memory", namespaces=[namespace])` with production rerank and
 the run's read setting.
 
@@ -163,7 +150,7 @@ graded the current answer; the latest row per prompt wins.
 
 ### Judge audit
 
-The official LongMemEval judge is gpt-4o; this harness judges with `glm-5.3-flash`.
+The official LongMemEval judge is gpt-4o; this harness judges with `glm-5.3-flash` by default.
 `audit-sample` draws 20 judgments at random (seed 0) into `judge-audit.jsonl` with the
 question, reference answer, model response, judge reply, and judge label. A person sets
 each row's `human_label` to `true` or `false`, and `score` reports the agreement rate
@@ -173,7 +160,7 @@ the manifest.
 ## Hit judge
 
 `answer.py judge-hits` labels the first ten hits of every packet of a run, normally the
-candidates run (`--gate off --read candidates`), in one call per question: the question
+candidates run (`--read candidates`), in one call per question: the question
 and its date, the reference answer, and the notes in rerank order with their dates. The
 default judge is `claude-sonnet-5-5` at effort medium (`--backend claude-code`); the zai
 backend sends the same instructions as a system turn. Each note gets one label:
@@ -239,17 +226,18 @@ the cells whose `junk` is at most 0.10, the fewer hits per question breaking a t
 - **Evidence coverage**: the hit judge's share of questions whose delivered notes suffice
   for the reference answer, per read cell of the frontier (see Hit judge).
 - **Write path**: notes per unit, refused-save rate overall and per `question_type`,
-  refusals by cause (gate, validation, credential), similar acks, and extraction and
-  gate token totals. The overall refused-save rate counts each unit once; a per-type
-  rate counts a unit once per question of that type that contains it.
+  refusals by cause (validation, credential), similar acks, and extraction token totals.
+  The overall refused-save rate counts each unit once; a per-type rate counts a unit once
+  per question of that type that contains it.
 - **Model usage**: answer and judge input and output tokens and seconds per question.
 - **Judge agreement**: the hand-audit agreement rate.
 
 ## Results
 
-The 100-question subset with the gate off, one pass of every stage, answered and judged
-by `claude-sonnet-5-5` (`answer.py --backend claude-code --effort high`). Notes were
-extracted by Sonnet 5.5 under the personal extraction policy with the gate off, and
+The 100-question subset with every extracted note the save path accepts loaded, one pass
+of every stage, answered and judged by `claude-sonnet-5-5` (`answer.py --backend
+claude-code --effort high`). Notes were extracted by Sonnet 5.5 under the personal
+extraction policy, and
 budget-mode recall counts about 12.6 distinct sessions per packet against 1.6 under
 search, so the budget row and the search rows are not one-to-one comparable.
 
@@ -258,6 +246,9 @@ search, so the budget row and the search rows are not one-to-one comparable.
 | search, 90-day age decay before the reranker | top 10, floor 0.25 | 20 | 0.663 | 0.809 | 0.74 | 0.667 | 1.84 | 653 |
 | search | top 10, floor 0.25 | 20 | 0.779 | 0.863 | 0.81 | 0.667 | 1.98 | 699 |
 | budget (shipped) | `budget_tokens=4000` | 40 | 0.926 | 0.927 | 0.91 | 0.926 | 36.21 | 15,573 |
+
+The budget row is the baseline variant under the `budget` read, recorded in the manifest's
+`retrieve-budget`, `answer-budget`, and `judge-budget` sections and `score.runs.budget`.
 
 ### QA accuracy
 
@@ -298,10 +289,12 @@ identical `recall_all@10` and `ndcg_any@10` and QA 0.89 (multi-session 0.852).
 
 ## Comparability
 
-The official LongMemEval judge is gpt-4o, and published numbers are graded by it. This
-harness answers and judges with `glm-5.3-flash`, so its accuracies are not directly
-comparable with published ones; the judge audit reports how often this judge agrees
-with a person on the run. `glm-5.3-flash` may have seen LongMemEval during training.
+The official LongMemEval judge is gpt-4o, and published numbers are graded by it.
+`answer.py` answers and judges with `glm-5.3-flash` by default (`--backend zai`); the
+recorded results were answered and judged by `claude-sonnet-5-5` (`--backend
+claude-code`). Neither is gpt-4o, so these accuracies are not directly comparable with
+published ones; the judge audit reports how often the judge agrees with a person on the
+run. Either model may have seen LongMemEval during training.
 
 ## Artefacts
 
@@ -309,42 +302,44 @@ The data directory (default `data/longmemeval/`) is gitignored: the filler sessi
 from ShareGPT, whose provenance is unclear. The committed manifest
 `docs/benchmarks/longmemeval-manifest.json` records what a run was: dataset sha256, the
 ordered question ids with per-type and abstention counts, code revision, upstream
-commit, the sha256 of every prompt (extract, gate judge, answer, judge), model ids and
-parameters (extractor, gate, embedder, reranker, answerer, judge), `NOTE_SIMILAR_THRESHOLD`,
+commit, the sha256 of every prompt (extract, answer, judge), model ids and
+parameters (extractor, embedder, reranker, answerer, judge), `NOTE_SIMILAR_THRESHOLD`,
 `MIN_SCORE`, `RERANK_TOP`, `FUSED_TOP`, the database image id and
 extensions, token totals for every model stage, counts, the judge agreement, and the
-sha256 of every jsonl artefact.
+sha256 of every jsonl artefact. Its extraction note counts are derived from the recorded
+extraction under the current save-path checks, while `notes_sha256`, `sessions_sha256`,
+and `artefacts_sha256` identify the original artefact files, whose per-note outcomes come
+from an earlier save path.
 
 ## Cost
 
-Measured token totals for the subset:
+Measured token totals for the subset, from the manifest's `extract`, `answer-budget`, and
+`judge-budget` sections:
 
 | stage | calls | input tokens | output tokens |
 |---|---|---|---|
-| extraction | 4,742 units (11 retries) | 12,196,913 | 638,142 |
-| content gate | 12,932 (132 retries) | 5,768,264 | 929,510 |
-| answer, gate-on / gate-off / dated | 100 / 100 / 27 | 18,668 / 20,403 / 5,840 | 9,951 / 9,498 / 2,843 |
-| judge, gate-on / gate-off / dated | 100 / 100 / 27 | 23,516 / 23,091 / 7,459 | 588 / 553 / 105 |
+| extraction (`claude-sonnet-5-5`) | 4,742 units (12 retries) | 23,001,533 | 2,694,776 |
+| answer, budget read | 100 | 726,934 | 23,726 |
+| judge, budget read | 100 | 77,873 | 1,972 |
 
-A unit takes 14.4 s on average at concurrency 5 (4.2 s of it the extraction call, the
-rest its gate calls). An answer takes 3.3 to 4.1 s and a judgment about 1.6 s.
+At concurrency 8, the extraction call of a unit takes 7.4 s on average (median 7.2 s), an
+answer 4.9 s, and a judgment 3.3 s.
 
 ## Commands
 
 ```bash
 uv run python scripts/longmemeval/extract.py --dataset PATH
 uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH
-uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH --gate off
 uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH --variant dated
 uv run python scripts/longmemeval/answer.py answer --dataset PATH
 uv run python scripts/longmemeval/answer.py judge --dataset PATH
 uv run python -m memory_base.eval.longmemeval audit-sample --dataset PATH
 uv run python -m memory_base.eval.longmemeval score --dataset PATH
-uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH --gate off --read candidates
-uv run python scripts/longmemeval/answer.py judge-hits --dataset PATH --gate off --read candidates --backend claude-code
-uv run python -m memory_base.eval.longmemeval frontier --dataset PATH --gate off --read candidates
+uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH --read candidates
+uv run python scripts/longmemeval/answer.py judge-hits --dataset PATH --read candidates --backend claude-code
+uv run python -m memory_base.eval.longmemeval frontier --dataset PATH --read candidates
 ```
 
-`answer.py` and `audit-sample` take `--gate off` or `--variant dated` for those runs;
+`answer.py` and `audit-sample` take `--variant dated` for that run;
 every command takes `--data-dir` and `--manifest`; `extract` and `retrieve` take
 `--questions ID,ID` to run part of the subset.

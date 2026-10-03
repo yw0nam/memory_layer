@@ -47,7 +47,7 @@ identical and the rest share 29 to 38 of their 30 to 38 hits: the reranker's sco
 
 | corpus | content | queries | measures |
 |---|---|---|---|
-| LME personal | LongMemEval_S subset, 100 questions, notes extracted by Sonnet 5.5, gate-off load (gate-stored and gate-refused notes), one namespace per question, throwaway Postgres | the 100 benchmark questions | recall_all, ndcg_any@10, tokens, junk share, zero-hit rate, QA |
+| LME personal | LongMemEval_S subset, 100 questions, notes extracted by Sonnet 5.5, every extracted note the save path accepts loaded, one namespace per question, throwaway Postgres | the 100 benchmark questions | recall_all, ndcg_any@10, tokens, junk share, zero-hit rate, QA |
 | LME probe | the namespace of question `c5e8278d` (first of the subset) | 40 off-topic coding prompts, 20 coding memory-intent prompts (`tests/fixtures/read_sweep_probes.jsonl`) | off-topic fire rate |
 | deployed | `memory.memory_chunks` copied over a `default_transaction_read_only` connection into a throwaway Postgres on the current schema: 334 rows, 178 active (141 `default`, 37 `personal`); search spans every namespace | the 34 labelled notes-replay queries (`tests/fixtures/retrieval_eval_notes.jsonl`: 25 scored, 9 expect-empty) and the 60 probe prompts | recall@5, MRR@10, expect-empty passes, off-topic fire rate and tokens |
 
@@ -184,14 +184,14 @@ two measured floors (0.632 at 0.6 with QA 0.67, 0.726 at 0.25 with QA 0.78).
 
 ```bash
 uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH --data-dir DIR \
-    --manifest DIR/manifest.json --gate off --read candidates
+    --manifest DIR/manifest.json --read candidates
 uv run python -m memory_base.eval.read_sweep lme-probe --dataset PATH --data-dir DIR
 uv run python -m memory_base.eval.read_sweep deployed --out FILE
 uv run python -m memory_base.eval.read_sweep report --dataset PATH --data-dir DIR --deployed FILE
 uv run python -m memory_base.eval.read_sweep export --data-dir DIR --setting k10-f0 \
     --path search --out QA_DIR
 uv run python scripts/longmemeval/answer.py answer --dataset PATH --data-dir QA_DIR \
-    --manifest QA_DIR/manifest.json --gate off --backend claude-code \
+    --manifest QA_DIR/manifest.json --backend claude-code \
     --model claude-sonnet-5-5 --effort high --concurrency 8
 uv run python scripts/longmemeval/answer.py judge ...   # same flags
 uv run python -m memory_base.eval.longmemeval score --dataset PATH --data-dir QA_DIR \

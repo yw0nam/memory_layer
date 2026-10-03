@@ -1,8 +1,8 @@
 # Memory Base
 
-A retrieval layer that stores only distilled, high-signal content. Agents write
-memories through a validating tool; documents and code repositories are ingested
-through source adapters. Every consumer reads back through one REST API.
+A retrieval layer that stores only distilled content. Agents write memories through a
+validating tool; documents and code repositories are ingested through source adapters.
+Every consumer reads back through one REST API.
 
 ## Language
 
