@@ -49,6 +49,8 @@ The server finds groups and applies changes; an agent judges each group.
   or merge. A later keep does not block it. An undone group stays out of
   the issued groups.
 - The server calls no chat model for consolidation.
+- The scheduled agent's setup, run, and report steps are in
+  [the consolidation procedure](../consolidation-procedure.md).
 
 ## Consequences
 
