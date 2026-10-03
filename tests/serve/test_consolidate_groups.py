@@ -21,6 +21,7 @@ from memory_base.serve.consolidate import (
     Group,
     Note,
     Pair,
+    acknowledged_pairs,
     build_groups,
     group_key,
 )
@@ -48,13 +49,8 @@ def notes_for(*ids, **texts):
     return {note_id: note(note_id, texts.get(note_id, "x" * 10)) for note_id in ids}
 
 
-def group(*members, min_score, max_score, acknowledged=False):
-    return Group(
-        members=tuple(members),
-        min_score=min_score,
-        max_score=max_score,
-        acknowledged=acknowledged,
-    )
+def group(*members, min_score, max_score):
+    return Group(members=tuple(members), min_score=min_score, max_score=max_score)
 
 
 def run(pairs, notes, threshold=0.72, max_group=6, max_group_chars=12000):
@@ -68,7 +64,7 @@ def test_chain_without_the_closing_edge_never_forms_one_group():
     pairs = [Pair("A", "B", 0.80), Pair("B", "C", 0.78)]
     groups, deferred = run(pairs, notes_for("A", "B", "C"))
     assert groups == [group("A", "B", min_score=0.80, max_score=0.80)]
-    assert deferred == [Deferred(("C",), "no clique")]
+    assert deferred == [Deferred("C", "no clique")]
 
 
 def test_growth_picks_the_candidate_with_the_highest_minimum_edge():
@@ -81,7 +77,7 @@ def test_growth_picks_the_candidate_with_the_highest_minimum_edge():
     ]
     groups, deferred = run(pairs, notes_for("A", "B", "C", "D"))
     assert groups == [group("A", "B", "D", min_score=0.80, max_score=0.95)]
-    assert deferred == [Deferred(("C",), "no clique")]
+    assert deferred == [Deferred("C", "no clique")]
 
 
 def test_growth_breaks_a_tie_by_id():
@@ -94,7 +90,7 @@ def test_growth_breaks_a_tie_by_id():
     ]
     groups, deferred = run(pairs, notes_for("A", "B", "C", "D"))
     assert groups == [group("A", "B", "C", min_score=0.80, max_score=0.95)]
-    assert deferred == [Deferred(("D",), "no clique")]
+    assert deferred == [Deferred("D", "no clique")]
 
 
 def test_max_group_stops_growth_and_reports_the_leftover():
@@ -108,7 +104,7 @@ def test_max_group_stops_growth_and_reports_the_leftover():
     ]
     groups, deferred = run(pairs, notes_for("A", "B", "C", "D"), max_group=3)
     assert groups == [group("A", "B", "C", min_score=0.90, max_score=0.95)]
-    assert deferred == [Deferred(("D",), "over max_group")]
+    assert deferred == [Deferred("D", "over max_group")]
 
 
 def test_a_candidate_over_the_char_cap_is_skipped_and_the_next_one_tried():
@@ -123,14 +119,48 @@ def test_a_candidate_over_the_char_cap_is_skipped_and_the_next_one_tried():
     notes = notes_for("A", "B", "C", "D", C="c" * 50)
     groups, deferred = run(pairs, notes, max_group_chars=35)
     assert groups == [group("A", "B", "D", min_score=0.85, max_score=0.95)]
-    assert deferred == [Deferred(("C",), "over max_group_chars")]
+    assert deferred == [Deferred("C", "over max_group_chars")]
 
 
-def test_a_pair_over_the_char_cap_is_deferred_with_both_ids():
+def test_a_pair_over_the_char_cap_defers_each_note():
     notes = notes_for("A", "B", A="a" * 30, B="b" * 30)
     groups, deferred = run([Pair("A", "B", 0.95)], notes, max_group_chars=50)
     assert groups == []
-    assert deferred == [Deferred(("A", "B"), "over max_group_chars")]
+    assert deferred == [
+        Deferred("A", "over max_group_chars"),
+        Deferred("B", "over max_group_chars"),
+    ]
+
+
+def test_a_note_in_two_over_cap_pairs_is_deferred_once():
+    pairs = [Pair("A", "B", 0.95), Pair("A", "C", 0.90)]
+    notes = notes_for("A", "B", "C", A="a" * 30, B="b" * 30, C="c" * 30)
+    groups, deferred = run(pairs, notes, max_group_chars=50)
+    assert groups == []
+    assert deferred == [
+        Deferred("A", "over max_group_chars"),
+        Deferred("B", "over max_group_chars"),
+        Deferred("C", "over max_group_chars"),
+    ]
+
+
+def test_a_deferred_note_keeps_the_first_reason_recorded_for_it():
+    pairs = [
+        Pair("A", "B", 0.95),
+        Pair("A", "C", 0.90),
+        Pair("A", "D", 0.90),
+        Pair("B", "C", 0.90),
+        Pair("B", "D", 0.90),
+        Pair("C", "D", 0.90),
+        Pair("D", "E", 0.80),
+    ]
+    notes = notes_for("A", "B", "C", "D", "E", E="e" * 600)
+    groups, deferred = run(pairs, notes, max_group=3, max_group_chars=500)
+    assert groups == [group("A", "B", "C", min_score=0.90, max_score=0.95)]
+    assert deferred == [
+        Deferred("D", "over max_group"),
+        Deferred("E", "over max_group_chars"),
+    ]
 
 
 def test_a_deferred_pair_drops_the_note_that_later_joins_a_group():
@@ -138,7 +168,7 @@ def test_a_deferred_pair_drops_the_note_that_later_joins_a_group():
     notes = notes_for("A", "B", "C", A="a" * 30, B="b" * 30)
     groups, deferred = run(pairs, notes, max_group_chars=50)
     assert groups == [group("A", "C", min_score=0.90, max_score=0.90)]
-    assert deferred == [Deferred(("B",), "over max_group_chars")]
+    assert deferred == [Deferred("B", "over max_group_chars")]
 
 
 def test_a_deferred_pair_disappears_when_both_notes_later_join_groups():
@@ -156,26 +186,34 @@ def test_edges_below_the_threshold_do_not_count():
     pairs = [Pair("A", "B", 0.95), Pair("A", "C", 0.90), Pair("B", "C", 0.60)]
     groups, deferred = run(pairs, notes_for("A", "B", "C"), threshold=0.72)
     assert groups == [group("A", "B", min_score=0.95, max_score=0.95)]
-    assert deferred == [Deferred(("C",), "no clique")]
+    assert deferred == [Deferred("C", "no clique")]
 
 
-def test_a_fully_acknowledged_group_is_flagged():
+@pytest.mark.parametrize("lister,listed", [("A", "B"), ("B", "A")])
+def test_an_acknowledged_pair_in_either_direction_is_ignored(lister, listed):
     notes = notes_for("A", "B")
-    notes["B"] = dataclasses.replace(notes["B"], similar_ack=("A",))
-    groups, deferred = run([Pair("A", "B", 0.90)], notes)
-    assert groups == [group("A", "B", min_score=0.90, max_score=0.90, acknowledged=True)]
-    assert deferred == []
+    notes[lister] = dataclasses.replace(notes[lister], similar_ack=(listed,))
+    assert run([Pair("A", "B", 0.90)], notes) == ([], [])
+    assert acknowledged_pairs([Pair("A", "B", 0.90)], notes) == 1
 
 
-def test_acknowledgement_counts_in_either_direction_and_must_cover_every_pair():
-    pairs = [Pair("A", "B", 0.90), Pair("A", "C", 0.90), Pair("B", "C", 0.90)]
+def test_an_acknowledged_pair_does_not_hide_an_unacknowledged_duplicate():
+    pairs = [Pair("A", "B", 0.90), Pair("A", "C", 0.80)]
     notes = notes_for("A", "B", "C")
-    notes["A"] = dataclasses.replace(notes["A"], similar_ack=("B", "C"))
-    groups, _ = run(pairs, notes)
-    assert groups[0].acknowledged is False
+    notes["A"] = dataclasses.replace(notes["A"], similar_ack=("B",))
+    groups, deferred = run(pairs, notes)
+    assert groups == [group("A", "C", min_score=0.80, max_score=0.80)]
+    assert deferred == []
+    assert acknowledged_pairs(pairs, notes) == 1
+
+
+def test_an_acknowledged_edge_breaks_a_clique():
+    pairs = [Pair("A", "B", 0.95), Pair("A", "C", 0.90), Pair("B", "C", 0.90)]
+    notes = notes_for("A", "B", "C")
     notes["C"] = dataclasses.replace(notes["C"], similar_ack=("B",))
-    groups, _ = run(pairs, notes)
-    assert groups[0].acknowledged is True
+    groups, deferred = run(pairs, notes)
+    assert groups == [group("A", "B", min_score=0.95, max_score=0.95)]
+    assert deferred == [Deferred("C", "no clique")]
 
 
 def test_groups_are_ordered_by_highest_edge_then_smallest_id():
@@ -534,11 +572,12 @@ def test_route_reports_deferred_notes(consolidator, fake_db):
     section = response.json()["namespaces"]["default"]
     assert section["groups"] == []
     assert section["deferred"] == [
-        {"ids": ["note:default:a", "note:default:b"], "reason": "over max_group_chars"}
+        {"id": "note:default:a", "reason": "over max_group_chars"},
+        {"id": "note:default:b", "reason": "over max_group_chars"},
     ]
 
 
-def test_route_drops_acknowledged_groups_before_the_limit(consolidator, fake_db):
+def test_route_counts_acknowledged_pairs_and_applies_the_limit(consolidator, fake_db):
     fake_db.note_rows = [
         _note_row("note:default:a", "a", 1.0),
         _note_row("note:default:b", "b", 2.0, similar_ack=["note:default:a"]),
@@ -565,3 +604,42 @@ def test_route_drops_acknowledged_groups_before_the_limit(consolidator, fake_db)
     ).json()["namespaces"]["default"]
     assert len(exact["groups"]) == 2
     assert exact["truncated"] is False
+
+
+def test_route_surfaces_a_duplicate_beside_an_acknowledged_pair(consolidator, fake_db):
+    fake_db.note_rows = [
+        _note_row("note:default:a", "a", 1.0, similar_ack=["note:default:b"]),
+        _note_row("note:default:b", "b", 2.0),
+        _note_row("note:default:c", "c", 3.0),
+    ]
+    fake_db.pair_rows = [
+        {"a_id": "note:default:a", "b_id": "note:default:b", "score": 0.90},
+        {"a_id": "note:default:a", "b_id": "note:default:c", "score": 0.80},
+    ]
+    section = client.get("/admin/consolidate/groups", params={"namespace": "default"}).json()[
+        "namespaces"
+    ]["default"]
+    assert section["pairs"] == 2
+    assert section["acknowledged"] == 1
+    assert [[m["id"] for m in g["members"]] for g in section["groups"]] == [
+        ["note:default:a", "note:default:c"]
+    ]
+    assert section["deferred"] == []
+
+
+@pytest.mark.parametrize(
+    "bound,value,param,rejected",
+    [
+        ("MAX_NEIGHBORS", 3, "neighbors", "4"),
+        ("MAX_MAX_GROUP", 4, "max_group", "5"),
+        ("MIN_MAX_GROUP_CHARS", 1000, "max_group_chars", "999"),
+        ("MAX_LIMIT", 10, "limit", "11"),
+    ],
+)
+def test_route_takes_its_bounds_from_the_module(
+    monkeypatch, consolidator, fake_db, bound, value, param, rejected
+):
+    monkeypatch.setattr(consolidate, bound, value)
+    response = client.get("/admin/consolidate/groups", params={param: rejected})
+    assert response.status_code == 400
+    assert str(value) in response.json()["error"]

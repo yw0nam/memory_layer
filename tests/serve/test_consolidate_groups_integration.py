@@ -155,7 +155,7 @@ def test_rule_restatements_form_one_group_and_nothing_else_leaks(seeded):
     assert THRESHOLD <= group["min_score"] <= group["max_score"] < NOTE_SIMILAR_THRESHOLD
     assert main["acknowledged"] == 0
     grouped = {m["id"] for g in main["groups"] for m in g["members"]}
-    deferred = {i for d in main["deferred"] for i in d["ids"]}
+    deferred = {d["id"] for d in main["deferred"]}
     assert grouped.isdisjoint(seeded["unrelated"])
     assert deferred.isdisjoint(seeded["unrelated"])
     text = json.dumps(body)
@@ -191,7 +191,7 @@ def test_pair_search_never_uses_the_embedding_index(seeded):
     assert "memory_chunks__vec" not in text
 
 
-def test_a_fully_acknowledged_group_is_counted_not_returned():
+def test_an_acknowledged_pair_is_counted_not_grouped():
     name = f"consolidate-ack-{uuid.uuid4().hex[:8]}"
 
     async def seed():
