@@ -111,6 +111,8 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/admin/archive` | preview cold notes (`notes_to_archive`) and terminal messages (`messages_to_delete`), then archive the notes and delete the messages with `confirm`; message deletion is permanent, so a member key purges only the namespaces it owns; `ids` selects rows in the caller's scope and requires an `author`, stamped on every row archived |
 | `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author and the `replaced_by` and `consolidated_into` lineage |
 
+An agent runs the consolidation routes on a schedule by following [docs/consolidation-procedure.md](docs/consolidation-procedure.md).
+
 Filters are bound to the source they belong to: `kind`, `tags`, `author`, and
 `since`/`until` require `source="memory"`, `repo` requires `source="code"`, and
 `source="all"` takes none of them. `repo` is a list of cache directory names as reported by `GET /repos`; an
