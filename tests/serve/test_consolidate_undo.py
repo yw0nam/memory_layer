@@ -101,6 +101,13 @@ def test_a_later_action_on_the_replacement_refuses_the_undo():
     assert R in verdicts.undo_refusal(action_row(), found, None, True)
 
 
+def test_only_a_later_retire_or_merge_blocks_the_undo():
+    query = " ".join(verdicts.LATER_ACTION_SQL.split())
+    assert "action IN ('retire', 'merge')" in query
+    assert "undone_at IS NULL" in query
+    assert "$1 = ANY(member_ids)" in query
+
+
 def test_a_reused_replacement_and_retire_survivors_are_not_checked():
     reused = action_row(replacement_created=False)
     assert (

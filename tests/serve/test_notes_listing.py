@@ -300,6 +300,27 @@ def test_list_notes_reports_lineage_fields_when_recorded(monkeypatch):
     assert row["merged_from"] == ["note:a", "note:b"]
 
 
+def test_list_notes_reports_every_lineage_field_it_records(monkeypatch):
+    metadata = {
+        "tags": ["infra"],
+        "merged_from": ["note:a"],
+        "merged_dates": {"note:a": {"saved": "2026-08-12T00:00:00+00:00", "occurred_at": None}},
+        "consolidation_action": 4,
+        "undone_action": 4,
+    }
+    conn = FakeConnection([_row(metadata=metadata, archived_at=AUG_12)])
+    _patch_conn(monkeypatch, conn)
+    [row] = asyncio.run(notes.list_notes(include_archived=True))
+    for field in notes.LINEAGE_FIELDS:
+        if field in metadata:
+            assert row[field] == metadata[field]
+
+
+def test_restore_clears_the_archive_lineage_fields():
+    assert notes.ARCHIVE_LINEAGE_FIELDS == ("archived_by", "replaced_by", "consolidated_into")
+    assert set(notes.ARCHIVE_LINEAGE_FIELDS) <= set(notes.LINEAGE_FIELDS)
+
+
 def test_list_notes_omits_lineage_fields_when_unrecorded(monkeypatch):
     conn = FakeConnection([_row()])
     _patch_conn(monkeypatch, conn)

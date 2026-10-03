@@ -237,7 +237,28 @@ def test_capitalized_words_are_names_unless_they_start_a_sentence():
     assert verdicts.tokens("We met Alice in Paris.") == {"Alice", "Paris"}
     assert verdicts.tokens("Alice met Bob.") == {"Bob"}
     assert verdicts.tokens("Done. Alice left! Bob stayed? Carol: Dave came") == set()
-    assert verdicts.tokens("first line\nAlice\n- Bob\n* Carol\n1. Dave\n2) Erin") == {"1", "2"}
+    assert verdicts.tokens("first line\nAlice\n- Bob\n* Carol\n1. Dave\n 2) Erin") == set()
+
+
+def test_a_capital_right_after_punctuation_without_a_space_is_a_name():
+    assert verdicts.tokens("see foo.Bar and x:Baz or wow!Qux") == {"Bar", "Baz", "Qux"}
+    assert verdicts.tokens("Done.Alice left.") == {"Alice"}
+
+
+def test_the_single_word_i_is_not_a_name():
+    assert verdicts.tokens("Then I left, and I said so.") == set()
+    assert verdicts.token_check(["The deploy I run is nightly."], "The deploy is nightly.") is None
+
+
+def test_a_list_marker_is_not_a_number_but_a_number_in_the_line_is():
+    assert verdicts.tokens("1. ship at 04:00\n2) retry 3 times") == {"04:00", "3"}
+    assert verdicts.tokens("costs 1. That is all") == {"1"}
+    assert verdicts.tokens("1.5 is the ratio") == {"1.5"}
+
+
+def test_digits_inside_a_version_identifier_are_not_tokens():
+    assert verdicts.tokens("upgrade to v2.0 today") == set()
+    assert verdicts.token_check(["upgrade to v2.0 today"], "upgrade to v3.1 today") is None
 
 
 def test_words_with_two_capitals_are_names_anywhere():
@@ -685,6 +706,96 @@ def test_a_concurrent_insert_of_the_same_payload_is_a_duplicate(flow):
     }
     [result] = _run(batch)
     assert result == {**APPLIED, "status": "duplicate"}
+
+
+def test_a_failing_embedder_fails_only_its_verdict(flow, monkeypatch):
+    calls = []
+
+    async def embed_text(embedder, text):
+        calls.append(text)
+        if len(calls) == 2:
+            raise TimeoutError("embedding endpoint timed out")
+        return "[0.1]"
+
+    monkeypatch.setattr(verdicts, "embed_text", embed_text)
+    raw = body(
+        item("merge", idempotency_key="k-1", merged_text=MERGED),
+        item("merge", idempotency_key="k-2", merged_text=MERGED),
+        item("merge", idempotency_key="k-3", merged_text=MERGED),
+    )
+    results = _run(verdicts.parse_batch(raw, {NS}))
+    assert [r["status"] for r in results] == ["applied", "failed", "applied"]
+    failed = results[1]
+    assert failed["reason"] == "TimeoutError: embedding endpoint timed out"
+    assert failed["action_id"] is None
+    assert failed["archived_ids"] == [] and failed["replacement_id"] is None
+    assert len(_events(flow["log"], "apply")) == 2
+
+
+def test_a_failing_transaction_fails_only_its_verdict(flow):
+    flow["box"]["apply_error"] = asyncpg.exceptions.DeadlockDetectedError("deadlock detected")
+    raw = body(item("keep", idempotency_key="k-1"))
+    [result] = _run(verdicts.parse_batch(raw, {NS}))
+    assert result["status"] == "failed"
+    assert result["reason"] == "DeadlockDetectedError: deadlock detected"
+
+
+def test_a_long_failure_message_is_cut_short(flow):
+    flow["box"]["apply_error"] = RuntimeError("x" * 5000)
+    [result] = _run(verdicts.parse_batch(body(item("keep")), {NS}))
+    assert result["status"] == "failed"
+    assert len(result["reason"]) <= verdicts.MAX_FAILURE_CHARS
+
+
+def test_a_group_key_conflict_is_a_failure_not_a_cache_hit(flow):
+    flow["box"]["apply_error"] = _unique("consolidation_actions_group_key_key")
+    flow["box"]["committed"] = None
+    [result] = _run(verdicts.parse_batch(body(item("keep")), {NS}))
+    assert result["status"] == "failed"
+    assert result["reason"].startswith("UniqueViolationError")
+
+
+class StateConn:
+    """Answers load_state's reads: no recorded verdict, no judged key, an undone member set."""
+
+    def __init__(self, undone):
+        self.undone = undone
+        self.calls: list[tuple[str, tuple]] = []
+
+    async def fetchrow(self, query, *args):
+        self.calls.append((" ".join(query.split()), args))
+        return None
+
+    async def fetchval(self, query, *args):
+        self.calls.append((" ".join(query.split()), args))
+        if "undone_at IS NOT NULL" in query:
+            return self.undone
+        if "group_key = $1" in query:
+            return False
+        raise AssertionError(query)
+
+    async def fetch(self, query, *args):
+        raise AssertionError("a cached group needs no discovery")
+
+
+def test_a_member_set_equal_to_an_undone_actions_is_cached():
+    batch, verdict = parsed("retire", retire_ids=[A], member_ids=[C, A, B])
+    conn = StateConn(undone=True)
+    loaded = asyncio.run(verdicts.load_state(conn, verdict, batch))
+    assert loaded.cached is not None and "undone" in loaded.cached
+    [undone_query] = [c for c in conn.calls if "undone_at IS NOT NULL" in c[0]]
+    assert undone_query[1] == (NS, [A, B, C])
+    result = verdicts.plan_verdict(verdict, batch, loaded)
+    assert result["status"] == "cached"
+    assert result["reason"] == loaded.cached
+
+
+def test_a_created_replacement_without_an_embedding_is_refused(no_owning_helpers):
+    batch, verdict, loaded, planned, rows, _ = _merge_inputs()
+    with pytest.raises(ValueError, match="embedding"):
+        asyncio.run(
+            verdicts.apply_plan(RecordingConn(), verdict, batch, planned, loaded, rows, None)
+        )
 
 
 def test_a_concurrent_insert_of_another_payload_is_rejected(flow):

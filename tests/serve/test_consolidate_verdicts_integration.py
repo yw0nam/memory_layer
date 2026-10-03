@@ -56,6 +56,9 @@ SUCCESSOR = (
     "Coding tasks go to worktree subagents; the main session reviews their output and merges "
     "it once the checks pass."
 )
+RESTATED_MERGE = (
+    "Implementation is handed to worktree subagents; the lead session limits itself to reviewing."
+)
 SECOND_SUCCESSOR = (
     "Coding tasks go to worktree subagents; the main session reviews, merges after green "
     "checks, and deletes the worktree."
@@ -427,3 +430,16 @@ def test_undo_is_refused_through_an_archived_intermediate_successor(space):
     assert last in response.json()["error"]
     assert rows(ns) == before
     assert actions(ns) == [action_before]
+
+
+def test_a_later_keep_on_the_replacement_does_not_block_the_undo(space):
+    ns, (rules, _) = space(RULES, UNRELATED)
+    [merged] = submit(verdict(ns, group_of(groups(ns), rules), "merge", merged_text=MERGED_RULE))
+    rid = merged["replacement_id"]
+    restated = save(RESTATED_MERGE, ns)
+    [kept] = submit(verdict(ns, group_of(groups(ns), [rid, restated]), "keep"))
+    assert kept["status"] == "applied", kept
+    response = undo(merged["action_id"])
+    assert response.status_code == 200, response.text
+    assert note_row(rid)["archived_at"] is not None
+    assert all(note_row(member)["archived_at"] is None for member in rules)
