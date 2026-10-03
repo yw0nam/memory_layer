@@ -12,7 +12,8 @@ allows; personal memory appears only when the key used from Claude Code is
 allowed to read the `personal` namespace.
 
 Install (identical on every machine), together with the SessionStart hook
-(session_start_hook.py), which announces the repo's pending handoffs:
+(session_start_hook.py), which delivers the standing profiles and the repo's
+pending handoffs at every session start, resume, clear, and compaction:
     cp integrations/claude_code/prefetch_hook.py ~/.claude/hooks/memory_base_prefetch.py
     cp integrations/claude_code/session_start_hook.py ~/.claude/hooks/memory_base_session_start.py
     printf 'MEMORY_BASE_API_KEY=...\n' > ~/.config/memory-base/env   # chmod 600
@@ -23,7 +24,7 @@ Install (identical on every machine), together with the SessionStart hook
             "timeout": 5}]}],
         "SessionStart": [{"hooks": [{"type": "command",
             "command": "python3 \"$HOME/.claude/hooks/memory_base_session_start.py\"",
-            "timeout": 5}]}]}}
+            "timeout": 10}]}]}}
 
 Config via environment, every var optional: MEMORY_BASE_URL (default
 http://127.0.0.1:8010), MEMORY_BASE_API_KEY, MEMORY_BASE_ENV (env file
