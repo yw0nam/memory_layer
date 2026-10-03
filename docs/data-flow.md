@@ -537,6 +537,104 @@ text, kind, author, save time, `occurred_at`, `archived`, and its lineage fields
 `consolidation_action`, `archived_by`, `undone_action`). A deleted or moved note is absent
 from `notes`, and an undo of an action that archived it fails with 409.
 
+## Profiles
+
+A profile is standing text per namespace that clients deliver at session start, outside
+search: facts and rules that apply to every task match the topic of almost no message, so
+per-message prefetch rarely ranks them. Each namespace has two fixed slots:
+
+| slot | source notes | content | default `max_chars` |
+|---|---|---|---|
+| `user` | active agent notes of kind `personal` | text an agent generates from every source note | 1500 |
+| `work-rules` | active agent notes of kind `work` | the source notes an agent selects as standing working rules, rendered verbatim by the server | 6000 |
+
+The scheduled consolidation agent writes the slots through admin routes; the server calls
+no model and judges no content. Writing agents never write a profile. Profiles are never
+embedded and never read by search, consolidation, or another profile's sources.
+
+```
+ GET /admin/profiles/sources ──► eligible notes + source_hash + stale
+        │ agent: user → generate text from every note; work-rules → select note ids
+        ▼
+ PUT /admin/profiles {source_hash, content | note_ids}
+   one transaction: pg_advisory_xact_lock('profile:' ns ':' slot) ──► namespace FOR SHARE
+     recompute the eligible notes and their hash ── mismatch ──► 409 stale
+     content checks ── fail ──► 400
+     latest version has this hash and this content ──► unchanged
+     dry_run ──► planned
+     insert version n+1 ──► written
+        ▼
+ GET /profiles ──► SessionStart hook (Claude Code) · system_prompt_block (Hermes)
+```
+
+**Sources.** `GET /admin/profiles/sources?namespace=&slot=` takes the consolidation key (an
+admin key with `consolidator` in its authors; 403 otherwise). Both parameters are
+required and given once; the namespace is registered. It reads one read-only REPEATABLE
+READ snapshot and returns `namespace`, `slot`, `profile_version`, `source_hash`, `current`
+(`{version, source_hash, created_at}` of the latest version, or null), `stale` (no version
+yet, or its hash differs from `source_hash`), and `notes`: each eligible note's `id`,
+`kind`, `author`, `saved`, `occurred_at` (ISO 8601 UTC, or null), `tags`, and `text`, by
+save time, then id.
+
+**Source hash.** The sha256 of the canonical JSON (sorted keys, no whitespace)
+`{"v": PROFILE_VERSION, "slot", "namespace", "notes": [[id, sha256(text), kind, author,
+saved, occurred_at, sorted tags], …]}` with the notes ordered by id, absent values as null,
+and timestamps as stored epoch seconds. It changes when a source note is added, archived,
+or changes any of those fields, and when `PROFILE_VERSION` changes. `PROFILE_VERSION`
+covers the slot rules, the rendering, the budgets, and the profile-refresh procedure.
+
+**Write.** `PUT /admin/profiles` takes the consolidation key; `author` must be one of the
+key's authors. An unknown field, a wrong type, or a value out of range is a 400.
+
+| field | rule | default |
+|---|---|---|
+| `namespace` | registered | required |
+| `slot` | `user` or `work-rules` | required |
+| `source_hash` | the hash the sources call returned | required |
+| `author` | one of the key's authors | required |
+| `model` | string or null; recorded, not checked | null |
+| `dry_run` | boolean | false |
+| `content` | `user` only; string | required on `user` |
+| `note_ids` | `work-rules` only; 0–200 distinct ids | required on `work-rules` |
+| `max_chars` | 200–20000 | 1500 (`user`), 6000 (`work-rules`) |
+
+| case | response |
+|---|---|
+| the recomputed hash differs from `source_hash` | 409 `{"error": "stale", "source_hash": <current>}` |
+| `user`: content blank after stripping, carrying a credential, or longer than `max_chars` | 400 |
+| `work-rules`: an id outside the slot's eligible notes | 400 naming the ids |
+| `work-rules`: rendered text longer than `max_chars` | 400 with `chars` and `max_chars`; nothing is truncated or rewritten |
+| the latest version has the same hash and the same content | 200 `{"status": "unchanged", "version"}` |
+| `dry_run` | 200 `{"status": "planned", "content", "chars"}` |
+| otherwise | 200 `{"status": "written", "version", "chars"}` |
+
+`user` stores the stripped content with every eligible note as its source ids.
+`work-rules` stores the rendering of the selected notes in the submitted order, `- ` and
+the note's text per note, its inner lines indented by two spaces, joined by newlines; its
+source ids are the selection. An empty selection stores empty content, which is not
+served. A refused or failed write stores nothing, so the previous version stays served.
+
+**Read.** `GET /profiles` takes any key. `namespace` is optional and repeatable; the
+default is every namespace the key can read, and a namespace outside it is a 403. The
+response is the latest version of each slot whose content is non-empty:
+`[{namespace, slot, version, content, created_at}]`, by namespace, then `user` before
+`work-rules`.
+
+**History.** `GET /admin/profiles/versions?namespace=&slot=&limit=` takes the consolidation
+key and returns `{namespace, slot, versions}`: every version newest first with `version`,
+`content`, `source_ids`, `source_hash`, `author`, `model`, and `created_at`. `limit` is
+1–200, default 20.
+
+**Delivery.** The Claude Code SessionStart hook runs at every session start, resume,
+clear, and compaction. It calls `GET /profiles` and lists the repository's pending
+handoffs, and prints one `<memory-context>` fence: the header `Memory: standing profile.
+Apply it to every task.`, each profile under `## <slot> (<namespace>)`, then the handoffs.
+Profiles print outside a git repository too; the two fetches fail independently, and any
+failure prints nothing for that part. The Hermes provider fetches the same block body,
+without the fence, once in `initialize` and returns it from `system_prompt_block` for the
+session. Memory-context tags inside a profile are defused to `[memory-context]`.
+Per-message prefetch does not include profiles.
+
 ## Storage
 
 `memory.memory_chunks` — one table for every non-code source.
@@ -581,6 +679,13 @@ archived note's metadata before the action), `applied_at` (the `archived_at` the
 wrote), `author`, `model`, `reason`, `result` (the response returned on apply), and
 `undone_at`, `undone_by`, `undo_result`; indexed on (`namespace`, `run_id`). It is read
 only by the consolidation routes.
+
+`memory.profiles` — every version of every profile slot: `namespace`, `slot` (`user` |
+`work-rules`), `version` (1, 2, … per namespace and slot; unique together), `content`,
+`source_ids` (`user`: every eligible note; `work-rules`: the selection in render order),
+`source_hash`, `author`, `model`, and `created_at` (epoch seconds). No embedding column;
+read only by the profile routes. A profile version counts as namespace content: a
+namespace with one is not unregistered.
 
 `doc_rows` and `messages` are outside the retrieval contract: they are read by compute
 and by address, respectively, and are never granted to the SQL query role or returned by

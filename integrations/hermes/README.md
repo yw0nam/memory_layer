@@ -1,9 +1,16 @@
 # Hermes memory provider
 
-`memory_base/` is a Hermes external memory provider. It prefetches notes into every turn.
-Nothing is injected by recency; every injected note matched the turn's query at
-`min_score`.
+`memory_base/` is a Hermes external memory provider. It delivers the standing profiles in
+the system prompt and prefetches notes into every turn. Nothing else is injected by
+recency; every prefetched note matched the turn's query at `min_score`.
 
+- **Session start** — `initialize` calls `GET /profiles` once and `system_prompt_block`
+  returns the result for the whole session: the line `Memory: standing profile. Apply it
+  to every task.`, then each profile (the `user` and `work-rules` slots of every
+  namespace the key allows) under `## <slot> (<namespace>)`: the body of the block the
+  Claude Code SessionStart hook prints, without the `<memory-context>` fence.
+  Memory-context tags inside a profile are defused to `[memory-context]`. Returns nothing
+  on any error or when no profile is served.
 - **Every turn** — runs a semantic search over memory (all kinds) with the profile's
   configured `top_k`/`min_score` and returns the hits as prefetched context. Returns
   nothing on any error, timeout, or when there is nothing to add.
@@ -32,7 +39,7 @@ The provider never registers tools — the MCP server already exposes `search`/`
 ## Layout
 
 - `memory_base/client.py` — pure REST client (stdlib + httpx only, no Hermes imports).
-  Talks to the memory-base API's `/search` route. Unit-tested from this repo under
+  Talks to the memory-base API's `/search` and `/profiles` routes. Unit-tested from this repo under
   `tests/integrations/`.
 - `memory_base/__init__.py` — the Hermes-facing `MemoryProvider` subclass and `register(ctx)`
   entry point. Imports Hermes types at load time, so it only runs inside a Hermes process.
