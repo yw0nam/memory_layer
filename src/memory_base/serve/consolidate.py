@@ -107,7 +107,8 @@ class Snapshot:
     undone_members: frozenset[tuple[str, ...]]
 
 
-def _note(row: Any) -> Note:
+def note_from_row(row: Any) -> Note:
+    """A note read by NOTES_SQL or a query with the same columns."""
     metadata = metadata_dict(row["metadata"])
     return Note(
         id=row["id"],
@@ -131,7 +132,7 @@ async def read_pairs(
     The caller owns the transaction and has applied EXACT_SEARCH_SETTINGS in it.
     """
     rows = await conn.fetch(PAIRS_SQL, namespace, neighbors, threshold)
-    notes = {row["id"]: _note(row) for row in await conn.fetch(NOTES_SQL, namespace)}
+    notes = {row["id"]: note_from_row(row) for row in await conn.fetch(NOTES_SQL, namespace)}
     best: dict[tuple[str, str], float] = {}
     for row in rows:
         ends = (min(row["a_id"], row["b_id"]), max(row["a_id"], row["b_id"]))

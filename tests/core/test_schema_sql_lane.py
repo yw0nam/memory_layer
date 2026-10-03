@@ -56,6 +56,29 @@ def test_api_keys_and_jobs_stamp_their_own_created_at(monkeypatch):
         assert "created_at timestamptz NOT NULL DEFAULT now()" in body, table
 
 
+def test_profiles_table_keeps_every_version_of_each_slot_unembedded(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    sql = "\n".join(conn.queries)
+    body = sql.split('CREATE TABLE IF NOT EXISTS "scratch_schema".profiles (', 1)[1]
+    body = " ".join(body.split(");", 1)[0].split())
+    assert "id bigserial PRIMARY KEY" in body
+    assert "namespace text NOT NULL" in body
+    assert "slot text NOT NULL CHECK (slot IN ('user', 'work-rules'))" in body
+    assert "version int NOT NULL" in body
+    assert "content text NOT NULL" in body
+    assert "source_ids text[] NOT NULL" in body
+    assert "source_hash text NOT NULL" in body
+    assert "author text NOT NULL" in body
+    assert "model text," in body
+    assert "created_at double precision NOT NULL" in body
+    assert "UNIQUE (namespace, slot, version)" in body
+    assert "embedding" not in body
+
+
 def test_messages_table_carries_the_lifecycle_constraints_and_indexes(monkeypatch):
     monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
     conn = RecordingConnection()

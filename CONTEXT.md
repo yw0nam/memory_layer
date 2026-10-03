@@ -104,6 +104,18 @@ _Avoid_: job, operation, change set
 Note metadata that links a note to the notes that replaced or absorbed it: `supersedes` and `replaced_by` from a supersede save, `consolidated_into` on a note a consolidation archived, and `merged_from` and `merged_dates` on a merge's replacement.
 _Avoid_: history, provenance, links
 
+**Profile**:
+Standing text per namespace and slot that clients deliver at session start, outside search. Written only by the scheduled consolidation agent through the profile routes; every version is kept, and the latest one is served when its content is non-empty.
+_Avoid_: summary, persona, memory block
+
+**Slot**:
+One of the two fixed profiles of a namespace: `user`, generated from every active `personal` note, and `work-rules`, the active `work` notes an agent selects as standing working rules, rendered verbatim.
+_Avoid_: section, category
+
+**Source hash**:
+A hash over a slot's eligible notes (each note's text, kind, author, save time, event date, and tags), the slot, the namespace, and the profile version. A profile write is stored only while it still matches; a slot whose latest version carries it is not stale.
+_Avoid_: checksum, snapshot id
+
 **Distilled**:
 Reduced to its high-signal form before storage. The property that qualifies content for the store at all.
 _Avoid_: summarized, cleaned, processed

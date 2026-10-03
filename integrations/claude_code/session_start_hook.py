@@ -1,18 +1,22 @@
-"""Claude Code SessionStart hook: announce this repo's pending handoffs.
+"""Claude Code SessionStart hook: deliver the standing profiles and this repo's handoffs.
 
-Reads the hook payload on stdin, derives the handoff scope
-`repo:<host>/<path>` from the `origin` remote of the payload's `cwd`, lists the
-pending handoffs addressed to that scope, and prints at most ten of them,
-newest first, inside a <memory-context> fence. It never claims one: the session
-claims a handoff only when asked to continue it. A cwd outside a git
-repository, without an `origin` remote, or whose origin is not a remote host
-prints nothing. Every failure mode is fail-open: no output, exit 0. Stdlib
-only — the script runs under whatever python3 Claude Code invokes, outside any
-venv.
+Reads the hook payload on stdin and prints one <memory-context> fence holding,
+in order, the served profiles (`GET /profiles`: each slot's latest version, for
+every namespace the key allows) and the pending handoffs addressed to this
+repository. The handoff scope `repo:<host>/<path>` comes from the `origin`
+remote of the payload's `cwd`; a cwd outside a git repository, without an
+`origin` remote, or whose origin is not a remote host gets the profiles alone.
+At most ten handoffs print, newest first; the hook never claims one: the
+session claims a handoff only when asked to continue it. Profiles and handoffs
+are fetched independently, so a failure of either keeps the other. Every
+failure mode is fail-open: no output, exit 0. Stdlib only — the script runs
+under whatever python3 Claude Code invokes, outside any venv.
 
-The listing sends no namespace filter, so it spans every namespace the key
-allows. Installation, the settings.json entry, and the key file are shared with
-the UserPromptSubmit hook and documented in prefetch_hook.py.
+The hook runs at every SessionStart source (startup, resume, clear, compact)
+through one settings.json entry without a matcher, so the profiles return after
+a compaction. Its two requests take up to 3 seconds each, so the entry's
+timeout is 10 seconds. Installation, the settings.json entry, and the key file
+are shared with the UserPromptSubmit hook and documented in prefetch_hook.py.
 
 Config via environment, every var optional: MEMORY_BASE_URL (default
 http://127.0.0.1:8010), MEMORY_BASE_API_KEY, MEMORY_BASE_ENV (env file
@@ -37,6 +41,7 @@ GIT_TIMEOUT_SECONDS = 1.0
 HANDOFF_HEADER = (
     "Memory: pending handoffs for this repo. Nothing is claimed; ask to continue one to claim it."
 )
+PROFILE_HEADER = "Memory: standing profile. Apply it to every task."
 
 _FENCE_TAG = re.compile(r"<\s*/?\s*memory-context", re.IGNORECASE)
 _SCP_ORIGIN = re.compile(r"(?:[^:@/]+@)?(?P<host>[^:/]+):(?P<path>.+)")
@@ -94,27 +99,41 @@ def git_origin(cwd: str) -> str | None:
     return url if result.returncode == 0 and url else None
 
 
+def _defuse(text: str) -> str:
+    return _FENCE_TAG.sub("[memory-context]", text)
+
+
+def format_profiles(rows: list[dict]) -> str:
+    """The profile header, then each profile under `## <slot> (<namespace>)`; empty for none."""
+    sections = [_defuse(f"## {row['slot']} ({row['namespace']})\n{row['content']}") for row in rows]
+    return "\n\n".join([PROFILE_HEADER, *sections]) if sections else ""
+
+
 def format_handoffs(rows: list[dict]) -> str:
-    """One line per handoff inside a memory-context fence; empty for none."""
+    """The handoff header and one line per handoff; empty for none."""
     lines = []
     for row in rows[:HANDOFF_LIMIT]:
-        subject = _FENCE_TAG.sub("[memory-context]", " ".join(str(row["subject"]).split()))
+        subject = _defuse(" ".join(str(row["subject"]).split()))
         created = str(row.get("created_at", ""))[:10]
         lines.append(f"- {created}  {subject}  (status: {row.get('status', '?')}, id: {row['id']})")
-    if not lines:
+    return "\n".join([HANDOFF_HEADER, *lines]) if lines else ""
+
+
+def _profiles(get) -> str:
+    try:
+        return format_profiles(get("/profiles", {}))
+    except Exception:
         return ""
-    return "\n".join(["<memory-context>", HANDOFF_HEADER, *lines, "</memory-context>"])
 
 
-def run_hook(payload: dict, get, remote_of=git_origin) -> str:
-    """Derive the scope from cwd, list its pending handoffs via `get`, and format them."""
+def _handoffs(payload: dict, get, remote_of) -> str:
     cwd = payload.get("cwd") or ""
     if not cwd:
         return ""
-    scope = repo_scope(remote_of(cwd))
-    if scope is None:
-        return ""
     try:
+        scope = repo_scope(remote_of(cwd))
+        if scope is None:
+            return ""
         rows = get(
             "/messages",
             {"purpose": "handoff", "scope": scope, "limit": str(HANDOFF_LIMIT)},
@@ -122,6 +141,14 @@ def run_hook(payload: dict, get, remote_of=git_origin) -> str:
         return format_handoffs(rows)
     except Exception:
         return ""
+
+
+def run_hook(payload: dict, get, remote_of=git_origin) -> str:
+    """Fetch the profiles and this repo's pending handoffs via `get`; one fence, or empty."""
+    parts = [part for part in (_profiles(get), _handoffs(payload, get, remote_of)) if part]
+    if not parts:
+        return ""
+    return "\n".join(["<memory-context>", "\n\n".join(parts), "</memory-context>"])
 
 
 def _resolve_api_key() -> str:
@@ -142,8 +169,9 @@ def _resolve_api_key() -> str:
 
 def _get_from_server(url: str, api_key: str):
     def get(path: str, params: dict) -> list[dict]:
+        query = f"?{urllib.parse.urlencode(params)}" if params else ""
         req = urllib.request.Request(
-            f"{url.rstrip('/')}{path}?{urllib.parse.urlencode(params)}",
+            f"{url.rstrip('/')}{path}{query}",
             headers={"X-API-Key": api_key},
         )
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:

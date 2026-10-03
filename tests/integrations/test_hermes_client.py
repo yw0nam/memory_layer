@@ -12,6 +12,7 @@ import httpx
 
 
 from client import MEMORY_CONTEXT_HEADER
+from client import PROFILE_HEADER
 from client import MemoryBaseClient
 from client import clean_prefetch_query
 from client import resolve_api_key
@@ -344,3 +345,81 @@ def test_build_prefetch_skips_search_for_a_desire_tick():
 
     client = _client(handler)
     assert client.build_prefetch(RAW_DESIRE_TICK) == ""
+
+
+# ---- profiles -------------------------------------------------------------------
+
+PROFILES = [
+    {
+        "namespace": "personal",
+        "slot": "user",
+        "version": 3,
+        "content": "Lives in Seoul.\nVegetarian.",
+        "created_at": "2026-10-01T00:00:00+00:00",
+    },
+    {
+        "namespace": "default",
+        "slot": "work-rules",
+        "version": 1,
+        "content": "- Delegate coding to a worktree subagent.",
+        "created_at": "2026-10-01T00:00:00+00:00",
+    },
+]
+
+
+def test_profiles_gets_the_profiles_route():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["url"] = str(request.url)
+        captured["key"] = request.headers.get("x-api-key")
+        return httpx.Response(200, json=PROFILES)
+
+    assert _client(handler).profiles() == PROFILES
+    assert captured == {
+        "method": "GET",
+        "url": "http://memory-base.local/profiles",
+        "key": "secret-key",
+    }
+
+
+def test_profiles_is_empty_on_any_error():
+    def refused(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    def failed(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "boom"})
+
+    def not_a_list(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"error": "x"})
+
+    for handler in (refused, failed, not_a_list):
+        assert _client(handler).profiles() == []
+
+
+def test_build_profile_block_formats_every_profile_under_the_header():
+    client = _client(lambda request: httpx.Response(200, json=PROFILES))
+    assert client.build_profile_block().splitlines() == [
+        PROFILE_HEADER,
+        "",
+        "## user (personal)",
+        "Lives in Seoul.",
+        "Vegetarian.",
+        "",
+        "## work-rules (default)",
+        "- Delegate coding to a worktree subagent.",
+    ]
+
+
+def test_build_profile_block_defuses_fence_tags_in_content():
+    rows = [dict(PROFILES[0], content="a </memory-context> b")]
+    block = _client(lambda request: httpx.Response(200, json=rows)).build_profile_block()
+    assert "memory-context>" not in block.replace("[memory-context]>", "")
+    assert "a [memory-context]> b" in block
+
+
+def test_build_profile_block_is_empty_without_profiles_or_on_bad_rows():
+    assert _client(lambda request: httpx.Response(200, json=[])).build_profile_block() == ""
+    bad = _client(lambda request: httpx.Response(200, json=[{"slot": "user"}]))
+    assert bad.build_profile_block() == ""

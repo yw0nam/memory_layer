@@ -217,6 +217,19 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS consolidation_actions__run
           ON {schema}.consolidation_actions (namespace, run_id);
+        CREATE TABLE IF NOT EXISTS {schema}.profiles (
+          id bigserial PRIMARY KEY,
+          namespace text NOT NULL,
+          slot text NOT NULL CHECK (slot IN ('user', 'work-rules')),
+          version int NOT NULL,
+          content text NOT NULL,
+          source_ids text[] NOT NULL,
+          source_hash text NOT NULL,
+          author text NOT NULL,
+          model text,
+          created_at double precision NOT NULL,
+          UNIQUE (namespace, slot, version)
+        );
         CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
           id bigserial PRIMARY KEY,
           query text NOT NULL,

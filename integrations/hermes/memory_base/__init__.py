@@ -1,6 +1,7 @@
 """memory_base Hermes memory plugin — MemoryProvider interface.
 
-Pre-injects a per-turn semantic prefetch over the memory-base REST API into
+Delivers the standing profiles in the system prompt, fetched once per session,
+and pre-injects a per-turn semantic prefetch over the memory-base REST API into
 every conversation turn.
 
 Config via config.yaml (memory.memory_base):
@@ -40,11 +41,12 @@ def _load_plugin_config() -> dict[str, Any]:
 
 
 class MemoryBaseProvider(MemoryProvider):
-    """Semantic prefetch every turn."""
+    """Standing profiles at session start, semantic prefetch every turn."""
 
     def __init__(self) -> None:
         self._config = _load_plugin_config()
         self._client: client.MemoryBaseClient | None = None
+        self._profile_block = ""
 
     @property
     def name(self) -> str:
@@ -71,9 +73,10 @@ class MemoryBaseProvider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._client = self._build_client()
+        self._profile_block = self._client.build_profile_block()
 
     def system_prompt_block(self) -> str:
-        return ""
+        return self._profile_block
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         if not self._client:
