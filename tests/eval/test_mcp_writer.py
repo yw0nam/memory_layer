@@ -50,6 +50,11 @@ RESULT = _line(
     }
 )
 
+REFUSAL = (
+    "Error executing tool save_memory: "
+    "Refused: 1 active note(s) in this namespace say nearly the same thing."
+)
+
 
 def test_the_prompt_is_the_published_instruction_the_author_and_the_session():
     turns = [
@@ -80,7 +85,7 @@ def test_the_stream_becomes_a_session_record():
         _tool_use("t3", "mcp__memory-base__save_memory", {"content": "B"}),
         _tool_result("t3", [{"type": "text", "text": json.dumps(duplicate)}]),
         _tool_use("t4", "mcp__memory-base__save_memory", {"content": "C"}),
-        _tool_result("t4", "Error executing tool save_memory: not for this gate", is_error=True),
+        _tool_result("t4", REFUSAL, is_error=True),
         RESULT,
     ]
     record = mcp_writer.parse_stream(lines)
@@ -101,12 +106,7 @@ def test_the_stream_becomes_a_session_record():
         {"tool": "save_memory", "id": "note:lme-q:c", "stored": False,
          "superseded": None},
     ]  # fmt: skip
-    assert record["refusals"] == [
-        {
-            "tool": "save_memory",
-            "error": "Error executing tool save_memory: not for this gate",
-        }
-    ]
+    assert record["refusals"] == [{"tool": "save_memory", "error": REFUSAL}]
     assert record["usage"] == {
         "input_tokens": 5,
         "cache_creation_input_tokens": 100,
@@ -201,7 +201,7 @@ def test_the_agent_runs_an_isolated_headless_session(monkeypatch, tmp_path):
     assert record["seconds"] >= 0
 
 
-def test_the_eval_api_gates_with_the_benchmark_key(monkeypatch):
+def test_the_eval_api_keeps_its_on_disk_state_in_its_own_tempdir(monkeypatch):
     spawned = {}
 
     class Proc:
@@ -221,13 +221,13 @@ def test_the_eval_api_gates_with_the_benchmark_key(monkeypatch):
     class Health:
         status_code = 200
 
-    monkeypatch.setenv("ZAI_API_KEY", "production-key")
-    monkeypatch.setenv(mcp_writer.GATE_KEY_ENV, "benchmark-key")
     monkeypatch.setattr(mcp_writer.subprocess, "Popen", popen)
     monkeypatch.setattr(mcp_writer.httpx, "get", lambda *a, **k: Health())
-    with mcp_writer.EvalApi():
-        pass
-    assert spawned["env"]["ZAI_API_KEY"] == "benchmark-key"
+    with mcp_writer.EvalApi() as api:
+        state = api.state.name
+    env = spawned["env"]
+    for name in ("INGEST_SPOOL", "REPO_CACHE", "LOG_DIR", "COCOINDEX_DB"):
+        assert env[name].startswith(state)
 
 
 def test_questions_run_concurrently_up_to_the_limit(monkeypatch, tmp_path):
@@ -251,3 +251,54 @@ def test_questions_run_concurrently_up_to_the_limit(monkeypatch, tmp_path):
     asyncio.run(mcp_writer._write_all(questions, args, "http://127.0.0.1:1"))
     assert peak == 2
     assert sorted(done) == [f"q{i}" for i in range(5)]
+
+
+def test_a_run_records_the_writer_setup_in_its_manifest(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text("[]")
+    question = {"question_id": "q1"}
+
+    @contextmanager
+    def database():
+        yield {"url": "postgresql://memory:pw@127.0.0.1:1/memory_base"}
+
+    class Api:
+        url = "http://127.0.0.1:18555"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+    async def prepare(url):
+        return []
+
+    async def write_all(questions, args, api_url):
+        pass
+
+    monkeypatch.setattr(mcp_writer, "load_dataset", lambda path: [question])
+    monkeypatch.setattr(mcp_writer, "select_subset", lambda dataset: [question])
+    monkeypatch.setattr(mcp_writer, "code_revision", lambda: {"commit": "c", "dirty": False})
+    monkeypatch.setattr(mcp_writer, "throwaway_postgres", database)
+    monkeypatch.setattr(mcp_writer, "_prepare_schema", prepare)
+    monkeypatch.setattr(mcp_writer, "EvalApi", Api)
+    monkeypatch.setattr(mcp_writer, "_write_all", write_all)
+    mcp_writer.main(["--dataset", str(dataset), "--data-dir", str(tmp_path / "out")])
+    [manifest] = mcp_writer.read_jsonl(tmp_path / "out" / "writer-runs.jsonl")
+    assert set(manifest) == {
+        "dataset_sha256",
+        "code",
+        "writer",
+        "instruction",
+        "author_line",
+        "concurrency",
+        "run_id",
+    }
+    assert manifest["writer"] == {
+        "harness": "claude-code",
+        "model": "sonnet",
+        "author": "lme-writer",
+    }

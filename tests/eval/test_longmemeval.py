@@ -130,12 +130,12 @@ def test_loading_maps_each_note_back_to_every_session_it_came_from():
     units = [("s1", "2023/05/20 (Sat) 02:21"), ("s2", "2023/05/21 (Sun) 09:00")]
     notes_by_unit = {
         units[0]: [
-            {"content": "The user owns a red bike.", "kind": "note", "gate": "stored"},
-            {"content": "Refused chatter.", "kind": "note", "gate": "refused"},
+            {"content": "The user owns a red bike.", "kind": "note", "outcome": "stored"},
+            {"content": "Refused chatter.", "kind": "note", "outcome": "refused"},
         ],
         units[1]: [
-            {"content": "The user owns a red bike.", "kind": "note", "gate": "stored"},
-            {"content": "A similar fact.", "kind": "episode", "gate": "stored"},
+            {"content": "The user owns a red bike.", "kind": "note", "outcome": "stored"},
+            {"content": "A similar fact.", "kind": "episode", "outcome": "stored"},
         ],
     }
     calls = []
@@ -169,8 +169,8 @@ def test_loading_counts_credential_and_invalid_refusals():
     units = [("s1", "2023/05/20 (Sat) 02:21")]
     notes_by_unit = {
         units[0]: [
-            {"content": "has secret", "kind": "note", "gate": "stored"},
-            {"content": "too long", "kind": "note", "gate": "stored"},
+            {"content": "has secret", "kind": "note", "outcome": "stored"},
+            {"content": "too long", "kind": "note", "outcome": "stored"},
         ]
     }
     stats, provenance = asyncio.run(
@@ -387,28 +387,17 @@ def test_score_uses_the_latest_judgment_of_the_current_answer():
     assert report["overall"] == {"correct": 1, "judged": 1, "accuracy": 1.0}
 
 
-def test_run_names_pair_gate_and_variant_without_gate_off_dated():
-    assert lme.run_name("baseline", "on") == "baseline"
-    assert lme.run_name("dated", "on") == "dated"
-    assert lme.run_name("baseline", "off") == "gate-off"
-    with pytest.raises(ValueError):
-        lme.run_name("dated", "off")
-    assert lme.packets_path(Path("d"), "gate-off") == Path("d/packets-gate-off.jsonl")
-    assert lme.stage_output_path(Path("d"), "judge", "gate-off") == Path(
-        "d/judgments-gate-off.jsonl"
-    )
-
-
-def test_the_prefetch_read_setting_names_its_own_runs():
-    assert lme.run_name("baseline", "on", "prefetch") == "prefetch"
-    assert lme.run_name("baseline", "off", "prefetch") == "prefetch-gate-off"
-    assert lme.run_name("baseline", "on", "search") == "baseline"
-    assert lme.packets_path(Path("d"), "prefetch-gate-off") == Path(
-        "d/packets-prefetch-gate-off.jsonl"
-    )
-    assert lme.read_setting("prefetch-gate-off") == {"top_k": 5, "min_score": 0.25}
-    assert lme.read_setting("gate-off") == {"top_k": 10, "min_score": None}
-    assert set(lme.RUNS) >= {"prefetch", "prefetch-gate-off"}
+def test_run_names_pair_the_variant_and_the_read_setting():
+    assert lme.run_name("baseline") == "baseline"
+    assert lme.run_name("dated") == "dated"
+    assert lme.run_name("baseline", "prefetch") == "prefetch"
+    assert lme.run_name("baseline", "search") == "baseline"
+    assert lme.run_name("dated", "prefetch") == "prefetch-dated"
+    assert lme.packets_path(Path("d"), "prefetch") == Path("d/packets-prefetch.jsonl")
+    assert lme.stage_output_path(Path("d"), "judge", "dated") == Path("d/judgments-dated.jsonl")
+    assert lme.read_setting("prefetch") == {"top_k": 5, "min_score": 0.25}
+    assert lme.read_setting("baseline") == {"top_k": 10, "min_score": None}
+    assert lme.RUNS == ("baseline", "dated", "prefetch", "budget")
 
 
 def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(monkeypatch):
@@ -426,8 +415,7 @@ def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(mon
         calls.append(kwargs)
         return [Hit(i) for i in range(7)]
 
-    async def load(namespace, units, notes_by_unit, gate):
-        calls.append(gate)
+    async def load(namespace, units, notes_by_unit):
         return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(7)}
 
     async def create(namespace):
@@ -437,21 +425,17 @@ def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(mon
     monkeypatch.setattr(lme, "load_question_notes", load)
     monkeypatch.setattr(namespaces, "create_namespace", create)
     question = make_question("q1", "single-session-user", sessions=[("s1", D1)])
-    packet = asyncio.run(lme.retrieve_question(question, {}, "prefetch-gate-off"))
-    assert calls[0] == "off"
-    assert calls[1]["min_score"] == 0.25
+    packet = asyncio.run(lme.retrieve_question(question, {}, "prefetch"))
+    assert calls[0]["min_score"] == 0.25
     assert [h["id"] for h in packet["hits"]] == ["n0", "n1", "n2", "n3", "n4"]
     packet = asyncio.run(lme.retrieve_question(question, {}, "baseline"))
-    assert calls[2] == "on"
-    assert calls[3]["min_score"] is None
+    assert calls[1]["min_score"] is None
     assert len(packet["hits"]) == 7
 
 
 def test_the_budget_read_setting_names_its_own_runs():
-    assert lme.run_name("baseline", "off", "budget") == "budget-gate-off"
-    assert lme.read_setting("budget-gate-off") == {"budget_tokens": 4000}
+    assert lme.run_name("baseline", "budget") == "budget"
     assert lme.read_setting("budget") == {"budget_tokens": 4000}
-    assert set(lme.RUNS) >= {"budget", "budget-gate-off"}
 
 
 def test_a_budget_run_passes_the_budget_to_search_and_keeps_every_packed_hit(monkeypatch):
@@ -469,7 +453,7 @@ def test_a_budget_run_passes_the_budget_to_search_and_keeps_every_packed_hit(mon
         calls.append(kwargs)
         return [Hit(i) for i in range(12)]
 
-    async def load(namespace, units, notes_by_unit, gate):
+    async def load(namespace, units, notes_by_unit):
         return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(12)}
 
     async def create(namespace):
@@ -479,33 +463,32 @@ def test_a_budget_run_passes_the_budget_to_search_and_keeps_every_packed_hit(mon
     monkeypatch.setattr(lme, "load_question_notes", load)
     monkeypatch.setattr(namespaces, "create_namespace", create)
     question = make_question("q1", "multi-session", sessions=[("s1", D1)])
-    packet = asyncio.run(lme.retrieve_question(question, {}, "budget-gate-off"))
+    packet = asyncio.run(lme.retrieve_question(question, {}, "budget"))
     assert calls[0]["budget_tokens"] == 4000
     assert len(packet["hits"]) == 12
     assert packet["budget_tokens"] == 4000
-    packet = asyncio.run(lme.retrieve_question(question, {}, "gate-off"))
+    packet = asyncio.run(lme.retrieve_question(question, {}, "baseline"))
     assert calls[1].get("budget_tokens") is None
     assert len(packet["hits"]) == 10
     assert packet["budget_tokens"] is None
 
 
-def test_gate_off_loading_adds_gate_refused_notes_but_not_save_path_refusals():
+def test_loading_skips_notes_the_extraction_refused():
     units = [("s1", "2023/05/20 (Sat) 02:21")]
     notes_by_unit = {
         units[0]: [
-            {"content": "Kept.", "kind": "note", "gate": "stored", "gate_reason": "ok"},
-            {"content": "Gate refused.", "kind": "note", "gate": "refused", "gate_reason": "plan"},
+            {"content": "Kept.", "kind": "note", "outcome": "stored", "reason": None},
             {
                 "content": "Bad kind.",
                 "kind": "plan",
-                "gate": "refused",
-                "gate_reason": "validation: kind must be one of ('note', 'decision', 'episode')",
+                "outcome": "refused",
+                "reason": "validation: kind must be one of ('note', 'decision', 'episode')",
             },
             {
                 "content": "Secret.",
                 "kind": "note",
-                "gate": "refused",
-                "gate_reason": "credential: GitHub Token",
+                "outcome": "refused",
+                "reason": "credential: GitHub Token",
             },
         ]
     }
@@ -514,27 +497,23 @@ def test_gate_off_loading_adds_gate_refused_notes_but_not_save_path_refusals():
         lme.load_question_notes("lme-q1", units, notes_by_unit, save=fake_save_note(calls))
     )
     assert [c[0] for c in calls] == ["Kept."]
-    assert stats.gate_refused == 0
-    calls = []
-    stats, _ = asyncio.run(
-        lme.load_question_notes(
-            "lme-q1", units, notes_by_unit, save=fake_save_note(calls), gate="off"
-        )
-    )
-    assert [c[0] for c in calls] == ["Kept.", "Gate refused."]
     assert all(c[1] == "personal" for c in calls)
-    assert stats.gate_refused == 1
-    assert stats.submitted == 2
+    assert stats.submitted == 1
 
 
 def test_loading_saves_every_extracted_label_as_personal_memory():
     units = [("s1", "2023/05/20 (Sat) 02:21")]
     notes_by_unit = {
         units[0]: [
-            {"content": "A note.", "kind": "note", "gate": "stored"},
-            {"content": "A decision.", "kind": "decision", "gate": "stored"},
-            {"content": "An episode.", "kind": "episode", "gate": "stored"},
-            {"content": "Refused.", "kind": "note", "gate": "refused", "gate_reason": "plan"},
+            {"content": "A note.", "kind": "note", "outcome": "stored"},
+            {"content": "A decision.", "kind": "decision", "outcome": "stored"},
+            {"content": "An episode.", "kind": "episode", "outcome": "stored"},
+            {
+                "content": "Refused.",
+                "kind": "note",
+                "outcome": "refused",
+                "reason": "validation: x",
+            },
         ]
     }
     calls = []
@@ -544,14 +523,6 @@ def test_loading_saves_every_extracted_label_as_personal_memory():
     assert [c[0] for c in calls] == ["A note.", "A decision.", "An episode."]
     assert all(c[1] == "personal" for c in calls)
     assert stats.invalid == 0
-    calls = []
-    asyncio.run(
-        lme.load_question_notes(
-            "lme-q1", units, notes_by_unit, save=fake_save_note(calls), gate="off"
-        )
-    )
-    assert len(calls) == 4
-    assert all(c[1] == "personal" for c in calls)
 
 
 def test_judge_audit_sample_is_seeded_and_carries_what_the_auditor_needs():
@@ -594,18 +565,18 @@ def test_judge_agreement_counts_only_hand_labeled_rows():
 D1, D2, D9 = "2023/05/01 (Mon) 10:00", "2023/05/02 (Tue) 10:00", "2023/05/09 (Tue) 10:00"
 
 
-def test_gate_rates_count_refusals_per_question_type():
+def test_refusal_rates_count_refusals_per_question_type():
     questions = {
         "q1": make_question("q1", "multi-session", sessions=[("s1", D1), ("s2", D2)]),
         "q2": make_question("q2", "temporal-reasoning", sessions=[("s2", D2)]),
     }
     notes = [
-        {"session_id": "s1", "date": D1, "gate": "stored"},
-        {"session_id": "s1", "date": D1, "gate": "refused"},
-        {"session_id": "s2", "date": D2, "gate": "refused"},
-        {"session_id": "s9", "date": D9, "gate": "stored"},
+        {"session_id": "s1", "date": D1, "outcome": "stored"},
+        {"session_id": "s1", "date": D1, "outcome": "refused"},
+        {"session_id": "s2", "date": D2, "outcome": "refused"},
+        {"session_id": "s9", "date": D9, "outcome": "stored"},
     ]
-    rates = lme.gate_rates(["q1", "q2"], questions, notes)
+    rates = lme.refusal_rates(["q1", "q2"], questions, notes)
     assert rates["overall"] == {"notes": 3, "refused": 2, "refused_rate": pytest.approx(2 / 3)}
     assert rates["multi-session"] == {
         "notes": 3,
@@ -717,7 +688,7 @@ def test_score_reports_whichever_runs_have_packets(tmp_path, monkeypatch):
         "hits": [],
         "load": {"submitted": 0},
     }
-    lme.append_jsonl(lme.packets_path(data_dir, "prefetch-gate-off"), [packet])
+    lme.append_jsonl(lme.packets_path(data_dir, "prefetch"), [packet])
     lme.append_jsonl(data_dir / lme.SESSIONS_FILE, [])
     manifest = tmp_path / "manifest.json"
     revisions_captured_in_order(monkeypatch)
@@ -733,7 +704,7 @@ def test_score_reports_whichever_runs_have_packets(tmp_path, monkeypatch):
         ]
     )
     report = json.loads((data_dir / "report.json").read_text())
-    assert list(report["runs"]) == ["prefetch-gate-off"]
+    assert list(report["runs"]) == ["prefetch"]
     assert lme.read_manifest(manifest)["score"]["questions_scored"] == 1
 
 
@@ -769,8 +740,6 @@ def retrieve_setup(tmp_path, monkeypatch):
     """A data dir whose packets file holds the first subset question's packet."""
     from contextlib import contextmanager
 
-    from memory_base.serve import notes
-
     dataset = synthetic_dataset()
     for question in dataset:
         question["answer_session_ids"] = ["s1"]
@@ -801,7 +770,6 @@ def retrieve_setup(tmp_path, monkeypatch):
         lme.append_jsonl(out_path, [packet(q["question_id"]) for q in pending_questions])
         return []
 
-    monkeypatch.setattr(notes, "judge_note_content", notes.judge_note_content)
     monkeypatch.setattr(lme, "throwaway_postgres", database)
     monkeypatch.setattr(lme, "_retrieve_all", retrieve_all)
     revisions_captured_in_order(monkeypatch)
@@ -824,8 +792,8 @@ def test_retrieve_with_nothing_pending_runs_no_questions(tmp_path, monkeypatch):
 
 
 def test_hit_judgments_live_beside_the_run_packets():
-    assert lme.hit_judgments_path(Path("d"), "candidates-gate-off") == Path(
-        "d/hit-judgments-candidates-gate-off.jsonl"
+    assert lme.hit_judgments_path(Path("d"), "candidates") == Path(
+        "d/hit-judgments-candidates.jsonl"
     )
     assert lme.hit_judgments_path(Path("d"), "baseline") == Path("d/hit-judgments.jsonl")
 
@@ -837,7 +805,7 @@ def test_frontier_prints_the_grid_for_the_selected_run(tmp_path, capsys):
     ]
     dataset_path = tmp_path / "dataset.json"
     dataset_path.write_text(json.dumps(dataset))
-    run = "candidates-gate-off"
+    run = "candidates"
 
     def hit(sid, score):
         return {
@@ -861,7 +829,7 @@ def test_frontier_prints_the_grid_for_the_selected_run(tmp_path, capsys):
     lme.append_jsonl(lme.hit_judgments_path(tmp_path, run), judgments)
     lme.main(
         ["frontier", "--dataset", str(dataset_path), "--data-dir", str(tmp_path)]
-        + ["--gate", "off", "--read", "candidates"]
+        + ["--read", "candidates"]
     )
     out = capsys.readouterr().out
     assert "2 questions" in out

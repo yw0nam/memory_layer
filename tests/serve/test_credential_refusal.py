@@ -42,7 +42,6 @@ class Calls:
 def calls(monkeypatch):
     recorder = Calls()
     for target, name in [
-        (notes, "chat_json"),
         (notes, "embed_text"),
         (enrich, "chat_json"),
         (ingest_api, "summarize_and_tag"),
@@ -97,7 +96,7 @@ def _mcp_through_rest(monkeypatch):
 # ---- notes ------------------------------------------------------------------
 
 
-def test_save_note_refuses_a_credential_before_the_gate_embedding_and_db(calls, log_lines):
+def test_save_note_refuses_a_credential_before_the_embedding_and_db(calls, log_lines):
     with pytest.raises(notes.CredentialNoteError) as refused:
         asyncio.run(
             notes.save_note(

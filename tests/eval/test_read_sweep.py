@@ -225,7 +225,7 @@ def test_the_candidates_read_keeps_every_fused_candidate(monkeypatch):
         calls.append(kwargs)
         return [Hit(i) for i in range(search_module.FUSED_TOP)]
 
-    async def load(namespace, units, notes_by_unit, gate, writer=None):
+    async def load(namespace, units, notes_by_unit, writer=None):
         return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(search_module.FUSED_TOP)}
 
     async def create(namespace):
@@ -242,7 +242,7 @@ def test_the_candidates_read_keeps_every_fused_candidate(monkeypatch):
         "haystack_session_ids": ["s1"],
         "haystack_dates": [D1],
     }
-    assert lme.run_name("baseline", "off", "candidates") == sweep.CANDIDATES_RUN
+    assert lme.run_name("baseline", "candidates") == sweep.CANDIDATES_RUN
     packet = asyncio.run(lme.retrieve_question(question, {}, sweep.CANDIDATES_RUN))
     assert calls[0]["budget_tokens"] == sweep.CANDIDATES_BUDGET
     assert len(packet["hits"]) == search_module.FUSED_TOP
@@ -263,8 +263,8 @@ def test_probe_collection_searches_each_probe_in_the_question_namespace(monkeypa
         calls.append((query, kwargs))
         return [Hit(0)]
 
-    async def load(namespace, units, notes_by_unit, gate, writer=None):
-        calls.append((namespace, gate))
+    async def load(namespace, units, notes_by_unit, writer=None):
+        calls.append(namespace)
         return lme.LoadStats(), {}
 
     async def create(namespace):
@@ -275,8 +275,8 @@ def test_probe_collection_searches_each_probe_in_the_question_namespace(monkeypa
     monkeypatch.setattr(namespaces, "create_namespace", create)
     question = {"question_id": "q1", "haystack_session_ids": ["s1"], "haystack_dates": [D1]}
     probes = [{"intent": "off_topic", "query": "rename this variable please"}]
-    rows = asyncio.run(sweep.probe_question(question, {}, "off", probes))
-    assert calls[0] == ("lme-q1", "off")
+    rows = asyncio.run(sweep.probe_question(question, {}, probes))
+    assert calls[0] == "lme-q1"
     query, kwargs = calls[1]
     assert query == "rename this variable please"
     assert kwargs["namespaces"] == ["lme-q1"]
@@ -314,9 +314,9 @@ def test_export_writes_the_delivered_packets_for_the_answer_stage(tmp_path):
     lme.append_jsonl(lme.packets_path(source, sweep.CANDIDATES_RUN), [packet])
     out = tmp_path / "k3"
     sweep.export_packets(source, sweep.parse_setting("k3-f0.25"), "search", out)
-    (exported,) = lme.read_jsonl(lme.packets_path(out, "gate-off"))
+    (exported,) = lme.read_jsonl(lme.packets_path(out, "baseline"))
     assert ids(exported["hits"]) == ["n0", "n1"]
-    assert exported["run"] == "gate-off"
+    assert exported["run"] == "baseline"
     assert exported["read"] == {"setting": "k3-f0.25", "path": "search"}
     assert json.dumps(exported)
 

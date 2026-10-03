@@ -40,7 +40,6 @@ from starlette.testclient import TestClient
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api, mcp_server
 from memory_base.serve.notes import (
-    ContentVerdict,
     SimilarNotesError,
     build_note_row,
     save_note,
@@ -324,11 +323,6 @@ def _patch_note_deps(monkeypatch, conn):
     monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
     monkeypatch.setattr(notes, "ensure_schema_once", noop)
 
-    async def accepted_judge(content):
-        return ContentVerdict(accepted=True, reason="durable knowledge")
-
-    monkeypatch.setattr(notes, "judge_note_content", accepted_judge)
-
 
 def test_supersede_stamps_archived_by_with_the_new_notes_author(monkeypatch):
     conn = FakeConnection()
@@ -362,7 +356,7 @@ class ArchivedDuplicateConnection(FakeConnection):
         return "archived_at" not in query
 
 
-def test_supersede_of_the_note_with_identical_content_is_refused_before_gate_and_embed(
+def test_supersede_of_the_note_with_identical_content_is_refused_before_embed(
     monkeypatch,
 ):
     from memory_base.serve import notes
@@ -371,15 +365,10 @@ def test_supersede_of_the_note_with_identical_content_is_refused_before_gate_and
     _patch_note_deps(monkeypatch, conn)
     calls = []
 
-    async def counting_judge(content):
-        calls.append("judge")
-        return ContentVerdict(accepted=True, reason="durable knowledge")
-
     async def counting_embed(embedder, text):
         calls.append("embed")
         return "[0]"
 
-    monkeypatch.setattr(notes, "judge_note_content", counting_judge)
     monkeypatch.setattr(notes, "embed_text", counting_embed)
     content = "prefer ruff over flake8 for linting"
     own_id = build_note_row(content, "work", ["test"], NOW)["id"]

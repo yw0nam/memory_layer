@@ -1,4 +1,4 @@
-"""Unit coverage for the LongMemEval note extractor (fake model client, fake gate)."""
+"""Unit coverage for the LongMemEval note extractor (fake model client)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,6 @@ import json
 
 import pytest
 from longmemeval import extract
-
-from memory_base.serve.notes import ContentVerdict
 
 DATE_A = "2023/05/20 (Sat) 02:21"
 DATE_B = "2023/05/22 (Mon) 09:00"
@@ -34,18 +32,12 @@ class FakeClient:
         return json.dumps({"notes": []}), 100, 2
 
 
-async def accept(content):
-    return ContentVerdict(accepted="chatter" not in content, reason="judged")
-
-
 def unit(sid, date, text):
     return (sid, date, [{"role": "user", "content": text}, {"role": "assistant", "content": "ok"}])
 
 
-def run(units, data_dir, client, gate=accept):
-    return asyncio.run(
-        extract.extract_units(units, data_dir, client=client, gate=gate, concurrency=2)
-    )
+def run(units, data_dir, client):
+    return asyncio.run(extract.extract_units(units, data_dir, client=client, concurrency=2))
 
 
 def test_notes_and_session_records_are_written_per_unit(tmp_path):
@@ -53,15 +45,16 @@ def test_notes_and_session_records_are_written_per_unit(tmp_path):
         {
             "bike": [
                 {"content": "The user owns a red bike.", "kind": "note"},
-                {"content": "Some chatter.", "kind": "note"},
+                {"content": "x" * 4001, "kind": "note"},
             ]
         }
     )
     summary = run([unit("s1", DATE_A, "my bike"), unit("s2", DATE_A, "hello")], tmp_path, client)
     notes = extract.read_notes(tmp_path)
     sessions = extract.read_sessions(tmp_path)
-    assert {(n["session_id"], n["gate"]) for n in notes} == {("s1", "stored"), ("s1", "refused")}
-    assert all(n["date"] == DATE_A and n["gate_reason"] == "judged" for n in notes)
+    assert {(n["session_id"], n["outcome"]) for n in notes} == {("s1", "stored"), ("s1", "refused")}
+    assert [n["reason"] for n in notes][0] is None
+    assert all(n["date"] == DATE_A for n in notes)
     assert {(s["session_id"], s["notes"]) for s in sessions} == {("s1", 2), ("s2", 0)}
     assert all(s["in_tok"] == 100 and s["seconds"] >= 0 for s in sessions)
     assert summary["completed"] == 2
@@ -98,68 +91,6 @@ def test_resume_discards_a_partial_line_and_notes_of_uncompleted_units(tmp_path)
     assert sessions_path.read_text() == json.dumps(done) + "\n"
 
 
-def test_gate_failures_are_retried_and_never_recorded_as_a_verdict(tmp_path, monkeypatch):
-    monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
-    attempts = []
-
-    async def flaky(content):
-        attempts.append(content)
-        if len(attempts) < 3:
-            raise TimeoutError("gate down")
-        return ContentVerdict(accepted=True, reason="fine")
-
-    client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
-    run([unit("s1", DATE_A, "bike")], tmp_path, client, gate=flaky)
-    assert len(attempts) == 3
-    [note] = extract.read_notes(tmp_path)
-    assert note["gate"] == "stored"
-    [session] = extract.read_sessions(tmp_path)
-    assert session["gate_retries"] == 2
-
-
-def test_a_unit_whose_gate_stays_down_is_not_written(tmp_path, monkeypatch):
-    monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
-
-    async def down(content):
-        raise TimeoutError("gate down")
-
-    client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
-    summary = run([unit("s1", DATE_A, "bike")], tmp_path, client, gate=down)
-    assert summary["failed"] == 1
-    assert extract.read_notes(tmp_path) == []
-    assert extract.read_sessions(tmp_path) == []
-
-
-def test_a_gate_content_filter_refusal_stores_the_note_unjudged_like_production(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(extract, "RETRY_BACKOFF_SECONDS", 0)
-    attempts = []
-
-    async def filtered(content):
-        attempts.append(content)
-        raise provider_error("1301")
-
-    client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
-    summary = run([unit("s1", DATE_A, "bike")], tmp_path, client, gate=filtered)
-    assert summary["failed"] == 0
-    assert len(attempts) == 1
-    [note] = extract.read_notes(tmp_path)
-    assert note["gate"] == "stored"
-    assert note["gate_reason"] == "content gate unavailable: content_filter"
-    [session] = extract.read_sessions(tmp_path)
-    assert (session["stored"], session["gate_retries"]) == (1, 0)
-
-
-def test_with_the_gate_off_notes_are_recorded_unjudged_without_a_gate_call(tmp_path):
-    client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
-    run([unit("s1", DATE_A, "bike")], tmp_path, client, gate=None)
-    (note,) = extract.read_notes(tmp_path)
-    (session,) = extract.read_sessions(tmp_path)
-    assert (note["gate"], note["gate_reason"]) == ("unjudged", "gate off")
-    assert (session["stored"], session["gate_calls"]) == (0, 0)
-
-
 THREE_LABELS = [
     {"content": "A note.", "kind": "note"},
     {"content": "A decision.", "kind": "decision"},
@@ -167,69 +98,31 @@ THREE_LABELS = [
 ]
 
 
-def test_extraction_keeps_the_extractors_label_and_judges_every_note(tmp_path):
-    judged = []
-
-    async def recording_gate(content):
-        judged.append(content)
-        return ContentVerdict(accepted=True, reason="judged")
-
-    run([unit("s1", DATE_A, "bike")], tmp_path, FakeClient({"bike": THREE_LABELS}), recording_gate)
-    assert len(judged) == 3
+def test_extraction_keeps_the_extractors_label_and_stores_every_valid_note(tmp_path):
+    run([unit("s1", DATE_A, "bike")], tmp_path, FakeClient({"bike": THREE_LABELS}))
     notes = extract.read_notes(tmp_path)
     assert [n["kind"] for n in notes] == ["note", "decision", "episode"]
-    assert [n["gate"] for n in notes] == ["stored"] * 3
+    assert [n["outcome"] for n in notes] == ["stored"] * 3
+    [session] = extract.read_sessions(tmp_path)
+    assert session["stored"] == 3
 
 
-def test_gate_off_keeps_every_extracted_label(tmp_path):
-    run([unit("s1", DATE_A, "bike")], tmp_path, FakeClient({"bike": THREE_LABELS}), gate=None)
-    notes = extract.read_notes(tmp_path)
-    assert [n["kind"] for n in notes] == ["note", "decision", "episode"]
-    assert [n["gate"] for n in notes] == ["unjudged"] * 3
-
-
-def test_the_manifest_hashes_the_personal_judge_prompt(tmp_path, monkeypatch):
+def test_the_manifest_records_the_extract_note_counts(tmp_path, monkeypatch):
     from memory_base.eval import longmemeval as lme
-    from memory_base.serve import notes as notes_module
 
     dataset = tmp_path / "dataset.json"
     qid = single_session_dataset(dataset)
     client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
     client.model, client.provider = "glm-5.3-flash", "zai"
     monkeypatch.setattr(extract.OpenAIExtractor, "from_env", lambda env, model: client)
-    monkeypatch.setattr(extract, "record_gate_usage", lambda: None)
-    monkeypatch.setattr(notes_module, "judge_note_content", accept)
     manifest = tmp_path / "manifest.json"
     extract.main(
         ["--dataset", str(dataset), "--data-dir", str(tmp_path / "data"),
-         "--manifest", str(manifest), "--questions", qid, "--gate", "on"]
+         "--manifest", str(manifest), "--questions", qid]
     )  # fmt: skip
     section = lme.read_manifest(manifest)["extract"]
-    assert section["gate"]["judge_prompt_sha256"] == lme.prompt_sha(notes_module.JUDGE_PROMPT)
-
-
-def test_the_gate_off_flag_skips_the_gate_and_leaves_it_out_of_the_manifest(tmp_path, monkeypatch):
-    from memory_base.eval import longmemeval as lme
-    from memory_base.serve import notes as notes_module
-
-    dataset = tmp_path / "dataset.json"
-    qid = single_session_dataset(dataset)
-    client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
-    client.model, client.provider = "glm-5.3-flash", "zai"
-    monkeypatch.setattr(extract.OpenAIExtractor, "from_env", lambda env, model: client)
-
-    async def never(content):
-        raise AssertionError("gate called")
-
-    monkeypatch.setattr(notes_module, "judge_note_content", never)
-    manifest = tmp_path / "manifest.json"
-    extract.main(
-        ["--dataset", str(dataset), "--data-dir", str(tmp_path / "data"),
-         "--manifest", str(manifest), "--questions", qid, "--gate", "off"]
-    )  # fmt: skip
-    section = lme.read_manifest(manifest)["extract"]
-    assert section["gate"] is None
-    assert [n["gate"] for n in extract.read_notes(tmp_path / "data")] == ["unjudged"]
+    assert section["notes"] == {"total": 1, "stored": 1, "refused": 0}
+    assert [n["outcome"] for n in extract.read_notes(tmp_path / "data")] == ["stored"]
 
 
 def test_invalid_extractor_output_is_retried_then_parsed(tmp_path, monkeypatch):
@@ -242,13 +135,7 @@ def test_invalid_extractor_output_is_retried_then_parsed(tmp_path, monkeypatch):
     assert session["extract_retries"] == 1
 
 
-def test_notes_the_save_path_would_refuse_are_refused_without_a_gate_call(tmp_path):
-    gated = []
-
-    async def gate(content):
-        gated.append(content)
-        return ContentVerdict(accepted=True, reason="fine")
-
+def test_notes_the_save_path_would_refuse_are_recorded_refused(tmp_path):
     token = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
     client = FakeClient(
         {
@@ -260,13 +147,12 @@ def test_notes_the_save_path_would_refuse_are_refused_without_a_gate_call(tmp_pa
             ]
         }
     )
-    run([unit("s1", DATE_A, "bike")], tmp_path, client, gate=gate)
+    run([unit("s1", DATE_A, "bike")], tmp_path, client)
     notes = extract.read_notes(tmp_path)
-    assert gated == []
-    assert [n["gate"] for n in notes] == ["refused", "refused", "refused"]
-    assert notes[0]["gate_reason"].startswith("validation:")
-    assert notes[1]["gate_reason"].startswith("validation:")
-    assert notes[2]["gate_reason"].startswith("credential:")
+    assert [n["outcome"] for n in notes] == ["refused", "refused", "refused"]
+    assert notes[0]["reason"].startswith("validation:")
+    assert notes[1]["reason"].startswith("validation:")
+    assert notes[2]["reason"].startswith("credential:")
 
 
 def test_parse_extraction_rejects_a_reply_without_a_notes_list():
@@ -337,15 +223,12 @@ def single_session_dataset(path):
 
 def test_the_manifest_records_the_code_revision_from_the_start_of_the_run(tmp_path, monkeypatch):
     from memory_base.eval import longmemeval as lme
-    from memory_base.serve import notes as notes_module
 
     dataset = tmp_path / "dataset.json"
     qid = single_session_dataset(dataset)
     client = FakeClient({"bike": [{"content": "The user owns a red bike.", "kind": "note"}]})
     client.model, client.provider = "glm-5.3-flash", "zai"
     monkeypatch.setattr(extract.OpenAIExtractor, "from_env", lambda env, model: client)
-    monkeypatch.setattr(extract, "record_gate_usage", lambda: None)
-    monkeypatch.setattr(notes_module, "judge_note_content", accept)
     revisions_captured_in_order(monkeypatch)
     manifest = tmp_path / "manifest.json"
     extract.main(
@@ -393,7 +276,7 @@ def test_a_content_filter_refusal_completes_the_unit_with_no_notes_and_no_retry(
     [session] = extract.read_sessions(tmp_path)
     assert session["provider_refused"] == "content_filter"
     assert (session["session_id"], session["date"], session["notes"]) == ("s1", DATE_A, 0)
-    assert all(session[name] == 0 for name in ("in_tok", "out_tok", "gate_calls"))
+    assert all(session[name] == 0 for name in ("in_tok", "out_tok"))
     assert extract.prepare_resume(tmp_path) == {("s1", DATE_A)}
 
 
@@ -420,9 +303,7 @@ def test_the_extract_manifest_counts_provider_refused_units(tmp_path, monkeypatc
             "haystack_sessions": [[], []],
         }
     ]
-    args = argparse.Namespace(
-        data_dir=tmp_path, questions=None, concurrency=5, prompt="agent", gate="on"
-    )
+    args = argparse.Namespace(data_dir=tmp_path, questions=None, concurrency=5, prompt="agent")
     client = RaisingClient(None)
     manifest = extract._extract_manifest(
         args, selected, client, {"failed": 0}, {"commit": "c", "dirty": False}
@@ -447,9 +328,7 @@ def test_the_digest_prompt_carries_the_session_and_is_pinned_apart_from_the_agen
 def test_units_are_extracted_with_the_selected_prompt(tmp_path):
     client = FakeClient()
     asyncio.run(
-        extract.extract_units(
-            [unit("s1", DATE_A, "hi")], tmp_path, client=client, gate=accept, prompt="digest"
-        )
+        extract.extract_units([unit("s1", DATE_A, "hi")], tmp_path, client=client, prompt="digest")
     )
     assert len(client.calls) == 1 and "Storing nothing" in client.calls[0]
 

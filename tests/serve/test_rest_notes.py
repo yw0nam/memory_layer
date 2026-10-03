@@ -17,7 +17,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api, notes
-from memory_base.serve.notes import ContentVerdict, build_note_row, save_note
+from memory_base.serve.notes import build_note_row, save_note
 
 NOW = 1_700_000_000.0
 ID_RE = re.compile(r"^note:default:[0-9a-f]{16}$")
@@ -268,11 +268,6 @@ def _patch_note_deps(monkeypatch, conn):
     # test/CI environment configures.
     monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
     monkeypatch.setattr(notes, "ensure_schema_once", _noop)
-
-    async def accepted_judge(content):
-        return ContentVerdict(accepted=True, reason="durable knowledge")
-
-    monkeypatch.setattr(notes, "judge_note_content", accepted_judge)
 
 
 async def _noop(conn):
