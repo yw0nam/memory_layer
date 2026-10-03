@@ -92,6 +92,18 @@ _Avoid_: cluster, duplicate set
 A hash over a group's members and each member's prompt-visible fields (text, kind, author, save time, event date, tags, supersedes) and the procedure version; it changes whenever any of them does.
 _Avoid_: group id, fingerprint
 
+**Verdict**:
+An agent's judgement of one issued group — `keep`, `retire` (with the ids to archive), or `merge` (with the merged text) — with a reason and an idempotency key. The server accepts it only for a group it issues now under the same key and members, and checks it deterministically; it judges no content.
+_Avoid_: decision, ruling, review
+
+**Consolidation action**:
+The record of one accepted verdict in `consolidation_actions`: what it archived, what survived or replaced the members, the archived notes' metadata before the change, and whether it was undone. Its group key is the verdict cache; undo reverses exactly one action.
+_Avoid_: job, operation, change set
+
+**Lineage fields**:
+Note metadata that links a note to the notes that replaced or absorbed it: `supersedes` and `replaced_by` from a supersede save, `consolidated_into` on a note a consolidation archived, and `merged_from` and `merged_dates` on a merge's replacement.
+_Avoid_: history, provenance, links
+
 **Distilled**:
 Reduced to its high-signal form before storage. The property that qualifies content for the store at all.
 _Avoid_: summarized, cleaned, processed
