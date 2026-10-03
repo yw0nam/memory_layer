@@ -481,8 +481,14 @@ archived member gets `archived_at` = the apply time, `archived_by`, and
 archived members' metadata from before the change. A reused replacement and the survivors
 of a retire are not changed. A keep writes the action row only.
 
+Each verdict fails alone. An unexpected error while it is processed — the embedding call,
+or the database during its transaction — rolls that verdict back and returns it as
+`failed`, with the error's class and message (at most 300 characters) as the reason; the
+next verdict runs. `failed` is transient: the agent may resubmit the verdict with the same
+idempotency key.
+
 ```
-{"results": [{"group_key", "status": "applied" | "planned" | "cached" | "duplicate" | "stale" | "rejected",
+{"results": [{"group_key", "status": "applied" | "planned" | "cached" | "duplicate" | "stale" | "rejected" | "failed",
               "reason", "action_id" or null, "archived_ids", "survivor_ids",
               "replacement_id" or null, "current_groups" or null}]}
 ```
@@ -490,16 +496,18 @@ of a retire are not changed. A keep writes the action row only.
 The token check reads three kinds of token from each text, as exact strings:
 
 - numbers and dates: `2026-09-30`, `04:00`, `1,500`, `-5`, `0.72`, `1.5e3`; digits inside an
-  identifier (`abc123`, `note:x9`) are not tokens, and a numbered-list marker is;
+  identifier (`abc123`, `note:x9`, `v2.0`) are not tokens, nor is a numbered-list marker
+  at the start of a line (`1.` or `2)` followed by whitespace);
 - the content of each backticked span;
-- names: a word that starts with a capital and does not start a sentence (text start, or
-  after `.`, `!`, `?`, `:`, a newline, or a list marker), and any word with two or more
-  capitals (`GLM`, `PR`, `iOS`, `McDonald`).
+- names: a word other than `I` that starts with a capital and does not start a sentence
+  (text start, a newline, or whitespace after `.`, `!`, `?`, `:`, or a list marker; in
+  `foo.Bar`, `Bar` is a name), and any word with two or more capitals (`GLM`, `PR`, `iOS`,
+  `McDonald`).
 
 Every member's tokens must appear in the merged text, and every token of the merged text
 must appear in some member. It is a conservative filter, not proof of meaning: a changed
-name at the start of a sentence, a negation, and names in scripts without case (Korean)
-pass it.
+name at the start of a sentence, a negation, names in scripts without case (Korean), and a
+changed version inside an identifier (`v2.0` → `v3.1`) pass it.
 
 ## Consolidation undo and actions
 
@@ -512,7 +520,7 @@ authorization, and runs under the namespace lock with the touched rows locked.
 | action already undone | 200 with its recorded undo result |
 | keep action | 409, nothing to undo |
 | an archived note is gone, has another `archived_at`, or another `consolidated_into` | 409 with the reason; nothing changes |
-| a created replacement is gone or archived, an active note is reachable from it through `metadata.supersedes` links (through archived notes in between), or an action not undone lists it as a member | 409 with the reason; nothing changes |
+| a created replacement is gone or archived, an active note is reachable from it through `metadata.supersedes` links (through archived notes in between), or a retire or merge action not undone lists it as a member | 409 with the reason; nothing changes |
 | otherwise | 200: each archived note is active again with its metadata from before the action; a created replacement is archived with `archived_by` and `undone_action`; the action records `undone_at`, `undone_by`, and the result |
 
 A reused replacement and a retire's survivors are never checked or changed. An archive and

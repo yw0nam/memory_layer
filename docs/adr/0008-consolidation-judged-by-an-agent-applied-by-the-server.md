@@ -33,8 +33,9 @@ The server finds groups and applies changes; an agent judges each group.
   note; one equal to an archived note is refused.
 - Each verdict is applied alone, in one transaction under a per-namespace advisory lock,
   with the touched rows locked, after the server plans it again on the current rows. A plan
-  that changed since the preflight is `stale`. Retire and merge actions per run and
-  namespace are capped by the request.
+  that changed since the preflight is `stale`. An embedder or database error rolls back
+  only its verdict, which is reported `failed` and may be retried with the same idempotency
+  key. Retire and merge actions per run and namespace are capped by the request.
 - Every accepted verdict, keep included, is a row in `consolidation_actions`. Its
   idempotency key makes a retry a duplicate. Its group key is the verdict cache: a judged
   group is not issued again until a member changes or the procedure version changes. The
@@ -43,7 +44,9 @@ The server finds groups and applies changes; an agent judges each group.
   replacement carries `merged_from` and `merged_dates`; an agent's supersede writes
   `replaced_by` on the replaced note.
 - `POST /admin/consolidate/undo` reverses one action. It refuses with 409 and changes
-  nothing when a later change touched what it would reverse. An undone group stays out of
+  nothing when a later change touched what it would reverse: a changed archived note, or a
+  replacement that is archived, superseded by an active note, or a member of a later retire
+  or merge. A later keep does not block it. An undone group stays out of
   the issued groups.
 - The server calls no chat model for consolidation.
 
@@ -53,7 +56,8 @@ The server finds groups and applies changes; an agent judges each group.
   go past its action cap.
 - A merge is only as good as the agent's wording. The token check refuses a dropped or
   added number, date, backticked identifier, or mid-sentence name, but passes a changed
-  sentence-initial name, a negation, and names in scripts without case.
+  sentence-initial name, a negation, names in scripts without case, and a changed version
+  inside an identifier such as `v2.0`.
 - Consolidation never deletes a note, so `GET /admin/consolidate/actions` shows the full
   history with full text.
 - An applied verdict runs the namespace's exact neighbour search twice, so its cost grows
