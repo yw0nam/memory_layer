@@ -62,7 +62,7 @@ AUTHOR_LINE = f"Your author name for the memory tools is {AUTHOR}."
 SERVER_NAME = "memory-base"
 GATE_KEY_ENV = "SUB_ZAI_API_KEY"
 TOOL_PREFIX = f"mcp__{SERVER_NAME}__"
-SAVE_TOOLS = ("save_personal_memory", "save_work_memory")
+SAVE_TOOLS = ("save_memory",)
 # The production REST port; the eval backend must never be reached through it.
 PRODUCTION_PORTS = {8010}
 SESSION_TIMEOUT_SECONDS = 600.0
