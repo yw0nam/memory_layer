@@ -601,14 +601,16 @@ key's authors. An unknown field, a wrong type, or a value out of range is a 400.
 | case | response |
 |---|---|
 | the recomputed hash differs from `source_hash` | 409 `{"error": "stale", "source_hash": <current>}` |
-| `user`: content blank after stripping, carrying a credential, or longer than `max_chars` | 400 |
+| `user`: content blank after stripping while the slot has source notes, carrying a credential, or longer than `max_chars` | 400 |
 | `work-rules`: an id outside the slot's eligible notes | 400 naming the ids |
 | `work-rules`: rendered text longer than `max_chars` | 400 with `chars` and `max_chars`; nothing is truncated or rewritten |
 | the latest version has the same hash and the same content | 200 `{"status": "unchanged", "version"}` |
 | `dry_run` | 200 `{"status": "planned", "content", "chars"}` |
 | otherwise | 200 `{"status": "written", "version", "chars"}` |
 
-`user` stores the stripped content with every eligible note as its source ids.
+`user` stores the stripped content with every eligible note as its source ids. With no
+eligible notes it also accepts blank content and stores it empty, so a `user` profile does
+not outlive its sources: the empty version is not served.
 `work-rules` stores the rendering of the selected notes in the submitted order, `- ` and
 the note's text per note, its inner lines indented by two spaces, joined by newlines; its
 source ids are the selection. An empty selection stores empty content, which is not
