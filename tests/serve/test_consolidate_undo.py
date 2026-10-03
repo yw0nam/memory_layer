@@ -191,6 +191,7 @@ def test_undo_restores_prior_metadata_exactly_and_archives_the_created_replaceme
     assert result["restored_ids"] == [A, B, C]
     assert result["archived_ids"] == [R]
     assert result["undone_by"] == "consolidator"
+    assert result["undone_at"].endswith("+00:00")
     lock = next(c for c in conn.calls if c[0] == "execute")
     assert "pg_advisory_xact_lock" in lock[1] and lock[2] == (NS,)
     [locked] = [c for c in conn.calls if c[0] == "fetch"]

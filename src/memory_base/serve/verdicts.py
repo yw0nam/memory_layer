@@ -867,7 +867,7 @@ async def undo(action_id: int, author: str) -> dict[str, Any]:
                 "action_id": action_id,
                 "restored_ids": list(action["archived_ids"]),
                 "archived_ids": [] if replacement is None else [replacement],
-                "undone_at": now,
+                "undone_at": iso(now),
                 "undone_by": author,
             }
             await conn.execute(MARK_UNDONE_SQL, action_id, now, author, json.dumps(result))
