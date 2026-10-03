@@ -19,6 +19,16 @@ DEFAULT_NEIGHBORS = 5
 DEFAULT_MAX_GROUP = 6
 DEFAULT_MAX_GROUP_CHARS = 12000
 DEFAULT_LIMIT = 200
+# The threshold lies in (MIN_THRESHOLD, MAX_THRESHOLD]; every other bound is inclusive.
+MIN_THRESHOLD = 0.0
+MAX_THRESHOLD = 1.0
+MIN_NEIGHBORS = 1
+MAX_NEIGHBORS = 50
+MIN_MAX_GROUP = 2
+MAX_MAX_GROUP = 20
+MIN_MAX_GROUP_CHARS = 500
+MIN_LIMIT = 1
+MAX_LIMIT = 1000
 
 # Disabling index scans keeps the planner off the approximate HNSW index.
 EXACT_SEARCH_SETTINGS = (
@@ -75,12 +85,11 @@ class Group:
     members: tuple[str, ...]
     min_score: float
     max_score: float
-    acknowledged: bool
 
 
 @dataclass(frozen=True)
 class Deferred:
-    ids: tuple[str, ...]
+    id: str
     reason: str
 
 
@@ -131,6 +140,15 @@ async def read_snapshots(
         }
 
 
+def _acknowledged(pair: Pair, notes: dict[str, Note]) -> bool:
+    return pair.b in notes[pair.a].similar_ack or pair.a in notes[pair.b].similar_ack
+
+
+def acknowledged_pairs(pairs: Iterable[Pair], notes: dict[str, Note]) -> int:
+    """How many pairs a writer acknowledged as distinct facts through `similar_ack`."""
+    return sum(_acknowledged(pair, notes) for pair in pairs)
+
+
 def build_groups(
     pairs: Iterable[Pair],
     notes: dict[str, Note],
@@ -138,10 +156,13 @@ def build_groups(
     max_group: int,
     max_group_chars: int,
 ) -> tuple[list[Group], list[Deferred]]:
-    """Pack edges into cliques greedily and deterministically; report what stayed out."""
+    """Pack unacknowledged edges into cliques greedily and deterministically.
+
+    Returns the groups and every note with an edge that ended in no group.
+    """
     edges: dict[frozenset[str], float] = {}
     for pair in pairs:
-        if pair.score >= threshold and pair.a != pair.b:
+        if pair.score >= threshold and pair.a != pair.b and not _acknowledged(pair, notes):
             key = frozenset((pair.a, pair.b))
             edges[key] = max(edges.get(key, pair.score), pair.score)
     neighbours: dict[str, set[str]] = {}
@@ -153,12 +174,13 @@ def build_groups(
 
     assigned: set[str] = set()
     groups: list[Group] = []
-    provisional: list[Deferred] = []
+    reasons: dict[str, str] = {}
     for _, a, b in ordered:
         if a in assigned or b in assigned:
             continue
         if len(notes[a].text) + len(notes[b].text) > max_group_chars:
-            provisional.append(Deferred((a, b), "over max_group_chars"))
+            reasons.setdefault(a, "over max_group_chars")
+            reasons.setdefault(b, "over max_group_chars")
             continue
         members = [a, b]
         chars = len(notes[a].text) + len(notes[b].text)
@@ -175,10 +197,10 @@ def build_groups(
             added = False
             for _, candidate in candidates:
                 if len(members) >= max_group:
-                    provisional.append(Deferred((candidate,), "over max_group"))
+                    reasons.setdefault(candidate, "over max_group")
                     skipped.add(candidate)
                 elif chars + len(notes[candidate].text) > max_group_chars:
-                    provisional.append(Deferred((candidate,), "over max_group_chars"))
+                    reasons.setdefault(candidate, "over max_group_chars")
                     skipped.add(candidate)
                 else:
                     members.append(candidate)
@@ -188,35 +210,21 @@ def build_groups(
             if not added:
                 break
         assigned.update(members)
-        groups.append(_group(members, edges, notes))
+        groups.append(_group(members, edges))
 
     groups.sort(key=lambda g: (-g.max_score, g.members[0]))
-    return groups, _deferred(provisional, neighbours, assigned)
+    deferred = [
+        Deferred(note_id, reasons.get(note_id, "no clique"))
+        for note_id in sorted(neighbours)
+        if note_id not in assigned
+    ]
+    return groups, deferred
 
 
-def _group(members: list[str], edges: dict[frozenset[str], float], notes: dict[str, Note]) -> Group:
+def _group(members: list[str], edges: dict[frozenset[str], float]) -> Group:
     ordered = tuple(sorted(members))
-    member_pairs = [(a, b) for i, a in enumerate(ordered) for b in ordered[i + 1 :]]
-    scores = [edges[frozenset(pair)] for pair in member_pairs]
-    acknowledged = all(
-        b in notes[a].similar_ack or a in notes[b].similar_ack for a, b in member_pairs
-    )
-    return Group(ordered, min(scores), max(scores), acknowledged)
-
-
-def _deferred(
-    provisional: list[Deferred], neighbours: dict[str, set[str]], assigned: set[str]
-) -> list[Deferred]:
-    entries: set[Deferred] = set()
-    for entry in provisional:
-        ids = tuple(sorted(i for i in entry.ids if i not in assigned))
-        if ids:
-            entries.add(Deferred(ids, entry.reason))
-    explained = {i for entry in entries for i in entry.ids}
-    for note_id in neighbours:
-        if note_id not in assigned and note_id not in explained:
-            entries.add(Deferred((note_id,), "no clique"))
-    return sorted(entries, key=lambda entry: (entry.ids, entry.reason))
+    scores = [edges[frozenset((a, b))] for i, a in enumerate(ordered) for b in ordered[i + 1 :]]
+    return Group(ordered, min(scores), max(scores))
 
 
 def group_key(namespace: str, members: Iterable[Note]) -> str:
@@ -271,13 +279,12 @@ def namespace_report(
     max_group_chars: int,
     limit: int,
 ) -> dict[str, Any]:
-    """One namespace's section of the response: eligible groups up to `limit`, and deferrals."""
+    """One namespace's section of the response: groups up to `limit`, and deferrals."""
     groups, deferred = build_groups(pairs, notes, threshold, max_group, max_group_chars)
-    eligible = [g for g in groups if not g.acknowledged]
     return {
         "active_notes": len(notes),
         "pairs": len(pairs),
-        "acknowledged": len(groups) - len(eligible),
+        "acknowledged": acknowledged_pairs(pairs, notes),
         "groups": [
             {
                 "key": group_key(namespace, (notes[i] for i in g.members)),
@@ -287,8 +294,8 @@ def namespace_report(
                     _member(notes[i]) for i in sorted(g.members, key=lambda i: (notes[i].saved, i))
                 ],
             }
-            for g in eligible[:limit]
+            for g in groups[:limit]
         ],
-        "deferred": [{"ids": list(d.ids), "reason": d.reason} for d in deferred],
-        "truncated": len(eligible) > limit,
+        "deferred": [{"id": d.id, "reason": d.reason} for d in deferred],
+        "truncated": len(groups) > limit,
     }

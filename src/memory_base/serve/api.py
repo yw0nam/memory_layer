@@ -575,40 +575,42 @@ async def admin_consolidate_groups_route(request: Request) -> JSONResponse:
             "threshold",
             float,
             consolidate.DEFAULT_THRESHOLD,
-            lambda x: math.isfinite(x) and 0 < x <= 1,
-            "a number in (0, 1]",
+            lambda x: (
+                math.isfinite(x) and consolidate.MIN_THRESHOLD < x <= consolidate.MAX_THRESHOLD
+            ),
+            f"a number in ({consolidate.MIN_THRESHOLD:g}, {consolidate.MAX_THRESHOLD:g}]",
         )
         neighbors = _scalar(
             request,
             "neighbors",
             int,
             consolidate.DEFAULT_NEIGHBORS,
-            lambda x: 1 <= x <= 50,
-            "an integer between 1 and 50",
+            lambda x: consolidate.MIN_NEIGHBORS <= x <= consolidate.MAX_NEIGHBORS,
+            f"an integer between {consolidate.MIN_NEIGHBORS} and {consolidate.MAX_NEIGHBORS}",
         )
         max_group = _scalar(
             request,
             "max_group",
             int,
             consolidate.DEFAULT_MAX_GROUP,
-            lambda x: 2 <= x <= 20,
-            "an integer between 2 and 20",
+            lambda x: consolidate.MIN_MAX_GROUP <= x <= consolidate.MAX_MAX_GROUP,
+            f"an integer between {consolidate.MIN_MAX_GROUP} and {consolidate.MAX_MAX_GROUP}",
         )
         max_group_chars = _scalar(
             request,
             "max_group_chars",
             int,
             consolidate.DEFAULT_MAX_GROUP_CHARS,
-            lambda x: x >= 500,
-            "an integer of at least 500",
+            lambda x: x >= consolidate.MIN_MAX_GROUP_CHARS,
+            f"an integer of at least {consolidate.MIN_MAX_GROUP_CHARS}",
         )
         limit = _scalar(
             request,
             "limit",
             int,
             consolidate.DEFAULT_LIMIT,
-            lambda x: 1 <= x <= 1000,
-            "an integer between 1 and 1000",
+            lambda x: consolidate.MIN_LIMIT <= x <= consolidate.MAX_LIMIT,
+            f"an integer between {consolidate.MIN_LIMIT} and {consolidate.MAX_LIMIT}",
         )
     except ValueError as exc:
         return error(str(exc))
