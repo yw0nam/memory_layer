@@ -264,12 +264,17 @@ async def archive_rows(
 
 
 async def restore_rows(ids: list[str], namespaces: list[str] | None = None) -> int:
-    """Restore rows matching the supplied identifiers, scoped to namespaces."""
+    """Restore rows matching the supplied identifiers, scoped to namespaces.
+
+    Restoring clears the fields that recorded the archive: its author and the note that
+    replaced or absorbed the row.
+    """
     async with db.acquire() as conn:
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
-            SET archived_at = NULL, metadata = metadata - 'archived_by'
+            SET archived_at = NULL,
+                metadata = metadata - 'archived_by' - 'replaced_by' - 'consolidated_into'
             WHERE id = ANY($1::text[])
               AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             """,
