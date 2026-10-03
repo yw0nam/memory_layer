@@ -255,11 +255,14 @@ async def sources(namespace: str, slot: str) -> dict[str, Any]:
 
 
 def _content(request: Write, notes: list[Note]) -> tuple[str, list[str]]:
-    """The text to store and its source ids, or Refused."""
+    """The text to store and its source ids, or Refused.
+
+    Empty `user` content is accepted only when the slot has no source notes; it clears the slot.
+    """
     if request.slot == "user":
-        content = (request.content or "").strip()
-        if not content:
-            raise Refused("content must be non-blank")
+        content = request.content.strip()
+        if not content and notes:
+            raise Refused("content must be non-blank while the slot has source notes")
         secret = find_secret(content)
         if secret is not None:
             raise Refused(f"content contains a credential ({secret})")
@@ -271,7 +274,7 @@ def _content(request: Write, notes: list[Note]) -> tuple[str, list[str]]:
             )
         return content, [note.id for note in notes]
     eligible = {note.id: note for note in notes}
-    ids = request.note_ids or ()
+    ids = request.note_ids
     outside = [i for i in ids if i not in eligible]
     if outside:
         raise Refused(f"note_ids outside the slot's eligible notes: {', '.join(outside)}")
