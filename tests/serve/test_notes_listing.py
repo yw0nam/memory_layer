@@ -285,6 +285,28 @@ def test_list_notes_omits_the_superseded_key_when_null(monkeypatch):
     assert "supersedes" not in rows[0]
 
 
+def test_list_notes_reports_lineage_fields_when_recorded(monkeypatch):
+    metadata = {
+        "tags": ["infra"],
+        "replaced_by": "note:new0000000000",
+        "consolidated_into": ["note:r", "note:s"],
+        "merged_from": ["note:a", "note:b"],
+    }
+    conn = FakeConnection([_row(metadata=metadata)])
+    _patch_conn(monkeypatch, conn)
+    [row] = asyncio.run(notes.list_notes())
+    assert row["replaced_by"] == "note:new0000000000"
+    assert row["consolidated_into"] == ["note:r", "note:s"]
+    assert row["merged_from"] == ["note:a", "note:b"]
+
+
+def test_list_notes_omits_lineage_fields_when_unrecorded(monkeypatch):
+    conn = FakeConnection([_row()])
+    _patch_conn(monkeypatch, conn)
+    [row] = asyncio.run(notes.list_notes())
+    assert not {"replaced_by", "consolidated_into", "merged_from"} & set(row)
+
+
 def test_list_notes_filters_by_author(monkeypatch):
     conn = FakeConnection([])
     _patch_conn(monkeypatch, conn)
