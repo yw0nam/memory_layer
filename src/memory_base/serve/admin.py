@@ -244,7 +244,7 @@ async def archive_rows(
     namespaces: list[str] | None = None,
     archived_by: str | None = None,
 ) -> int:
-    """Archive active rows matching the supplied identifiers, scoped to namespaces."""
+    """Archive active agent notes matching the supplied identifiers, scoped to namespaces."""
     stamp = (
         ", metadata = metadata || jsonb_build_object('archived_by', $4::text)"
         if archived_by is not None
@@ -256,7 +256,7 @@ async def archive_rows(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
             SET archived_at = $2{stamp}
-            WHERE id = ANY($1::text[]) AND archived_at IS NULL
+            WHERE source_type = 'agent_note' AND id = ANY($1::text[]) AND archived_at IS NULL
               AND ($3::text[] IS NULL OR namespace = ANY($3::text[]))
             """,
             ids,
@@ -289,14 +289,14 @@ async def restore_rows(ids: list[str], namespaces: list[str] | None = None) -> i
 
 
 async def rows_by_ids(ids: list[str], namespaces: list[str] | None = None) -> list[dict]:
-    """Return lifecycle fields for rows matching the supplied identifiers, scoped to namespaces."""
+    """Return lifecycle fields for agent notes matching the supplied identifiers, scoped to namespaces."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
             SELECT id, chunk_kind AS kind, archived_at, hit_count, last_hit_at,
                    metadata->>'archived_by' AS archived_by
             FROM "{PG_SCHEMA}".memory_chunks
-            WHERE id = ANY($1::text[])
+            WHERE source_type = 'agent_note' AND id = ANY($1::text[])
               AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             ORDER BY id
             """,
