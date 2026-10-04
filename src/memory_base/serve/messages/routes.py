@@ -138,3 +138,20 @@ async def cancel_route(request: Request) -> JSONResponse:
     except store.MessageNotFound as exc:
         return error(str(exc), 404)
     return JSONResponse(row)
+
+
+async def purge_route(request: Request) -> JSONResponse:
+    """Preview, or delete with confirm, the claimed, cancelled, superseded, and expired messages.
+
+    Deletion is permanent and releases idempotency keys, so a member key purges only the
+    namespaces it owns — enough to unregister one, not enough to drain a shared namespace.
+    """
+    key = request.state.key
+    try:
+        body = await json_body(request)
+    except Exception as exc:
+        return error(f"invalid JSON body: {exc}")
+    owner = None if key.is_admin else key.label
+    if body.get("confirm") is True:
+        return JSONResponse({"deleted": await store.delete_terminal_messages(owner)})
+    return JSONResponse({"messages_to_delete": await store.terminal_messages(owner)})

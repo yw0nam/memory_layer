@@ -314,24 +314,25 @@ out-of-scope id a 404.
 `GET /admin/duplicates` lists near-duplicate agent-note pairs by cosine with each side's author,
 `GET /admin/notes` lists old agent notes, and `POST /admin/restore` clears `archived_at`
 and `metadata.archived_by`, `replaced_by`, and `consolidated_into`. `POST /admin/archive` archives the agent notes named by `ids`, or
-the cold agent notes when `ids` is omitted; the no-ids preview distinguishes
-`notes_to_archive` from `messages_to_delete`, and the confirm pass archives the notes
-and deletes claimed, cancelled, superseded, and expired messages, which also releases
+the cold agent notes when `ids` is omitted; its preview lists them as `notes_to_archive`.
+`POST /admin/messages/purge` previews claimed, cancelled, superseded, and expired
+messages as `messages_to_delete`, and its confirm pass deletes them, which also releases
 their idempotency keys. Archiving a note is reversible and deleting a message is not,
-so a member key purges the message half only in the namespaces it owns — enough to
-drain one before unregistering it, not enough to touch a shared namespace. An admin
-key purges everywhere. Every mutating admin route previews by default and
-acts only with `{"confirm": true}`, and each is reachable over MCP as
-`list_memory_duplicates`, `archive_notes`, `restore_notes`, and `delete_notes`.
-`archive_notes` always names ids, so the message purge is a REST-only call.
+so a member key purges messages only in the namespaces it owns — enough to drain one
+before unregistering it, not enough to touch a shared namespace. An admin key purges
+everywhere. Every mutating admin route previews by default and
+acts only with `{"confirm": true}`. The note routes are reachable over MCP as
+`list_memory_duplicates`, `archive_notes`, `restore_notes`, and `delete_notes`; the
+message purge is a REST-only call.
 
 Namespace deletion counts messages as content: a namespace with messages — pending or
 terminal — cannot be unregistered until they are removed. `POST /admin/notes/move`
 rewrites a note's id to `note:<target>:<hash>`.
 
-Retirement is manual: no scheduler runs in-process, so terminal rows survive until a
-caller runs the `/admin/archive` preview and confirm pass. A deployment that wants it
-periodic drives that pair from outside, e.g. a cron job or an n8n schedule.
+Retirement is manual: no scheduler runs in-process, so cold notes stay active until a
+caller runs the `/admin/archive` preview and confirm pass, and terminal messages survive
+until a caller runs the `/admin/messages/purge` pair. A deployment that wants either
+periodic drives it from outside, e.g. a cron job or an n8n schedule.
 
 ## Consolidation groups
 

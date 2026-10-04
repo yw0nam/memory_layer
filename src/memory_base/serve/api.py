@@ -33,7 +33,6 @@ from memory_base.serve import consolidate
 from memory_base.serve import ingest_api
 from memory_base.serve import job_store
 from memory_base.serve import keys
-from memory_base.serve.messages import store as message_store
 from memory_base.serve import namespaces
 from memory_base.serve import notes
 from memory_base.serve import repos
@@ -597,14 +596,7 @@ async def admin_consolidate_actions_route(request: Request) -> JSONResponse:
 
 
 async def admin_archive_route(request: Request) -> JSONResponse:
-    """Preview or archive cold notes and delete terminal messages, in scope.
-
-    The preview distinguishes the two halves: notes_to_archive and
-    messages_to_delete (claimed, cancelled, superseded, or expired). Deleting a
-    message is permanent, so a member key purges only the namespaces it owns —
-    enough to unregister one, not enough to drain a shared namespace. An ids
-    call selects rows in the caller's scope and never touches messages.
-    """
+    """Preview or archive the agent notes named by ids, or the cold ones, in scope."""
     key = request.state.key
     try:
         body = await json_body(request)
@@ -631,18 +623,15 @@ async def admin_archive_route(request: Request) -> JSONResponse:
             return error("ids must refer only to rows in the caller's scope")
         if body.get("confirm") is True:
             archived = await admin.archive_rows(ids, now, namespaces=scope, archived_by=author)
-            return JSONResponse({"archived": archived, "deleted": 0})
-        return JSONResponse({"notes_to_archive": rows, "messages_to_delete": []})
+            return JSONResponse({"archived": archived})
+        return JSONResponse({"notes_to_archive": rows})
     candidates = await admin.archive_candidates(now, namespaces=scope)
-    owner = None if key.is_admin else key.label
     if body.get("confirm") is True:
         archived = await admin.archive_rows(
             [row["id"] for row in candidates], now, namespaces=scope, archived_by=author
         )
-        deleted = await message_store.delete_terminal_messages(owner)
-        return JSONResponse({"archived": archived, "deleted": deleted})
-    terminal = await message_store.terminal_messages(owner)
-    return JSONResponse({"notes_to_archive": candidates, "messages_to_delete": terminal})
+        return JSONResponse({"archived": archived})
+    return JSONResponse({"notes_to_archive": candidates})
 
 
 async def admin_restore_route(request: Request) -> JSONResponse:
@@ -836,6 +825,7 @@ app = Starlette(
         Route("/admin/consolidate/undo", admin_consolidate_undo_route, methods=["POST"]),
         Route("/admin/consolidate/actions", admin_consolidate_actions_route, methods=["GET"]),
         Route("/admin/archive", admin_archive_route, methods=["POST"]),
+        Route("/admin/messages/purge", message_routes.purge_route, methods=["POST"]),
         Route("/admin/restore", admin_restore_route, methods=["POST"]),
     ],
 )
