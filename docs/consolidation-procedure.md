@@ -108,7 +108,7 @@ Decide one action per group:
 
 | action | when |
 |---|---|
-| `keep` | unsure; or the members state different facts, decisions made at different times, or a history worth keeping; or no merge passes the merge requirement below |
+| `keep` | the members state different facts, decisions made at different times, or a history worth keeping; or no merge passes the merge requirement below |
 | `retire` | one or more members are fully covered by another member; `retire_ids` lists the covered ones and at least one member stays |
 | `merge` | no single member covers the group, and a merged text passes the merge requirement below |
 
@@ -143,6 +143,7 @@ only type 7, the agent judges whether that member is about the same subject as t
 one specific rule, event, task, or decision that the member directly qualifies. Sharing a
 person, project, tool, or vocabulary is not the same subject. Same subject: `merge`, when
 the merge requirement passes and within `merge_max_chars`. Different subject: `keep`.
+Unsure: the group is left for the owner (below).
 
 In every other case of more than one type, the more conservative verdict wins (`keep` over
 `merge`). `retire` still takes precedence over `merge` whenever one member fully covers the
@@ -173,12 +174,13 @@ A verdict's `reason` starts with `type N: `, where N is one integer from 1 to 8:
 whose verdict the group got (for a merge kept for length, the merge type). The report
 counts types from this prefix.
 
-**Groups the guidelines do not settle.** Apply the table, the rules, and the conservative
-rule first. When two readings, each supported by specific passages of the members, still
-lead to different final actions, and one missing fact (what a member refers to, a rule's
-scope, or which rule takes precedence) would decide between them, submit no verdict for the
-group. Different type labels with the same action do not count. List the group in the report
-for the owner's decision with the passages, the two readings, and the missing fact. A held group blocks nothing on
+**Groups left for the owner.** When the agent is unsure which action this section gives a
+group, it asks the owner instead of choosing: which type fits, whether a member is about the
+same subject, whether two rules conflict, whether a later member identifies an earlier
+decision. Unsure means the agent can read the members in two ways that lead to different
+actions; two type labels with the same action do not count. Submit no verdict for such a
+group. List it in the report for the owner's decision with the passages behind each
+reading and the recommended action. A held group blocks nothing on
 the server; without a recorded verdict it is offered again, and listed again, on every
 run until the owner decides. The owner gives the decision in a later start instruction
 (group key and verdict). That run submits it in its own mode, with its own run id, and
@@ -282,8 +284,8 @@ counts per status: applied, planned, cached, duplicate, stale, rejected, failed
 counts of verdicts per overlap type (1-8), read from the `type N: ` prefix of each reason
 each merge kept as "over merge_max_chars": group_key and member ids
 each group left for the owner's decision: group_key, namespace, each member's id and a
-  one-line summary, the passages behind each reading, the missing fact, the candidate
-  verdicts, the recommended one and why
+  one-line summary, the passages behind each reading, the candidate verdicts, the
+  recommended one and why
 each applied action: action_id, namespace, action, group (member ids), reason
 each rejected verdict: group_key and reason
 each failed verdict after its retry: group_key and reason
