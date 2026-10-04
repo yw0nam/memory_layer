@@ -108,9 +108,9 @@ Decide one action per group:
 
 | action | when |
 |---|---|
-| `keep` | unsure; or the members state different facts, decisions made at different times, or a history worth keeping |
+| `keep` | unsure; or the members state different facts, decisions made at different times, or a history worth keeping; or no merge passes the merge requirement below |
 | `retire` | one or more members are fully covered by another member; `retire_ids` lists the covered ones and at least one member stays |
-| `merge` | no single member covers the group and one note can state every fact |
+| `merge` | no single member covers the group, and a merged text passes the merge requirement below |
 
 **Default verdict by overlap type.** Apply this table first, then the rules below. Check
 the members' kinds first: a group whose members have different kinds is type 8 (`keep`),
@@ -118,28 +118,41 @@ regardless of any other type it also fits.
 
 | # | overlap type | how to recognize it | verdict |
 |---|---|---|---|
-| 1 | the same rule or preference, restated or extended at different times | members state one rule or preference in different wording or with additions, saved on different days | `merge`; the text states the rule once in its latest wording, keeps tokens found only in older wordings, and keeps every date that appears in a member's text, adding none from a note's saved time or `occurred_at` (the token check rejects it as added); `keep` when the merged note would hold two rules that could conflict |
+| 1 | the same rule or preference, restated or extended at different times | members state one rule or preference in different wording or with additions, saved on different days | `merge`; the text states the rule once in its latest wording, keeps tokens found only in older wordings, and keeps every date that appears in a member's text, adding none from a note's saved time or `occurred_at` (the token check rejects it as added); `keep` when the rules conflict (below) |
 | 2 | usage policy and implementation facts of one feature | one member says how or when to use the feature, another says how it is built or configured | `keep` |
 | 3 | an episode narrative and a rule or preference extracted from the same session | one member narrates what happened, another states the rule or preference that came out of it | `merge`, written around the rule; the text keeps every fact of the episode |
-| 4 | notes from the same day's work, or updates of one task | members share a task and a working day, or later members update earlier ones | `merge` |
-| 5 | a decision and a later decision that replaces or freezes it, both members of the group | the later member names the earlier decision and changes its status | `merge` into one note that states the decision's content and its current status with both dates; `keep` when the merged note would hold two rules that could conflict |
+| 4 | notes from the same day's work, or updates of one task | members describe the same specific task on the same working day, or a later member explicitly updates that task's earlier state; a shared date or project alone is type 7 | `merge` |
+| 5 | a decision and a later decision that replaces or freezes it, both members of the group | the later member explicitly identifies a decision another member states and replaces, withdraws, or freezes it; a shared subject and a later date are not enough, and a reference to some other decision or configuration does not qualify | `merge` into one note that states the decision's content and its current status, with each decision date that appears in a member's text; `keep` when the rules conflict (below) |
 | 6 | episodes or periodic reflections dated on different days that describe different events | each member records its own events | `keep` |
 | 7 | different facts that share only a topic, project, tool, or vocabulary, including a later decision whose earlier decision is outside the group | no member restates, extends, or replaces another member | `keep` |
 | 8 | members of different kinds | `personal` and `work` members in one group | `keep`; the server rejects a cross-kind merge |
 
-When a merge type (1, 3, 4, or 5) joins some members and one member fits only type 7, the
-agent judges whether that member is about the same subject as the others. Same subject:
-`merge`, within `merge_max_chars`. Different subject: `keep`. When the agent cannot tell,
-the group is left for the owner (below). In every other case of more than one type, the
-more conservative verdict wins (`keep` over `merge`). `retire` still takes precedence over `merge` whenever one member fully covers the
-others. A merge carries every token of its members, so it reduces the number of notes, not
-their length.
+**Merge requirement.** A merged text states shared content once, removes at least one
+repeated statement, keeps every distinct fact and every protected token of the members, and
+is shorter than the member texts joined with single spaces. The server's token check
+compares the sets of protected tokens, so a token repeated across members is written once.
+A merge that only joins the members is not a merge; the verdict is `keep`.
+
+**Conflicting rules.** Two rules conflict when they apply to the same work and prescribe
+incompatible choices, or when stating both needs a scope or precedence that no member
+states. A rule that a later member explicitly replaces (type 5) does not conflict with its
+replacement once the merged text marks it as replaced.
+
+**Same subject.** When a merge type (1, 3, 4, or 5) joins some members and one member fits
+only type 7, the agent judges whether that member is about the same subject as the others:
+one specific rule, event, task, or decision that the member directly qualifies. Sharing a
+person, project, tool, or vocabulary is not the same subject. Same subject: `merge`, when
+the merge requirement passes and within `merge_max_chars`. Different subject: `keep`.
+
+In every other case of more than one type, the more conservative verdict wins (`keep` over
+`merge`). `retire` still takes precedence over `merge` whenever one member fully covers the
+others.
 
 Rules:
 
 - Prefer `retire` over `merge`.
-- When a newer member replaces a value that an older member states, and the older one is
-  not a history worth keeping, retire the older one.
+- When a newer member explicitly replaces a value that an older member states, and the
+  surviving members keep every other distinct fact of the older one, retire the older one.
 - A merged text keeps every number, date, identifier, name, possessive, and condition of
   the members, copied exactly as a member writes it, adds nothing, and is written in the
   members' language. Keep backticks around identifiers; do not change how a person is named
@@ -160,9 +173,12 @@ A verdict's `reason` starts with `type N: `, where N is one integer from 1 to 8:
 whose verdict the group got (for a merge kept for length, the merge type). The report
 counts types from this prefix.
 
-**Groups the guidelines do not settle.** When no single overlap type fits a group, or the
-type is clear but this section does not decide between two verdicts, submit no verdict for
-the group. List it in the report for the owner's decision. A held group blocks nothing on
+**Groups the guidelines do not settle.** Apply the table, the rules, and the conservative
+rule first. When two readings, each supported by specific passages of the members, still
+lead to different final actions, and one missing fact (what a member refers to, a rule's
+scope, or which rule takes precedence) would decide between them, submit no verdict for the
+group. Different type labels with the same action do not count. List the group in the report
+for the owner's decision with the passages, the two readings, and the missing fact. A held group blocks nothing on
 the server; without a recorded verdict it is offered again, and listed again, on every
 run until the owner decides. The owner gives the decision in a later start instruction
 (group key and verdict). That run submits it in its own mode, with its own run id, and
@@ -182,7 +198,9 @@ the owner's decision.
 
 ### 3. Verify every merge
 
-Before submitting a merge, open a fresh context that did not write it (a separate subagent
+Before verification, count characters: a merged text not shorter than the member texts
+joined with single spaces fails the merge requirement and becomes `keep`. Then, before
+submitting a merge, open a fresh context that did not write it (a separate subagent
 or a new session). Give it only the member texts and the merged text, and ask whether
 every fact of the members is preserved and nothing is added or changed. The check must
 include negations ("not", "never", "without"), which the server's token check cannot
@@ -264,7 +282,8 @@ counts per status: applied, planned, cached, duplicate, stale, rejected, failed
 counts of verdicts per overlap type (1-8), read from the `type N: ` prefix of each reason
 each merge kept as "over merge_max_chars": group_key and member ids
 each group left for the owner's decision: group_key, namespace, each member's id and a
-  one-line summary, the candidate verdicts, the recommended one and why
+  one-line summary, the passages behind each reading, the missing fact, the candidate
+  verdicts, the recommended one and why
 each applied action: action_id, namespace, action, group (member ids), reason
 each rejected verdict: group_key and reason
 each failed verdict after its retry: group_key and reason
