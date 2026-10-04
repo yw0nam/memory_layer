@@ -145,7 +145,8 @@ person, project, tool, or vocabulary is not the same subject. Same subject: `mer
 the merge requirement passes and within `merge_max_chars`. Different subject: `keep`.
 Unsure: the group is left for the owner (below).
 
-In every other case of more than one type, the more conservative verdict wins (`keep` over
+In every other case where the agent is sure that more than one type fits, the more
+conservative verdict wins (`keep` over
 `merge`). `retire` still takes precedence over `merge` whenever one member fully covers the
 others.
 
