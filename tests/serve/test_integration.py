@@ -20,7 +20,8 @@ import pytest
 from memory_base.core.config import EMB_DIM, PG_SCHEMA, db_url, vector_literal
 from memory_base.core.db import acquire, close_pool, get_pool
 from memory_base.retrieval.search import PER_FILE_CAP, search
-from memory_base.serve import mcp_server, repos
+from memory_base.serve import mcp_server
+from memory_base.serve.repos import cache as repo_cache
 from memory_base.serve.notes.store import build_note_row, save_note
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("indexed_code")]
@@ -44,7 +45,9 @@ def indexed_code(tmp_path_factory):
     git_env.update(GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
     for args in (["init", "-q", "-b", "main"], ["add", "."], ["commit", "-q", "-m", "seed"]):
         subprocess.run(["git", "-C", str(origin), *args], check=True, env=git_env)
-    asyncio.run(repos._run_ingest_job(str(origin), repos.CACHE_ROOT / "seed", None, "test"))
+    asyncio.run(
+        repo_cache._run_ingest_job(str(origin), repo_cache.CACHE_ROOT / "seed", None, "test")
+    )
 
 
 async def _delete_note(note_id: str) -> None:

@@ -9,7 +9,9 @@ import time
 import httpx
 import pytest
 
-from memory_base.serve import api, auth, repos
+from memory_base.serve import api, auth
+from memory_base.serve.common import job_store
+from memory_base.serve.repos import cache as repo_cache
 
 
 def _delete(path, api_key="test-key"):
@@ -46,7 +48,7 @@ class _CapturingAdmit:
     async def admit(self, **kwargs):
         self.called = True
         now = time.time()
-        return repos.RepoJob(
+        return job_store.RepoJob(
             job_id="job-1",
             name=kwargs["name"],
             action=kwargs["action"],
@@ -69,12 +71,12 @@ def _own(cache, name, label):
 
 
 def test_owner_key_removes_its_repo_returns_202(monkeypatch, tmp_path):
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
     (tmp_path / "repo").mkdir()
     _own(tmp_path, "repo", "owner-label")
     _auth_map(monkeypatch, {"owner-key": _identity("owner-label")})
     admitted = _CapturingAdmit()
-    monkeypatch.setattr(repos.job_store, "admit_repo", admitted.admit)
+    monkeypatch.setattr(job_store, "admit_repo", admitted.admit)
 
     response = _delete("/repos/repo", api_key="owner-key")
 
@@ -83,12 +85,12 @@ def test_owner_key_removes_its_repo_returns_202(monkeypatch, tmp_path):
 
 
 def test_different_non_admin_key_gets_403_and_no_job(monkeypatch, tmp_path):
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
     (tmp_path / "repo").mkdir()
     _own(tmp_path, "repo", "owner-label")
     _auth_map(monkeypatch, {"intruder-key": _identity("intruder-label")})
     admitted = _CapturingAdmit()
-    monkeypatch.setattr(repos.job_store, "admit_repo", admitted.admit)
+    monkeypatch.setattr(job_store, "admit_repo", admitted.admit)
 
     response = _delete("/repos/repo", api_key="intruder-key")
 
@@ -97,11 +99,11 @@ def test_different_non_admin_key_gets_403_and_no_job(monkeypatch, tmp_path):
 
 
 def test_admin_key_removes_an_owned_repo_returns_202(monkeypatch, tmp_path):
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
     (tmp_path / "repo").mkdir()
     _own(tmp_path, "repo", "someone-else")
     admitted = _CapturingAdmit()
-    monkeypatch.setattr(repos.job_store, "admit_repo", admitted.admit)
+    monkeypatch.setattr(job_store, "admit_repo", admitted.admit)
 
     response = _delete("/repos/repo")  # default test-key (conftest) is an admin
 
@@ -110,10 +112,10 @@ def test_admin_key_removes_an_owned_repo_returns_202(monkeypatch, tmp_path):
 
 
 def test_admin_key_removes_an_orphaned_repo_returns_202(monkeypatch, tmp_path):
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
     (tmp_path / "repo").mkdir()
     admitted = _CapturingAdmit()
-    monkeypatch.setattr(repos.job_store, "admit_repo", admitted.admit)
+    monkeypatch.setattr(job_store, "admit_repo", admitted.admit)
 
     response = _delete("/repos/repo")
 
@@ -122,11 +124,11 @@ def test_admin_key_removes_an_orphaned_repo_returns_202(monkeypatch, tmp_path):
 
 
 def test_non_admin_removal_of_an_unowned_repo_gets_403(monkeypatch, tmp_path):
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
     (tmp_path / "repo").mkdir()
     _auth_map(monkeypatch, {"member-key": _identity("member-label")})
     admitted = _CapturingAdmit()
-    monkeypatch.setattr(repos.job_store, "admit_repo", admitted.admit)
+    monkeypatch.setattr(job_store, "admit_repo", admitted.admit)
 
     response = _delete("/repos/repo", api_key="member-key")
 
@@ -140,7 +142,7 @@ def test_non_admin_removal_of_an_unowned_repo_gets_403(monkeypatch, tmp_path):
 def test_first_ingest_records_owner_and_reingest_does_not_transfer(monkeypatch, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
-    monkeypatch.setattr(repos, "CACHE_ROOT", cache)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", cache)
     dest = cache / "repo"
 
     async def fake_clone(url, d, branch):
@@ -156,32 +158,38 @@ def test_first_ingest_records_owner_and_reingest_does_not_transfer(monkeypatch, 
     async def fake_index():
         return None
 
-    monkeypatch.setattr(repos, "clone", fake_clone)
-    monkeypatch.setattr(repos, "_run_git", fake_run_git)
-    monkeypatch.setattr(repos, "pull", fake_pull)
-    monkeypatch.setattr(repos, "run_index", fake_index)
+    monkeypatch.setattr(repo_cache, "clone", fake_clone)
+    monkeypatch.setattr(repo_cache, "_run_git", fake_run_git)
+    monkeypatch.setattr(repo_cache, "pull", fake_pull)
+    monkeypatch.setattr(repo_cache, "run_index", fake_index)
 
-    asyncio.run(repos._run_ingest_job("https://example.com/repo.git", dest, None, "first-owner"))
+    asyncio.run(
+        repo_cache._run_ingest_job("https://example.com/repo.git", dest, None, "first-owner")
+    )
     owner_file = cache / ".owners" / "repo"
     assert owner_file.read_text() == "first-owner"
 
-    asyncio.run(repos._run_ingest_job("https://example.com/repo.git", dest, None, "second-owner"))
+    asyncio.run(
+        repo_cache._run_ingest_job("https://example.com/repo.git", dest, None, "second-owner")
+    )
     assert owner_file.read_text() == "first-owner"
 
 
 def test_failed_clone_records_no_owner(monkeypatch, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
-    monkeypatch.setattr(repos, "CACHE_ROOT", cache)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", cache)
     dest = cache / "repo"
 
     async def failing_clone(url, d, branch):
-        raise repos.RepoError("boom")
+        raise repo_cache.RepoError("boom")
 
-    monkeypatch.setattr(repos, "clone", failing_clone)
+    monkeypatch.setattr(repo_cache, "clone", failing_clone)
 
-    with pytest.raises(repos.RepoError):
-        asyncio.run(repos._run_ingest_job("https://example.com/repo.git", dest, None, "someone"))
+    with pytest.raises(repo_cache.RepoError):
+        asyncio.run(
+            repo_cache._run_ingest_job("https://example.com/repo.git", dest, None, "someone")
+        )
 
     assert not (cache / ".owners" / "repo").exists()
 
@@ -191,13 +199,13 @@ def test_remove_job_deletes_the_owner_record(monkeypatch, tmp_path):
     dest = cache / "repo"
     dest.mkdir(parents=True)
     _own(cache, "repo", "alice")
-    monkeypatch.setattr(repos, "CACHE_ROOT", cache)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", cache)
 
     async def fake_index():
         return None
 
-    monkeypatch.setattr(repos, "run_index", fake_index)
-    asyncio.run(repos._run_remove_job(dest))
+    monkeypatch.setattr(repo_cache, "run_index", fake_index)
+    asyncio.run(repo_cache._run_remove_job(dest))
 
     assert not (cache / ".owners" / "repo").exists()
     assert not dest.exists()
@@ -211,13 +219,13 @@ def test_list_repos_includes_owner_field(tmp_path, monkeypatch):
     (cache / "repo").mkdir(parents=True)
     (cache / "repo2").mkdir(parents=True)
     _own(cache, "repo", "alice")
-    monkeypatch.setattr(repos, "CACHE_ROOT", cache)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", cache)
 
     async def no_counts():
         return {}
 
-    monkeypatch.setattr(repos, "_repo_chunk_counts", no_counts)
+    monkeypatch.setattr(repo_cache, "_repo_chunk_counts", no_counts)
 
-    listed = {entry["name"]: entry for entry in asyncio.run(repos.list_repos())}
+    listed = {entry["name"]: entry for entry in asyncio.run(repo_cache.list_repos())}
     assert listed["repo"]["owner"] == "alice"
     assert listed["repo2"]["owner"] is None

@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from memory_base.serve import mcp_server
+from memory_base.serve.documents import tools as document_tools
 from memory_base.serve.common import rest_client
 from memory_base.serve.notes import tools as note_tools
 
@@ -602,7 +603,7 @@ def test_ingest_document_429_non_json_body_raises_generic_value_error(monkeypatc
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="backend returned 429"):
-        asyncio.run(mcp_server.ingest_document("content", "guide.md"))
+        asyncio.run(document_tools.ingest_document("content", "guide.md"))
 
 
 def test_ingest_document_posts_text_as_multipart_and_returns_job_reference(monkeypatch):
@@ -623,7 +624,7 @@ def test_ingest_document_posts_text_as_multipart_and_returns_job_reference(monke
 
     _patch_client(monkeypatch, handler)
     result = asyncio.run(
-        mcp_server.ingest_document(
+        document_tools.ingest_document(
             "# Guide",
             "guide.md",
             document_id="guide",
@@ -649,7 +650,7 @@ def test_ingest_document_forwards_tags_as_repeated_form_fields(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.ingest_document("# Guide", "guide.md", tags=["zx bank", "policy"]))
+    asyncio.run(document_tools.ingest_document("# Guide", "guide.md", tags=["zx bank", "policy"]))
     assert captured["body"].count(b'name="tags"') == 2
     assert b"zx bank" in captured["body"]
     assert b"policy" in captured["body"]
@@ -666,14 +667,14 @@ def test_ingest_document_omitted_tags_send_no_tags_field(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.ingest_document("# Guide", "guide.md"))
+    asyncio.run(document_tools.ingest_document("# Guide", "guide.md"))
     assert b'name="tags"' not in captured["body"]
 
 
 @pytest.mark.parametrize("filename", ["guide.pdf", "slides.pptx"])
 def test_ingest_document_mcp_rejects_binary_formats(filename):
     with pytest.raises(ValueError, match="text formats only"):
-        asyncio.run(mcp_server.ingest_document("content", filename))
+        asyncio.run(document_tools.ingest_document("content", filename))
 
 
 def test_ingest_document_mcp_accepts_csv(monkeypatch):
@@ -687,7 +688,7 @@ def test_ingest_document_mcp_accepts_csv(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.ingest_document("name,value\none,1\n", "table.csv"))
+    asyncio.run(document_tools.ingest_document("name,value\none,1\n", "table.csv"))
     assert b"name,value" in captured["body"]
 
 
@@ -706,7 +707,7 @@ def test_remove_document_deletes_with_default_namespace(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    result = asyncio.run(mcp_server.remove_document("guide.md"))
+    result = asyncio.run(document_tools.remove_document("guide.md"))
     assert captured["method"] == "DELETE"
     assert captured["path"] == "/ingest/documents/guide.md"
     assert captured["params"] == {}
@@ -723,7 +724,7 @@ def test_remove_document_forwards_namespace(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.remove_document("guide.md", namespace="team-a"))
+    asyncio.run(document_tools.remove_document("guide.md", namespace="team-a"))
     assert captured["params"] == {"namespace": "team-a"}
 
 
@@ -735,7 +736,7 @@ def test_remove_document_403_raises_backend_error_message(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="only the document owner or an admin"):
-        asyncio.run(mcp_server.remove_document("guide.md"))
+        asyncio.run(document_tools.remove_document("guide.md"))
 
 
 def test_remove_document_404_raises_backend_error_message(monkeypatch):
@@ -744,7 +745,7 @@ def test_remove_document_404_raises_backend_error_message(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="document not found"):
-        asyncio.run(mcp_server.remove_document("ghost.md"))
+        asyncio.run(document_tools.remove_document("ghost.md"))
 
 
 def test_save_tool_schemas_offer_no_conversation_link():

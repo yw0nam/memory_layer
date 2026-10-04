@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import pytest
 
-from memory_base.serve import auth, ingest_api, job_store
+from memory_base.serve import auth
+from memory_base.serve.documents import pipeline as document_pipeline
+from memory_base.serve.documents import store as document_store
 
 TEST_API_KEY = "test-key"
 
@@ -40,8 +42,7 @@ def _stub_api_key_auth(request, monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolated_ingest_spool(monkeypatch, tmp_path):
     spool = tmp_path / "ingest-spool"
-    monkeypatch.setattr(ingest_api, "INGEST_SPOOL", spool)
-    monkeypatch.setattr(job_store, "INGEST_SPOOL", spool)
+    monkeypatch.setattr(document_pipeline, "INGEST_SPOOL", spool)
 
 
 @pytest.fixture(autouse=True)
@@ -56,4 +57,4 @@ def _stub_existing_document_owner(request, monkeypatch):
     async def fake_existing_document_owner(document_id, namespace="default", schema=None):
         return False, None
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", fake_existing_document_owner)
+    monkeypatch.setattr(document_store, "existing_document_owner", fake_existing_document_owner)

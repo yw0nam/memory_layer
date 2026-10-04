@@ -59,7 +59,9 @@ if not _emb_reachable():
 pytestmark = pytest.mark.integration
 
 from memory_base.retrieval.search import search  # noqa: E402
-from memory_base.serve import api, repos  # noqa: E402
+from memory_base.serve import api  # noqa: E402
+from memory_base.serve.common import job_store  # noqa: E402
+from memory_base.serve.repos import cache as repo_cache  # noqa: E402
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "t",
@@ -122,7 +124,7 @@ class _CapturingBacklog:
         self.job = None
 
     async def admit(self, **kwargs):
-        self.job = repos.RepoJob(**kwargs)
+        self.job = job_store.RepoJob(**kwargs)
         return self.job
 
     async def get(self, job_id, *, kind):
@@ -162,10 +164,10 @@ def isolated_stack(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_URL", it_db)
     monkeypatch.setenv("COCOINDEX_DB", str(tmp_path / "cocoindex_state"))
     monkeypatch.setenv("REPO_CACHE", str(cache))
-    monkeypatch.setattr(repos, "CACHE_ROOT", cache)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", cache)
     backlog = _CapturingBacklog()
-    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
-    monkeypatch.setattr(repos.job_store, "get_job", backlog.get)
+    monkeypatch.setattr(job_store, "admit_repo", backlog.admit)
+    monkeypatch.setattr(job_store, "get_job", backlog.get)
     try:
         yield cache
     finally:
@@ -181,8 +183,8 @@ def test_multi_repo_index_search_and_teardown(isolated_stack, tmp_path):
 
     # Local paths are intentionally rejected by the URL trust boundary, so drive
     # the ingest runner directly (clone + index) rather than POST /repos.
-    asyncio.run(repos._run_ingest_job(str(origin_a), cache / "repo_a", None, "test"))
-    asyncio.run(repos._run_ingest_job(str(origin_b), cache / "repo_b", None, "test"))
+    asyncio.run(repo_cache._run_ingest_job(str(origin_a), cache / "repo_a", None, "test"))
+    asyncio.run(repo_cache._run_ingest_job(str(origin_b), cache / "repo_b", None, "test"))
 
     listed = {r["name"]: r for r in _get("/repos").json()}
     assert {"repo_a", "repo_b"} <= set(listed)
@@ -207,7 +209,7 @@ def test_multi_repo_index_search_and_teardown(isolated_stack, tmp_path):
     assert _get(f"/repos/jobs/{body['job_id']}").status_code == 200
 
     # Deterministic teardown: run the remove runner, then assert rows are gone.
-    asyncio.run(repos._run_remove_job(cache / "repo_a"))
+    asyncio.run(repo_cache._run_remove_job(cache / "repo_a"))
     assert asyncio.run(_repo_row_count("repo_a")) == 0
     assert asyncio.run(_repo_row_count("repo_b")) > 0
     assert "repo_a" not in {r["name"] for r in _get("/repos").json()}

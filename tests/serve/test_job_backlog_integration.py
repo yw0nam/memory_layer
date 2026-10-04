@@ -13,7 +13,9 @@ import pytest
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
-from memory_base.serve import api, auth, ingest_api, job_store
+from memory_base.serve import api, auth, namespaces
+from memory_base.serve.common import job_store
+from memory_base.serve.documents import pipeline as document_pipeline
 
 pytestmark = pytest.mark.integration
 
@@ -355,8 +357,8 @@ def test_fifty_sequential_uploads_are_durably_accepted_and_reach_terminal(monkey
 
         spool = tmp_path / "spool"
         monkeypatch.setattr(auth, "authenticate_request", authenticate)
-        monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", namespace_exists)
-        monkeypatch.setattr(ingest_api, "INGEST_SPOOL", spool)
+        monkeypatch.setattr(namespaces, "namespace_exists", namespace_exists)
+        monkeypatch.setattr(document_pipeline, "INGEST_SPOOL", spool)
         job_ids = []
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app),
@@ -410,7 +412,9 @@ def test_fifty_sequential_uploads_are_durably_accepted_and_reach_terminal(monkey
     asyncio.run(scenario())
 
 
-def test_startup_recovery_requeues_valid_spool_and_fails_missing_spool(tmp_path):
+def test_document_recovery_requeues_valid_spool_fails_missing_spool_and_skips_repos(
+    monkeypatch, tmp_path
+):
     async def scenario():
         marker = uuid.uuid4().hex
         key_id = f"it-{marker}"
@@ -440,7 +444,16 @@ def test_startup_recovery_requeues_valid_spool_and_fails_missing_spool(tmp_path)
                     missing,
                     str(missing_path),
                 )
-                await job_store.recover_and_prune(spool)
+                repo = f"it-{marker}-repo"
+                await connection.execute(
+                    f'''INSERT INTO "{PG_SCHEMA}".jobs
+                    (job_id, kind, status, key_id, key_label, created_at, updated_at, name, action)
+                    VALUES ($1, 'repo', 'running', $2, 'label', now(), now(), $1, 'remove')''',
+                    repo,
+                    key_id,
+                )
+                monkeypatch.setattr(document_pipeline, "INGEST_SPOOL", spool)
+                await document_pipeline.recover()
                 recovered = await connection.fetchrow(
                     f'SELECT status, stage, filename FROM "{PG_SCHEMA}".jobs WHERE job_id = $1',
                     valid,
@@ -455,6 +468,12 @@ def test_startup_recovery_requeues_valid_spool_and_fails_missing_spool(tmp_path)
                 }
                 assert failed["status"] == "failed"
                 assert "spool file is missing" in failed["error"]
+                assert (
+                    await connection.fetchval(
+                        f'SELECT status FROM "{PG_SCHEMA}".jobs WHERE job_id = $1', repo
+                    )
+                    == "running"
+                )
                 claimed = await job_store.claim_job(
                     "document", connection=second, only_key_prefix=key_id
                 )

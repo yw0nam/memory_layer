@@ -7,7 +7,7 @@ import os
 import subprocess
 
 from memory_base.ingest import code
-from memory_base.serve import repos
+from memory_base.serve.repos import cache as repo_cache
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "t",
@@ -63,12 +63,12 @@ def test_commit_time_falls_back_to_file_mtime_when_git_has_nothing(tmp_path):
 
 
 def test_clone_keeps_full_history_so_commit_times_exist():
-    args = repos._clone_args("https://example.com/x.git", "/dest", None)
+    args = repo_cache._clone_args("https://example.com/x.git", "/dest", None)
     assert "--filter=blob:none" in args
     assert "--depth" not in args, "a shallow clone collapses every file to one commit time"
 
 
 def test_clone_still_honours_branch():
-    args = repos._clone_args("https://example.com/x.git", "/dest", "dev")
+    args = repo_cache._clone_args("https://example.com/x.git", "/dest", "dev")
     assert args[args.index("--branch") + 1] == "dev"
     assert args[-2:] == ["https://example.com/x.git", "/dest"]

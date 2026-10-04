@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, ClassVar
 
 from loguru import logger
@@ -19,10 +19,8 @@ from memory_base.core.schema import ensure_schema_once
 
 INGEST_BACKLOG_PER_KEY = int(os.getenv("INGEST_BACKLOG_PER_KEY", "500"))
 INGEST_BACKLOG_MAX = int(os.getenv("INGEST_BACKLOG_MAX", "2000"))
-INGEST_MAX_CONCURRENT_JOBS = int(os.getenv("INGEST_MAX_CONCURRENT_JOBS", "2"))
 REPO_MAX_QUEUED = int(os.getenv("REPO_MAX_QUEUED", "10"))
 JOB_RETENTION_SECONDS = int(os.getenv("JOB_RETENTION_SECONDS", str(7 * 24 * 60 * 60)))
-INGEST_SPOOL = Path(os.getenv("INGEST_SPOOL", "/data/ingest-spool"))
 WORKER_IDLE_SECONDS = 1.0
 TERMINAL_STATUSES = frozenset({"succeeded", "no_op", "failed"})
 # key_ids under this prefix are invisible to an unscoped claim_job call; only a
@@ -66,6 +64,57 @@ class JobBase:
         return payload
 
 
+@dataclass
+class IngestJob(JobBase):
+    document_id: str
+    namespace: str = "default"
+    origin: str | None = None
+    mode: str = "upsert"
+    filename: str = ""
+    spool_path: str = ""
+    key_id: str = ""
+    key_label: str = ""
+    tags: list[str] = field(default_factory=list)
+    stage: str = "queued"
+    chunks_total: int = 0
+    chunks_done: int = 0
+    chunks_dropped: int = 0
+    rows_written: int = 0
+    enrichment_retries: int = 0
+    content_hash: str | None = None
+
+    RESPONSE_EXCLUDE: ClassVar[frozenset[str]] = frozenset(
+        {"namespace", "origin", "mode", "filename", "spool_path", "key_id", "key_label", "tags"}
+    )
+
+    def touch(self, *, status: str | None = None, stage: str | None = None) -> None:
+        if status is not None:
+            self.status = status
+        if stage is not None:
+            self.stage = stage
+        self.updated_at = time.time()
+
+    @property
+    def kind(self) -> str:
+        return "document"
+
+
+@dataclass
+class RepoJob(JobBase):
+    name: str
+    action: str
+    url: str | None = None
+    branch: str | None = None
+    key_id: str = ""
+    key_label: str = ""
+
+    RESPONSE_EXCLUDE: ClassVar[frozenset[str]] = frozenset({"url", "branch", "key_id", "key_label"})
+
+    @property
+    def kind(self) -> str:
+        return "repo"
+
+
 @asynccontextmanager
 async def _connection(connection=None):
     if connection is not None:
@@ -79,11 +128,7 @@ async def _connection(connection=None):
 def _row_to_job(row: Any):
     values = dict(row)
     if values["kind"] == "document":
-        from memory_base.serve.ingest_api import IngestJob
-
         return IngestJob.from_row(values)
-    from memory_base.serve.repos import RepoJob
-
     return RepoJob.from_row(values)
 
 
@@ -358,93 +403,23 @@ async def list_document_jobs(
     return [_row_to_job(row) for row in rows]
 
 
-async def document_spool_rows() -> list[dict[str, Any]]:
+async def recover_and_prune(kind: str) -> None:
+    """Requeue a kind's interrupted jobs and apply startup retention."""
     async with _connection() as conn:
-        rows = await conn.fetch(
-            f'''SELECT spool_path, status FROM "{PG_SCHEMA}".jobs
-            WHERE kind = 'document' AND spool_path IS NOT NULL'''
-        )
-    return [dict(row) for row in rows]
-
-
-async def prune_spool(spool_root: Path) -> None:
-    """Remove terminal and unreferenced spool files during startup."""
-    rows = await document_spool_rows()
-    active = {row["spool_path"] for row in rows if row["status"] not in TERMINAL_STATUSES}
-    terminal = {row["spool_path"] for row in rows if row["status"] in TERMINAL_STATUSES}
-    for name in terminal:
-        Path(name).unlink(missing_ok=True)
-    if spool_root.exists():
-        for path in spool_root.iterdir():
-            if path.is_file() and str(path) not in active:
-                path.unlink(missing_ok=True)
-
-
-async def recover_and_prune(spool_root: Path = INGEST_SPOOL) -> None:
-    """Requeue interrupted work, fail missing uploads, and apply startup retention."""
-    async with _connection() as conn:
-        rows = await conn.fetch(
-            f'''SELECT job_id, spool_path FROM "{PG_SCHEMA}".jobs
-            WHERE kind = 'document' AND status <> ALL($1::text[])''',
-            list(TERMINAL_STATUSES),
-        )
-        missing = [row["job_id"] for row in rows if not Path(row["spool_path"]).is_file()]
         async with conn.transaction():
-            if missing:
-                await conn.execute(
-                    f'''UPDATE "{PG_SCHEMA}".jobs
-                    SET status = 'failed', stage = 'done',
-                        error = 'document spool file is missing during startup recovery',
-                        updated_at = now()
-                    WHERE job_id = ANY($1::text[])''',
-                    missing,
-                )
             await conn.execute(
                 f'''UPDATE "{PG_SCHEMA}".jobs
-                SET status = 'queued', stage = CASE WHEN kind = 'document' THEN 'queued' ELSE stage END,
-                    updated_at = now()
-                WHERE status <> ALL($1::text[]) AND NOT (job_id = ANY($2::text[]))''',
+                SET status = 'queued', updated_at = now()
+                WHERE kind = $1 AND status <> ALL($2::text[])''',
+                kind,
                 list(TERMINAL_STATUSES),
-                missing,
             )
             await _prune_rows(conn)
-    await prune_spool(spool_root)
-
-
-async def initialize() -> None:
-    INGEST_SPOOL.mkdir(parents=True, exist_ok=True)
-    async with db.acquire() as conn:
-        await ensure_schema_once(conn)
-    await recover_and_prune(INGEST_SPOOL)
-
-
-async def _run_claimed(job) -> None:
-    if job.kind == "document":
-        from memory_base.serve.ingest_api import run_document_job
-
-        try:
-            await run_document_job(job)
-            await mark_terminal(job, job.status)
-        except Exception as exc:
-            await mark_terminal(job, "failed", str(exc) or type(exc).__name__)
-        Path(job.spool_path).unlink(missing_ok=True)
-        return
-
-    from memory_base.serve import repos
-
-    try:
-        destination = repos.CACHE_ROOT / job.name
-        if job.action == "ingest":
-            await repos._run_ingest_job(job.url, destination, job.branch, job.key_label)
-        else:
-            await repos._run_remove_job(destination)
-        await mark_terminal(job, "succeeded")
-    except Exception as exc:
-        await mark_terminal(job, "failed", str(exc) or type(exc).__name__)
 
 
 async def worker_loop(
     kind: str,
+    run: Callable[[Any], Awaitable[None]],
     *,
     stop: asyncio.Event | None = None,
     claim: Callable[[str], Awaitable[Any | None]] | None = None,
@@ -465,19 +440,12 @@ async def worker_loop(
             await asyncio.sleep(WORKER_IDLE_SECONDS)
             continue
         try:
-            await _run_claimed(job)
+            await run(job)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.error("{} worker execution persistence failed: {}", kind, exc)
             await asyncio.sleep(WORKER_IDLE_SECONDS)
-
-
-def start_workers() -> list[asyncio.Task[None]]:
-    return [
-        *(asyncio.create_task(worker_loop("document")) for _ in range(INGEST_MAX_CONCURRENT_JOBS)),
-        asyncio.create_task(worker_loop("repo")),
-    ]
 
 
 async def stop_workers(tasks: list[asyncio.Task[None]]) -> None:

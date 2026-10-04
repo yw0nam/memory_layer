@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from memory_base.core.config import SERVICE_TIMEOUT_SECONDS
-from memory_base.serve import mcp_server
+from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.common import rest_client
 
 
@@ -24,7 +24,7 @@ def _patch_client(monkeypatch, handler):
 def _list_repos_error(monkeypatch, handler) -> str:
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError) as exc:
-        asyncio.run(mcp_server.list_repos())
+        asyncio.run(repo_tools.list_repos())
     return str(exc.value)
 
 

@@ -7,7 +7,7 @@ import asyncio
 import httpx
 import pytest
 
-from memory_base.serve import mcp_server
+from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.common import rest_client
 
 
@@ -35,7 +35,7 @@ def test_ingest_repo_returns_job_id_and_status_url(monkeypatch):
         )
 
     monkeypatch.setattr(rest_client, "client", _mock_client(handler))
-    result = asyncio.run(mcp_server.ingest_repo("https://github.com/o/repo.git"))
+    result = asyncio.run(repo_tools.ingest_repo("https://github.com/o/repo.git"))
     assert result == {"job_id": "j1", "status_url": "/repos/jobs/j1"}
 
 
@@ -54,7 +54,7 @@ def test_remove_repo_returns_job_id_and_status_url(monkeypatch):
         )
 
     monkeypatch.setattr(rest_client, "client", _mock_client(handler))
-    result = asyncio.run(mcp_server.remove_repo("repo"))
+    result = asyncio.run(repo_tools.remove_repo("repo"))
     assert result == {"job_id": "j2", "status_url": "/repos/jobs/j2"}
 
 
@@ -68,7 +68,7 @@ def test_list_repos_returns_backend_list(monkeypatch):
         )
 
     monkeypatch.setattr(rest_client, "client", _mock_client(handler))
-    result = asyncio.run(mcp_server.list_repos())
+    result = asyncio.run(repo_tools.list_repos())
     assert result[0]["name"] == "repo"
 
 
@@ -78,4 +78,4 @@ def test_ingest_repo_raises_backend_error(monkeypatch):
 
     monkeypatch.setattr(rest_client, "client", _mock_client(handler))
     with pytest.raises(ValueError, match="invalid url"):
-        asyncio.run(mcp_server.ingest_repo("ftp://bad"))
+        asyncio.run(repo_tools.ingest_repo("ftp://bad"))

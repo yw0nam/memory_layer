@@ -178,8 +178,8 @@ def test_scratch_schema_scope_restores_on_exception():
 
 
 def test_ingest_fixture_threads_schema_to_run_document_job(monkeypatch, tmp_path):
-    """ingest_api.PG_SCHEMA reads are contained in run_document_job's own call graph,
-    so the eval passes schema explicitly instead of rebinding ingest_api's global."""
+    """The document pipeline's PG_SCHEMA reads are contained in run_document_job's own call
+    graph, so the eval passes schema explicitly instead of rebinding the store's global."""
     from memory_base.eval import retrieval as eval_module
 
     captured = {}
@@ -188,7 +188,7 @@ def test_ingest_fixture_threads_schema_to_run_document_job(monkeypatch, tmp_path
         captured["schema"] = schema
         job.status = "succeeded"
 
-    monkeypatch.setattr(eval_module.ingest_api, "run_document_job", fake_run_document_job)
+    monkeypatch.setattr(eval_module.document_pipeline, "run_document_job", fake_run_document_job)
     fixture = tmp_path / "note.md"
     fixture.write_text("hello", encoding="utf-8")
 

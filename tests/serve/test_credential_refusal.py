@@ -12,7 +12,11 @@ from loguru import logger
 
 from memory_base.adapters import document
 from memory_base.ingest import enrich
-from memory_base.serve import api, ingest_api, job_store, mcp_server
+from memory_base.serve import api, namespaces
+from memory_base.serve.documents import tools as document_tools
+from memory_base.serve.common import job_store
+from memory_base.serve.documents import pipeline as document_pipeline
+from memory_base.serve.documents import store as document_store
 from memory_base.serve.common import rest_client
 from memory_base.serve.notes import store, tools
 
@@ -46,10 +50,10 @@ def calls(monkeypatch):
     for target, name in [
         (store, "embed_text"),
         (enrich, "chat_json"),
-        (ingest_api, "summarize_and_tag"),
-        (ingest_api, "embed_text"),
-        (ingest_api, "replace_document_rows"),
-        (ingest_api, "_existing_document_state"),
+        (document_pipeline, "summarize_and_tag"),
+        (document_pipeline, "embed_text"),
+        (document_store, "replace_document_rows"),
+        (document_store, "existing_document_state"),
         (job_store, "admit_document"),
     ]:
         recorder.forbid(monkeypatch, target, name)
@@ -64,7 +68,7 @@ def calls(monkeypatch):
         return name == "default"
 
     monkeypatch.setattr(store.db, "acquire", acquire)
-    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", namespace_exists)
+    monkeypatch.setattr(namespaces, "namespace_exists", namespace_exists)
     return recorder
 
 
@@ -189,7 +193,9 @@ def test_rest_upload_refuses_a_credential_in_its_fields_before_admission(
     assert f"contains a credential ({secret_type})" in response.json()["error"]
     assert AWS_KEY not in response.text and GITLAB_TOKEN not in response.text
     assert calls.made == []
-    assert not ingest_api.INGEST_SPOOL.exists() or not any(ingest_api.INGEST_SPOOL.iterdir())
+    assert not document_pipeline.INGEST_SPOOL.exists() or not any(
+        document_pipeline.INGEST_SPOOL.iterdir()
+    )
 
 
 @pytest.mark.parametrize(
@@ -203,7 +209,7 @@ def test_rest_upload_refuses_a_credential_in_its_fields_before_admission(
 def test_mcp_ingest_document_surfaces_the_field_refusal(monkeypatch, calls, kwargs, secret_type):
     _mcp_through_rest(monkeypatch)
     with pytest.raises(ValueError) as refused:
-        asyncio.run(mcp_server.ingest_document(content="plain body", **kwargs))
+        asyncio.run(document_tools.ingest_document(content="plain body", **kwargs))
     assert f"contains a credential ({secret_type})" in str(refused.value)
     assert AWS_KEY not in str(refused.value) and GITLAB_TOKEN not in str(refused.value)
     assert calls.made == []
@@ -214,7 +220,7 @@ def test_mcp_ingest_document_surfaces_the_field_refusal(monkeypatch, calls, kwar
 
 def _queued_job(spool, filename, mode="force"):
     now = time.time()
-    return ingest_api.IngestJob(
+    return job_store.IngestJob(
         job_id="job-1",
         document_id=filename.lower(),
         namespace="default",
@@ -263,7 +269,7 @@ def test_worker_fails_a_credential_document_whole_and_cleans_the_spool(
     spool = make_spool(tmp_path)
     job = _queued_job(spool, spool.name)
 
-    asyncio.run(job_store._run_claimed(job))
+    asyncio.run(document_pipeline.run_claimed(job))
 
     expected = "document contains a credential (AWS Access Key); remove it and upload again"
     assert terminal == [("failed", expected)]
@@ -281,15 +287,15 @@ def test_same_hash_reupload_of_a_credential_document_is_still_refused(
     monkeypatch, tmp_path, calls, make_spool
 ):
     spool = make_spool(tmp_path)
-    same_hash = ingest_api._file_hash(spool)
+    same_hash = document_pipeline._file_hash(spool)
 
     async def existing(document_id, namespace="default", schema=None):
         return same_hash, True
 
-    monkeypatch.setattr(ingest_api, "_existing_document_state", existing)
+    monkeypatch.setattr(document_store, "existing_document_state", existing)
     job = _queued_job(spool, spool.name, mode="upsert")
     with pytest.raises(document.CredentialDocumentError) as refused:
-        asyncio.run(ingest_api.run_document_job(job))
+        asyncio.run(document_pipeline.run_document_job(job))
     assert refused.value.secret_type == "AWS Access Key"
     assert AWS_KEY not in str(refused.value)
     assert job.status != "no_op"

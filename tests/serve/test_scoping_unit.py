@@ -6,7 +6,8 @@ from pathlib import Path
 
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth, ingest_api
+from memory_base.serve import api, auth, namespaces
+from memory_base.serve.common import job_store
 from memory_base.serve.notes import store
 
 HOME = "alice-notes"
@@ -97,14 +98,14 @@ def test_ingest_document_omitted_namespace_lands_in_key_home(monkeypatch):
 
     async def admit(**kwargs):
         captured.update(kwargs)
-        return ingest_api.IngestJob(**kwargs)
+        return job_store.IngestJob(**kwargs)
 
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", admit)
+    monkeypatch.setattr(job_store, "admit_document", admit)
 
     async def fake_namespace_exists(name):
         return name == HOME
 
-    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+    monkeypatch.setattr(namespaces, "namespace_exists", fake_namespace_exists)
     client = _non_admin_client(monkeypatch)
     response = client.post("/ingest/document", files={"file": ("guide.md", b"content")})
     assert response.status_code == 202

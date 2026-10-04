@@ -17,7 +17,10 @@ import time
 import httpx
 import pytest
 
-from memory_base.serve import api, repos
+from memory_base.serve import api
+from memory_base.serve.common import job_store
+from memory_base.serve.repos import cache as repo_cache
+from memory_base.serve.repos import routes as repo_routes
 
 
 def _post(path, **kwargs):
@@ -40,7 +43,7 @@ class AcceptingBacklog:
 
     async def admit(self, **kwargs):
         now = time.time()
-        self.job = repos.RepoJob(
+        self.job = job_store.RepoJob(
             job_id="job-1",
             name=kwargs["name"],
             action=kwargs["action"],
@@ -82,11 +85,11 @@ def test_dir_size_sums_nested_files(tmp_path):
     (tmp_path / "a" / "b").mkdir()
     (tmp_path / "a" / "b" / "two").write_bytes(b"x" * 2000)
 
-    assert repos._dir_size(tmp_path) == 3000
+    assert repo_cache._dir_size(tmp_path) == 3000
 
 
 def test_dir_size_of_a_missing_path_is_zero(tmp_path):
-    assert repos._dir_size(tmp_path / "gone") == 0
+    assert repo_cache._dir_size(tmp_path / "gone") == 0
 
 
 def test_dir_size_does_not_follow_symlinks(tmp_path):
@@ -95,7 +98,7 @@ def test_dir_size_does_not_follow_symlinks(tmp_path):
     (tmp_path / "real" / "file").write_bytes(b"x" * 500)
     (tmp_path / "real" / "loop").symlink_to(tmp_path / "real", target_is_directory=True)
 
-    assert repos._dir_size(tmp_path) == 500
+    assert repo_cache._dir_size(tmp_path) == 500
 
 
 # ---- bounding the clone itself ---------------------------------------------
@@ -105,8 +108,8 @@ def test_watchdog_kills_a_process_that_outgrows_the_cap(tmp_path, monkeypatch):
     """A huge remote must die mid-clone, not after it has filled the disk."""
     dest = tmp_path / "checkout"
     dest.mkdir()
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 64 * 1024)
-    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 0.02)
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 64 * 1024)
+    monkeypatch.setattr(repo_cache, "SIZE_POLL_SECONDS", 0.02)
 
     grower = (
         "import pathlib, time\n"
@@ -125,7 +128,7 @@ def test_watchdog_kills_a_process_that_outgrows_the_cap(tmp_path, monkeypatch):
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await repos._watch_size(proc, dest)
+        await repo_cache._watch_size(proc, dest)
         return await proc.wait()
 
     started = time.monotonic()
@@ -140,8 +143,8 @@ def test_the_kill_takes_descendants_with_it(tmp_path, monkeypatch):
     leaves them writing into the checkout."""
     dest = tmp_path / "checkout"
     dest.mkdir()
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 64 * 1024)
-    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 0.02)
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 64 * 1024)
+    monkeypatch.setattr(repo_cache, "SIZE_POLL_SECONDS", 0.02)
 
     parent = (
         "import pathlib, subprocess, sys, time\n"
@@ -165,7 +168,7 @@ def test_the_kill_takes_descendants_with_it(tmp_path, monkeypatch):
             stderr=asyncio.subprocess.DEVNULL,
             start_new_session=True,
         )
-        await repos._watch_size(proc, dest)
+        await repo_cache._watch_size(proc, dest)
         await proc.wait()
         return int((dest / "child.pid").read_text())
 
@@ -181,8 +184,8 @@ def test_git_runs_in_its_own_process_group(tmp_path, monkeypatch):
     origin = tmp_path / "origin"
     _make_git_repo(origin, payload_bytes=1000)
     dest = tmp_path / "cache" / "repo"
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 50 * 1024 * 1024)
-    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 30)
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 50 * 1024 * 1024)
+    monkeypatch.setattr(repo_cache, "SIZE_POLL_SECONDS", 30)
 
     seen = []
     spawn = asyncio.create_subprocess_exec
@@ -191,8 +194,8 @@ def test_git_runs_in_its_own_process_group(tmp_path, monkeypatch):
         seen.append(kwargs.get("start_new_session"))
         return await spawn(*args, **kwargs)
 
-    monkeypatch.setattr(repos.asyncio, "create_subprocess_exec", spy)
-    asyncio.run(repos.clone(str(origin), dest))
+    monkeypatch.setattr(repo_cache.asyncio, "create_subprocess_exec", spy)
+    asyncio.run(repo_cache.clone(str(origin), dest))
 
     assert seen and all(started is True for started in seen)
 
@@ -201,9 +204,9 @@ def test_measuring_the_checkout_does_not_block_the_event_loop(tmp_path, monkeypa
     """A million-file checkout takes seconds to walk; the API cannot stop serving for it."""
     dest = tmp_path / "checkout"
     dest.mkdir()
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 10**12)
-    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 0.01)
-    monkeypatch.setattr(repos, "_dir_size", lambda path: time.sleep(0.3) or 0)
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 10**12)
+    monkeypatch.setattr(repo_cache, "SIZE_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(repo_cache, "_dir_size", lambda path: time.sleep(0.3) or 0)
 
     async def scenario():
         ticks = 0
@@ -223,7 +226,7 @@ def test_measuring_the_checkout_does_not_block_the_event_loop(tmp_path, monkeypa
             stderr=asyncio.subprocess.DEVNULL,
             start_new_session=True,
         )
-        await repos._watch_size(proc, dest)
+        await repo_cache._watch_size(proc, dest)
         beat.cancel()
         return ticks
 
@@ -237,22 +240,22 @@ def test_clone_rejects_a_checkout_that_lands_over_the_cap(tmp_path, monkeypatch)
     origin = tmp_path / "origin"
     _make_git_repo(origin, payload_bytes=300_000)
     dest = tmp_path / "cache" / "repo"
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 50_000)
-    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 30)
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 50_000)
+    monkeypatch.setattr(repo_cache, "SIZE_POLL_SECONDS", 30)
 
-    with pytest.raises(repos.RepoError):
-        asyncio.run(repos.clone(str(origin), dest))
+    with pytest.raises(repo_cache.RepoError):
+        asyncio.run(repo_cache.clone(str(origin), dest))
 
 
 def test_a_rejected_clone_leaves_no_partial_checkout(tmp_path, monkeypatch):
     origin = tmp_path / "origin"
     _make_git_repo(origin, payload_bytes=300_000)
     dest = tmp_path / "cache" / "repo"
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 50_000)
-    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 30)
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 50_000)
+    monkeypatch.setattr(repo_cache, "SIZE_POLL_SECONDS", 30)
 
-    with pytest.raises(repos.RepoError):
-        asyncio.run(repos.clone(str(origin), dest))
+    with pytest.raises(repo_cache.RepoError):
+        asyncio.run(repo_cache.clone(str(origin), dest))
 
     assert not dest.exists()
 
@@ -262,12 +265,12 @@ def test_a_failed_clone_does_not_delete_a_checkout_it_did_not_create(tmp_path, m
     origin = tmp_path / "origin"
     _make_git_repo(origin, payload_bytes=1000)
     dest = tmp_path / "cache" / "repo"
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 50 * 1024 * 1024)
-    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 30)
-    asyncio.run(repos.clone(str(origin), dest))
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 50 * 1024 * 1024)
+    monkeypatch.setattr(repo_cache, "SIZE_POLL_SECONDS", 30)
+    asyncio.run(repo_cache.clone(str(origin), dest))
 
-    with pytest.raises(repos.RepoError):
-        asyncio.run(repos.clone(str(origin), dest))
+    with pytest.raises(repo_cache.RepoError):
+        asyncio.run(repo_cache.clone(str(origin), dest))
 
     assert (dest / "main.py").exists()
 
@@ -276,10 +279,10 @@ def test_a_clone_within_the_cap_is_untouched(tmp_path, monkeypatch):
     origin = tmp_path / "origin"
     _make_git_repo(origin, payload_bytes=1000)
     dest = tmp_path / "cache" / "repo"
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 50 * 1024 * 1024)
-    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 0.02)
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 50 * 1024 * 1024)
+    monkeypatch.setattr(repo_cache, "SIZE_POLL_SECONDS", 0.02)
 
-    asyncio.run(repos.clone(str(origin), dest))
+    asyncio.run(repo_cache.clone(str(origin), dest))
 
     assert (dest / "main.py").read_text() == "print('hi')\n"
 
@@ -289,11 +292,11 @@ def test_pull_is_bounded_too(tmp_path, monkeypatch):
     origin = tmp_path / "origin"
     _make_git_repo(origin, payload_bytes=1000)
     dest = tmp_path / "cache" / "repo"
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 50 * 1024 * 1024)
-    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 0.02)
-    asyncio.run(repos.clone(str(origin), dest))
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 50 * 1024 * 1024)
+    monkeypatch.setattr(repo_cache, "SIZE_POLL_SECONDS", 0.02)
+    asyncio.run(repo_cache.clone(str(origin), dest))
 
-    settled = repos._dir_size(dest)
+    settled = repo_cache._dir_size(dest)
     (origin / "payload.txt").write_bytes(b"y" * 8 * 1024 * 1024)
     subprocess.run(["git", "-C", str(origin), "add", "."], check=True)
     subprocess.run(
@@ -303,22 +306,22 @@ def test_pull_is_bounded_too(tmp_path, monkeypatch):
     )
 
     # under the cap before the pull, over it once the new commit lands
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", settled + 2 * 1024 * 1024)
-    with pytest.raises(repos.RepoError):
-        asyncio.run(repos.pull(dest))
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", settled + 2 * 1024 * 1024)
+    with pytest.raises(repo_cache.RepoError):
+        asyncio.run(repo_cache.pull(dest))
 
 
 def test_a_rejected_pull_keeps_the_existing_checkout(tmp_path, monkeypatch):
     origin = tmp_path / "origin"
     _make_git_repo(origin, payload_bytes=1000)
     dest = tmp_path / "cache" / "repo"
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 50 * 1024 * 1024)
-    monkeypatch.setattr(repos, "SIZE_POLL_SECONDS", 30)
-    asyncio.run(repos.clone(str(origin), dest))
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 50 * 1024 * 1024)
+    monkeypatch.setattr(repo_cache, "SIZE_POLL_SECONDS", 30)
+    asyncio.run(repo_cache.clone(str(origin), dest))
 
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 100)
-    with pytest.raises(repos.RepoError):
-        asyncio.run(repos.pull(dest))
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 100)
+    with pytest.raises(repo_cache.RepoError):
+        asyncio.run(repo_cache.pull(dest))
 
     assert (dest / "main.py").exists()
 
@@ -328,15 +331,15 @@ def test_a_rejected_pull_keeps_the_existing_checkout(tmp_path, monkeypatch):
 
 def _fake_usage(monkeypatch, *, total, free):
     usage = shutil._ntuple_diskusage(total, total - free, free)
-    monkeypatch.setattr(repos.shutil, "disk_usage", lambda path: usage)
+    monkeypatch.setattr(repo_routes.shutil, "disk_usage", lambda path: usage)
 
 
 def test_post_repos_refuses_when_free_space_is_below_the_headroom(monkeypatch, tmp_path):
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
-    monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "DISK_HEADROOM_BYTES", 1024**3)
     _fake_usage(monkeypatch, total=100 * 1024**3, free=200 * 1024**2)
     backlog = AcceptingBacklog()
-    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
+    monkeypatch.setattr(job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
@@ -346,11 +349,11 @@ def test_post_repos_refuses_when_free_space_is_below_the_headroom(monkeypatch, t
 
 def test_an_empty_volume_smaller_than_the_headroom_still_refuses(monkeypatch, tmp_path):
     """Being wholly unused does not make a volume big enough to hold a checkout."""
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
-    monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "DISK_HEADROOM_BYTES", 1024**3)
     _fake_usage(monkeypatch, total=512 * 1024**2, free=512 * 1024**2)
     backlog = AcceptingBacklog()
-    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
+    monkeypatch.setattr(job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
@@ -360,12 +363,12 @@ def test_an_empty_volume_smaller_than_the_headroom_still_refuses(monkeypatch, tm
 
 def test_admission_requires_room_for_a_full_size_checkout(monkeypatch, tmp_path):
     """A cap larger than the free space cannot bound anything — refuse at the door."""
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
-    monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 2 * 1024**3)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "DISK_HEADROOM_BYTES", 1024**3)
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 2 * 1024**3)
     _fake_usage(monkeypatch, total=100 * 1024**3, free=3 * 1024**3 - 1)
     backlog = AcceptingBacklog()
-    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
+    monkeypatch.setattr(job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
@@ -375,14 +378,14 @@ def test_admission_requires_room_for_a_full_size_checkout(monkeypatch, tmp_path)
 
 def test_an_unreadable_volume_refuses_rather_than_admits(monkeypatch, tmp_path):
     """Failing open puts the guard off exactly when the volume is in trouble."""
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
 
     def unreadable(path):
         raise OSError("EIO")
 
-    monkeypatch.setattr(repos.shutil, "disk_usage", unreadable)
+    monkeypatch.setattr(repo_routes.shutil, "disk_usage", unreadable)
     backlog = AcceptingBacklog()
-    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
+    monkeypatch.setattr(job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
@@ -391,12 +394,12 @@ def test_an_unreadable_volume_refuses_rather_than_admits(monkeypatch, tmp_path):
 
 
 def test_post_repos_proceeds_when_the_disk_has_room(monkeypatch, tmp_path):
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
-    monkeypatch.setattr(repos, "DISK_HEADROOM_BYTES", 1024**3)
-    monkeypatch.setattr(repos, "REPO_MAX_BYTES", 2 * 1024**3)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "DISK_HEADROOM_BYTES", 1024**3)
+    monkeypatch.setattr(repo_cache, "REPO_MAX_BYTES", 2 * 1024**3)
     _fake_usage(monkeypatch, total=100 * 1024**3, free=50 * 1024**3)
     backlog = AcceptingBacklog()
-    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
+    monkeypatch.setattr(job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
@@ -406,10 +409,10 @@ def test_post_repos_proceeds_when_the_disk_has_room(monkeypatch, tmp_path):
 
 def test_an_absent_cache_root_does_not_block_ingestion(monkeypatch, tmp_path):
     """The cache dir is created on first use; its absence is not a full disk."""
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path / "not-created-yet")
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path / "not-created-yet")
     _fake_usage(monkeypatch, total=100 * 1024**3, free=50 * 1024**3)
     backlog = AcceptingBacklog()
-    monkeypatch.setattr(repos.job_store, "admit_repo", backlog.admit)
+    monkeypatch.setattr(job_store, "admit_repo", backlog.admit)
 
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
 
