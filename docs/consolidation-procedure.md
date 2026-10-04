@@ -73,9 +73,13 @@ change is applied.
 ## The run
 
 ```
- GET groups ──► judge each group ──► verify each merge (fresh context)
-                                              │
-     report ◄── handle statuses ◄── POST verdicts ◄┘
+ GET groups ──► judge each group twice (two contexts) ──► agree ──► verify each merge
+                                              │                            │
+                                           differ                          │
+                                              │                            │
+     report ◄── held groups ◄─────────────────┘                            │
+        ▲                                                                  │
+        └────── handle statuses ◄── POST verdicts ◄────────────────────────┘
 ```
 
 ### 1. Fetch groups
@@ -108,9 +112,9 @@ Decide one action per group:
 
 | action | when |
 |---|---|
-| `keep` | unsure; or the members state different facts, decisions made at different times, or a history worth keeping |
+| `keep` | the members state different facts, decisions made at different times, or a history worth keeping; or no merge passes the merge requirement below |
 | `retire` | one or more members are fully covered by another member; `retire_ids` lists the covered ones and at least one member stays |
-| `merge` | no single member covers the group and one note can state every fact |
+| `merge` | no single member covers the group, and a merged text passes the merge requirement below |
 
 **Default verdict by overlap type.** Apply this table first, then the rules below. Check
 the members' kinds first: a group whose members have different kinds is type 8 (`keep`),
@@ -118,28 +122,43 @@ regardless of any other type it also fits.
 
 | # | overlap type | how to recognize it | verdict |
 |---|---|---|---|
-| 1 | the same rule or preference, restated or extended at different times | members state one rule or preference in different wording or with additions, saved on different days | `merge`; the text states the rule once in its latest wording, keeps tokens found only in older wordings, and keeps every date that appears in a member's text, adding none from a note's saved time or `occurred_at` (the token check rejects it as added); `keep` when the merged note would hold two rules that could conflict |
+| 1 | the same rule or preference, restated or extended at different times | members state one rule or preference in different wording or with additions, saved on different days | `merge`; the text states the rule once in its latest wording, keeps tokens found only in older wordings, and keeps every date that appears in a member's text, adding none from a note's saved time or `occurred_at` (the token check rejects it as added); `keep` when the rules conflict (below) |
 | 2 | usage policy and implementation facts of one feature | one member says how or when to use the feature, another says how it is built or configured | `keep` |
 | 3 | an episode narrative and a rule or preference extracted from the same session | one member narrates what happened, another states the rule or preference that came out of it | `merge`, written around the rule; the text keeps every fact of the episode |
-| 4 | notes from the same day's work, or updates of one task | members share a task and a working day, or later members update earlier ones | `merge` |
-| 5 | a decision and a later decision that replaces or freezes it, both members of the group | the later member names the earlier decision and changes its status | `merge` into one note that states the decision's content and its current status with both dates; `keep` when the merged note would hold two rules that could conflict |
+| 4 | notes from the same day's work, or updates of one task | members describe the same specific task on the same working day, or a later member explicitly updates that task's earlier state; a shared date or project alone is type 7 | `merge` |
+| 5 | a decision and a later decision that replaces or freezes it, both members of the group | the later member explicitly identifies a decision another member states and replaces, withdraws, or freezes it; a shared subject and a later date are not enough, and a reference to some other decision or configuration does not qualify | `merge` into one note that states the decision's content and its current status, with each decision date that appears in a member's text; `keep` when the rules conflict (below) |
 | 6 | episodes or periodic reflections dated on different days that describe different events | each member records its own events | `keep` |
 | 7 | different facts that share only a topic, project, tool, or vocabulary, including a later decision whose earlier decision is outside the group | no member restates, extends, or replaces another member | `keep` |
 | 8 | members of different kinds | `personal` and `work` members in one group | `keep`; the server rejects a cross-kind merge |
 
-When a merge type (1, 3, 4, or 5) joins some members and one member fits only type 7, the
-agent judges whether that member is about the same subject as the others. Same subject:
-`merge`, within `merge_max_chars`. Different subject: `keep`. When the agent cannot tell,
-the group is left for the owner (below). In every other case of more than one type, the
-more conservative verdict wins (`keep` over `merge`). `retire` still takes precedence over `merge` whenever one member fully covers the
-others. A merge carries every token of its members, so it reduces the number of notes, not
-their length.
+**Merge requirement.** A merged text states shared content once, removes at least one
+repeated statement (a statement that another member also makes, in the same or other
+words), keeps every distinct fact and every protected token of the members, and
+is shorter than the member texts joined with single spaces. The server's token check
+compares the sets of protected tokens, so a token repeated across members is written once.
+A merge that only joins the members is not a merge; the verdict is `keep`.
+
+**Conflicting rules.** Two rules conflict when they apply to the same work and prescribe
+incompatible choices, or when stating both needs a scope or precedence that no member
+states. A rule that a later member explicitly replaces (type 5) does not conflict with its
+replacement once the merged text marks it as replaced.
+
+**Same subject.** When a merge type (1, 3, 4, or 5) joins some members and one member fits
+only type 7, the agent judges whether that member is about the same subject as the others:
+one specific rule, event, task, or decision that the member directly qualifies. Sharing a
+person, project, tool, or vocabulary is not the same subject. Same subject: `merge`, when
+the merge requirement passes and within `merge_max_chars`. Different subject: `keep`.
+
+Within one judgment, when more than one type fits a group, the more conservative verdict
+wins (`keep` over `merge`), and `retire` takes precedence over `merge` whenever one member
+fully covers the others. This rule settles one judgment only. When the two judgments of a
+group differ, the group is held under the rule below; `keep` does not break that tie.
 
 Rules:
 
 - Prefer `retire` over `merge`.
-- When a newer member replaces a value that an older member states, and the older one is
-  not a history worth keeping, retire the older one.
+- When a newer member explicitly replaces a value that an older member states, and the
+  surviving members keep every other distinct fact of the older one, retire the older one.
 - A merged text keeps every number, date, identifier, name, possessive, and condition of
   the members, copied exactly as a member writes it, adds nothing, and is written in the
   members' language. Keep backticks around identifiers; do not change how a person is named
@@ -160,13 +179,27 @@ A verdict's `reason` starts with `type N: `, where N is one integer from 1 to 8:
 whose verdict the group got (for a merge kept for length, the merge type). The report
 counts types from this prefix.
 
-**Groups the guidelines do not settle.** When no single overlap type fits a group, or the
-type is clear but this section does not decide between two verdicts, submit no verdict for
-the group. List it in the report for the owner's decision. A held group blocks nothing on
-the server; without a recorded verdict it is offered again, and listed again, on every
-run until the owner decides. The owner gives the decision in a later start instruction
-(group key and verdict). That run submits it in its own mode, with its own run id, and
-verifies a merge as in step 3. The owner's recurring decisions are rules of this section.
+**Two judgments; disagreement goes to the owner.** Judge every group in two separate
+contexts: the agent's own and a fresh one that did not see the first (a separate subagent
+or a new session; one subagent may judge all groups). Give both the same members, this
+procedure, `merge_max_chars`, and the owner's decisions from the start instruction (group
+key and verdict). Neither context sees the other's action, reason, or merged text before
+that context finishes. Each returns an action, the `retire_ids` of a retire, a merged text
+for a merge, and its passages: the member sentences the action rests on. Only the first
+context's merged text goes to step 3.
+
+The two judgments agree when the actions are equal and the `retire_ids` are equal as sets;
+type labels do not matter. Otherwise the agent holds the group: it submits no verdict for
+the group and lists the group in the report for the owner's decision with both readings,
+their passages, the fact that would settle them, and the action the agent recommends.
+Confidence does not override a disagreement. The agent does not reconcile the judgments,
+vote, or ask a third judgment. When the second context cannot be opened, the agent holds
+every group of the run. A held group blocks nothing on the server. Without a recorded
+verdict the server offers it again on every run, and the report lists it again, until the
+owner decides. The owner gives the decision in a later start instruction (group key and
+verdict). That run submits the decision in its own mode, with its own run id, without the
+two judgments; a merge still passes step 3. When the owner gives the same decision for the
+same kind of group more than once, that decision is written into this section as a rule.
 
 The server treats a merge as follows:
 
@@ -182,13 +215,25 @@ the owner's decision.
 
 ### 3. Verify every merge
 
-Before submitting a merge, open a fresh context that did not write it (a separate subagent
-or a new session). Give it only the member texts and the merged text, and ask whether
-every fact of the members is preserved and nothing is added or changed. The check must
-include negations ("not", "never", "without"), which the server's token check cannot
-catch. A merge that fails verification becomes `keep`, or `retire` when one member covers
-the rest. When no separate context can be opened for a merge, that merge becomes `keep`;
-re-reading it in the same context is not verification.
+A merge goes ahead only when both judgments chose `merge`, or the owner decided it. The
+checks run in this order:
+
+1. Count characters. A merged text not shorter than the member texts joined with single
+   spaces fails the merge requirement.
+2. The second context checks the first context's merged text against the member texts:
+   every fact, condition, negation ("not", "never", "without"), and protected token is
+   kept, and nothing is added or changed. Negations need this check because the server's
+   token check cannot see them. Re-reading a merge in the context that wrote it is not
+   verification.
+3. The server's deterministic checks. In an apply run, send the merge first in a request
+   with `"dry_run": true`; `planned` passes. In a dry run the normal submission is this
+   check.
+
+A draft that fails any check is corrected once and goes through the checks again from the
+first. One correction covers all three checks. When the corrected draft still fails check 1,
+the verdict is `keep` (no merge passes the merge requirement). When it still fails check 2
+or 3, the group is held for the owner with the failure. Never apply a draft the server
+rejected.
 
 ### 4. Submit verdicts
 
@@ -240,8 +285,8 @@ The response is `{"results": [...]}`; a result has `group_key`, `status`, `reaso
 | `planned` | dry run, nothing written | log the planned change |
 | `cached` | the group has a recorded verdict, or matches the members of an undone action | nothing |
 | `duplicate` | the idempotency key and payload match a recorded verdict; the recorded result is returned | nothing |
-| `stale` | `group_key` or `member_ids` match no group issued now, or the notes changed during the apply; `current_groups` lists the current groups sharing a member | judge those groups again once in this run, verify any merge, and submit with new group keys and idempotency keys; a second `stale` is logged |
-| `rejected` | a check failed; `reason` says which (reused idempotency key with another payload, `action cap reached`, a retire or merge rule, a token-check `drops …` or `adds …`, a credential, a replacement that exists archived) | log the reason; do not retry |
+| `stale` | `group_key` or `member_ids` match no group issued now, or the notes changed during the apply; `current_groups` lists the current groups sharing a member | judge those groups again once in this run as in step 2 (two judgments), verify any merge as in step 3, and submit with new group keys and idempotency keys; a second `stale` is logged |
+| `rejected` | a check failed; `reason` says which (reused idempotency key with another payload, `action cap reached`, a retire or merge rule, a token-check `drops …` or `adds …`, a credential, a replacement that exists archived) | log the reason; a merge rejected by the token check or a merge rule takes the one correction of step 3 and is sent again under the same idempotency key (the server records no rejected verdict); every other rejection is logged only |
 | `failed` | an embedder or database error rolled this verdict back | retry once with the same idempotency key and the same payload; if it fails again, log it |
 
 The agent calls only the consolidation routes (groups, verdicts, actions, undo). It never
@@ -264,7 +309,8 @@ counts per status: applied, planned, cached, duplicate, stale, rejected, failed
 counts of verdicts per overlap type (1-8), read from the `type N: ` prefix of each reason
 each merge kept as "over merge_max_chars": group_key and member ids
 each group left for the owner's decision: group_key, namespace, each member's id and a
-  one-line summary, the candidate verdicts, the recommended one and why
+  one-line summary, the passages behind each reading, the fact that would settle them,
+  the candidate verdicts, the recommended one and why
 each applied action: action_id, namespace, action, group (member ids), reason
 each rejected verdict: group_key and reason
 each failed verdict after its retry: group_key and reason
