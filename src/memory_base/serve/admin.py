@@ -288,19 +288,26 @@ async def restore_rows(ids: list[str], namespaces: list[str] | None = None) -> i
         return int(status.rsplit(" ", 1)[-1])
 
 
-async def rows_by_ids(ids: list[str], namespaces: list[str] | None = None) -> list[dict]:
-    """Return lifecycle fields for agent notes matching the supplied identifiers, scoped to namespaces."""
+async def rows_by_ids(
+    ids: list[str], namespaces: list[str] | None = None, notes_only: bool = False
+) -> list[dict]:
+    """Return lifecycle fields for rows matching the supplied identifiers, scoped to namespaces.
+
+    ``notes_only`` drops every row that is not an agent note.
+    """
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
             SELECT id, chunk_kind AS kind, archived_at, hit_count, last_hit_at,
                    metadata->>'archived_by' AS archived_by
             FROM "{PG_SCHEMA}".memory_chunks
-            WHERE source_type = 'agent_note' AND id = ANY($1::text[])
+            WHERE id = ANY($1::text[])
               AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
+              AND (NOT $3::boolean OR source_type = 'agent_note')
             ORDER BY id
             """,
             ids,
             namespaces,
+            notes_only,
         )
         return [dict(row) for row in rows]

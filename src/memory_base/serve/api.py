@@ -755,7 +755,7 @@ async def admin_archive_route(request: Request) -> JSONResponse:
     now = time.time()
     scope = _admin_scope(key)
     if ids is not None:
-        rows = await admin.rows_by_ids(ids, namespaces=scope)
+        rows = await admin.rows_by_ids(ids, namespaces=scope, notes_only=True)
         if {row["id"] for row in rows} != set(ids):
             return error("ids must refer only to rows in the caller's scope")
         if body.get("confirm") is True:
