@@ -114,12 +114,12 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `PUT` | `/keys/{label}/authors` | replace a label's allowlist — `authors` (slugs matching `^[a-z0-9][a-z0-9-]{0,39}$`); admin keys only |
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
 | `POST` | `/admin/notes/delete` | preview, or delete with `confirm` |
-| `GET` | `/admin/duplicates` | near-duplicate pairs above `threshold` |
+| `GET` | `/admin/duplicates` | near-duplicate agent-note pairs above `threshold` |
 | `GET` | `/admin/consolidate/groups` | groups of active agent notes that may state the same thing, for an agent to judge; a pair either note lists in `similar_ack` is ignored and counted; a group with a recorded verdict, or with exactly the members of an undone action, is left out and counted `cached`; changes no note — an admin key with `consolidator` in its authors only; `namespace` (repeatable, default every registered namespace), `threshold` (0 < x ≤ 1, default 0.72), `neighbors` (1–50, default 5), `max_group` (2–20, default 6), `max_group_chars` (≥ 500, default 12000), `limit` (groups per namespace, 1–1000, default 200); see [data flow](docs/data-flow.md#consolidation-groups) |
 | `POST` | `/admin/consolidate/verdicts` | apply an agent's `keep` / `retire` / `merge` verdicts on issued groups, each alone in one transaction under a per-namespace lock — same key as the groups route, `author` one of its authors; `run_id`, `model`, `dry_run` (plan only, no write), the groups call's `threshold` / `neighbors` / `max_group` / `max_group_chars`, `max_actions` (retire and merge per run and namespace, 1–500, default 20), 1–200 `verdicts`; a schema violation refuses the whole request with 400; each result is `applied`, `planned`, `cached`, `duplicate`, `stale` (with the current groups), `rejected`, or `failed` (an embedder or database error rolled that verdict back; retry it with the same idempotency key); a merge text must pass a two-direction token check (numbers, dates, backticked spans, names) that a changed sentence-initial name, a negation, a caseless-script name, or a version inside an identifier (`v2.0`) passes; see [data flow](docs/data-flow.md#consolidation-verdicts) |
 | `POST` | `/admin/consolidate/undo` | reverse one action — `action_id`, `author`; restores the notes it archived with their prior metadata and archives a replacement it created; 409 with nothing changed when a later change touched them or for a keep, 404 for an unknown id, the recorded result when already undone; see [data flow](docs/data-flow.md#consolidation-undo-and-actions) |
 | `GET` | `/admin/consolidate/actions` | consolidation actions newest first with the full text and lineage of every note they name — `namespace`, `run_id`, `note_id`, `limit` (1–500, default 50) |
-| `POST` | `/admin/archive` | preview cold notes (`notes_to_archive`) and terminal messages (`messages_to_delete`), then archive the notes and delete the messages with `confirm`; message deletion is permanent, so a member key purges only the namespaces it owns; `ids` selects rows in the caller's scope and requires an `author`, stamped on every row archived |
+| `POST` | `/admin/archive` | preview cold notes (`notes_to_archive`) and terminal messages (`messages_to_delete`), then archive the notes and delete the messages with `confirm`; message deletion is permanent, so a member key purges only the namespaces it owns; `ids` selects agent notes in the caller's scope and requires an `author`, stamped on every row archived |
 | `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author and the `replaced_by` and `consolidated_into` lineage |
 
 An agent runs the consolidation routes on a schedule by following [docs/consolidation-procedure.md](docs/consolidation-procedure.md).
@@ -177,7 +177,7 @@ a token budget instead of `top_k` hits above `min_score`.
 deterministic reads like every note carrying one subject tag or a time window. `author` filters
 `search_memory` and `list_notes` to one agent's notes.
 
-Curation runs over the same tools: `list_memory_duplicates` reads near-duplicate pairs
+Curation runs over the same tools: `list_memory_duplicates` reads near-duplicate agent-note pairs
 with both sides' authors, and `archive_notes` (`ids` and `author` required),
 `restore_notes`, and `delete_notes` preview by default and act only with `confirm`.
 Archiving is restorable and records its author; deleting is permanent and records

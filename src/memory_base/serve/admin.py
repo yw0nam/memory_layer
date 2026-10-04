@@ -134,7 +134,7 @@ async def move_notes(ids: list[str], target_namespace: str) -> dict[str, list]:
 async def find_duplicates(
     threshold: float, kind: str | None, limit: int, namespaces: list[str] | None = None
 ) -> list[dict]:
-    """Return active row pairs meeting the cosine-similarity threshold, scoped to namespaces."""
+    """Return active agent-note pairs meeting the cosine-similarity threshold, scoped to namespaces."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -160,14 +160,16 @@ async def find_duplicates(
                        candidate.metadata,
                        candidate.embedding <=> a.embedding AS distance
                 FROM "{PG_SCHEMA}".memory_chunks AS candidate
-                WHERE candidate.archived_at IS NULL
+                WHERE candidate.source_type = 'agent_note'
+                  AND candidate.archived_at IS NULL
                   AND candidate.id <> a.id
                   AND ($2::text IS NULL OR candidate.chunk_kind = $2)
                   AND ($4::text[] IS NULL OR candidate.namespace = ANY($4::text[]))
                 ORDER BY candidate.embedding <=> a.embedding
                 LIMIT {DUPLICATE_NEIGHBORS}
               ) AS b
-              WHERE a.archived_at IS NULL
+              WHERE a.source_type = 'agent_note'
+                AND a.archived_at IS NULL
                 AND ($2::text IS NULL OR a.chunk_kind = $2)
                 AND ($4::text[] IS NULL OR a.namespace = ANY($4::text[]))
             ),
@@ -212,7 +214,7 @@ async def find_duplicates(
 
 
 async def archive_candidates(now: float, namespaces: list[str] | None = None) -> list[dict]:
-    """Return active rows matching the configured cold-tier rule, scoped to namespaces."""
+    """Return active agent notes matching the configured cold-tier rule, scoped to namespaces."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -220,7 +222,8 @@ async def archive_candidates(now: float, namespaces: list[str] | None = None) ->
                    ($1 - ts_last_active) / {DAY_SECONDS} AS age_days,
                    hit_count, last_hit_at
             FROM "{PG_SCHEMA}".memory_chunks
-            WHERE archived_at IS NULL
+            WHERE source_type = 'agent_note'
+              AND archived_at IS NULL
               AND ts_last_active < $1 - $2::double precision * {DAY_SECONDS}
               AND coalesce(last_hit_at, ts_last_active)
                   < $1 - $3::double precision * {DAY_SECONDS}
@@ -241,7 +244,7 @@ async def archive_rows(
     namespaces: list[str] | None = None,
     archived_by: str | None = None,
 ) -> int:
-    """Archive active rows matching the supplied identifiers, scoped to namespaces."""
+    """Archive active agent notes matching the supplied identifiers, scoped to namespaces."""
     stamp = (
         ", metadata = metadata || jsonb_build_object('archived_by', $4::text)"
         if archived_by is not None
@@ -253,7 +256,7 @@ async def archive_rows(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
             SET archived_at = $2{stamp}
-            WHERE id = ANY($1::text[]) AND archived_at IS NULL
+            WHERE source_type = 'agent_note' AND id = ANY($1::text[]) AND archived_at IS NULL
               AND ($3::text[] IS NULL OR namespace = ANY($3::text[]))
             """,
             ids,
@@ -285,8 +288,13 @@ async def restore_rows(ids: list[str], namespaces: list[str] | None = None) -> i
         return int(status.rsplit(" ", 1)[-1])
 
 
-async def rows_by_ids(ids: list[str], namespaces: list[str] | None = None) -> list[dict]:
-    """Return lifecycle fields for rows matching the supplied identifiers, scoped to namespaces."""
+async def rows_by_ids(
+    ids: list[str], namespaces: list[str] | None = None, notes_only: bool = False
+) -> list[dict]:
+    """Return lifecycle fields for rows matching the supplied identifiers, scoped to namespaces.
+
+    ``notes_only`` drops every row that is not an agent note.
+    """
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -295,9 +303,11 @@ async def rows_by_ids(ids: list[str], namespaces: list[str] | None = None) -> li
             FROM "{PG_SCHEMA}".memory_chunks
             WHERE id = ANY($1::text[])
               AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
+              AND (NOT $3::boolean OR source_type = 'agent_note')
             ORDER BY id
             """,
             ids,
             namespaces,
+            notes_only,
         )
         return [dict(row) for row in rows]

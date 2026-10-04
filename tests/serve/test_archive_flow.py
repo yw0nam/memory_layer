@@ -61,6 +61,7 @@ async def _seed_row(
     ts_last_active: float,
     last_hit_at: float | None = None,
     chunk_kind: str = "work",
+    source_type: str = "agent_note",
 ) -> None:
     await conn.execute(
         f"""
@@ -68,7 +69,7 @@ async def _seed_row(
           (id, source_type, source_ref, chunk_kind, session_id, content_raw,
            distilled, embedding, ts_last_active, metadata,
            hit_count, last_hit_at)
-        VALUES ($1,'agent_note','save_memory',$6,$1,$2,$2,$3::halfvec,$4,
+        VALUES ($1,$7,'save_memory',$6,$1,$2,$2,$3::halfvec,$4,
                 '{{}}'::jsonb, 0, $5)
         ON CONFLICT (id) DO NOTHING
         """,
@@ -78,6 +79,7 @@ async def _seed_row(
         ts_last_active,
         last_hit_at,
         chunk_kind,
+        source_type,
     )
 
 
@@ -315,3 +317,172 @@ def test_duplicates_keep_pair_found_only_from_larger_id_direction():
         assert matching_pairs[0]["score"] >= 0.99
     finally:
         asyncio.run(_delete_rows(seeded_ids))
+
+
+@pytest.mark.integration
+def test_duplicates_and_cold_candidates_exclude_document_chunks():
+    token = time.time_ns()
+    note_a_id = f"notesonly-note-a-{token}"
+    note_b_id = f"notesonly-note-b-{token}"
+    doc_id = f"doc:notesonly-{token}:0"
+    seeded_ids = [note_a_id, note_b_id, doc_id]
+    now = time.time()
+    old = now - 400 * 86400
+
+    async def _seed() -> None:
+        conn = await asyncpg.connect(db_url())
+        try:
+            await ensure_schema(conn)
+            vec = _angled_vec(0)
+            await _seed_row(conn, note_a_id, "notes only a", vec, old)
+            await _seed_row(conn, note_b_id, "notes only b", vec, old)
+            await _seed_row(
+                conn,
+                doc_id,
+                "notes only document",
+                vec,
+                old,
+                chunk_kind="doc",
+                source_type="document",
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_delete_rows(seeded_ids))
+    asyncio.run(_seed())
+    try:
+        pairs = asyncio.run(admin.find_duplicates(0.99, None, 1000))
+        pair_ids = [{pair["a"]["id"], pair["b"]["id"]} for pair in pairs]
+        assert {note_a_id, note_b_id} in pair_ids
+        assert not any(doc_id in ids for ids in pair_ids)
+
+        candidate_ids = {row["id"] for row in asyncio.run(admin.archive_candidates(now))}
+        assert {note_a_id, note_b_id} <= candidate_ids
+        assert doc_id not in candidate_ids
+    finally:
+        asyncio.run(_delete_rows(seeded_ids))
+
+
+@pytest.mark.integration
+def test_archive_route_never_touches_document_chunks():
+    token = time.time_ns()
+    note_id = f"notesonly-route-note-{token}"
+    doc_id = f"doc:notesonly-route-{token}:0"
+    seeded_ids = [note_id, doc_id]
+    old = time.time() - 400 * 86400
+
+    async def _seed() -> None:
+        conn = await asyncpg.connect(db_url())
+        try:
+            await ensure_schema(conn)
+            await _seed_row(conn, note_id, "notes only route note", _angled_vec(0), old)
+            await _seed_row(
+                conn,
+                doc_id,
+                "notes only route document",
+                _angled_vec(0),
+                old,
+                chunk_kind="doc",
+                source_type="document",
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_delete_rows(seeded_ids))
+    asyncio.run(_seed())
+    try:
+        preview = client.post("/admin/archive", json={})
+        assert preview.status_code == 200
+        previewed = {row["id"] for row in preview.json()["notes_to_archive"]}
+        assert note_id in previewed
+        assert doc_id not in previewed
+
+        confirm = client.post("/admin/archive", json={"confirm": True})
+        assert confirm.status_code == 200
+        assert asyncio.run(_archived_at(note_id)) is not None
+        assert asyncio.run(_archived_at(doc_id)) is None
+    finally:
+        asyncio.run(_delete_rows(seeded_ids))
+
+
+@pytest.mark.integration
+def test_archive_by_ids_refuses_a_document_chunk_like_an_unknown_id():
+    token = time.time_ns()
+    note_id = f"notesonly-ids-note-{token}"
+    doc_id = f"doc:notesonly-ids-{token}:0"
+    seeded_ids = [note_id, doc_id]
+    old = time.time() - 400 * 86400
+
+    async def _seed() -> None:
+        conn = await asyncpg.connect(db_url())
+        try:
+            await ensure_schema(conn)
+            await _seed_row(conn, note_id, "notes only ids note", _angled_vec(0), old)
+            await _seed_row(
+                conn,
+                doc_id,
+                "notes only ids document",
+                _angled_vec(0),
+                old,
+                chunk_kind="doc",
+                source_type="document",
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_delete_rows(seeded_ids))
+    asyncio.run(_seed())
+    try:
+        body = {"ids": [note_id, doc_id], "author": "claude-code"}
+        unknown = client.post("/admin/archive", json={**body, "ids": [note_id, f"missing-{token}"]})
+        for extra in ({}, {"confirm": True}):
+            response = client.post("/admin/archive", json={**body, **extra})
+            assert response.status_code == unknown.status_code == 400
+            assert response.json() == unknown.json()
+        assert asyncio.run(_archived_at(note_id)) is None
+        assert asyncio.run(_archived_at(doc_id)) is None
+
+        only_note = client.post(
+            "/admin/archive", json={"ids": [note_id], "author": "claude-code", "confirm": True}
+        )
+        assert only_note.json()["archived"] == 1
+        assert asyncio.run(_archived_at(note_id)) is not None
+    finally:
+        asyncio.run(_delete_rows(seeded_ids))
+
+
+@pytest.mark.integration
+def test_restore_preview_lists_an_archived_document_chunk():
+    token = time.time_ns()
+    doc_id = f"doc:notesonly-restore-{token}:0"
+    now = time.time()
+
+    async def _seed() -> None:
+        conn = await asyncpg.connect(db_url())
+        try:
+            await ensure_schema(conn)
+            await _seed_row(
+                conn,
+                doc_id,
+                "notes only restore document",
+                _angled_vec(0),
+                now,
+                chunk_kind="doc",
+                source_type="document",
+            )
+            await conn.execute(
+                f'UPDATE "{PG_SCHEMA}".memory_chunks SET archived_at = $2 WHERE id = $1',
+                doc_id,
+                now,
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_delete_rows([doc_id]))
+    asyncio.run(_seed())
+    try:
+        preview = client.post("/admin/restore", json={"ids": [doc_id]})
+        assert preview.status_code == 200
+        assert [row["id"] for row in preview.json()["rows"]] == [doc_id]
+    finally:
+        asyncio.run(_delete_rows([doc_id]))
