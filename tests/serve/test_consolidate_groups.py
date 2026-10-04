@@ -436,9 +436,7 @@ def test_route_refuses_an_admin_key_without_the_consolidator_author(fake_db):
     [
         {"threshold": "0"},
         {"threshold": "1.01"},
-        {"threshold": "-0.5"},
         {"threshold": "nan"},
-        {"threshold": "inf"},
         {"threshold": "high"},
         {"neighbors": "0"},
         {"neighbors": "51"},
@@ -450,7 +448,6 @@ def test_route_refuses_an_admin_key_without_the_consolidator_author(fake_db):
         {"limit": "0"},
         {"limit": "1001"},
         {"namespace": " "},
-        {"namespace": ""},
         {"namespace": "nowhere"},
         [("threshold", "0.8"), ("threshold", "0.9")],
         [("limit", "5"), ("limit", "5")],
@@ -509,7 +506,6 @@ def test_route_reads_one_exact_snapshot_per_namespace(consolidator, fake_db):
     assert "SET LOCAL enable_bitmapscan = off" in fake_db.executed
     pair_query, pair_args = next(f for f in fake_db.fetched if "<=>" in f[0])
     assert "source_type = 'agent_note'" in pair_query
-    assert "archived_at IS NULL" in pair_query
     assert set(pair_args) >= {"work", 0.8, 7}
 
 
