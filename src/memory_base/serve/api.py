@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -27,18 +26,17 @@ from memory_base.retrieval.search import UpstreamUnavailable
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
 from memory_base.serve import access_log
-from memory_base.serve import consolidate
 from memory_base.serve import ingest_api
 from memory_base.serve import job_store
 from memory_base.serve import keys
 from memory_base.serve import namespaces
 from memory_base.serve import repos
 from memory_base.serve import tables
-from memory_base.serve import verdicts
 from memory_base.serve.auth import ApiKeyAuthMiddleware
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.common.http import error
 from memory_base.serve.common.http import json_body
+from memory_base.serve.consolidation import routes as consolidation_routes
 from memory_base.serve.messages import routes as message_routes
 from memory_base.serve.notes import routes as note_routes
 from memory_base.serve.notes.store import note_date
@@ -248,184 +246,6 @@ async def search_route(request: Request) -> JSONResponse:
     return JSONResponse([hit_to_dict(hit) for hit in hits])
 
 
-CONSOLIDATE_AUTHOR = "consolidator"
-
-
-def _scalar(request: Request, name: str, parse, default, valid, rule: str):
-    """One optional query value: parsed, range-checked, and given at most once."""
-    values = request.query_params.getlist(name)
-    if len(values) > 1:
-        raise ValueError(f"{name} must be given at most once")
-    if not values:
-        return default
-    try:
-        value = parse(values[0])
-    except ValueError:
-        raise ValueError(f"{name} must be {rule}") from None
-    if not valid(value):
-        raise ValueError(f"{name} must be {rule}")
-    return value
-
-
-def _consolidator_denied(key) -> JSONResponse | None:
-    if key.is_admin and CONSOLIDATE_AUTHOR in key.authors:
-        return None
-    return error(f"admin key with {CONSOLIDATE_AUTHOR!r} in its authors required", 403)
-
-
-async def admin_consolidate_groups_route(request: Request) -> JSONResponse:
-    """List groups of active notes that may state the same thing; changes no note."""
-    denied = _consolidator_denied(request.state.key)
-    if denied is not None:
-        return denied
-    try:
-        threshold = _scalar(
-            request,
-            "threshold",
-            float,
-            consolidate.DEFAULT_THRESHOLD,
-            lambda x: (
-                math.isfinite(x) and consolidate.MIN_THRESHOLD < x <= consolidate.MAX_THRESHOLD
-            ),
-            f"a number in ({consolidate.MIN_THRESHOLD:g}, {consolidate.MAX_THRESHOLD:g}]",
-        )
-        neighbors = _scalar(
-            request,
-            "neighbors",
-            int,
-            consolidate.DEFAULT_NEIGHBORS,
-            lambda x: consolidate.MIN_NEIGHBORS <= x <= consolidate.MAX_NEIGHBORS,
-            f"an integer between {consolidate.MIN_NEIGHBORS} and {consolidate.MAX_NEIGHBORS}",
-        )
-        max_group = _scalar(
-            request,
-            "max_group",
-            int,
-            consolidate.DEFAULT_MAX_GROUP,
-            lambda x: consolidate.MIN_MAX_GROUP <= x <= consolidate.MAX_MAX_GROUP,
-            f"an integer between {consolidate.MIN_MAX_GROUP} and {consolidate.MAX_MAX_GROUP}",
-        )
-        max_group_chars = _scalar(
-            request,
-            "max_group_chars",
-            int,
-            consolidate.DEFAULT_MAX_GROUP_CHARS,
-            lambda x: x >= consolidate.MIN_MAX_GROUP_CHARS,
-            f"an integer of at least {consolidate.MIN_MAX_GROUP_CHARS}",
-        )
-        limit = _scalar(
-            request,
-            "limit",
-            int,
-            consolidate.DEFAULT_LIMIT,
-            lambda x: consolidate.MIN_LIMIT <= x <= consolidate.MAX_LIMIT,
-            f"an integer between {consolidate.MIN_LIMIT} and {consolidate.MAX_LIMIT}",
-        )
-    except ValueError as exc:
-        return error(str(exc))
-    requested = request.query_params.getlist("namespace")
-    if any(not name.strip() for name in requested):
-        return error("namespace must not be blank")
-    registered = {row["name"] for row in await namespaces.list_namespaces()}
-    unknown = sorted(set(requested) - registered)
-    if unknown:
-        return error(f"unregistered namespace: {', '.join(unknown)}")
-    names = sorted(set(requested or registered))
-    snapshots = await consolidate.read_snapshots(names, threshold, neighbors)
-    return JSONResponse(
-        {
-            "params": {
-                "namespace": names,
-                "threshold": threshold,
-                "neighbors": neighbors,
-                "max_group": max_group,
-                "max_group_chars": max_group_chars,
-                "limit": limit,
-            },
-            "procedure_version": consolidate.PROCEDURE_VERSION,
-            "namespaces": {
-                name: consolidate.namespace_report(
-                    name,
-                    snapshot,
-                    threshold=threshold,
-                    max_group=max_group,
-                    max_group_chars=max_group_chars,
-                    limit=limit,
-                )
-                for name, snapshot in snapshots.items()
-            },
-        }
-    )
-
-
-async def admin_consolidate_verdicts_route(request: Request) -> JSONResponse:
-    """Validate and apply (or plan, on a dry run) verdicts on issued groups, each alone."""
-    key = request.state.key
-    denied = _consolidator_denied(key)
-    if denied is not None:
-        return denied
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    registered = {row["name"] for row in await namespaces.list_namespaces()}
-    try:
-        batch = verdicts.parse_batch(body, registered)
-    except verdicts.RequestError as exc:
-        return error(str(exc))
-    if batch.author not in key.authors:
-        return error(f"author {batch.author!r} is not permitted for this key", 403)
-    return JSONResponse({"results": await verdicts.process_batch(batch)})
-
-
-async def admin_consolidate_undo_route(request: Request) -> JSONResponse:
-    """Reverse one consolidation action: 404 unknown, 409 refused with nothing changed."""
-    key = request.state.key
-    denied = _consolidator_denied(key)
-    if denied is not None:
-        return denied
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    try:
-        action_id, author = verdicts.parse_undo(body)
-    except verdicts.RequestError as exc:
-        return error(str(exc))
-    if author not in key.authors:
-        return error(f"author {author!r} is not permitted for this key", 403)
-    try:
-        result = await verdicts.undo(action_id, author)
-    except verdicts.UndoNotFound as exc:
-        return error(str(exc), 404)
-    except verdicts.UndoRefused as exc:
-        return error(str(exc), 409)
-    return JSONResponse(result)
-
-
-async def admin_consolidate_actions_route(request: Request) -> JSONResponse:
-    """List consolidation actions newest first with the notes they reference."""
-    denied = _consolidator_denied(request.state.key)
-    if denied is not None:
-        return denied
-    try:
-        filters = {
-            name: _scalar(request, name, str, None, lambda x: bool(x.strip()), "non-blank")
-            for name in ("namespace", "run_id", "note_id")
-        }
-        limit = _scalar(
-            request,
-            "limit",
-            int,
-            verdicts.DEFAULT_ACTIONS_LIMIT,
-            lambda x: 1 <= x <= verdicts.MAX_ACTIONS_LIMIT,
-            f"an integer between 1 and {verdicts.MAX_ACTIONS_LIMIT}",
-        )
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(await verdicts.list_actions(**filters, limit=limit))
-
-
 async def keys_authors_route(request: Request) -> JSONResponse:
     """Report a label's author allowlist; a non-admin key may read only its own label."""
     key = request.state.key
@@ -595,10 +415,10 @@ app = Starlette(
         Route("/admin/notes/delete", note_routes.delete_route, methods=["POST"]),
         Route("/admin/notes/move", note_routes.move_route, methods=["POST"]),
         Route("/admin/duplicates", note_routes.duplicates_route, methods=["GET"]),
-        Route("/admin/consolidate/groups", admin_consolidate_groups_route, methods=["GET"]),
-        Route("/admin/consolidate/verdicts", admin_consolidate_verdicts_route, methods=["POST"]),
-        Route("/admin/consolidate/undo", admin_consolidate_undo_route, methods=["POST"]),
-        Route("/admin/consolidate/actions", admin_consolidate_actions_route, methods=["GET"]),
+        Route("/admin/consolidate/groups", consolidation_routes.groups_route, methods=["GET"]),
+        Route("/admin/consolidate/verdicts", consolidation_routes.verdicts_route, methods=["POST"]),
+        Route("/admin/consolidate/undo", consolidation_routes.undo_route, methods=["POST"]),
+        Route("/admin/consolidate/actions", consolidation_routes.actions_route, methods=["GET"]),
         Route("/admin/archive", note_routes.archive_route, methods=["POST"]),
         Route("/admin/messages/purge", message_routes.purge_route, methods=["POST"]),
         Route("/admin/restore", note_routes.restore_route, methods=["POST"]),

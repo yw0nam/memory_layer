@@ -15,8 +15,9 @@ import asyncpg
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth, namespaces, verdicts
-from memory_base.serve.consolidate import Note, Pair, group_key
+from memory_base.serve import api, auth, namespaces
+from memory_base.serve.consolidation import verdicts
+from memory_base.serve.consolidation.groups import Note, Pair, group_key
 from memory_base.serve.notes import curation, store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
