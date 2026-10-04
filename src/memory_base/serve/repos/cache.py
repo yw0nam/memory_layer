@@ -25,10 +25,8 @@ from memory_base.serve.common.job_store import RepoJob
 REPO_MAX_BYTES = int(os.getenv("REPO_MAX_BYTES", str(2 * 1024**3)))
 DISK_HEADROOM_BYTES = int(os.getenv("REPO_DISK_HEADROOM_BYTES", str(1024**3)))
 SIZE_POLL_SECONDS = 5
-CACHE_ROOT = Path(
-    os.getenv("REPO_CACHE", Path(__file__).resolve().parents[4] / ".repos_cache")
-).resolve()
 PACKAGE_ROOT = Path(__file__).resolve().parents[4]
+CACHE_ROOT = Path(os.getenv("REPO_CACHE", PACKAGE_ROOT / ".repos_cache")).resolve()
 CODE_APP = "src/memory_base/ingest/code.py"
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
