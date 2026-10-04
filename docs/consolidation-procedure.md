@@ -12,31 +12,20 @@ document: Claude Code headless, a Hermes cron agent, or another.
 1. **Key.** Mint an admin key for the agent (operator, on the server host):
 
    ```
-   (umask 177; uv run python -m memory_base.serve.keys new consolidator --admin \
+   (umask 177; uv run python -m memory_base.serve.keys new consolidator --admin --author consolidator \
      | tail -n 1 | sed 's/^/export MEMORY_API_KEY=/' >> <env-file>)
    ```
 
    The command prints the plaintext key once, on its last line. Write it straight into the
    agent's env file (mode 600, as above) and paste it nowhere else. The consolidation routes require an admin
-   key whose authors include `consolidator`; any other key gets 403.
+   key whose authors include `consolidator`; any other key gets 403. The `author` field of
+   every verdict and undo request must be one of the key's authors; use `consolidator`.
+   `keys authors consolidator` prints the key's authors.
 
-2. **Authors.** `$ADMIN_KEY` is the operator's existing admin key, not the new one. A freshly
-   minted key's author list is empty. `PUT /keys/{label}/authors` replaces the whole list
-   of a label, so read it first and send it back with `consolidator` merged in:
-
-   ```
-   curl -s -H "X-API-Key: $ADMIN_KEY" "$REST_URL/keys/consolidator/authors"
-   curl -s -X PUT -H "X-API-Key: $ADMIN_KEY" -H "Content-Type: application/json" \
-     -d '{"authors": [<existing...>, "consolidator"]}' "$REST_URL/keys/consolidator/authors"
-   ```
-
-   An author slug matches `^[a-z0-9][a-z0-9-]{0,39}$`. The `author` field of every verdict
-   and undo request must be one of the key's authors; use `consolidator`.
-
-3. **Base URL.** The REST API (Docker default `http://localhost:8010`). Every request sends
+2. **Base URL.** The REST API (Docker default `http://localhost:8010`). Every request sends
    the key in the `X-API-Key` header.
 
-4. **Secrets.** The agent reads the base URL and key from its environment (`REST_URL`,
+3. **Secrets.** The agent reads the base URL and key from its environment (`REST_URL`,
    `MEMORY_API_KEY`, the names the MCP server uses) or from an env file the operator
    provides, which also exports `REST_URL`. Never put the key in a prompt, a note, a run log, or a command echoed to a
    log. Expand the variables in the shell instead of printing them.

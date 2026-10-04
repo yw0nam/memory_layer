@@ -251,12 +251,13 @@ fail-closed `401`.
 Keys are provisioned with an operator CLI, not through the API:
 
 ```bash
-uv run python -m memory_base.serve.keys new <label> [--home <namespace>] [--admin]
+uv run python -m memory_base.serve.keys new <label> [--home <namespace>] [--admin] [--author <slug>]...
+uv run python -m memory_base.serve.keys authors <label> [<slug>...]
 uv run python -m memory_base.serve.keys list
 uv run python -m memory_base.serve.keys revoke <key-hash-prefix>
 ```
 
-`new` prints the plaintext key once — only its sha256 hash is stored. `--home` sets the
+`new` prints the plaintext key once, on its last line — only its sha256 hash is stored. `--home` sets the
 namespace `save_memory` and document ingest default into (`default` when omitted);
 minting fails if that namespace does not exist or is not accessible to the label.
 `revoke` takes an 8+ character prefix of the stored hash, as shown by `list`, and
@@ -268,9 +269,15 @@ the minting key's label when the namespace is created with `visibility: private`
 Requests naming a namespace outside that set get `403`.
 
 Every saved note names its author, and the value must be in the key's author allowlist
-(`api_keys.authors`, empty on a new key, so it cannot save until an allowlist is set).
-Admin keys get no bypass. The allowlist is managed over REST alone:
+(`api_keys.authors`; a key minted without `--author` cannot save until an allowlist is set).
+Admin keys get no bypass. `keys authors <label>` prints a label's allowlist and, given
+slugs, replaces it on every active key of the label; over REST the same list is
 `GET /keys/{label}/authors` and `PUT /keys/{label}/authors` (admin only).
+
+Each agent gets its own key whose allowlist is its own author slug, so it writes only its
+own notes and profile. The `memory-base-connect-agent` skill
+([integrations/skills/memory-base-connect-agent/SKILL.md](integrations/skills/memory-base-connect-agent/SKILL.md))
+walks through connecting, changing, and disconnecting an agent.
 
 The MCP server needs the same header: over streamable HTTP it forwards the caller's own
 `X-API-Key`, and over stdio (no inbound HTTP request to read one from) it reads the
