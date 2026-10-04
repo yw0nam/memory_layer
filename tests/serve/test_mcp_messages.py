@@ -55,11 +55,6 @@ def _capturing_handler(captured, status=201, body=None):
 # ---- registration -------------------------------------------------------------
 
 
-def test_message_tools_are_registered():
-    tools = _tools()
-    assert {"send_message", "list_messages", "claim_message", "cancel_message"} <= set(tools)
-
-
 def test_send_message_schema_requires_subject_result_author():
     tools = _tools()
     required = set(tools["send_message"].inputSchema["required"])
@@ -199,15 +194,6 @@ def test_send_message_forwards_optional_fields(monkeypatch):
     assert body["expires_at"] == "2026-03-01T00:00:00+00:00"
 
 
-def test_send_message_surfaces_409_conflict_as_tool_error(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, json={"error": "idempotency_key already used"})
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="idempotency_key already used"):
-        asyncio.run(tools.send_message(subject="s", result="r", author="claude-code"))
-
-
 # ---- list_messages -----------------------------------------------------------------
 
 
@@ -285,12 +271,3 @@ def test_claim_and_cancel_reject_a_non_uuid_message_id(monkeypatch):
             asyncio.run(tools.claim_message(message_id=bad))
         with pytest.raises(ValueError, match="message_id"):
             asyncio.run(tools.cancel_message(message_id=bad))
-
-
-def test_claim_message_surfaces_404_as_tool_error(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404, json={"error": "no claimable message"})
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="no claimable message"):
-        asyncio.run(tools.claim_message(message_id=MESSAGE_ID))

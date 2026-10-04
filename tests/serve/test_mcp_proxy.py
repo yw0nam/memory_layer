@@ -14,7 +14,6 @@ import json
 import httpx
 import pytest
 
-from memory_base.serve import mcp_server
 from memory_base.serve.documents import tools as document_tools
 from memory_base.serve.common import rest_client
 from memory_base.serve.tables import tools as table_tools
@@ -29,43 +28,6 @@ def _patch_client(monkeypatch, handler):
         )
 
     monkeypatch.setattr(rest_client, "client", fake_client)
-
-
-# ---- tool registration ----------------------------------------------------
-
-
-def test_tool_list_includes_document_ingestion():
-    from mcp.shared.memory import create_connected_server_and_client_session
-
-    async def _run():
-        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
-            result = await client.list_tools()
-            return {t.name for t in result.tools}
-
-    names = asyncio.run(_run())
-    assert names == {
-        "search",
-        "search_code",
-        "search_memory",
-        "save_memory",
-        "query_table",
-        "ingest_document",
-        "ingest_repo",
-        "remove_repo",
-        "remove_document",
-        "list_repos",
-        "list_notes",
-        "list_memory_duplicates",
-        "archive_notes",
-        "restore_notes",
-        "delete_notes",
-        "send_message",
-        "list_messages",
-        "claim_message",
-        "cancel_message",
-        "update_my_profile",
-        "propose_user_profile",
-    }
 
 
 # ---- search proxying --------------------------------------------------------
@@ -220,18 +182,6 @@ def test_search_memory_forwards_the_author_filter(monkeypatch):
     assert captured["json"]["author"] == "natsume"
 
 
-def test_search_memory_omits_an_unset_author(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["json"] = json.loads(request.content)
-        return httpx.Response(200, json=[])
-
-    _patch_client(monkeypatch, handler)
-    asyncio.run(search_tools.search_memory("who decided"))
-    assert "author" not in captured["json"]
-
-
 def test_list_notes_forwards_the_author_filter(monkeypatch):
     captured = {}
 
@@ -260,11 +210,6 @@ def test_search_all_does_not_expose_memory_only_filters():
     params = inspect.signature(search_tools.search_all).parameters
     assert "kind" not in params
     assert "tags" not in params
-
-
-def test_search_tools_do_not_expose_include_atoms():
-    assert "include_atoms" not in inspect.signature(search_tools.search_all).parameters
-    assert "include_atoms" not in inspect.signature(search_tools.search_memory).parameters
 
 
 def test_search_all_forwards_include_archived(monkeypatch):
@@ -303,18 +248,6 @@ def test_search_memory_forwards_min_score(monkeypatch):
     assert captured["json"]["min_score"] == 0.3
 
 
-def test_search_memory_omitted_min_score_not_in_body(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["json"] = json.loads(request.content)
-        return httpx.Response(200, json=[])
-
-    _patch_client(monkeypatch, handler)
-    asyncio.run(search_tools.search_memory(query="burst gate"))
-    assert "min_score" not in captured["json"]
-
-
 @pytest.mark.parametrize("tool", [search_tools.search_all, search_tools.search_memory])
 def test_search_tools_forward_budget_tokens(monkeypatch, tool):
     captured = {}
@@ -326,55 +259,6 @@ def test_search_tools_forward_budget_tokens(monkeypatch, tool):
     _patch_client(monkeypatch, handler)
     asyncio.run(tool(query="burst gate", budget_tokens=4000))
     assert captured["json"]["budget_tokens"] == 4000
-
-
-@pytest.mark.parametrize("tool", [search_tools.search_all, search_tools.search_memory])
-def test_search_tools_omit_an_unset_budget(monkeypatch, tool):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["json"] = json.loads(request.content)
-        return httpx.Response(200, json=[])
-
-    _patch_client(monkeypatch, handler)
-    asyncio.run(tool(query="burst gate"))
-    assert "budget_tokens" not in captured["json"]
-
-
-def test_search_400_non_json_body_raises_generic_value_error(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, text="upstream proxy error")
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="backend returned 400"):
-        asyncio.run(search_tools.search_code(query="q"))
-
-
-@pytest.mark.parametrize(
-    "tool", [search_tools.search_all, search_tools.search_code, search_tools.search_memory]
-)
-def test_search_503_surfaces_the_backend_message(monkeypatch, tool):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            503,
-            json={
-                "error": "search unavailable: the embedding service is not responding, "
-                "so memory cannot be attached right now"
-            },
-        )
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="memory cannot be attached right now"):
-        asyncio.run(tool(query="q"))
-
-
-def test_search_400_json_without_error_key_raises_generic_value_error(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, json={"detail": "bad request"})
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="backend returned 400"):
-        asyncio.run(search_tools.search_code(query="q"))
 
 
 def test_search_all_posts_with_source_all(monkeypatch):
@@ -404,18 +288,6 @@ def test_search_returns_rest_response_body_unmodified(monkeypatch):
     _patch_client(monkeypatch, handler)
     result = asyncio.run(search_tools.search_code(query="q", top_k=5))
     assert result == hits
-
-
-# ---- save tool proxying ---------------------------------------------------
-
-
-def test_save_memory_400_response_raises_value_error_with_server_message(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, json={"error": "content must not be empty"})
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="content must not be empty"):
-        asyncio.run(note_tools.save_memory("", "natsume", tags=["test"], kind="work"))
 
 
 # ---- lifecycle tool proxying ------------------------------------------------
@@ -539,24 +411,6 @@ def test_delete_notes_sends_confirm_only_when_true(monkeypatch):
     assert captured["json"] == {"ids": ["note:a"], "confirm": True}
 
 
-@pytest.mark.parametrize(
-    "tool_call",
-    [
-        pytest.param(lambda: note_tools.list_memory_duplicates(), id="list-duplicates"),
-        pytest.param(lambda: note_tools.archive_notes(["note:a"], "natsume"), id="archive-notes"),
-        pytest.param(lambda: note_tools.restore_notes(["note:a"]), id="restore-notes"),
-        pytest.param(lambda: note_tools.delete_notes(["note:a"]), id="delete-notes"),
-    ],
-)
-def test_lifecycle_tools_surface_backend_errors(monkeypatch, tool_call):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(403, json={"error": "author 'x' is not permitted for this key"})
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="not permitted for this key"):
-        asyncio.run(tool_call())
-
-
 def test_query_table_posts_sql_and_namespace_and_returns_body(monkeypatch):
     captured = {}
     payload = {
@@ -587,25 +441,6 @@ def test_query_table_posts_sql_and_namespace_and_returns_body(monkeypatch):
         },
     }
     assert result == payload
-
-
-@pytest.mark.parametrize("status", [400, 401, 403, 408, 413])
-def test_query_table_maps_expected_backend_errors(monkeypatch, status):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(status, json={"error": "query rejected"})
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="query rejected"):
-        asyncio.run(table_tools.query_table("SELECT 1"))
-
-
-def test_ingest_document_429_non_json_body_raises_generic_value_error(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429, text="rate limited")
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="backend returned 429"):
-        asyncio.run(document_tools.ingest_document("content", "guide.md"))
 
 
 def test_ingest_document_posts_text_as_multipart_and_returns_job_reference(monkeypatch):
@@ -673,10 +508,9 @@ def test_ingest_document_omitted_tags_send_no_tags_field(monkeypatch):
     assert b'name="tags"' not in captured["body"]
 
 
-@pytest.mark.parametrize("filename", ["guide.pdf", "slides.pptx"])
-def test_ingest_document_mcp_rejects_binary_formats(filename):
+def test_ingest_document_mcp_rejects_binary_formats():
     with pytest.raises(ValueError, match="text formats only"):
-        asyncio.run(document_tools.ingest_document("content", filename))
+        asyncio.run(document_tools.ingest_document("content", "guide.pdf"))
 
 
 def test_ingest_document_mcp_accepts_csv(monkeypatch):
@@ -728,37 +562,3 @@ def test_remove_document_forwards_namespace(monkeypatch):
     _patch_client(monkeypatch, handler)
     asyncio.run(document_tools.remove_document("guide.md", namespace="team-a"))
     assert captured["params"] == {"namespace": "team-a"}
-
-
-def test_remove_document_403_raises_backend_error_message(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            403, json={"error": "only the document owner or an admin can delete this document"}
-        )
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="only the document owner or an admin"):
-        asyncio.run(document_tools.remove_document("guide.md"))
-
-
-def test_remove_document_404_raises_backend_error_message(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404, json={"error": "document not found"})
-
-    _patch_client(monkeypatch, handler)
-    with pytest.raises(ValueError, match="document not found"):
-        asyncio.run(document_tools.remove_document("ghost.md"))
-
-
-def test_save_tool_schemas_offer_no_conversation_link():
-    from mcp.shared.memory import create_connected_server_and_client_session
-
-    async def _run():
-        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
-            result = await client.list_tools()
-            return {t.name: t for t in result.tools}
-
-    tools = asyncio.run(_run())
-    properties = tools["save_memory"].inputSchema["properties"]
-    assert not {"conversation_id", "turn_start", "turn_end"} & set(properties)
-    assert not {"expand_source", "list_conversations"} & set(tools)

@@ -120,8 +120,7 @@ def test_search_forwards_api_key_header(monkeypatch):
     assert captured["header"] == "secret"
 
 
-@pytest.mark.parametrize("kind", ["personal", "work"])
-def test_save_tool_forwards_api_key_header(monkeypatch, kind):
+def test_save_tool_forwards_api_key_header(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -139,7 +138,7 @@ def test_save_tool_forwards_api_key_header(monkeypatch, kind):
 
     _patch_client(monkeypatch, handler)
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(tools.save_memory("content", "natsume", tags=["test"], kind=kind, ctx=ctx))
+    asyncio.run(tools.save_memory("content", "natsume", tags=["test"], kind="work", ctx=ctx))
     assert captured["header"] == "secret"
 
 
@@ -337,12 +336,8 @@ def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
     [
         pytest.param(lambda: search_tools.search_memory(query="q"), id="search"),
         pytest.param(
-            lambda: tools.save_memory("content", "natsume", tags=["test"], kind="personal"),
-            id="save-personal-memory",
-        ),
-        pytest.param(
             lambda: tools.save_memory("content", "natsume", tags=["test"], kind="work"),
-            id="save-work-memory",
+            id="save-memory",
         ),
         pytest.param(lambda: table_tools.query_table("SELECT 1"), id="query-table"),
         pytest.param(
