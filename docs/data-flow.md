@@ -504,12 +504,14 @@ The token check reads three kinds of token from each text, as exact strings:
   `foo.Bar`, `Bar` is a name), and any word with two or more capitals (`GLM`, `PR`, `iOS`,
   `McDonald`).
 
-A token counts as dropped when a member has it as read above and the merged text has no
-such word even at a sentence start, and as added when the merged text has it and no member
-has it even at a sentence start. A name that moves between a sentence start and mid-sentence
-therefore passes. It is a conservative filter, not proof of meaning: a changed name at the
-start of a sentence, a negation, names in scripts without case (Korean), and a changed
-version inside an identifier (`v2.0` → `v3.1`) pass it.
+A token counts as dropped when a member has it under the rules above and the merged text
+has no such word even at a sentence start, and as added when the merged text has it and no
+member has it even at a sentence start. `I` is never a name in either reading. A name that
+moves between a sentence start and mid-sentence therefore passes, and a sentence-initial
+word (such as `May` or `Then`) can match a same-spelled name on the other side. It is a
+conservative filter, not proof of meaning: a changed name at the start of a sentence in
+both texts, a negation, names in scripts without case (Korean), and a changed version
+inside an identifier (`v2.0` → `v3.1`) pass it.
 
 ## Consolidation undo and actions
 
