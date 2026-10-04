@@ -11,7 +11,7 @@ fixture wiped it.
 from __future__ import annotations
 
 from memory_base.retrieval.search import Hit
-from memory_base.serve import access_log
+from memory_base.serve.search import access_log
 
 NOW = 1_700_000_000.0
 

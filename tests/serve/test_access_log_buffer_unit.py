@@ -1,4 +1,4 @@
-"""Unit tests for the buffered retrieval write-back (memory_base.serve.access_log).
+"""Unit tests for the buffered retrieval write-back (memory_base.serve.search.access_log).
 
 No DB, no network: ``memory_base.core.db.acquire`` is replaced by a connection
 that records every statement, so these tests pin what the search request path
@@ -18,15 +18,14 @@ from starlette.testclient import TestClient
 
 from memory_base.core import db
 from memory_base.retrieval.search import Hit
-from memory_base.serve import access_log, api
+from memory_base.serve import api
+from memory_base.serve.search import access_log
+from memory_base.serve.search import routes as search_routes
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 WRITE_VERBS = ("INSERT", "UPDATE", "DELETE")
 NOW = 1_700_000_000.0
-# tests/conftest.py stubs the lifespan flusher; these tests drive the real one.
-START_FLUSHER = access_log.start_flusher
-STOP_FLUSHER = access_log.stop_flusher
 
 
 class RecordingConnection:
@@ -98,7 +97,7 @@ def test_search_request_performs_no_db_writes(monkeypatch, connection):
     async def fake_search(query, **options):
         return [_hit("chunk-a"), _hit("chunk-b")]
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
 
     response = client.post("/search", json={"query": "q", "source": "memory"})
 
@@ -267,11 +266,11 @@ def test_flusher_loop_flushes_on_the_configured_interval(monkeypatch, connection
     assert access_log._pending_hits == {}
 
 
-def test_stop_flusher_flushes_pending_hits(connection):
+def test_stop_flushes_pending_hits(connection):
     async def _run() -> None:
-        task = START_FLUSHER()
+        task = await access_log.start()
         access_log.record_retrieval("q", "memory", [_hit("chunk-a")], now=NOW)
-        await STOP_FLUSHER(task)
+        await access_log.stop(task)
 
     asyncio.run(_run())
 

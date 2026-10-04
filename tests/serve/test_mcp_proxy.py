@@ -19,6 +19,7 @@ from memory_base.serve.documents import tools as document_tools
 from memory_base.serve.common import rest_client
 from memory_base.serve.tables import tools as table_tools
 from memory_base.serve.notes import tools as note_tools
+from memory_base.serve.search import tools as search_tools
 
 
 def _patch_client(monkeypatch, handler):
@@ -80,7 +81,7 @@ def test_search_code_posts_to_search_with_source_code(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_code(query="halfvec index", top_k=5))
+    asyncio.run(search_tools.search_code(query="halfvec index", top_k=5))
     assert captured["method"] == "POST"
     assert captured["path"] == "/search"
     assert captured["json"] == {
@@ -98,7 +99,7 @@ def test_search_memory_posts_with_source_memory(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_memory(query="burst gate", top_k=3))
+    asyncio.run(search_tools.search_memory(query="burst gate", top_k=3))
     assert captured["json"] == {
         "query": "burst gate",
         "source": "memory",
@@ -115,7 +116,7 @@ def test_search_memory_forwards_kind_and_tags(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     asyncio.run(
-        mcp_server.search_memory(
+        search_tools.search_memory(
             query="decision",
             top_k=4,
             kind="work",
@@ -139,12 +140,12 @@ def test_search_code_forwards_repo_filter(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_code("marker", repo=["repo_a"]))
+    asyncio.run(search_tools.search_code("marker", repo=["repo_a"]))
     assert captured["json"]["repo"] == ["repo_a"]
 
 
 def test_search_all_does_not_expose_repo_filter():
-    assert "repo" not in inspect.signature(mcp_server.search_all).parameters
+    assert "repo" not in inspect.signature(search_tools.search_all).parameters
 
 
 def test_search_memory_forwards_since_and_until(monkeypatch):
@@ -155,14 +156,14 @@ def test_search_memory_forwards_since_and_until(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_memory("last week", since="2026-08-01", until="2026-08-12"))
+    asyncio.run(search_tools.search_memory("last week", since="2026-08-01", until="2026-08-12"))
     assert captured["json"]["since"] == "2026-08-01"
     assert captured["json"]["until"] == "2026-08-12"
 
 
 @pytest.mark.parametrize("tool", ["search_all", "search_code"])
 def test_only_search_memory_exposes_time_bounds(tool):
-    parameters = inspect.signature(getattr(mcp_server, tool)).parameters
+    parameters = inspect.signature(getattr(search_tools, tool)).parameters
     assert "since" not in parameters
     assert "until" not in parameters
 
@@ -215,7 +216,7 @@ def test_search_memory_forwards_the_author_filter(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_memory("who decided", author="natsume"))
+    asyncio.run(search_tools.search_memory("who decided", author="natsume"))
     assert captured["json"]["author"] == "natsume"
 
 
@@ -227,7 +228,7 @@ def test_search_memory_omits_an_unset_author(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_memory("who decided"))
+    asyncio.run(search_tools.search_memory("who decided"))
     assert "author" not in captured["json"]
 
 
@@ -256,14 +257,14 @@ def test_list_notes_omits_unset_filters(monkeypatch):
 
 
 def test_search_all_does_not_expose_memory_only_filters():
-    params = inspect.signature(mcp_server.search_all).parameters
+    params = inspect.signature(search_tools.search_all).parameters
     assert "kind" not in params
     assert "tags" not in params
 
 
 def test_search_tools_do_not_expose_include_atoms():
-    assert "include_atoms" not in inspect.signature(mcp_server.search_all).parameters
-    assert "include_atoms" not in inspect.signature(mcp_server.search_memory).parameters
+    assert "include_atoms" not in inspect.signature(search_tools.search_all).parameters
+    assert "include_atoms" not in inspect.signature(search_tools.search_memory).parameters
 
 
 def test_search_all_forwards_include_archived(monkeypatch):
@@ -274,7 +275,7 @@ def test_search_all_forwards_include_archived(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_all("query", include_archived=True))
+    asyncio.run(search_tools.search_all("query", include_archived=True))
     assert captured["json"]["include_archived"] is True
 
 
@@ -286,7 +287,7 @@ def test_search_memory_forwards_include_archived(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_memory("query", include_archived=True))
+    asyncio.run(search_tools.search_memory("query", include_archived=True))
     assert captured["json"]["include_archived"] is True
 
 
@@ -298,7 +299,7 @@ def test_search_memory_forwards_min_score(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_memory(query="burst gate", min_score=0.3))
+    asyncio.run(search_tools.search_memory(query="burst gate", min_score=0.3))
     assert captured["json"]["min_score"] == 0.3
 
 
@@ -310,11 +311,11 @@ def test_search_memory_omitted_min_score_not_in_body(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_memory(query="burst gate"))
+    asyncio.run(search_tools.search_memory(query="burst gate"))
     assert "min_score" not in captured["json"]
 
 
-@pytest.mark.parametrize("tool", [mcp_server.search_all, mcp_server.search_memory])
+@pytest.mark.parametrize("tool", [search_tools.search_all, search_tools.search_memory])
 def test_search_tools_forward_budget_tokens(monkeypatch, tool):
     captured = {}
 
@@ -327,7 +328,7 @@ def test_search_tools_forward_budget_tokens(monkeypatch, tool):
     assert captured["json"]["budget_tokens"] == 4000
 
 
-@pytest.mark.parametrize("tool", [mcp_server.search_all, mcp_server.search_memory])
+@pytest.mark.parametrize("tool", [search_tools.search_all, search_tools.search_memory])
 def test_search_tools_omit_an_unset_budget(monkeypatch, tool):
     captured = {}
 
@@ -346,11 +347,11 @@ def test_search_400_non_json_body_raises_generic_value_error(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="backend returned 400"):
-        asyncio.run(mcp_server.search_code(query="q"))
+        asyncio.run(search_tools.search_code(query="q"))
 
 
 @pytest.mark.parametrize(
-    "tool", [mcp_server.search_all, mcp_server.search_code, mcp_server.search_memory]
+    "tool", [search_tools.search_all, search_tools.search_code, search_tools.search_memory]
 )
 def test_search_503_surfaces_the_backend_message(monkeypatch, tool):
     def handler(request: httpx.Request) -> httpx.Response:
@@ -373,7 +374,7 @@ def test_search_400_json_without_error_key_raises_generic_value_error(monkeypatc
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="backend returned 400"):
-        asyncio.run(mcp_server.search_code(query="q"))
+        asyncio.run(search_tools.search_code(query="q"))
 
 
 def test_search_all_posts_with_source_all(monkeypatch):
@@ -384,7 +385,7 @@ def test_search_all_posts_with_source_all(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_all(query="anything", top_k=10))
+    asyncio.run(search_tools.search_all(query="anything", top_k=10))
     assert captured["json"] == {
         "query": "anything",
         "source": "all",
@@ -401,7 +402,7 @@ def test_search_returns_rest_response_body_unmodified(monkeypatch):
         return httpx.Response(200, json=hits)
 
     _patch_client(monkeypatch, handler)
-    result = asyncio.run(mcp_server.search_code(query="q", top_k=5))
+    result = asyncio.run(search_tools.search_code(query="q", top_k=5))
     assert result == hits
 
 

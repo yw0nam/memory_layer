@@ -37,7 +37,7 @@ instead of search.
    ╚═╤═══════════════╤═══════════════╤═══════════════╤═════════╝
      │ WRITE         │ WRITE         │ WRITE         │ READ + LIFECYCLE
      ▼               ▼               ▼               ▼
-  notes/store  documents/        repos/        search.py · tables/ · notes/curation
+  notes/store  documents/        repos/        search/ · tables/ · notes/curation
      │               │               │               │
      └───────────────┴───────┬───────┴───────────────┘
                              ▼
@@ -159,7 +159,8 @@ fields they record: `archived_by`, `replaced_by`, `consolidated_into`, `merged_f
 
 ## MCP tools
 
-`mcp_server.py` is a thin proxy over the REST API — no logic of its own. Transport is
+Each MCP tool is a thin proxy over the REST API, defined in its feature package's
+`tools.py` and registered by `mcp_server.py`, which holds no logic of its own. Transport is
 stdio by default; `MCP_TRANSPORT=sse|streamable-http` with `MCP_HOST`/`MCP_PORT` serves
 over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 

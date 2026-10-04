@@ -18,12 +18,12 @@ import json
 import httpx
 import pytest
 
-from memory_base.serve import mcp_server
 from memory_base.serve.documents import tools as document_tools
 from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.common import rest_client
 from memory_base.serve.tables import tools as table_tools
 from memory_base.serve.notes import tools
+from memory_base.serve.search import tools as search_tools
 
 
 class FakeHeaders:
@@ -116,7 +116,7 @@ def test_search_forwards_api_key_header(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(mcp_server.search_memory(query="q", ctx=ctx))
+    asyncio.run(search_tools.search_memory(query="q", ctx=ctx))
     assert captured["header"] == "secret"
 
 
@@ -224,7 +224,7 @@ def test_search_omitted_namespace_sends_no_namespaces_key(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_memory(query="q"))
+    asyncio.run(search_tools.search_memory(query="q"))
     assert "namespaces" not in captured["json"]
 
 
@@ -236,7 +236,7 @@ def test_search_explicit_namespace_sent_as_single_item_list(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.search_memory(query="q", namespace="team-a"))
+    asyncio.run(search_tools.search_memory(query="q", namespace="team-a"))
     assert captured["json"]["namespaces"] == ["team-a"]
 
 
@@ -335,7 +335,7 @@ def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
 @pytest.mark.parametrize(
     "tool_call",
     [
-        pytest.param(lambda: mcp_server.search_memory(query="q"), id="search"),
+        pytest.param(lambda: search_tools.search_memory(query="q"), id="search"),
         pytest.param(
             lambda: tools.save_memory("content", "natsume", tags=["test"], kind="personal"),
             id="save-personal-memory",
@@ -370,4 +370,4 @@ def test_search_preserves_unauthorized_backend_message(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="invalid or missing API key"):
-        asyncio.run(mcp_server.search_memory(query="q"))
+        asyncio.run(search_tools.search_memory(query="q"))

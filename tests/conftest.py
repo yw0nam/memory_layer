@@ -167,7 +167,7 @@ def table_query_password_for_unit_tests(request, monkeypatch):
 def isolated_access_log_buffer():
     """Rows buffered by one test's /search calls must never be flushed into the
     real retrieval_log by a later integration test in the same run."""
-    from memory_base.serve import access_log
+    from memory_base.serve.search import access_log
 
     access_log._pending_logs.clear()
     access_log._pending_hits.clear()
@@ -182,17 +182,9 @@ def isolate_unit_app_lifespan(request, monkeypatch):
     if request.node.get_closest_marker("integration") is not None:
         return
 
-    from memory_base.serve import access_log, api
-
-    def start_flusher():
-        return None
-
-    async def stop_flusher(task):
-        assert task is None
+    from memory_base.serve import api
 
     monkeypatch.setattr(api, "BACKGROUND", ())
-    monkeypatch.setattr(access_log, "start_flusher", start_flusher)
-    monkeypatch.setattr(access_log, "stop_flusher", stop_flusher)
 
 
 @pytest.fixture()
