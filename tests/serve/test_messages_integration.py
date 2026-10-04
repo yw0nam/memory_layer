@@ -607,11 +607,11 @@ def test_expired_messages_leave_list_and_claim_and_purge_deletes_them():
         expired_claim = client.post(f"/messages/{message_id}/claim")
         assert expired_claim.status_code == 409
 
-        preview = client.post("/admin/archive", json={}).json()
+        preview = client.post("/admin/messages/purge", json={}).json()
         assert any(row["id"] == message_id for row in preview["messages_to_delete"]), (
             "expired message must appear in the purge preview"
         )
-        confirm = client.post("/admin/archive", json={"confirm": True}).json()
+        confirm = client.post("/admin/messages/purge", json={"confirm": True}).json()
         assert confirm["deleted"] >= 1
 
         async def _gone():
@@ -668,7 +668,7 @@ def test_idempotency_replays_conflicts_and_releases_on_delete():
 
         message_id = first.json()["id"]
         assert client.post(f"/messages/{message_id}/claim").status_code == 200
-        confirm = client.post("/admin/archive", json={"confirm": True}).json()
+        confirm = client.post("/admin/messages/purge", json={"confirm": True}).json()
         assert confirm["deleted"] >= 1
 
         released = client.post(
@@ -706,7 +706,7 @@ def test_namespace_deletion_waits_for_messages(monkeypatch):
         assert blocked.status_code == 409
 
         assert client.delete(f"/messages/{message_id}").status_code == 200
-        client.post("/admin/archive", json={"confirm": True})
+        client.post("/admin/messages/purge", json={"confirm": True})
         assert client.delete(f"/namespaces/{namespace}").status_code == 200
     finally:
         asyncio.run(_cleanup(subject, namespace=namespace))
@@ -792,7 +792,7 @@ def test_a_member_owner_can_purge_and_unregister_its_own_namespace(monkeypatch):
         assert member.delete(f"/messages/{sent.json()['id']}").status_code == 200
         assert member.delete(f"/namespaces/{namespace}").status_code == 409
 
-        purged = member.post("/admin/archive", json={"confirm": True, "author": "claude-code"})
+        purged = member.post("/admin/messages/purge", json={"confirm": True})
         assert purged.json()["deleted"] == 1
         assert member.delete(f"/namespaces/{namespace}").status_code == 200
     finally:
@@ -808,21 +808,21 @@ def test_a_member_purge_leaves_messages_it_does_not_own(monkeypatch):
         assert client.delete(f"/messages/{sent.json()['id']}").status_code == 200
 
         member = _member_client(monkeypatch, "msgoutsider", {"default"})
-        preview = member.post("/admin/archive", json={})
+        preview = member.post("/admin/messages/purge", json={})
         assert preview.json()["messages_to_delete"] == []
-        purged = member.post("/admin/archive", json={"confirm": True, "author": "claude-code"})
+        purged = member.post("/admin/messages/purge", json={"confirm": True})
         assert purged.json()["deleted"] == 0
 
-        remaining = client.post("/admin/archive", json={}).json()["messages_to_delete"]
+        remaining = client.post("/admin/messages/purge", json={}).json()["messages_to_delete"]
         assert any(row["subject"] == subject for row in remaining)
     finally:
         asyncio.run(_cleanup(subject))
 
 
-# ---- admin purge distinguishes the two halves ----------------------------------------------
+# ---- terminal-message purge ----------------------------------------------------------------
 
 
-def test_admin_archive_purge_deletes_only_terminal_messages():
+def test_purge_deletes_only_terminal_messages():
     marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
     try:
         pending = _send(f"{marker} keep", result="r")
@@ -830,12 +830,12 @@ def test_admin_archive_purge_deletes_only_terminal_messages():
         cancelled_id = cancelled.json()["id"]
         assert client.delete(f"/messages/{cancelled_id}").status_code == 200
 
-        preview = client.post("/admin/archive", json={}).json()
+        preview = client.post("/admin/messages/purge", json={}).json()
         preview_ids = {row["id"] for row in preview["messages_to_delete"]}
         assert cancelled_id in preview_ids
         assert pending.json()["id"] not in preview_ids
 
-        client.post("/admin/archive", json={"confirm": True})
+        client.post("/admin/messages/purge", json={"confirm": True})
         kept = client.get("/messages", params={"subject": f"{marker} keep"}).json()
         assert [row["id"] for row in kept] == [pending.json()["id"]]
         dropped = client.get("/messages", params={"subject": f"{marker} drop"}).json()
@@ -1023,7 +1023,7 @@ def test_a_handoff_without_expiry_is_still_pending_and_claimable_after_thirty_da
         listed = client.get("/messages", params={"subject": subject}).json()
         assert [row["id"] for row in listed] == [message_id]
 
-        preview = client.post("/admin/archive", json={}).json()
+        preview = client.post("/admin/messages/purge", json={}).json()
         assert message_id not in {row["id"] for row in preview["messages_to_delete"]}
 
         claimed = client.post(f"/messages/{message_id}/claim")

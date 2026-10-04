@@ -336,3 +336,47 @@ def test_message_routes_require_auth():
     assert plain.post("/messages", json={}).status_code == 401
     assert plain.post(f"/messages/{ROW['id']}/claim").status_code == 401
     assert plain.delete(f"/messages/{ROW['id']}").status_code == 401
+
+
+# ---- POST /admin/messages/purge ---------------------------------------------------
+
+
+def _patch_purge(monkeypatch, calls):
+    async def fake_terminal_messages(owner=None):
+        calls.append(("preview", owner))
+        return [dict(ROW)]
+
+    async def fake_delete_terminal_messages(owner=None):
+        calls.append(("delete", owner))
+        return 1
+
+    monkeypatch.setattr(store, "terminal_messages", fake_terminal_messages)
+    monkeypatch.setattr(store, "delete_terminal_messages", fake_delete_terminal_messages)
+
+
+def test_purge_previews_terminal_messages_without_deleting(monkeypatch):
+    calls = []
+    _patch_purge(monkeypatch, calls)
+    response = client.post("/admin/messages/purge", json={})
+    assert response.status_code == 200
+    assert response.json() == {"messages_to_delete": [ROW]}
+    assert calls == [("preview", None)]
+
+
+def test_purge_confirm_deletes_without_loading_the_preview(monkeypatch):
+    calls = []
+    _patch_purge(monkeypatch, calls)
+    response = client.post("/admin/messages/purge", json={"confirm": True})
+    assert response.status_code == 200
+    assert response.json() == {"deleted": 1}
+    assert calls == [("delete", None)]
+
+
+def test_a_member_purge_names_only_its_own_label(monkeypatch):
+    calls = []
+    _patch_purge(monkeypatch, calls)
+    member = _member_client(monkeypatch, "eve", {"default", "team-a"})
+    assert member.post("/admin/messages/purge", json={}).status_code == 200
+    assert member.post("/admin/messages/purge", json={"confirm": True}).status_code == 200
+    # Ownership resolves inside the purge query, so a member names itself, never a list.
+    assert calls == [("preview", "eve"), ("delete", "eve")]
