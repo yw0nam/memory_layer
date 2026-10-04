@@ -1,10 +1,13 @@
 """API-key provisioning CLI, and the author allowlist behind /keys/{label}/authors.
 
-    uv run python -m memory_base.serve.keys new <label> [--home <ns>] [--admin]
+    uv run python -m memory_base.serve.keys new <label> [--home <ns>] [--admin] [--author <slug>]...
+    uv run python -m memory_base.serve.keys authors <label> [<slug>...]
     uv run python -m memory_base.serve.keys list
     uv run python -m memory_base.serve.keys revoke <prefix-or-hash>
 
-`new` prints the plaintext key exactly once; only its sha256 hash is stored.
+`new` prints the plaintext key exactly once, on its last line; only its sha256 hash is stored.
+`authors` prints a label's authors, or replaces them on every active key of the label when
+slugs are given.
 
 A label's authors are the note authors its keys may save as and the profile owners
 they act for; the `user` author approves profile proposals and is held only by the
@@ -50,8 +53,11 @@ async def _home_is_accessible(conn: Any, home: str, label: str, is_admin: bool) 
     return is_admin or row["owner"] == label
 
 
-async def new_key(label: str, home: str = "default", is_admin: bool = False) -> str:
-    """Mint a key for `label`; returns the plaintext (never stored)."""
+async def new_key(
+    label: str, home: str = "default", is_admin: bool = False, authors: list[str] | None = None
+) -> str:
+    """Mint a key for `label` with `authors`; returns the plaintext (never stored)."""
+    authors = validate_authors(authors or [])
     plaintext = generate_key()
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
@@ -61,13 +67,14 @@ async def new_key(label: str, home: str = "default", is_admin: bool = False) -> 
             )
         await conn.execute(
             f"""
-            INSERT INTO "{PG_SCHEMA}".api_keys (key_hash, label, home, is_admin)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO "{PG_SCHEMA}".api_keys (key_hash, label, home, is_admin, authors)
+            VALUES ($1, $2, $3, $4, $5::text[])
             """,
             hash_key(plaintext),
             label,
             home,
             is_admin,
+            authors,
         )
     return plaintext
 
@@ -160,6 +167,11 @@ def build_parser() -> argparse.ArgumentParser:
     new_parser.add_argument("label")
     new_parser.add_argument("--home", default="default")
     new_parser.add_argument("--admin", action="store_true")
+    new_parser.add_argument("--author", dest="authors", action="append", default=[])
+
+    authors_parser = subparsers.add_parser("authors", help="show or replace a label's authors")
+    authors_parser.add_argument("label")
+    authors_parser.add_argument("authors", nargs="*")
 
     subparsers.add_parser("list", help="list keys")
 
@@ -174,11 +186,23 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "new":
         try:
-            plaintext = asyncio.run(new_key(args.label, args.home, args.admin))
-        except HomeNamespaceError as exc:
+            plaintext = asyncio.run(new_key(args.label, args.home, args.admin, args.authors))
+        except (HomeNamespaceError, AuthorError) as exc:
             raise SystemExit(str(exc)) from exc
         print(f"API key for {args.label!r} (store this now, it will not be shown again):")
         print(plaintext)
+    elif args.command == "authors":
+        try:
+            authors = asyncio.run(
+                set_authors(args.label, validate_authors(args.authors))
+                if args.authors
+                else get_authors(args.label)
+            )
+        except AuthorError as exc:
+            raise SystemExit(str(exc)) from exc
+        if authors is None:
+            raise SystemExit(f"no active key for {args.label!r}")
+        print(f"{args.label}: {', '.join(authors) or '(none)'}")
     elif args.command == "list":
         _print_keys(asyncio.run(list_keys()))
     elif args.command == "revoke":

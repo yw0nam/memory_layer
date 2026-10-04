@@ -185,7 +185,9 @@ def test_cli_authors_replaces_the_list_when_names_are_given(monkeypatch, capsys)
     assert capsys.readouterr().out.strip() == "codex: codex, user"
 
 
-def test_cli_authors_without_names_shows_the_list_and_fails_for_an_unknown_label(monkeypatch, capsys):
+def test_cli_authors_without_names_shows_the_list_and_fails_for_an_unknown_label(
+    monkeypatch, capsys
+):
     async def get_authors(label):
         return ["claude-code"] if label == "claude-code" else None
 
