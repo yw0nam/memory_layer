@@ -174,7 +174,7 @@ so `search` and `search_code` do not offer them; `repo` on `search_code` alone;
 `budget_tokens` on `search` and `search_memory`, which returns hits in rerank order up to
 a token budget instead of `top_k` hits above `min_score`.
 `list_notes` reads notes by filters alone — no query, no embedding call — for
-deterministic reads like tag-scoped profile notes or a time window. `author` filters
+deterministic reads like every note carrying one subject tag or a time window. `author` filters
 `search_memory` and `list_notes` to one agent's notes.
 
 Curation runs over the same tools: `list_memory_duplicates` reads near-duplicate pairs

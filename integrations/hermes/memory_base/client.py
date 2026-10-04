@@ -133,7 +133,10 @@ def _part(profile: dict[str, Any], name: str) -> tuple[int, str]:
 
 
 def format_profile(owner: str, profile: Any) -> str:
-    """The profile block body the Claude Code SessionStart hook prints; raises when malformed."""
+    """The owner's header, both parts under their version lines, and a pending notice.
+
+    Raises on a malformed profile, so no version is ever fabricated.
+    """
     if not isinstance(profile, dict):
         raise ValueError("profile is not an object")
     lines = [PROFILE_HEADER.format(owner=owner)]
