@@ -303,7 +303,7 @@ def test_delete_by_creator_removes_chunks(monkeypatch):
 
     deleted_calls = []
 
-    async def delete_rows(document_id, namespace="default", schema=None):
+    async def delete_rows(document_id, namespace="default"):
         deleted_calls.append((document_id, namespace))
         return 3
 
@@ -321,7 +321,7 @@ def test_delete_by_admin_removes_chunks(monkeypatch):
     async def existing_owner(document_id, namespace="default", schema=None):
         return True, "alice"
 
-    async def delete_rows(document_id, namespace="default", schema=None):
+    async def delete_rows(document_id, namespace="default"):
         return 1
 
     monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
@@ -338,7 +338,7 @@ def test_delete_by_other_non_admin_key_gets_403(monkeypatch):
 
     called = []
 
-    async def delete_rows(document_id, namespace="default", schema=None):
+    async def delete_rows(document_id, namespace="default"):
         called.append(True)
         return 1
 
@@ -379,7 +379,7 @@ def test_delete_respects_namespace_query_param(monkeypatch):
         captured.append(("owner", document_id, namespace))
         return True, "alice"
 
-    async def delete_rows(document_id, namespace="default", schema=None):
+    async def delete_rows(document_id, namespace="default"):
         captured.append(("delete", document_id, namespace))
         return 2
 

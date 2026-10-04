@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 
 from memory_base.core import schema
 
@@ -33,15 +32,19 @@ def test_ensure_schema_creates_doc_rows_with_only_its_primary_key(monkeypatch):
     assert "doc_rows__" not in sql
 
 
+def _table_body(sql, table):
+    body = sql.split(f'CREATE TABLE IF NOT EXISTS "scratch_schema".{table} (', 1)[1]
+    return " ".join(body.split(");", 1)[0].split())
+
+
 def test_ensure_schema_adds_the_api_key_author_allowlist(monkeypatch):
     monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
     conn = RecordingConnection()
 
     asyncio.run(schema.ensure_schema(conn))
 
-    sql = "\n".join(conn.queries)
-    assert 'ALTER TABLE "scratch_schema".api_keys' in sql
-    assert "ADD COLUMN IF NOT EXISTS authors text[] NOT NULL DEFAULT '{}'" in sql
+    body = _table_body("\n".join(conn.queries), "api_keys")
+    assert "authors text[] NOT NULL DEFAULT '{}'" in body
 
 
 def test_api_keys_and_jobs_stamp_their_own_created_at(monkeypatch):
@@ -55,24 +58,6 @@ def test_api_keys_and_jobs_stamp_their_own_created_at(monkeypatch):
         body = sql.split(f'CREATE TABLE IF NOT EXISTS "scratch_schema".{table} (', 1)[1]
         body = body.split(");", 1)[0]
         assert "created_at timestamptz NOT NULL DEFAULT now()" in body, table
-
-
-def _table_body(sql, table):
-    body = sql.split(f'CREATE TABLE IF NOT EXISTS "scratch_schema".{table} (', 1)[1]
-    return " ".join(body.split(");", 1)[0].split())
-
-
-def test_the_legacy_profiles_table_is_dropped_in_the_configured_schema_only(monkeypatch):
-    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
-    conn = RecordingConnection()
-
-    asyncio.run(schema.ensure_schema(conn))
-
-    sql = "\n".join(conn.queries)
-    assert 'DROP TABLE IF EXISTS "scratch_schema".profiles;' in sql
-    assert 'CREATE TABLE IF NOT EXISTS "scratch_schema".profiles' not in sql
-    for statement in re.findall(r"(?:TABLE(?: IF (?:NOT )?EXISTS)?|ON) (\S*profile\S*)", sql):
-        assert statement.startswith('"scratch_schema".'), statement
 
 
 def test_agent_profiles_keep_every_version_of_each_part_unembedded(monkeypatch):
@@ -135,34 +120,14 @@ def test_messages_table_carries_the_lifecycle_constraints_and_indexes(monkeypatc
     assert 'ON "scratch_schema".messages (sender_key, idempotency_key)' in " ".join(sql.split())
 
 
-def _statements(conn: RecordingConnection) -> list[str]:
-    return [" ".join(part.split()) for part in "\n".join(conn.queries).split(";")]
-
-
-def test_memory_chunks_keep_occurred_at_and_drop_the_conversation_link(monkeypatch):
+def test_memory_chunks_keep_occurred_at(monkeypatch):
     monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
     conn = RecordingConnection()
 
     asyncio.run(schema.ensure_schema(conn))
 
-    statements = _statements(conn)
-    assert (
-        'ALTER TABLE "scratch_schema".memory_chunks ADD COLUMN IF NOT EXISTS '
-        "occurred_at double precision" in statements
-    )
-    for column in ("conversation_id", "source_turn_start", "source_turn_end"):
-        assert f'ALTER TABLE "scratch_schema".memory_chunks DROP COLUMN IF EXISTS {column}' in (
-            statements
-        ), column
-        assert not any(
-            f"ADD COLUMN IF NOT EXISTS {column}" in statement for statement in statements
-        ), column
-    assert 'DROP INDEX IF EXISTS "scratch_schema".memory_chunks__conversation' in statements
-    assert 'DROP TABLE IF EXISTS "scratch_schema".conversation_sources' in statements
-    assert not any(
-        statement.startswith("CREATE") and "conversation_sources" in statement
-        for statement in statements
-    )
+    body = _table_body("\n".join(conn.queries), "memory_chunks")
+    assert "occurred_at double precision" in body
 
 
 def test_production_schema_self_heals_query_role_and_hardens_function_acls(
@@ -229,7 +194,7 @@ def test_scratch_schema_does_not_require_or_retarget_query_role(monkeypatch):
     assert "memory_tables_query" not in sql
 
 
-def test_messages_expiry_is_nullable_on_new_and_existing_tables(monkeypatch):
+def test_messages_expiry_is_nullable(monkeypatch):
     monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
     conn = RecordingConnection()
 
@@ -240,11 +205,6 @@ def test_messages_expiry_is_nullable_on_new_and_existing_tables(monkeypatch):
     create = create[: create.index(");")]
     assert "expires_at timestamptz," in create
     assert "expires_at timestamptz NOT NULL" not in create
-    alter = 'ALTER TABLE "scratch_schema".messages ALTER COLUMN expires_at DROP NOT NULL'
-    assert alter in " ".join(sql.split())
-    assert sql.index("ALTER COLUMN expires_at DROP NOT NULL") > sql.index(
-        'CREATE TABLE IF NOT EXISTS "scratch_schema".messages'
-    )
 
 
 def test_pending_message_index_carries_no_expiry_predicate(monkeypatch):

@@ -17,21 +17,6 @@ DAY_SECONDS = 86400.0
 DUPLICATE_NEIGHBORS = 5
 
 
-def is_cold(
-    ts_last_active: float,
-    last_hit_at: float | None,
-    now: float,
-    age_days: int,
-    unhit_days: int,
-) -> bool:
-    """Return whether a row is older than both cold-tier cutoffs."""
-    effective_hit_at = last_hit_at if last_hit_at is not None else ts_last_active
-    return (
-        ts_last_active < now - age_days * DAY_SECONDS
-        and effective_hit_at < now - unhit_days * DAY_SECONDS
-    )
-
-
 async def list_old_notes(older_than_days: int, namespaces: list[str] | None = None) -> list[dict]:
     """Return active agent notes older than the requested age, scoped to namespaces (None: all)."""
     async with db.acquire() as conn:

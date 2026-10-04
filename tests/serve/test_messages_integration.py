@@ -988,37 +988,6 @@ async def _execute(sql, *args):
         await conn.close()
 
 
-class _Rollback(Exception):
-    """Carries a value out of a transaction that must not commit."""
-
-
-def test_ensure_schema_makes_an_existing_not_null_expiry_nullable():
-    async def _run():
-        conn = await asyncpg.connect(db_url())
-        try:
-            async with conn.transaction():
-                await conn.execute(f'DELETE FROM "{PG_SCHEMA}".messages WHERE expires_at IS NULL')
-                await conn.execute(
-                    f'ALTER TABLE "{PG_SCHEMA}".messages ALTER COLUMN expires_at SET NOT NULL'
-                )
-                await ensure_schema(conn)
-                nullable = await conn.fetchval(
-                    """
-                    SELECT is_nullable FROM information_schema.columns
-                    WHERE table_schema = $1 AND table_name = 'messages'
-                      AND column_name = 'expires_at'
-                    """,
-                    PG_SCHEMA,
-                )
-                raise _Rollback(nullable)
-        except _Rollback as rollback:
-            return rollback.args[0]
-        finally:
-            await conn.close()
-
-    assert asyncio.run(_run()) == "YES"
-
-
 def test_a_handoff_without_expiry_is_stored_null_and_listed_as_pending():
     marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
     subject = f"{marker} open-ended work"

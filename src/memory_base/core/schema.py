@@ -109,10 +109,14 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           chunk_kind text NOT NULL, session_id text NOT NULL, content_raw text NOT NULL,
           distilled text, embedding halfvec({EMB_DIM}) NOT NULL,
           ts_last_active double precision NOT NULL,
-          metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb
+          metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+          last_hit_at double precision,
+          hit_count bigint NOT NULL DEFAULT 0,
+          archived_at double precision,
+          namespace text NOT NULL DEFAULT 'default',
+          occurred_at double precision
         );
         CREATE EXTENSION IF NOT EXISTS pg_textsearch;
-        DROP INDEX IF EXISTS {schema}.memory_chunks__fts;
         CREATE INDEX IF NOT EXISTS memory_chunks_bm25 ON {schema}.memory_chunks
           USING bm25(content_raw) WITH (text_config='english');
         CREATE INDEX IF NOT EXISTS memory_chunks__vec ON {schema}.memory_chunks
@@ -120,23 +124,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         CREATE INDEX IF NOT EXISTS memory_chunks__session ON {schema}.memory_chunks (session_id);
         CREATE INDEX IF NOT EXISTS memory_chunks__tags ON {schema}.memory_chunks
           USING GIN ((metadata->'tags'));
-        ALTER TABLE {schema}.memory_chunks
-          ADD COLUMN IF NOT EXISTS last_hit_at double precision;
-        ALTER TABLE {schema}.memory_chunks
-          ADD COLUMN IF NOT EXISTS hit_count bigint NOT NULL DEFAULT 0;
-        ALTER TABLE {schema}.memory_chunks
-          ADD COLUMN IF NOT EXISTS archived_at double precision;
-        ALTER TABLE {schema}.memory_chunks
-          ADD COLUMN IF NOT EXISTS namespace text NOT NULL DEFAULT 'default';
-        ALTER TABLE {schema}.memory_chunks DROP COLUMN IF EXISTS idf_score;
         CREATE INDEX IF NOT EXISTS memory_chunks__namespace ON {schema}.memory_chunks (namespace);
-        ALTER TABLE {schema}.memory_chunks
-          ADD COLUMN IF NOT EXISTS occurred_at double precision;
-        DROP INDEX IF EXISTS {schema}.memory_chunks__conversation;
-        ALTER TABLE {schema}.memory_chunks DROP COLUMN IF EXISTS conversation_id;
-        ALTER TABLE {schema}.memory_chunks DROP COLUMN IF EXISTS source_turn_start;
-        ALTER TABLE {schema}.memory_chunks DROP COLUMN IF EXISTS source_turn_end;
-        DROP TABLE IF EXISTS {schema}.conversation_sources;
         CREATE TABLE IF NOT EXISTS {schema}.doc_rows (
           namespace text NOT NULL,
           document_id text NOT NULL,
@@ -164,7 +152,6 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           CHECK (purpose <> 'handoff' OR scope IS NOT NULL),
           CHECK (purpose <> 'message' OR scope IS NULL)
         );
-        ALTER TABLE {schema}.messages ALTER COLUMN expires_at DROP NOT NULL;
         CREATE INDEX IF NOT EXISTS messages__pending
           ON {schema}.messages (namespace, purpose, subject_key, created_at DESC, id DESC)
           WHERE claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL;
@@ -173,25 +160,21 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           WHERE idempotency_key IS NOT NULL;
         CREATE TABLE IF NOT EXISTS {schema}.namespaces (
           name text PRIMARY KEY,
-          created_at double precision NOT NULL
+          created_at double precision NOT NULL,
+          visibility text NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
+          owner text
         );
         INSERT INTO {schema}.namespaces (name, created_at) VALUES ('default', 0)
           ON CONFLICT (name) DO NOTHING;
-        ALTER TABLE {schema}.namespaces
-          ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'public'
-          CHECK (visibility IN ('public', 'private'));
-        ALTER TABLE {schema}.namespaces
-          ADD COLUMN IF NOT EXISTS owner text;
         CREATE TABLE IF NOT EXISTS {schema}.api_keys (
           key_hash text PRIMARY KEY,
           label text NOT NULL,
           home text NOT NULL DEFAULT 'default',
           is_admin boolean NOT NULL DEFAULT false,
           created_at timestamptz NOT NULL DEFAULT now(),
-          revoked_at timestamptz
+          revoked_at timestamptz,
+          authors text[] NOT NULL DEFAULT '{{}}'
         );
-        ALTER TABLE {schema}.api_keys
-          ADD COLUMN IF NOT EXISTS authors text[] NOT NULL DEFAULT '{{}}';
         CREATE TABLE IF NOT EXISTS {schema}.consolidation_actions (
           id bigserial PRIMARY KEY,
           idempotency_key text NOT NULL UNIQUE,
@@ -217,7 +200,6 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS consolidation_actions__run
           ON {schema}.consolidation_actions (namespace, run_id);
-        DROP TABLE IF EXISTS {schema}.profiles;
         CREATE TABLE IF NOT EXISTS {schema}.agent_profiles (
           id bigserial PRIMARY KEY,
           owner text NOT NULL,
@@ -251,12 +233,10 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           ts double precision NOT NULL,
           filters jsonb NOT NULL DEFAULT '{{}}'::jsonb
         );
-        ALTER TABLE {schema}.retrieval_log
-          ADD COLUMN IF NOT EXISTS filters jsonb NOT NULL DEFAULT '{{}}'::jsonb;
         CREATE INDEX IF NOT EXISTS retrieval_log__ts ON {schema}.retrieval_log (ts);
         CREATE TABLE IF NOT EXISTS {schema}.jobs (
           job_id text PRIMARY KEY,
-          kind text NOT NULL,
+          kind text NOT NULL CONSTRAINT jobs_kind_check CHECK (kind IN ('document', 'repo')),
           status text NOT NULL DEFAULT 'queued'
             CHECK (status IN ('queued', 'running', 'succeeded', 'no_op', 'failed')),
           key_id text NOT NULL,
@@ -281,22 +261,13 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           action text CHECK (action IS NULL OR action IN ('ingest', 'remove')),
           url text,
           branch text,
+          tags text[] NOT NULL DEFAULT '{{}}'::text[],
           CHECK (kind <> 'document' OR
             (namespace IS NOT NULL AND document_id IS NOT NULL AND mode IS NOT NULL
              AND filename IS NOT NULL AND spool_path IS NOT NULL AND stage IS NOT NULL)),
           CHECK (kind <> 'repo' OR (name IS NOT NULL AND action IS NOT NULL)),
           CHECK (kind <> 'repo' OR action <> 'ingest' OR url IS NOT NULL)
         );
-        ALTER TABLE {schema}.jobs
-          ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{{}}'::text[];
-        DELETE FROM {schema}.jobs WHERE kind = 'conversation';
-        DROP INDEX IF EXISTS {schema}.jobs__conversation_active;
-        ALTER TABLE {schema}.jobs DROP CONSTRAINT IF EXISTS jobs_conversation_check;
-        ALTER TABLE {schema}.jobs DROP COLUMN IF EXISTS conversation_id;
-        ALTER TABLE {schema}.jobs DROP COLUMN IF EXISTS result;
-        ALTER TABLE {schema}.jobs DROP CONSTRAINT IF EXISTS jobs_kind_check;
-        ALTER TABLE {schema}.jobs ADD CONSTRAINT jobs_kind_check
-          CHECK (kind IN ('document', 'repo'));
         CREATE INDEX IF NOT EXISTS jobs__claim
           ON {schema}.jobs (kind, status, key_id, created_at);
         CREATE INDEX IF NOT EXISTS jobs__document_active

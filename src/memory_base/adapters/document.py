@@ -399,8 +399,8 @@ async def build_csv_card(
 def _qualify_document_id(namespace: str, document_id: str) -> str:
     """Namespace-qualify a document_id for row-id construction.
 
-    'default' keeps the legacy unqualified id so existing rows are
-    unaffected; every other namespace gets a distinct id space so the same
+    'default' uses the unqualified id; every other namespace gets a
+    distinct id space so the same
     document_id ingested into two namespaces never collides on the
     memory_chunks primary key.
     """
