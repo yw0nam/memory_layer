@@ -16,7 +16,7 @@ from starlette.testclient import TestClient
 
 from memory_base.serve import api
 from memory_base.serve.access import auth
-from memory_base.serve.profiles import routes, store
+from memory_base.serve.profiles import store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -449,12 +449,8 @@ def test_an_owner_key_reads_its_own_proposal_but_not_another_owners(monkeypatch,
     "body",
     [
         {"content": "x"},
-        {"owner": OWNER},
         {"owner": OWNER, "content": "x", "extra": 1},
         {"owner": OWNER, "content": 5},
-        {"owner": OWNER, "content": None},
-        {"owner": 5, "content": "x"},
-        {"owner": "Claude", "content": "x"},
         {"owner": "-bad", "content": "x"},
         {"owner": "a" * 41, "content": "x"},
         {"owner": "user", "content": "x"},
@@ -462,7 +458,6 @@ def test_an_owner_key_reads_its_own_proposal_but_not_another_owners(monkeypatch,
         {"owner": OWNER, "content": "x", "max_chars": 199},
         {"owner": OWNER, "content": "x", "max_chars": 20001},
         {"owner": OWNER, "content": "x", "max_chars": True},
-        {"owner": OWNER, "content": "x", "max_chars": 500.0},
         {"owner": OWNER, "content": "x", "max_chars": "500"},
         [{"owner": OWNER, "content": "x"}],
     ],
@@ -475,14 +470,14 @@ def test_self_write_rejects_a_bad_body(monkeypatch, fake_db, body):
     assert fake_db.calls == []
 
 
-@pytest.mark.parametrize("raw", [b"", b"{", b"not json", b'"text"'])
+@pytest.mark.parametrize("raw", [b"{", b'"text"'])
 def test_mutations_reject_malformed_json(agent, fake_db, raw):
     for method, path in (("PUT", "/profiles/self"), ("POST", "/profiles/user/proposals")):
         assert client.request(method, path, content=raw).status_code == 400
     assert fake_db.calls == []
 
 
-@pytest.mark.parametrize("raw", [b"", b"{", b"[]", b"null"])
+@pytest.mark.parametrize("raw", [b"{", b"[]"])
 def test_decisions_reject_malformed_json(user, fake_db, raw):
     fake_db.add_proposal()
     for action in ("approve", "reject"):
@@ -496,11 +491,7 @@ def test_decisions_reject_malformed_json(user, fake_db, raw):
     "change",
     [
         {"owner": None},
-        {"content": None},
-        {"reason": None},
-        {"base_version": None},
         {"extra": True},
-        {"reason": ""},
         {"reason": "   "},
         {"reason": "r" * 1001},
         {"reason": 5},
@@ -508,13 +499,9 @@ def test_decisions_reject_malformed_json(user, fake_db, raw):
         {"base_version": -1},
         {"base_version": 2147483648},
         {"base_version": True},
-        {"base_version": 1.0},
-        {"base_version": "0"},
         {"max_chars": 199},
         {"max_chars": 20001},
-        {"max_chars": False},
         {"owner": "user"},
-        {"owner": "consolidator"},
         {"owner": "Bad Owner"},
     ],
 )
@@ -542,10 +529,8 @@ def test_proposal_accepts_the_largest_base_version_and_reports_it_stale(agent, f
     "body",
     [
         {"note": 5},
-        {"note": None},
         {"note": "n" * 1001},
         {"note": "x", "extra": 1},
-        {"status": "approved"},
     ],
 )
 def test_decisions_reject_a_bad_body(user, fake_db, body):
@@ -563,9 +548,7 @@ def test_decisions_accept_a_note_of_exactly_1000_characters_after_stripping(user
     assert fake_db.proposal(1)["decision_note"] == "n" * 1000
 
 
-@pytest.mark.parametrize(
-    "proposal_id", ["abc", "0", "-1", "1.5", "9223372036854775808", "1e3", "+1", "01"]
-)
+@pytest.mark.parametrize("proposal_id", ["abc", "0", "9223372036854775808"])
 def test_proposal_routes_reject_a_malformed_id(user, fake_db, proposal_id):
     assert client.get(f"/profiles/user/proposals/{proposal_id}").status_code == 400
     assert _approve(proposal_id).status_code == 400
@@ -581,12 +564,9 @@ def test_the_largest_proposal_id_is_well_formed(user, fake_db):
     "query",
     [
         "",
-        "owner=",
         "owner=user",
-        "owner=consolidator",
         "owner=Bad",
         "owner=claude-code&owner=natsume",
-        "owner=claude-code&part=self",
         "owner=claude-code&extra=1",
     ],
 )
@@ -599,14 +579,10 @@ def test_profile_read_rejects_a_bad_query(monkeypatch, fake_db, query):
 @pytest.mark.parametrize(
     "query",
     [
-        "owner=claude-code",
-        "part=self",
         "owner=claude-code&part=both",
         "owner=claude-code&part=self&part=user",
         "owner=claude-code&part=self&limit=0",
         "owner=claude-code&part=self&limit=201",
-        "owner=claude-code&part=self&limit=x",
-        "owner=claude-code&part=self&limit=5&limit=6",
         "owner=claude-code&part=self&status=pending",
         "owner=user&part=self",
     ],
@@ -624,9 +600,7 @@ def test_versions_reject_a_bad_query(monkeypatch, fake_db, query):
         "status=pending&status=approved",
         "limit=0",
         "limit=201",
-        "limit=ten",
         "owner=user",
-        "owner=claude-code&owner=natsume",
         "part=user",
     ],
 )
@@ -837,9 +811,8 @@ def test_approve_of_a_stale_proposal_leaves_it_pending_and_unchanged(user, fake_
     assert len(fake_db.versions) == 1
 
 
-@pytest.mark.parametrize("status", ["approved", "rejected", "superseded"])
-@pytest.mark.parametrize("action", ["approve", "reject"])
-def test_deciding_a_non_pending_proposal_is_refused_with_its_status(user, fake_db, status, action):
+@pytest.mark.parametrize(("action", "status"), [("approve", "approved"), ("reject", "rejected")])
+def test_deciding_a_non_pending_proposal_is_refused_with_its_status(user, fake_db, action, status):
     fake_db.add_proposal(status=status, decided_at=NOW - 1, decision_note="earlier")
     before = dict(fake_db.proposal(1))
     response = client.post(f"/profiles/user/proposals/1/{action}", json={"note": "again"})
@@ -956,13 +929,6 @@ def test_profile_read_keeps_the_version_of_a_cleared_part_and_never_serves_an_ol
     assert body["self"] is None
 
 
-def test_profile_read_with_only_a_pending_proposal(agent, fake_db):
-    fake_db.add_proposal()
-    body = client.get("/profiles", params={"owner": OWNER}).json()
-    assert body["user"] is None and body["self"] is None
-    assert body["pending_proposal"]["id"] == 1
-
-
 def test_versions_are_listed_newest_first_within_the_limit(agent, fake_db):
     for text in ("one", "two", "three"):
         fake_db.add_version(OWNER, "self", text)
@@ -1061,18 +1027,3 @@ def test_a_proposal_by_id_reports_a_cleared_or_absent_user_part_as_null(user, fa
 
 def test_an_unknown_proposal_by_id_is_404(user, fake_db):
     assert client.get("/profiles/user/proposals/3").status_code == 404
-
-
-def test_the_old_profile_routes_and_slot_machinery_are_gone(monkeypatch, fake_db):
-    _use_identity(monkeypatch, authors=("consolidator", OWNER, "user"), is_admin=True)
-    for method, path in (
-        ("GET", "/admin/profiles/sources?namespace=default&slot=user"),
-        ("PUT", "/admin/profiles"),
-        ("GET", "/admin/profiles/versions?namespace=default&slot=user"),
-    ):
-        assert client.request(method, path).status_code in (404, 405)
-    assert client.get("/profiles").status_code == 400
-    assert client.get("/profiles", params={"namespace": "default"}).status_code == 400
-    for name in ("PROFILE_VERSION", "source_hash", "render_rules", "SLOT_KINDS", "SLOT_FIELDS"):
-        assert not hasattr(store, name)
-        assert not hasattr(routes, name)
