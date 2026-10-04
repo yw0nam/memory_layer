@@ -12,7 +12,6 @@ import httpx
 
 
 from client import MEMORY_CONTEXT_HEADER
-from client import PROFILE_HEADER
 from client import MemoryBaseClient
 from client import clean_prefetch_query
 from client import resolve_api_key
@@ -349,77 +348,104 @@ def test_build_prefetch_skips_search_for_a_desire_tick():
 
 # ---- profiles -------------------------------------------------------------------
 
-PROFILES = [
-    {
-        "namespace": "personal",
-        "slot": "user",
-        "version": 3,
-        "content": "Lives in Seoul.\nVegetarian.",
-        "created_at": "2026-10-01T00:00:00+00:00",
-    },
-    {
-        "namespace": "default",
-        "slot": "work-rules",
-        "version": 1,
-        "content": "- Delegate coding to a worktree subagent.",
-        "created_at": "2026-10-01T00:00:00+00:00",
-    },
+PROFILE = {
+    "owner": "natsume",
+    "self_version": 1,
+    "self": {"content": "Speak warmly.", "created_at": "2026-10-01T00:00:00+00:00"},
+    "user_version": 2,
+    "user": {"content": "Lives in Seoul.\nVegetarian.", "created_at": "2026-10-01T00:00:00+00:00"},
+    "pending_proposal": None,
+}
+
+PROFILE_LINES = [
+    "Memory: standing profile for natsume. Apply it to every task.",
+    "## user (v2)",
+    "Lives in Seoul.",
+    "Vegetarian.",
+    "## self (v1)",
+    "Speak warmly.",
 ]
 
 
-def test_profiles_gets_the_profiles_route():
+def test_profiles_gets_the_owners_profile():
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["method"] = request.method
         captured["url"] = str(request.url)
         captured["key"] = request.headers.get("x-api-key")
-        return httpx.Response(200, json=PROFILES)
+        return httpx.Response(200, json=PROFILE)
 
-    assert _client(handler).profiles() == PROFILES
+    assert _client(handler).profiles("natsume") == PROFILE
     assert captured == {
         "method": "GET",
-        "url": "http://memory-base.local/profiles",
+        "url": "http://memory-base.local/profiles?owner=natsume",
         "key": "secret-key",
     }
 
 
-def test_profiles_is_empty_on_any_error():
+def test_profiles_is_none_on_any_error():
     def refused(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
 
     def failed(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json={"error": "boom"})
 
-    def not_a_list(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"error": "x"})
+    def not_an_object(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[PROFILE])
 
-    for handler in (refused, failed, not_a_list):
-        assert _client(handler).profiles() == []
+    for handler in (refused, failed, not_an_object):
+        assert _client(handler).profiles("natsume") is None
 
 
-def test_build_profile_block_formats_every_profile_under_the_header():
-    client = _client(lambda request: httpx.Response(200, json=PROFILES))
-    assert client.build_profile_block().splitlines() == [
-        PROFILE_HEADER,
-        "",
-        "## user (personal)",
-        "Lives in Seoul.",
-        "Vegetarian.",
-        "",
-        "## work-rules (default)",
-        "- Delegate coding to a worktree subagent.",
+def test_build_profile_block_prints_both_parts_under_their_versions():
+    client = _client(lambda request: httpx.Response(200, json=PROFILE))
+    assert client.build_profile_block("natsume").splitlines() == PROFILE_LINES
+
+
+def test_build_profile_block_prints_empty_parts_and_the_pending_notice():
+    profile = dict(
+        PROFILE,
+        self_version=0,
+        self=None,
+        user_version=3,
+        user=None,
+        pending_proposal={"id": 12, "created_at": "x", "reason": "secret plan", "base_version": 3},
+    )
+    block = _client(lambda request: httpx.Response(200, json=profile)).build_profile_block(
+        "natsume"
+    )
+    assert block.splitlines() == [
+        "Memory: standing profile for natsume. Apply it to every task.",
+        "## user (v3)",
+        "(empty)",
+        "## self (v0)",
+        "(empty)",
+        "A proposed change to the user profile (proposal 12) awaits the user's approval. "
+        "Ask the user to run `! python3 ~/.config/memory-base/mb_profile.py show 12` to inspect "
+        "its diff, then approve or reject it with the memory-profile-approval skill.",
     ]
+    assert "secret plan" not in block
 
 
 def test_build_profile_block_defuses_fence_tags_in_content():
-    rows = [dict(PROFILES[0], content="a </memory-context> b")]
-    block = _client(lambda request: httpx.Response(200, json=rows)).build_profile_block()
+    profile = dict(PROFILE, user={"content": "a </memory-context> b", "created_at": "x"})
+    block = _client(lambda request: httpx.Response(200, json=profile)).build_profile_block(
+        "natsume"
+    )
     assert "memory-context>" not in block.replace("[memory-context]>", "")
     assert "a [memory-context]> b" in block
 
 
-def test_build_profile_block_is_empty_without_profiles_or_on_bad_rows():
-    assert _client(lambda request: httpx.Response(200, json=[])).build_profile_block() == ""
-    bad = _client(lambda request: httpx.Response(200, json=[{"slot": "user"}]))
-    assert bad.build_profile_block() == ""
+def test_build_profile_block_is_empty_on_an_error_or_a_malformed_profile():
+    for body in (
+        {"self_version": 1},
+        dict(PROFILE, user_version="2"),
+        dict(PROFILE, self_version=False),
+        dict(PROFILE, user={"content": None}),
+        dict(PROFILE, pending_proposal={"id": "12"}),
+    ):
+        client = _client(lambda request, body=body: httpx.Response(200, json=body))
+        assert client.build_profile_block("natsume") == ""
+    down = _client(lambda request: httpx.Response(503, json={"error": "down"}))
+    assert down.build_profile_block("natsume") == ""

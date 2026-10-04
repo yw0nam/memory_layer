@@ -725,91 +725,6 @@ async def admin_consolidate_actions_route(request: Request) -> JSONResponse:
     return JSONResponse(await verdicts.list_actions(**filters, limit=limit))
 
 
-async def _profile_slot(request: Request) -> tuple[str, str]:
-    """The required `namespace` (registered) and `slot` query values, or ValueError."""
-    namespace = _scalar(request, "namespace", str, None, lambda x: bool(x.strip()), "non-blank")
-    slot = _scalar(
-        request, "slot", str, None, lambda x: x in profiles.SLOTS, f"one of {profiles.SLOTS}"
-    )
-    if namespace is None or slot is None:
-        raise ValueError("namespace and slot are required")
-    if namespace not in {row["name"] for row in await namespaces.list_namespaces()}:
-        raise ValueError(f"unregistered namespace: {namespace}")
-    return namespace, slot
-
-
-async def admin_profile_sources_route(request: Request) -> JSONResponse:
-    """A profile slot's eligible notes, their source hash, and whether the slot is stale."""
-    denied = _consolidator_denied(request.state.key)
-    if denied is not None:
-        return denied
-    try:
-        namespace, slot = await _profile_slot(request)
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(await profiles.sources(namespace, slot))
-
-
-async def admin_profiles_put_route(request: Request) -> JSONResponse:
-    """Store a profile slot's next version while its source hash still matches; 409 when stale."""
-    key = request.state.key
-    denied = _consolidator_denied(key)
-    if denied is not None:
-        return denied
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    try:
-        write = profiles.parse_write(body)
-    except profiles.RequestError as exc:
-        return error(str(exc))
-    if write.author not in key.authors:
-        return error(f"author {write.author!r} is not permitted for this key", 403)
-    try:
-        result = await profiles.write(write)
-    except profiles.Stale as exc:
-        return JSONResponse({"error": "stale", "source_hash": exc.source_hash}, status_code=409)
-    except profiles.Refused as exc:
-        return JSONResponse({"error": str(exc), **exc.details}, status_code=400)
-    except namespaces.NamespaceError as exc:
-        return error(str(exc))
-    return JSONResponse(result)
-
-
-async def admin_profile_versions_route(request: Request) -> JSONResponse:
-    """Every version of one profile slot, newest first."""
-    denied = _consolidator_denied(request.state.key)
-    if denied is not None:
-        return denied
-    try:
-        limit = _scalar(
-            request,
-            "limit",
-            int,
-            profiles.DEFAULT_VERSIONS_LIMIT,
-            lambda x: 1 <= x <= profiles.MAX_VERSIONS_LIMIT,
-            f"an integer between 1 and {profiles.MAX_VERSIONS_LIMIT}",
-        )
-        namespace, slot = await _profile_slot(request)
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(await profiles.versions(namespace, slot, limit))
-
-
-async def profiles_route(request: Request) -> JSONResponse:
-    """The served profiles of every namespace the caller can read, or of the requested ones."""
-    key = request.state.key
-    try:
-        requested = normalize_namespaces(request.query_params.getlist("namespace") or None)
-    except ValueError as exc:
-        return error(str(exc))
-    if requested is not None and not key.permits_all(set(requested)):
-        return error("requested namespaces are outside the caller's allowed set", 403)
-    scope = requested if requested is not None else _admin_scope(key)
-    return JSONResponse(await profiles.served(scope))
-
-
 async def admin_archive_route(request: Request) -> JSONResponse:
     """Preview or archive cold notes and delete terminal messages, in scope.
 
@@ -1001,7 +916,22 @@ app = Starlette(
         Route("/search", search_route, methods=["POST"]),
         Route("/save_memory", save_memory_route, methods=["POST"]),
         Route("/notes", notes_list_route, methods=["GET"]),
-        Route("/profiles", profiles_route, methods=["GET"]),
+        Route("/profiles", profiles.profile_route, methods=["GET"]),
+        Route("/profiles/self", profiles.self_route, methods=["PUT"]),
+        Route("/profiles/versions", profiles.versions_route, methods=["GET"]),
+        Route("/profiles/user/proposals", profiles.propose_route, methods=["POST"]),
+        Route("/profiles/user/proposals", profiles.proposals_route, methods=["GET"]),
+        Route("/profiles/user/proposals/{proposal_id}", profiles.proposal_route, methods=["GET"]),
+        Route(
+            "/profiles/user/proposals/{proposal_id}/approve",
+            profiles.approve_route,
+            methods=["POST"],
+        ),
+        Route(
+            "/profiles/user/proposals/{proposal_id}/reject",
+            profiles.reject_route,
+            methods=["POST"],
+        ),
         Route("/messages", messages_send_route, methods=["POST"]),
         Route("/messages", messages_list_route, methods=["GET"]),
         Route("/messages/{message_id}/claim", message_claim_route, methods=["POST"]),
@@ -1032,9 +962,6 @@ app = Starlette(
         Route("/admin/consolidate/verdicts", admin_consolidate_verdicts_route, methods=["POST"]),
         Route("/admin/consolidate/undo", admin_consolidate_undo_route, methods=["POST"]),
         Route("/admin/consolidate/actions", admin_consolidate_actions_route, methods=["GET"]),
-        Route("/admin/profiles/sources", admin_profile_sources_route, methods=["GET"]),
-        Route("/admin/profiles", admin_profiles_put_route, methods=["PUT"]),
-        Route("/admin/profiles/versions", admin_profile_versions_route, methods=["GET"]),
         Route("/admin/archive", admin_archive_route, methods=["POST"]),
         Route("/admin/restore", admin_restore_route, methods=["POST"]),
     ],

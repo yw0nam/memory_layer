@@ -22,13 +22,14 @@ instead of search.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  19 tools: search / search_code / search_memory /
+   ┌─────────────┐  21 tools: search / search_code / search_memory /
    │ mcp_server  │            save_memory / list_notes /
    └──────┬──────┘            ingest_document / remove_document
           │                   query_table / ingest_repo / remove_repo / list_repos
           │ HTTP              list_memory_duplicates / archive_notes /
           │                   restore_notes / delete_notes / send_message /
-          │                   list_messages / claim_message / cancel_message
+          │                   list_messages / claim_message / cancel_message /
+          │                   update_my_profile / propose_user_profile
           │                   (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
@@ -55,6 +56,8 @@ searched ([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)). No
 conversation turns are stored ([ADR-0005](docs/adr/0005-no-raw-conversation-storage.md)).
 `consolidation_actions` records each verdict an agent applied to a group of notes the
 server issued; the server judges no content ([ADR-0008](docs/adr/0008-consolidation-judged-by-an-agent-applied-by-the-server.md)).
+`agent_profiles` and `profile_proposals` hold each agent's profile versions and the
+proposals the user decides; they are never embedded or searched.
 
 The same components as an explorable diagram, with guided views and image export:
 [docs/diagrams/memory-base-architecture.html](docs/diagrams/memory-base-architecture.html)
@@ -83,7 +86,14 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
 | `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the required `kind` (`personal` or `work`, a label for search and listing), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); no chat model judges the note; refused with 409 when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set, and before embedding when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind` (`personal` or `work`), `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
-| `GET` | `/profiles` | the served profiles — the latest version of each slot (`user`, `work-rules`) per namespace, when its content is non-empty; `[{namespace, slot, version, content, created_at}]` by namespace, then slot; `namespace` repeatable, default every namespace the key can read, 403 outside it; see [data flow](docs/data-flow.md#profiles) |
+| `GET` | `/profiles` | one owner's profile — `owner` (an agent's author slug) required; `{owner, self_version, self, user_version, user, pending_proposal}` from one snapshot, a part `{content, created_at}` or null when absent or emptied, its version kept; a key whose authors hold the owner or `user` only; see [data flow](docs/data-flow.md#profiles) |
+| `PUT` | `/profiles/self` | replace the owner's `self` part (persona, working rules, conventions) — `owner` one of the key's authors, `content`, `max_chars` (200–20000, default 4000); `written` or `unchanged` with the version; empty content clears the part; 400 for an over-budget or credential-bearing text |
+| `POST` | `/profiles/user/proposals` | propose a full replacement of the owner's `user` part — `owner` one of the key's authors, `content`, `reason` (1–1000 chars), `base_version` (the current user version, 0 when none), `max_chars` (200–20000, default 3000); 201 `{id, status, superseded}`, superseding the owner's pending proposal; 409 `{error: "stale", version}` when the base is not current |
+| `GET` | `/profiles/user/proposals` | proposals newest first — `owner`, `status`, `limit` (1–200, default 20); without `owner`, every owner's, for keys carrying the `user` author only |
+| `GET` | `/profiles/user/proposals/{id}` | one proposal with `current_user_version` and `current_user_content` — the proposal owner's key or a `user` key |
+| `POST` | `/profiles/user/proposals/{id}/approve` | store a pending proposal as the owner's next user version (author `user`) — keys carrying the `user` author only; optional `note`; 409 `not_pending` with the status, or `stale` with the current version (the proposal stays pending) |
+| `POST` | `/profiles/user/proposals/{id}/reject` | reject a pending proposal — keys carrying the `user` author only; optional `note`; 409 `not_pending` with the status |
+| `GET` | `/profiles/versions` | one part's versions newest first with `content`, `author`, `proposal_id`, `created_at` — `owner`, `part` (`self`\|`user`), `limit` (1–200, default 20) |
 | `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, `author`, optional `idempotency_key` and `expires_at`; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
 | `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown or out-of-scope id a 404 |
@@ -99,7 +109,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/repos/jobs/{job_id}` | repo job state |
 | `POST` | `/namespaces` | register a namespace — `name` (`^[a-z0-9_-]{1,64}$`), `visibility` (`public`\|`private`, default `public`); a private namespace records the caller's key label as owner |
 | `GET` | `/namespaces` | list namespaces the caller can access (every namespace for an admin key) |
-| `DELETE` | `/namespaces/{name}` | unregister a namespace with no notes, chunks, table rows, messages, or profile versions — the namespace's owner or an admin key only; the reserved `default` namespace cannot be deleted |
+| `DELETE` | `/namespaces/{name}` | unregister a namespace with no notes, chunks, table rows, or messages — the namespace's owner or an admin key only; the reserved `default` namespace cannot be deleted |
 | `GET` | `/keys/{label}/authors` | a label's author allowlist — an admin key reads any label, a member key only its own |
 | `PUT` | `/keys/{label}/authors` | replace a label's allowlist — `authors` (slugs matching `^[a-z0-9][a-z0-9-]{0,39}$`); admin keys only |
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
@@ -109,17 +119,23 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/admin/consolidate/verdicts` | apply an agent's `keep` / `retire` / `merge` verdicts on issued groups, each alone in one transaction under a per-namespace lock — same key as the groups route, `author` one of its authors; `run_id`, `model`, `dry_run` (plan only, no write), the groups call's `threshold` / `neighbors` / `max_group` / `max_group_chars`, `max_actions` (retire and merge per run and namespace, 1–500, default 20), 1–200 `verdicts`; a schema violation refuses the whole request with 400; each result is `applied`, `planned`, `cached`, `duplicate`, `stale` (with the current groups), `rejected`, or `failed` (an embedder or database error rolled that verdict back; retry it with the same idempotency key); a merge text must pass a two-direction token check (numbers, dates, backticked spans, names) that a changed sentence-initial name, a negation, a caseless-script name, or a version inside an identifier (`v2.0`) passes; see [data flow](docs/data-flow.md#consolidation-verdicts) |
 | `POST` | `/admin/consolidate/undo` | reverse one action — `action_id`, `author`; restores the notes it archived with their prior metadata and archives a replacement it created; 409 with nothing changed when a later change touched them or for a keep, 404 for an unknown id, the recorded result when already undone; see [data flow](docs/data-flow.md#consolidation-undo-and-actions) |
 | `GET` | `/admin/consolidate/actions` | consolidation actions newest first with the full text and lineage of every note they name — `namespace`, `run_id`, `note_id`, `limit` (1–500, default 50) |
-| `GET` | `/admin/profiles/sources` | a profile slot's eligible notes (active `personal` notes for `user`, active `work` notes for `work-rules`) by save time, their `source_hash`, the `current` version, and `stale` — same key as the consolidation routes; `namespace` (registered) and `slot` required |
-| `PUT` | `/admin/profiles` | store a slot's next version — same key, `author` one of its authors; `namespace`, `slot`, `source_hash`, `model`, `dry_run`, `max_chars` (200–20000, default 1500 for `user`, 6000 for `work-rules`), and `content` (`user`) or 0–200 `note_ids` (`work-rules`, rendered verbatim in the given order); 409 with the current hash when the sources changed, 400 for blank content while the slot has source notes (blank content with none stores an empty version that clears the slot), credential-bearing or over-budget content, and for ids outside the slot's notes; `unchanged` when the latest version has the same hash and content; see [data flow](docs/data-flow.md#profiles) |
-| `GET` | `/admin/profiles/versions` | every version of one slot newest first with `content`, `source_ids`, `source_hash`, `author`, `model`, `created_at` — same key; `namespace`, `slot`, `limit` (1–200, default 20) |
 | `POST` | `/admin/archive` | preview cold notes (`notes_to_archive`) and terminal messages (`messages_to_delete`), then archive the notes and delete the messages with `confirm`; message deletion is permanent, so a member key purges only the namespaces it owns; `ids` selects rows in the caller's scope and requires an `author`, stamped on every row archived |
 | `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author and the `replaced_by` and `consolidated_into` lineage |
 
-An agent runs the consolidation and profile routes on a schedule by following [docs/consolidation-procedure.md](docs/consolidation-procedure.md).
-Clients deliver the profiles at session start: the Claude Code SessionStart hook
-(`integrations/claude_code/session_start_hook.py`, installed with a 10-second timeout as
+An agent runs the consolidation routes on a schedule by following [docs/consolidation-procedure.md](docs/consolidation-procedure.md).
+
+Profiles belong to agents ([ADR-0009](docs/adr/0009-profiles-owned-by-agents-user-part-approved-by-the-user.md)). Each owner (an agent's author slug) has a `self` part it writes
+with the MCP tool `update_my_profile` and a `user` part that changes only when the user
+approves the agent's `propose_user_profile` proposal with a key carrying the `user`
+author. Clients deliver the configured owner's profile at session start: the Claude Code
+SessionStart hook (`integrations/claude_code/session_start_hook.py`, owner
+`MEMORY_BASE_AUTHOR`, default `claude-code`, installed with a 10-second timeout as
 documented in `integrations/claude_code/prefetch_hook.py`) and the Hermes provider's system
-prompt block ([integrations/hermes/README.md](integrations/hermes/README.md)).
+prompt block (config `owner`, [integrations/hermes/README.md](integrations/hermes/README.md)).
+Both print the two parts under their version lines and a notice while a proposal is
+pending. The user decides with the approval CLI and the agents follow the
+`memory-profile-approval` skill; install both as described in
+[integrations/profile_approval/README.md](integrations/profile_approval/README.md).
 
 Filters are bound to the source they belong to: `kind`, `tags`, `author`, and
 `since`/`until` require `source="memory"`, `repo` requires `source="code"`, and
@@ -149,7 +165,8 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
-`list_messages` · `claim_message` · `cancel_message`
+`list_messages` · `claim_message` · `cancel_message` · `update_my_profile` ·
+`propose_user_profile`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,
@@ -157,7 +174,7 @@ so `search` and `search_code` do not offer them; `repo` on `search_code` alone;
 `budget_tokens` on `search` and `search_memory`, which returns hits in rerank order up to
 a token budget instead of `top_k` hits above `min_score`.
 `list_notes` reads notes by filters alone — no query, no embedding call — for
-deterministic reads like tag-scoped profile notes or a time window. `author` filters
+deterministic reads like every note carrying one subject tag or a time window. `author` filters
 `search_memory` and `list_notes` to one agent's notes.
 
 Curation runs over the same tools: `list_memory_duplicates` reads near-duplicate pairs
@@ -173,6 +190,13 @@ a handoff snapshot; `cancel_message` withdraws a sender's own pending message. A
 general message is operational and expires after `MESSAGE_TTL_DAYS`; a handoff stays
 pending until it is claimed, superseded, or cancelled unless its sender gives an
 `expires_at`; a note is durable knowledge.
+
+The profile tools write an agent's own profile: `update_my_profile` replaces its whole
+`self` part, and `propose_user_profile` proposes a full replacement of its `user` part
+against the user version delivered at session start. A stale proposal fails with the
+current version and asks the agent to refresh its profile context and reconsider the
+replacement. No MCP tool reads, approves, or rejects a profile; the user decides with the
+approval CLI.
 
 ## Running
 

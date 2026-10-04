@@ -35,7 +35,7 @@ markers = [
     "real_auth: exercises the real API-key auth path instead of the tests/serve stub",
 ]
 testpaths = ["tests"]
-pythonpath = ["scripts", "integrations/hermes/memory_base", "integrations/claude_code"]
+pythonpath = ["scripts", "integrations/hermes/memory_base", "integrations/claude_code", "integrations/profile_approval"]
 
 [build-system]
 requires = ["hatchling"]

@@ -1,139 +1,27 @@
-"""Unit tests for profile slots: the source hash, the work-rules rendering, and the routes.
+"""Unit tests for agent-owned profiles: request validation, authority, and the routes.
 
 No DB, no network: the routes read and write through a fake connection behind
-``db.acquire`` that answers each statement by a marker in its SQL.
+``db.acquire`` that answers each statement by its table and verb, emulates the
+transaction rollback, and checks that every mutation reads under the owner lock.
 """
 
 from __future__ import annotations
 
-import dataclasses
-import hashlib
+import copy
 import json
 from contextlib import asynccontextmanager
 
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth, namespaces, profiles
-from memory_base.serve.consolidate import Note
+from memory_base.serve import api, auth, profiles
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
-NS = "default"
-SAVED = 1_700_000_000.0
-
-
-def note(note_id, text="text", **fields):
-    values = {
-        "id": note_id,
-        "kind": "work",
-        "author": "claude-code",
-        "saved": SAVED,
-        "occurred_at": None,
-        "tags": ("rules",),
-        "similar_ack": (),
-        "supersedes": None,
-        "text": text,
-    }
-    values.update(fields)
-    return Note(**values)
-
-
-# ---- source hash ------------------------------------------------------------
-
-
-def test_source_hash_is_sha256_over_the_documented_canonical_json():
-    notes = [
-        note("B", "second", kind="personal", saved=0.0, tags=("z", "y"), author=None),
-        note("A", "first", kind="personal", occurred_at=1_600_000_000.0),
-    ]
-    payload = {
-        "v": "1",
-        "slot": "user",
-        "namespace": "ns",
-        "notes": [
-            [
-                "A",
-                hashlib.sha256(b"first").hexdigest(),
-                "personal",
-                "claude-code",
-                SAVED,
-                1_600_000_000.0,
-                ["rules"],
-            ],
-            ["B", hashlib.sha256(b"second").hexdigest(), "personal", None, 0.0, None, ["y", "z"]],
-        ],
-    }
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    assert profiles.PROFILE_VERSION == "1"
-    assert (
-        profiles.source_hash("ns", "user", notes) == hashlib.sha256(canonical.encode()).hexdigest()
-    )
-
-
-def test_source_hash_ignores_input_order():
-    a, b = note("A"), note("B")
-    assert profiles.source_hash(NS, "work-rules", [a, b]) == profiles.source_hash(
-        NS, "work-rules", [b, a]
-    )
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        {"text": "other text"},
-        {"kind": "personal"},
-        {"author": "natsume"},
-        {"author": None},
-        {"occurred_at": 0.0},
-        {"occurred_at": 1.0},
-        {"tags": ("rules", "delegation")},
-        {"saved": SAVED + 1},
-    ],
-)
-def test_source_hash_changes_with_every_field(change):
-    base = [note("A"), note("B")]
-    changed = [note("A"), dataclasses.replace(note("B"), **change)]
-    assert profiles.source_hash(NS, "work-rules", base) != profiles.source_hash(
-        NS, "work-rules", changed
-    )
-
-
-def test_source_hash_changes_when_a_note_is_added_or_removed():
-    base = profiles.source_hash(NS, "work-rules", [note("A"), note("B")])
-    assert profiles.source_hash(NS, "work-rules", [note("A"), note("B"), note("C")]) != base
-    assert profiles.source_hash(NS, "work-rules", [note("A")]) != base
-
-
-def test_source_hash_binds_the_slot_the_namespace_and_the_version(monkeypatch):
-    notes = [note("A")]
-    base = profiles.source_hash(NS, "work-rules", notes)
-    assert profiles.source_hash(NS, "user", notes) != base
-    assert profiles.source_hash("other", "work-rules", notes) != base
-    monkeypatch.setattr(profiles, "PROFILE_VERSION", "2")
-    assert profiles.source_hash(NS, "work-rules", notes) != base
-
-
-# ---- work-rules rendering ---------------------------------------------------
-
-
-def test_render_rules_is_byte_exact_and_keeps_the_submitted_order():
-    notes = {
-        "A": note("A", "Delegate coding to a worktree subagent."),
-        "B": note("B", "Reviews:\n- run the tests\n- read the diff"),
-        "C": note("C", "Ask before merging."),
-    }
-    assert profiles.render_rules(notes, ["C", "B", "A"]) == (
-        "- Ask before merging.\n"
-        "- Reviews:\n"
-        "  - run the tests\n"
-        "  - read the diff\n"
-        "- Delegate coding to a worktree subagent."
-    )
-
-
-def test_render_rules_of_an_empty_selection_is_empty():
-    assert profiles.render_rules({"A": note("A")}, []) == ""
+OWNER = "claude-code"
+NOW = 1_700_000_000.0
+NOW_ISO = "2023-11-14T22:13:20+00:00"
+GITHUB_TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
 
 
 # ---- fake database ----------------------------------------------------------
@@ -147,112 +35,220 @@ class FakeTransaction:
     async def __aenter__(self):
         self.conn.transactions.append(self.options)
         self.conn.depth += 1
+        self.conn.mutating = not self.options.get("readonly", False)
+        self.saved = copy.deepcopy((self.conn.versions, self.conn.proposals))
         return self
 
-    async def __aexit__(self, *exc):
+    async def __aexit__(self, exc_type, exc, tb):
         self.conn.depth -= 1
+        self.conn.locks.clear()
+        if exc_type is not None:
+            self.conn.versions, self.conn.proposals = self.saved
         return False
 
 
-class FakeConnection:
-    """Answers each profile statement by its SQL marker, emulating its filter and order."""
+def _kind(query):
+    q = " ".join(query.split())
+    if "pg_advisory_xact_lock" in q:
+        return "lock"
+    if q.startswith("INSERT INTO") and "agent_profiles" in q:
+        return "insert_version"
+    if q.startswith("INSERT INTO") and "profile_proposals" in q:
+        return "insert_proposal"
+    if q.startswith("UPDATE") and "'superseded'" in q:
+        return "supersede"
+    if q.startswith("UPDATE") and "profile_proposals" in q:
+        return "decide"
+    if "agent_profiles" in q and "LIMIT 1" in q:
+        return "latest"
+    if "agent_profiles" in q:
+        return "versions"
+    if q.startswith("SELECT owner FROM"):
+        return "proposal_owner"
+    if "profile_proposals" in q and "WHERE id = $1" in q:
+        return "proposal"
+    if "profile_proposals" in q and "status = 'pending'" in q:
+        return "pending"
+    if "profile_proposals" in q:
+        return "proposals"
+    raise AssertionError(f"unexpected statement: {q}")
 
-    def __init__(self, registered=("default", "work")):
-        self.registered = set(registered)
-        self.notes: list[dict] = []
-        self.profiles: list[dict] = []
+
+class FakeConnection:
+    """Emulates the profile statements over two in-memory tables."""
+
+    def __init__(self):
+        self.versions: list[dict] = []
+        self.proposals: list[dict] = []
         self.transactions: list[dict] = []
-        self.depth = 0
         self.calls: list[tuple[str, tuple]] = []
+        self.locks: set[str] = set()
+        self.depth = 0
+        self.mutating = False
 
     def transaction(self, **options):
         return FakeTransaction(self, options)
 
-    def _record(self, query, args):
-        self.calls.append((query, args))
+    def _owner_of(self, kind, args):
+        if kind in ("latest", "insert_version", "supersede", "insert_proposal"):
+            return args[0]
+        if kind in ("proposal", "decide"):
+            return next((p["owner"] for p in self.proposals if p["id"] == args[0]), None)
+        return None
+
+    def _run(self, query, args):
+        kind = _kind(query)
+        self.calls.append((kind, args))
+        if kind not in ("versions", "proposals"):
+            assert self.depth, f"{kind} runs inside a transaction"
+        owner = self._owner_of(kind, args)
+        if self.mutating and owner is not None:
+            assert owner in self.locks, f"{kind} runs under the owner lock"
+        return kind
+
+    def _latest(self, owner, part):
+        rows = [v for v in self.versions if v["owner"] == owner and v["part"] == part]
+        return max(rows, key=lambda v: v["version"]) if rows else None
 
     async def execute(self, query, *args):
-        self._record(query, args)
-        assert self.depth, "statements run inside a transaction"
-        return "SELECT 1"
+        kind = self._run(query, args)
+        if kind == "lock":
+            assert self.mutating
+            self.locks.add(args[0])
+            return "SELECT 1"
+        if kind == "decide":
+            proposal_id, status, decided_at, note = args
+            row = next(p for p in self.proposals if p["id"] == proposal_id)
+            row.update(status=status, decided_at=decided_at, decision_note=note)
+            return "UPDATE 1"
+        raise AssertionError(f"unexpected execute: {kind}")
 
     async def fetchval(self, query, *args):
-        self._record(query, args)
-        if "FOR SHARE" in query:
-            assert self.depth, "the namespace is held inside the write transaction"
-            return 1 if args[0] in self.registered else None
-        if "INSERT INTO" in query:
-            assert self.depth
-            namespace, slot, version, content, source_ids, source_hash, author, model, created = (
-                args
-            )
-            self.profiles.append(
+        kind = self._run(query, args)
+        if kind == "proposal_owner":
+            row = next((p for p in self.proposals if p["id"] == args[0]), None)
+            return None if row is None else row["owner"]
+        if kind == "insert_version":
+            owner, part, version, content, author, proposal_id, created_at = args
+            assert (owner, part, version) not in {
+                (v["owner"], v["part"], v["version"]) for v in self.versions
+            }
+            self.versions.append(
                 {
-                    "namespace": namespace,
-                    "slot": slot,
+                    "owner": owner,
+                    "part": part,
                     "version": version,
                     "content": content,
-                    "source_ids": list(source_ids),
-                    "source_hash": source_hash,
                     "author": author,
-                    "model": model,
-                    "created_at": created,
+                    "proposal_id": proposal_id,
+                    "created_at": created_at,
                 }
             )
             return version
-        raise AssertionError(f"unexpected fetchval: {query}")
+        if kind == "supersede":
+            owner, decided_at = args
+            pending = [
+                p for p in self.proposals if p["owner"] == owner and p["status"] == "pending"
+            ]
+            assert len(pending) <= 1
+            for row in pending:
+                row.update(status="superseded", decided_at=decided_at)
+            return pending[0]["id"] if pending else None
+        if kind == "insert_proposal":
+            owner, content, reason, base_version, created_at = args
+            assert not [
+                p for p in self.proposals if p["owner"] == owner and p["status"] == "pending"
+            ]
+            row = {
+                "id": len(self.proposals) + 1,
+                "owner": owner,
+                "content": content,
+                "reason": reason,
+                "base_version": base_version,
+                "status": "pending",
+                "created_at": created_at,
+                "decided_at": None,
+                "decision_note": None,
+            }
+            self.proposals.append(row)
+            return row["id"]
+        raise AssertionError(f"unexpected fetchval: {kind}")
 
     async def fetchrow(self, query, *args):
-        self._record(query, args)
-        namespace, slot = args
-        rows = self._versions(namespace, slot)
-        return rows[0] if rows else None
+        kind = self._run(query, args)
+        if kind == "latest":
+            return copy.deepcopy(self._latest(*args))
+        if kind == "proposal":
+            row = next((p for p in self.proposals if p["id"] == args[0]), None)
+            return copy.deepcopy(row)
+        if kind == "pending":
+            rows = [p for p in self.proposals if p["owner"] == args[0] and p["status"] == "pending"]
+            return copy.deepcopy(rows[0]) if rows else None
+        raise AssertionError(f"unexpected fetchrow: {kind}")
 
     async def fetch(self, query, *args):
-        self._record(query, args)
-        if "memory_chunks" in query:
-            namespace, kind = args
+        kind = self._run(query, args)
+        if kind == "versions":
+            owner, part, limit = args
+            rows = [v for v in self.versions if v["owner"] == owner and v["part"] == part]
+            return copy.deepcopy(sorted(rows, key=lambda v: -v["version"])[:limit])
+        if kind == "proposals":
+            owner, status, limit = args
             rows = [
-                row
-                for row in self.notes
-                if row["namespace"] == namespace
-                and row["kind"] == kind
-                and row["archived_at"] is None
+                p
+                for p in self.proposals
+                if (owner is None or p["owner"] == owner)
+                and (status is None or p["status"] == status)
             ]
-            return sorted(rows, key=lambda row: (row["ts_last_active"], row["id"]))
-        if "DISTINCT ON" in query:
-            (scope,) = args
-            latest = {}
-            for row in self.profiles:
-                if scope is not None and row["namespace"] not in scope:
-                    continue
-                key = (row["namespace"], row["slot"])
-                if key not in latest or row["version"] > latest[key]["version"]:
-                    latest[key] = row
-            return [latest[key] for key in sorted(latest)]
-        namespace, slot, limit = args
-        return self._versions(namespace, slot)[:limit]
+            rows = sorted(rows, key=lambda p: (-p["created_at"], -p["id"]))
+            return copy.deepcopy(rows[:limit])
+        raise AssertionError(f"unexpected fetch: {kind}")
 
-    def _versions(self, namespace, slot):
-        rows = [r for r in self.profiles if r["namespace"] == namespace and r["slot"] == slot]
-        return sorted(rows, key=lambda r: -r["version"])
+    # ---- seeding helpers
 
-    def add_note(self, note_id, text, kind="work", namespace=NS, saved=SAVED, **metadata):
-        self.notes.append(
+    def add_version(self, owner, part, content, author=None, proposal_id=None, created_at=NOW):
+        latest = self._latest(owner, part)
+        version = 1 if latest is None else latest["version"] + 1
+        self.versions.append(
             {
-                "id": note_id,
-                "namespace": namespace,
-                "kind": kind,
-                "ts_last_active": saved,
-                "occurred_at": metadata.pop("occurred_at", None),
-                "archived_at": metadata.pop("archived_at", None),
-                "text": text,
-                "metadata": json.dumps({"author": "claude-code", "tags": ["rules"], **metadata}),
+                "owner": owner,
+                "part": part,
+                "version": version,
+                "content": content,
+                "author": author or (owner if part == "self" else "user"),
+                "proposal_id": proposal_id,
+                "created_at": created_at,
             }
         )
+        return version
+
+    def add_proposal(
+        self, owner=OWNER, content="The user lives in Seoul.", base_version=0, status="pending",
+        created_at=NOW, reason="learned it", decided_at=None, decision_note=None,
+    ):  # fmt: skip
+        row = {
+            "id": len(self.proposals) + 1,
+            "owner": owner,
+            "content": content,
+            "reason": reason,
+            "base_version": base_version,
+            "status": status,
+            "created_at": created_at,
+            "decided_at": decided_at,
+            "decision_note": decision_note,
+        }
+        self.proposals.append(row)
+        return row["id"]
+
+    def proposal(self, proposal_id):
+        return next(p for p in self.proposals if p["id"] == proposal_id)
 
     def writes(self):
-        return [q for q, _ in self.calls if "INSERT INTO" in q]
+        return [
+            kind
+            for kind, _ in self.calls
+            if kind in ("insert_version", "insert_proposal", "supersede", "decide")
+        ]
 
 
 @pytest.fixture()
@@ -266,19 +262,16 @@ def fake_db(monkeypatch):
     async def noop(conn):
         return None
 
-    async def fake_list_namespaces():
-        return [{"name": n, "visibility": "public", "owner": None} for n in sorted(conn.registered)]
-
     monkeypatch.setattr(profiles.db, "acquire", acquire)
     monkeypatch.setattr(profiles, "ensure_schema_once", noop)
-    monkeypatch.setattr(namespaces, "list_namespaces", fake_list_namespaces)
+    monkeypatch.setattr(profiles, "_now", lambda: NOW)
     return conn
 
 
-def _use_identity(monkeypatch, is_admin=True, authors=("consolidator",), allowed=("default",)):
+def _use_identity(monkeypatch, authors=(OWNER,), is_admin=False, label="agents", allowed=()):
     identity = auth.KeyIdentity(
-        key_id="consolidator-key-hash",
-        label="consolidator",
+        key_id=f"{label}-key-hash",
+        label=label,
         home="default",
         is_admin=is_admin,
         allowed=frozenset(allowed),
@@ -292,556 +285,791 @@ def _use_identity(monkeypatch, is_admin=True, authors=("consolidator",), allowed
 
 
 @pytest.fixture()
-def consolidator(monkeypatch):
-    _use_identity(monkeypatch)
+def agent(monkeypatch):
+    _use_identity(monkeypatch, authors=(OWNER,))
 
 
-def _sources(slot, namespace=NS):
-    response = client.get("/admin/profiles/sources", params={"namespace": namespace, "slot": slot})
-    assert response.status_code == 200, response.json()
-    return response.json()
+@pytest.fixture()
+def user(monkeypatch):
+    _use_identity(monkeypatch, authors=("user",), label="yw0nam")
 
 
-def _put(**body):
-    return client.put("/admin/profiles", json=body)
+def _put_self(content="I review every diff before merging.", **fields):
+    return client.put("/profiles/self", json={"owner": OWNER, "content": content, **fields})
 
 
-def _user_body(fake_db, **overrides):
-    body = {
-        "namespace": NS,
-        "slot": "user",
-        "source_hash": _sources("user")["source_hash"],
-        "author": "consolidator",
-        "model": "test-model",
-        "content": "The user lives in Seoul.",
-    }
-    body.update(overrides)
-    return body
+def _propose(content="The user lives in Seoul.", base_version=0, **fields):
+    body = {"owner": OWNER, "content": content, "reason": "they said so", "base_version": 0}
+    body.update(base_version=base_version, **fields)
+    return client.post("/profiles/user/proposals", json=body)
 
 
-def _rules_body(fake_db, note_ids, **overrides):
-    body = {
-        "namespace": NS,
-        "slot": "work-rules",
-        "source_hash": _sources("work-rules")["source_hash"],
-        "author": "consolidator",
-        "model": None,
-        "note_ids": note_ids,
-    }
-    body.update(overrides)
-    return body
+def _approve(proposal_id, **body):
+    return client.post(f"/profiles/user/proposals/{proposal_id}/approve", json=body)
 
 
-# ---- authorization ----------------------------------------------------------
+def _reject(proposal_id, **body):
+    return client.post(f"/profiles/user/proposals/{proposal_id}/reject", json=body)
 
 
-@pytest.mark.parametrize(
-    "method,path",
-    [
-        ("get", "/admin/profiles/sources?namespace=default&slot=user"),
-        ("put", "/admin/profiles"),
-        ("get", "/admin/profiles/versions?namespace=default&slot=user"),
-    ],
-)
-@pytest.mark.parametrize("identity", [{"is_admin": False}, {"authors": ("claude-code",)}])
-def test_admin_profile_routes_need_an_admin_key_with_the_consolidator_author(
-    monkeypatch, fake_db, method, path, identity
-):
-    _use_identity(monkeypatch, **identity)
-    response = getattr(client, method)(path, **({"json": {}} if method == "put" else {}))
-    assert response.status_code == 403
-    assert "consolidator" in response.json()["error"]
+def _send(method, path, body):
+    kwargs = {"json": body} if body is not None else {}
+    return client.request(method.upper(), path, **kwargs)
+
+
+# ---- authentication ---------------------------------------------------------
+
+PROPOSAL = {"owner": OWNER, "content": "x", "reason": "r", "base_version": 0}
+AGENT_ROUTES = [
+    ("put", "/profiles/self", {"owner": OWNER, "content": "x"}),
+    ("post", "/profiles/user/proposals", PROPOSAL),
+]
+READ_ROUTES = [
+    ("get", "/profiles?owner=claude-code", None),
+    ("get", "/profiles/user/proposals?owner=claude-code", None),
+    ("get", "/profiles/versions?owner=claude-code&part=self", None),
+]
+DECISION_ROUTES = [
+    ("post", "/profiles/user/proposals/1/approve", {}),
+    ("post", "/profiles/user/proposals/1/reject", {}),
+]
+ROUTES = [
+    *AGENT_ROUTES,
+    *READ_ROUTES,
+    ("get", "/profiles/user/proposals/1", None),
+    *DECISION_ROUTES,
+]
+
+
+@pytest.mark.parametrize(("method", "path", "body"), ROUTES)
+@pytest.mark.parametrize("key", [None, "unknown-key"])
+def test_every_profile_route_needs_a_known_key(fake_db, method, path, body, key):
+    bare = TestClient(api.app)
+    kwargs = {"headers": {"X-API-Key": key} if key else {}}
+    if body is not None:
+        kwargs["json"] = body
+    response = bare.request(method.upper(), path, **kwargs)
+    assert response.status_code == 401
     assert fake_db.calls == []
 
 
-# ---- sources ----------------------------------------------------------------
+@pytest.mark.real_auth
+def test_a_revoked_key_is_never_resolved(monkeypatch, fake_db):
+    seen = []
+
+    class KeyConn:
+        async def fetchrow(self, query, *args):
+            seen.append(query)
+            return None
+
+    @asynccontextmanager
+    async def acquire(timeout=None):
+        yield KeyConn()
+
+    async def noop(conn):
+        return None
+
+    monkeypatch.setattr(auth.db, "acquire", acquire)
+    monkeypatch.setattr(auth, "ensure_schema_once", noop)
+    response = client.get("/profiles", params={"owner": OWNER})
+    assert response.status_code == 401
+    assert "revoked_at IS NULL" in seen[0]
+    assert fake_db.calls == []
 
 
+# ---- authority --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("method", "path", "body"), AGENT_ROUTES + READ_ROUTES + DECISION_ROUTES)
 @pytest.mark.parametrize(
-    "params",
+    "identity",
     [
-        {"slot": "user"},
-        {"namespace": NS},
-        {"namespace": NS, "slot": "notes"},
-        {"namespace": "nowhere", "slot": "user"},
-        {"namespace": " ", "slot": "user"},
-        [("namespace", NS), ("namespace", "work"), ("slot", "user")],
+        {"authors": ("natsume", "consolidator"), "is_admin": True, "label": "claude-code"},
+        {"authors": (), "is_admin": True, "label": "user", "allowed": ("default", "personal")},
+        {"authors": ("natsume",), "is_admin": False, "label": "claude-code"},
     ],
 )
-def test_sources_rejects_a_bad_parameter(consolidator, fake_db, params):
-    response = client.get("/admin/profiles/sources", params=params)
-    assert response.status_code == 400
+def test_admin_label_home_and_namespaces_confer_no_profile_authority(
+    monkeypatch, fake_db, method, path, body, identity
+):
+    _use_identity(monkeypatch, **identity)
+    fake_db.add_proposal()
+    response = _send(method, path, body)
+    assert response.status_code == 403, response.json()
     assert "error" in response.json()
     assert fake_db.calls == []
 
 
-def test_sources_returns_the_eligible_notes_in_save_order_and_their_hash(consolidator, fake_db):
-    fake_db.add_note("note:default:b", "Lives in Seoul.", kind="personal", saved=SAVED + 10)
-    fake_db.add_note(
-        "note:default:a", "Vegetarian.", kind="personal", saved=SAVED + 10, occurred_at=0.0
-    )
-    fake_db.add_note("note:default:c", "Born 1990.", kind="personal", saved=SAVED)
-    fake_db.add_note("note:default:w", "Review every PR.", kind="work")
-    fake_db.add_note("note:default:x", "Old fact.", kind="personal", archived_at=SAVED)
-    fake_db.add_note("note:work:p", "Other namespace.", kind="personal", namespace="work")
-    body = _sources("user")
-    assert body["namespace"] == NS
-    assert body["slot"] == "user"
-    assert body["profile_version"] == "1"
-    assert body["current"] is None
-    assert body["stale"] is True
-    assert [n["id"] for n in body["notes"]] == [
-        "note:default:c",
-        "note:default:a",
-        "note:default:b",
+@pytest.mark.parametrize(("method", "path", "body"), AGENT_ROUTES)
+def test_the_user_author_cannot_write_an_agents_parts(monkeypatch, fake_db, method, path, body):
+    _use_identity(monkeypatch, authors=("user",))
+    response = _send(method, path, body)
+    assert response.status_code == 403
+    assert fake_db.writes() == []
+
+
+@pytest.mark.parametrize(("method", "path", "body"), DECISION_ROUTES)
+def test_an_owner_author_cannot_decide_its_own_proposal(monkeypatch, fake_db, method, path, body):
+    _use_identity(monkeypatch, authors=(OWNER, "natsume", "consolidator"), is_admin=True)
+    fake_db.add_proposal()
+    response = _send(method, path, body)
+    assert response.status_code == 403
+    assert "user" in response.json()["error"]
+    assert fake_db.proposal(1)["status"] == "pending"
+    assert fake_db.writes() == []
+
+
+def test_a_non_admin_owner_key_writes_and_a_user_key_reads_and_decides(monkeypatch, fake_db):
+    _use_identity(monkeypatch, authors=(OWNER,), is_admin=False)
+    assert _put_self().status_code == 200
+    assert _propose().status_code == 201
+    _use_identity(monkeypatch, authors=("user",), is_admin=False)
+    assert client.get("/profiles", params={"owner": OWNER}).status_code == 200
+    assert client.get("/profiles/user/proposals").status_code == 200
+    assert client.get("/profiles/user/proposals/1").status_code == 200
+    versions = client.get("/profiles/versions", params={"owner": OWNER, "part": "self"})
+    assert versions.status_code == 200
+    assert _approve(1).status_code == 200
+
+
+def test_an_owner_key_reads_its_own_proposal_but_not_another_owners(monkeypatch, fake_db):
+    fake_db.add_proposal(owner="natsume")
+    fake_db.add_proposal(owner=OWNER)
+    _use_identity(monkeypatch, authors=(OWNER,))
+    assert client.get("/profiles/user/proposals/2").status_code == 200
+    assert client.get("/profiles/user/proposals/1").status_code == 403
+
+
+# ---- request validation -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"content": "x"},
+        {"owner": OWNER},
+        {"owner": OWNER, "content": "x", "extra": 1},
+        {"owner": OWNER, "content": 5},
+        {"owner": OWNER, "content": None},
+        {"owner": 5, "content": "x"},
+        {"owner": "Claude", "content": "x"},
+        {"owner": "-bad", "content": "x"},
+        {"owner": "a" * 41, "content": "x"},
+        {"owner": "user", "content": "x"},
+        {"owner": "consolidator", "content": "x"},
+        {"owner": OWNER, "content": "x", "max_chars": 199},
+        {"owner": OWNER, "content": "x", "max_chars": 20001},
+        {"owner": OWNER, "content": "x", "max_chars": True},
+        {"owner": OWNER, "content": "x", "max_chars": 500.0},
+        {"owner": OWNER, "content": "x", "max_chars": "500"},
+        [{"owner": OWNER, "content": "x"}],
+    ],
+)
+def test_self_write_rejects_a_bad_body(monkeypatch, fake_db, body):
+    _use_identity(monkeypatch, authors=(OWNER, "user", "consolidator"))
+    response = client.put("/profiles/self", json=body)
+    assert response.status_code == 400, response.json()
+    assert "error" in response.json()
+    assert fake_db.calls == []
+
+
+@pytest.mark.parametrize("raw", [b"", b"{", b"not json", b'"text"'])
+def test_mutations_reject_malformed_json(agent, fake_db, raw):
+    for method, path in (("PUT", "/profiles/self"), ("POST", "/profiles/user/proposals")):
+        assert client.request(method, path, content=raw).status_code == 400
+    assert fake_db.calls == []
+
+
+@pytest.mark.parametrize("raw", [b"", b"{", b"[]", b"null"])
+def test_decisions_reject_malformed_json(user, fake_db, raw):
+    fake_db.add_proposal()
+    for action in ("approve", "reject"):
+        response = client.post(f"/profiles/user/proposals/1/{action}", content=raw)
+        assert response.status_code == 400
+    assert fake_db.calls == []
+    assert fake_db.proposal(1)["status"] == "pending"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"owner": None},
+        {"content": None},
+        {"reason": None},
+        {"base_version": None},
+        {"extra": True},
+        {"reason": ""},
+        {"reason": "   "},
+        {"reason": "r" * 1001},
+        {"reason": 5},
+        {"content": 5},
+        {"base_version": -1},
+        {"base_version": 2147483648},
+        {"base_version": True},
+        {"base_version": 1.0},
+        {"base_version": "0"},
+        {"max_chars": 199},
+        {"max_chars": 20001},
+        {"max_chars": False},
+        {"owner": "user"},
+        {"owner": "consolidator"},
+        {"owner": "Bad Owner"},
+    ],
+)
+def test_proposal_rejects_a_bad_body(monkeypatch, fake_db, change):
+    _use_identity(monkeypatch, authors=(OWNER, "user", "consolidator"))
+    body = {k: v for k, v in {**PROPOSAL, **change}.items() if v is not None}
+    response = client.post("/profiles/user/proposals", json=body)
+    assert response.status_code == 400, response.json()
+    assert fake_db.calls == []
+
+
+def test_proposal_accepts_a_reason_of_exactly_1000_characters_after_stripping(agent, fake_db):
+    response = _propose(reason="  " + "r" * 1000 + "  ")
+    assert response.status_code == 201
+    assert fake_db.proposal(1)["reason"] == "r" * 1000
+
+
+def test_proposal_accepts_the_largest_base_version_and_reports_it_stale(agent, fake_db):
+    response = _propose(base_version=2147483647)
+    assert response.status_code == 409
+    assert response.json() == {"error": "stale", "version": 0}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"note": 5},
+        {"note": None},
+        {"note": "n" * 1001},
+        {"note": "x", "extra": 1},
+        {"status": "approved"},
+    ],
+)
+def test_decisions_reject_a_bad_body(user, fake_db, body):
+    fake_db.add_proposal()
+    for action in ("approve", "reject"):
+        response = client.post(f"/profiles/user/proposals/1/{action}", json=body)
+        assert response.status_code == 400, response.json()
+    assert fake_db.calls == []
+    assert fake_db.proposal(1)["status"] == "pending"
+
+
+def test_decisions_accept_a_note_of_exactly_1000_characters_after_stripping(user, fake_db):
+    fake_db.add_proposal()
+    assert _reject(1, note=" " + "n" * 1000 + " ").status_code == 200
+    assert fake_db.proposal(1)["decision_note"] == "n" * 1000
+
+
+@pytest.mark.parametrize(
+    "proposal_id", ["abc", "0", "-1", "1.5", "9223372036854775808", "1e3", "+1", "01"]
+)
+def test_proposal_routes_reject_a_malformed_id(user, fake_db, proposal_id):
+    assert client.get(f"/profiles/user/proposals/{proposal_id}").status_code == 400
+    assert _approve(proposal_id).status_code == 400
+    assert _reject(proposal_id).status_code == 400
+    assert fake_db.calls == []
+
+
+def test_the_largest_proposal_id_is_well_formed(user, fake_db):
+    assert client.get("/profiles/user/proposals/9223372036854775807").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "",
+        "owner=",
+        "owner=user",
+        "owner=consolidator",
+        "owner=Bad",
+        "owner=claude-code&owner=natsume",
+        "owner=claude-code&part=self",
+        "owner=claude-code&extra=1",
+    ],
+)
+def test_profile_read_rejects_a_bad_query(monkeypatch, fake_db, query):
+    _use_identity(monkeypatch, authors=(OWNER, "user"))
+    assert client.get(f"/profiles?{query}").status_code == 400
+    assert fake_db.calls == []
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "owner=claude-code",
+        "part=self",
+        "owner=claude-code&part=both",
+        "owner=claude-code&part=self&part=user",
+        "owner=claude-code&part=self&limit=0",
+        "owner=claude-code&part=self&limit=201",
+        "owner=claude-code&part=self&limit=x",
+        "owner=claude-code&part=self&limit=5&limit=6",
+        "owner=claude-code&part=self&status=pending",
+        "owner=user&part=self",
+    ],
+)
+def test_versions_reject_a_bad_query(monkeypatch, fake_db, query):
+    _use_identity(monkeypatch, authors=(OWNER, "user"))
+    assert client.get(f"/profiles/versions?{query}").status_code == 400
+    assert fake_db.calls == []
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "status=open",
+        "status=pending&status=approved",
+        "limit=0",
+        "limit=201",
+        "limit=ten",
+        "owner=user",
+        "owner=claude-code&owner=natsume",
+        "part=user",
+    ],
+)
+def test_proposal_list_rejects_a_bad_query(monkeypatch, fake_db, query):
+    _use_identity(monkeypatch, authors=(OWNER, "user"))
+    assert client.get(f"/profiles/user/proposals?{query}").status_code == 400
+    assert fake_db.calls == []
+
+
+def test_proposal_by_id_and_decisions_reject_any_query(user, fake_db):
+    fake_db.add_proposal()
+    assert client.get("/profiles/user/proposals/1?owner=claude-code").status_code == 400
+    assert client.post("/profiles/user/proposals/1/approve?x=1", json={}).status_code == 400
+    assert fake_db.calls == []
+
+
+# ---- self -------------------------------------------------------------------
+
+
+def test_self_write_stores_the_stripped_content_as_the_next_version(agent, fake_db):
+    response = _put_self("  I review every diff.  ")
+    assert response.status_code == 200
+    assert response.json() == {"status": "written", "version": 1}
+    assert fake_db.versions == [
+        {
+            "owner": OWNER,
+            "part": "self",
+            "version": 1,
+            "content": "I review every diff.",
+            "author": OWNER,
+            "proposal_id": None,
+            "created_at": NOW,
+        }
     ]
-    assert body["notes"][1] == {
-        "id": "note:default:a",
-        "kind": "personal",
-        "author": "claude-code",
-        "saved": "2023-11-14T22:13:30+00:00",
-        "occurred_at": "1970-01-01T00:00:00+00:00",
-        "tags": ["rules"],
-        "text": "Vegetarian.",
+    assert _put_self("I review every diff twice.").json() == {"status": "written", "version": 2}
+    assert fake_db.transactions[-1] == {"isolation": "read_committed"}
+    kinds = [kind for kind, _ in fake_db.calls]
+    assert kinds[:2] == ["lock", "latest"]
+    assert fake_db.calls[0] == ("lock", (OWNER,))
+
+
+def test_self_write_of_the_latest_content_is_unchanged(agent, fake_db):
+    _put_self("Same text.")
+    assert _put_self(" Same text.\n").json() == {"status": "unchanged", "version": 1}
+    assert len(fake_db.versions) == 1
+
+
+def test_self_write_of_empty_content_clears_the_part(agent, fake_db):
+    _put_self("Something.")
+    assert _put_self("   ").json() == {"status": "written", "version": 2}
+    assert fake_db.versions[-1]["content"] == ""
+    assert _put_self("").json() == {"status": "unchanged", "version": 2}
+    body = client.get("/profiles", params={"owner": OWNER}).json()
+    assert body["self_version"] == 2
+    assert body["self"] is None
+
+
+def test_self_write_over_the_budget_is_refused_with_its_length(agent, fake_db):
+    response = _put_self("x" * 4001)
+    assert response.status_code == 400
+    assert response.json()["chars"] == 4001
+    assert response.json()["max_chars"] == 4000
+    assert _put_self("x" * 4000).status_code == 200
+    response = _put_self("y" * 301, max_chars=300)
+    assert response.status_code == 400
+    assert response.json()["chars"] == 301
+    assert _put_self("y" * 300, max_chars=300).status_code == 200
+    assert _put_self("z" * 20000, max_chars=20000).status_code == 200
+
+
+def test_self_write_with_a_credential_is_refused_naming_only_its_type(agent, fake_db):
+    response = _put_self(f"My token is {GITHUB_TOKEN}.")
+    assert response.status_code == 400
+    assert "credential" in response.json()["error"]
+    assert GITHUB_TOKEN not in json.dumps(response.json())
+    assert fake_db.calls == []
+
+
+def test_self_write_for_another_owner_is_forbidden(agent, fake_db):
+    response = client.put("/profiles/self", json={"owner": "natsume", "content": "x"})
+    assert response.status_code == 403
+    assert fake_db.calls == []
+
+
+# ---- proposals --------------------------------------------------------------
+
+
+def test_a_proposal_starts_pending_with_no_decision(agent, fake_db):
+    response = _propose("  The user lives in Seoul.  ", reason="  they said so  ")
+    assert response.status_code == 201
+    assert response.json() == {"id": 1, "status": "pending", "superseded": None}
+    assert fake_db.proposals == [
+        {
+            "id": 1,
+            "owner": OWNER,
+            "content": "The user lives in Seoul.",
+            "reason": "they said so",
+            "base_version": 0,
+            "status": "pending",
+            "created_at": NOW,
+            "decided_at": None,
+            "decision_note": None,
+        }
+    ]
+    assert fake_db.transactions[-1] == {"isolation": "read_committed"}
+    assert fake_db.calls[0] == ("lock", (OWNER,))
+
+
+def test_a_new_proposal_supersedes_the_pending_one(agent, fake_db, monkeypatch):
+    _propose("first")
+    monkeypatch.setattr(profiles, "_now", lambda: NOW + 5)
+    response = _propose("second")
+    assert response.json() == {"id": 2, "status": "pending", "superseded": 1}
+    first, second = fake_db.proposals
+    assert first["status"] == "superseded"
+    assert first["decided_at"] == NOW + 5
+    assert first["decision_note"] is None
+    assert second["status"] == "pending"
+    assert second["created_at"] == NOW + 5
+    assert second["decided_at"] is None
+    assert second["decision_note"] is None
+    kinds = [kind for kind, _ in fake_db.calls]
+    assert kinds[-2:] == ["supersede", "insert_proposal"]
+
+
+def test_a_proposal_against_a_stale_base_is_refused_with_the_current_version(agent, fake_db):
+    fake_db.add_version(OWNER, "user", "Lives in Seoul.")
+    fake_db.add_proposal(base_version=1)
+    before = dict(fake_db.proposal(1))
+    response = _propose(base_version=0)
+    assert response.status_code == 409
+    assert response.json() == {"error": "stale", "version": 1}
+    response = _propose(base_version=2)
+    assert response.status_code == 409
+    assert response.json() == {"error": "stale", "version": 1}
+    assert fake_db.proposal(1) == before
+    assert len(fake_db.proposals) == 1
+    assert _propose(base_version=1).status_code == 201
+
+
+def test_a_proposal_over_the_budget_or_with_a_credential_is_refused(agent, fake_db):
+    response = _propose("x" * 3001)
+    assert response.status_code == 400
+    assert response.json()["chars"] == 3001
+    assert response.json()["max_chars"] == 3000
+    assert _propose("x" * 3001, max_chars=3001).status_code == 201
+    before = dict(fake_db.proposal(1))
+    for field in ("content", "reason"):
+        response = _propose(**{field: f"token {GITHUB_TOKEN}"})
+        assert response.status_code == 400
+        assert "credential" in response.json()["error"]
+        assert GITHUB_TOKEN not in json.dumps(response.json())
+    assert fake_db.proposals == [before]
+
+
+def test_a_proposal_for_another_owner_is_forbidden(agent, fake_db):
+    body = dict(PROPOSAL, owner="natsume")
+    assert client.post("/profiles/user/proposals", json=body).status_code == 403
+    assert fake_db.calls == []
+
+
+# ---- approve ----------------------------------------------------------------
+
+
+def test_approve_writes_a_user_version_with_the_proposal_id(user, fake_db, monkeypatch):
+    fake_db.add_proposal(content="The user lives in Seoul.")
+    monkeypatch.setattr(profiles, "_now", lambda: NOW + 9)
+    response = _approve(1, note="  looks right  ")
+    assert response.status_code == 200
+    assert response.json() == {"status": "approved", "version": 1}
+    assert fake_db.versions == [
+        {
+            "owner": OWNER,
+            "part": "user",
+            "version": 1,
+            "content": "The user lives in Seoul.",
+            "author": "user",
+            "proposal_id": 1,
+            "created_at": NOW + 9,
+        }
+    ]
+    row = fake_db.proposal(1)
+    assert row["status"] == "approved"
+    assert row["decided_at"] == NOW + 9
+    assert row["decision_note"] == "looks right"
+    kinds = [kind for kind, _ in fake_db.calls]
+    assert kinds[:3] == ["proposal_owner", "lock", "proposal"]
+    assert fake_db.transactions == [{"isolation": "read_committed"}]
+
+
+def test_approve_without_a_note_stores_null_and_an_empty_note_stores_empty(user, fake_db):
+    fake_db.add_proposal()
+    _approve(1)
+    assert fake_db.proposal(1)["decision_note"] is None
+    fake_db.add_proposal(base_version=1)
+    _approve(2, note="   ")
+    assert fake_db.proposal(2)["decision_note"] == ""
+
+
+def test_approve_of_a_stale_proposal_leaves_it_pending_and_unchanged(user, fake_db):
+    fake_db.add_version(OWNER, "user", "Lives in Seoul.")
+    fake_db.add_proposal(base_version=0)
+    before = dict(fake_db.proposal(1))
+    response = _approve(1, note="ok")
+    assert response.status_code == 409
+    assert response.json() == {"error": "stale", "version": 1}
+    assert fake_db.proposal(1) == before
+    assert len(fake_db.versions) == 1
+
+
+@pytest.mark.parametrize("status", ["approved", "rejected", "superseded"])
+@pytest.mark.parametrize("action", ["approve", "reject"])
+def test_deciding_a_non_pending_proposal_is_refused_with_its_status(user, fake_db, status, action):
+    fake_db.add_proposal(status=status, decided_at=NOW - 1, decision_note="earlier")
+    before = dict(fake_db.proposal(1))
+    response = client.post(f"/profiles/user/proposals/1/{action}", json={"note": "again"})
+    assert response.status_code == 409
+    assert response.json() == {"error": "not_pending", "status": status}
+    assert fake_db.proposal(1) == before
+    assert fake_db.versions == []
+    assert fake_db.writes() == []
+
+
+def test_a_non_pending_status_is_reported_before_a_stale_base(user, fake_db):
+    fake_db.add_version(OWNER, "user", "v1")
+    fake_db.add_proposal(status="superseded", base_version=0, decided_at=NOW)
+    response = _approve(1)
+    assert response.json() == {"error": "not_pending", "status": "superseded"}
+
+
+@pytest.mark.parametrize("action", ["approve", "reject"])
+def test_deciding_an_unknown_proposal_is_404(user, fake_db, action):
+    response = client.post(f"/profiles/user/proposals/7/{action}", json={})
+    assert response.status_code == 404
+    assert fake_db.writes() == []
+
+
+def test_approve_with_a_credential_in_the_note_is_refused(user, fake_db):
+    fake_db.add_proposal()
+    response = _approve(1, note=f"key {GITHUB_TOKEN}")
+    assert response.status_code == 400
+    assert GITHUB_TOKEN not in json.dumps(response.json())
+    assert fake_db.proposal(1)["status"] == "pending"
+    assert fake_db.calls == []
+
+
+def test_approve_over_an_existing_user_version_increments_it(user, fake_db):
+    fake_db.add_version(OWNER, "user", "v1")
+    fake_db.add_version(OWNER, "user", "")
+    fake_db.add_proposal(content="v3", base_version=2)
+    assert _approve(1).json() == {"status": "approved", "version": 3}
+
+
+# ---- reject -----------------------------------------------------------------
+
+
+def test_reject_records_the_decision_and_writes_no_version(user, fake_db, monkeypatch):
+    fake_db.add_version(OWNER, "user", "v1")
+    fake_db.add_proposal(base_version=0)
+    monkeypatch.setattr(profiles, "_now", lambda: NOW + 3)
+    response = _reject(1, note=" not true ")
+    assert response.status_code == 200
+    assert response.json() == {"status": "rejected"}
+    row = fake_db.proposal(1)
+    assert row["status"] == "rejected"
+    assert row["decided_at"] == NOW + 3
+    assert row["decision_note"] == "not true"
+    assert len(fake_db.versions) == 1
+    assert [kind for kind, _ in fake_db.calls][:3] == ["proposal_owner", "lock", "proposal"]
+    fake_db.add_proposal(base_version=1)
+    _reject(2)
+    assert fake_db.proposal(2)["decision_note"] is None
+
+
+# ---- reads ------------------------------------------------------------------
+
+
+def test_profile_read_of_an_owner_without_versions(agent, fake_db):
+    response = client.get("/profiles", params={"owner": OWNER})
+    assert response.status_code == 200
+    assert response.json() == {
+        "owner": OWNER,
+        "self_version": 0,
+        "self": None,
+        "user_version": 0,
+        "user": None,
+        "pending_proposal": None,
     }
-    eligible = [
-        note("note:default:c", "Born 1990.", kind="personal"),
-        note("note:default:a", "Vegetarian.", kind="personal", saved=SAVED + 10, occurred_at=0.0),
-        note("note:default:b", "Lives in Seoul.", kind="personal", saved=SAVED + 10),
-    ]
-    assert body["source_hash"] == profiles.source_hash(NS, "user", eligible)
-
-
-def test_sources_reads_one_snapshot(consolidator, fake_db):
-    _sources("user")
     assert fake_db.transactions == [{"isolation": "repeatable_read", "readonly": True}]
 
 
-def test_sources_hash_ignores_another_namespace_and_another_kind(consolidator, fake_db):
-    fake_db.add_note("note:default:a", "Lives in Seoul.", kind="personal")
-    before = _sources("user")["source_hash"]
-    fake_db.add_note("note:default:w", "Review every PR.", kind="work")
-    fake_db.add_note("note:work:p", "Lives in Busan.", kind="personal", namespace="work")
-    assert _sources("user")["source_hash"] == before
+def test_profile_read_serves_the_latest_parts_and_the_pending_proposal(user, fake_db):
+    fake_db.add_version(OWNER, "self", "old self")
+    fake_db.add_version(OWNER, "self", "Self text.", created_at=NOW + 1)
+    fake_db.add_version(OWNER, "user", "Lives in Seoul.", proposal_id=1)
+    fake_db.add_version("natsume", "user", "Other owner.")
+    fake_db.add_proposal(status="approved", decided_at=NOW)
+    fake_db.add_proposal(base_version=1, reason="moved", created_at=NOW + 2)
+    fake_db.add_proposal(owner="natsume")
+    body = client.get("/profiles", params={"owner": OWNER}).json()
+    assert body == {
+        "owner": OWNER,
+        "self_version": 2,
+        "self": {"content": "Self text.", "created_at": "2023-11-14T22:13:21+00:00"},
+        "user_version": 1,
+        "user": {"content": "Lives in Seoul.", "created_at": NOW_ISO},
+        "pending_proposal": {
+            "id": 2,
+            "created_at": "2023-11-14T22:13:22+00:00",
+            "reason": "moved",
+            "base_version": 1,
+        },
+    }
 
 
-def test_sources_hash_changes_when_a_note_is_archived(consolidator, fake_db):
-    fake_db.add_note("note:default:a", "Lives in Seoul.", kind="personal")
-    fake_db.add_note("note:default:b", "Vegetarian.", kind="personal")
-    before = _sources("user")["source_hash"]
-    fake_db.notes[1]["archived_at"] = SAVED
-    assert _sources("user")["source_hash"] != before
-
-
-def test_sources_reports_the_current_version_and_whether_it_is_stale(consolidator, fake_db):
-    fake_db.add_note("note:default:a", "Lives in Seoul.", kind="personal")
-    assert _put(**_user_body(fake_db)).json()["status"] == "written"
-    body = _sources("user")
-    assert body["stale"] is False
-    assert body["current"]["version"] == 1
-    assert body["current"]["source_hash"] == body["source_hash"]
-    assert set(body["current"]) == {"version", "source_hash", "created_at"}
-    fake_db.add_note("note:default:b", "Vegetarian.", kind="personal")
-    after = _sources("user")
-    assert after["stale"] is True
-    assert after["current"]["version"] == 1
-
-
-# ---- write: schema ----------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"extra": 1},
-        {"slot": "notes"},
-        {"namespace": ""},
-        {"source_hash": ""},
-        {"author": ""},
-        {"model": 3},
-        {"dry_run": "yes"},
-        {"content": 5},
-        {"note_ids": ["note:default:a"]},
-        {"max_chars": 199},
-        {"max_chars": 20001},
-        {"max_chars": True},
-        {"max_chars": 500.0},
-    ],
-)
-def test_write_user_refuses_a_schema_violation(consolidator, fake_db, overrides):
-    body = _user_body(fake_db, **overrides)
-    fake_db.calls.clear()
-    response = _put(**body)
-    assert response.status_code == 400
-    assert "error" in response.json()
-    assert fake_db.calls == []
-
-
-def test_write_user_requires_content(consolidator, fake_db):
-    body = _user_body(fake_db)
-    del body["content"]
-    assert _put(**body).status_code == 400
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"content": "- a rule"},
-        {"note_ids": "note:default:a"},
-        {"note_ids": [1]},
-        {"note_ids": ["note:default:a", "note:default:a"]},
-        {"note_ids": [f"note:default:{i}" for i in range(201)]},
-    ],
-)
-def test_write_rules_refuses_a_schema_violation(consolidator, fake_db, overrides):
-    body = {**_rules_body(fake_db, []), **overrides}
-    fake_db.calls.clear()
-    response = _put(**body)
-    assert response.status_code == 400
-    assert fake_db.calls == []
-
-
-def test_write_rules_requires_note_ids(consolidator, fake_db):
-    body = _rules_body(fake_db, [])
-    del body["note_ids"]
-    assert _put(**body).status_code == 400
-
-
-def test_write_refuses_an_author_the_key_does_not_hold(consolidator, fake_db):
-    response = _put(**_user_body(fake_db, author="claude-code"))
-    assert response.status_code == 403
-    assert fake_db.writes() == []
-
-
-def test_write_refuses_an_unregistered_namespace(consolidator, fake_db):
-    response = _put(**_user_body(fake_db, namespace="nowhere"))
-    assert response.status_code == 400
-    assert "unregistered" in response.json()["error"]
-    assert fake_db.writes() == []
-
-
-# ---- write: flow ------------------------------------------------------------
-
-
-def test_write_runs_in_one_transaction_under_the_slot_lock(consolidator, fake_db):
-    fake_db.add_note("note:default:a", "Lives in Seoul.", kind="personal")
-    body = _user_body(fake_db)
-    fake_db.calls.clear()
-    fake_db.transactions.clear()
-    assert _put(**body).json()["status"] == "written"
-    assert fake_db.transactions == [{}]
-    lock, lock_args = fake_db.calls[0]
-    assert "pg_advisory_xact_lock(hashtextextended('profile:' ||" in lock
-    assert lock_args == (NS, "user")
-    assert "FOR SHARE" in fake_db.calls[1][0]
-
-
-def test_a_stale_hash_is_409_with_the_current_hash_and_writes_nothing(consolidator, fake_db):
-    fake_db.add_note("note:default:a", "Lives in Seoul.", kind="personal")
-    body = _user_body(fake_db)
-    fake_db.add_note("note:default:b", "Vegetarian.", kind="personal")
-    response = _put(**body)
-    assert response.status_code == 409
-    assert response.json() == {"error": "stale", "source_hash": _sources("user")["source_hash"]}
-    assert fake_db.profiles == []
-
-
-def test_write_user_stores_the_stripped_content_with_every_eligible_note(consolidator, fake_db):
-    fake_db.add_note("note:default:b", "Vegetarian.", kind="personal", saved=SAVED + 1)
-    fake_db.add_note("note:default:a", "Lives in Seoul.", kind="personal", saved=SAVED + 2)
-    fake_db.add_note("note:default:w", "Review every PR.", kind="work")
-    response = _put(**_user_body(fake_db, content="  Lives in Seoul; vegetarian.\n"))
-    assert response.status_code == 200
-    assert response.json() == {"status": "written", "version": 1, "chars": 27}
-    [row] = fake_db.profiles
-    assert row["content"] == "Lives in Seoul; vegetarian."
-    assert row["source_ids"] == ["note:default:b", "note:default:a"]
-    assert row["source_hash"] == _sources("user")["source_hash"]
-    assert row["author"] == "consolidator"
-    assert row["model"] == "test-model"
-
-
-@pytest.mark.parametrize("content", ["", "   \n\t"])
-def test_write_user_refuses_blank_content_while_it_has_sources(consolidator, fake_db, content):
-    fake_db.add_note("note:default:a", "Lives in Seoul.", kind="personal")
-    response = _put(**_user_body(fake_db, content=content))
-    assert response.status_code == 400
-    assert fake_db.profiles == []
-
-
-@pytest.mark.parametrize("content", ["", "   \n\t"])
-def test_write_user_without_sources_stores_blank_content_as_empty(consolidator, fake_db, content):
-    response = _put(**_user_body(fake_db, content=content))
-    assert response.status_code == 200
-    assert response.json() == {"status": "written", "version": 1, "chars": 0}
-    [row] = fake_db.profiles
-    assert row["content"] == ""
-    assert row["source_ids"] == []
-
-
-def test_a_user_profile_is_cleared_when_every_source_is_archived(consolidator, fake_db):
-    fake_db.add_note("note:default:a", "Lives in Seoul.", kind="personal")
-    assert _put(**_user_body(fake_db)).json()["status"] == "written"
-    assert [p["slot"] for p in client.get("/profiles").json()] == ["user"]
-    fake_db.notes[0]["archived_at"] = SAVED
-    sources = _sources("user")
-    assert sources["notes"] == []
-    assert sources["stale"] is True
-    cleared = _put(**_user_body(fake_db, content=""))
-    assert cleared.json() == {"status": "written", "version": 2, "chars": 0}
-    assert client.get("/profiles").json() == []
-    assert _sources("user")["stale"] is False
-    again = _put(**_user_body(fake_db, content=""))
-    assert again.json() == {"status": "unchanged", "version": 2}
-    assert len(fake_db.profiles) == 2
-
-
-def test_write_user_refuses_content_over_the_budget(consolidator, fake_db):
-    over = _put(**_user_body(fake_db, content="x" * 1501))
-    assert over.status_code == 400
-    assert "1501" in over.json()["error"]
-    assert _put(**_user_body(fake_db, content="x" * 1500)).json()["status"] == "written"
-    assert _put(**_user_body(fake_db, content="y" * 300, max_chars=299)).status_code == 400
-    assert len(fake_db.profiles) == 1
-
-
-def test_write_user_refuses_a_credential(consolidator, fake_db):
-    token = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
-    response = _put(**_user_body(fake_db, content=f"The user's token is {token}."))
-    assert response.status_code == 400
-    assert "credential" in response.json()["error"]
-    assert token not in response.json()["error"]
-    assert fake_db.profiles == []
-
-
-def _seed_rules(fake_db):
-    fake_db.add_note("note:default:a", "Delegate coding to a worktree subagent.", saved=SAVED + 1)
-    fake_db.add_note("note:default:b", "Reviews:\n- run the tests\n- read the diff", saved=SAVED)
-    fake_db.add_note("note:default:c", "Ask before merging.", saved=SAVED + 2)
-    fake_db.add_note("note:default:p", "Lives in Seoul.", kind="personal")
-    fake_db.add_note("note:default:z", "Archived rule.", archived_at=SAVED)
-
-
-def test_write_rules_renders_the_selected_notes_verbatim_in_the_submitted_order(
-    consolidator, fake_db
+def test_profile_read_keeps_the_version_of_a_cleared_part_and_never_serves_an_older_one(
+    agent, fake_db
 ):
-    _seed_rules(fake_db)
-    ids = ["note:default:c", "note:default:b", "note:default:a"]
-    response = _put(**_rules_body(fake_db, ids))
-    expected = (
-        "- Ask before merging.\n"
-        "- Reviews:\n"
-        "  - run the tests\n"
-        "  - read the diff\n"
-        "- Delegate coding to a worktree subagent."
-    )
-    assert response.json() == {"status": "written", "version": 1, "chars": len(expected)}
-    [row] = fake_db.profiles
-    assert row["content"] == expected
-    assert row["source_ids"] == ids
-    assert row["model"] is None
+    fake_db.add_version(OWNER, "user", "Lives in Seoul.")
+    fake_db.add_version(OWNER, "user", "")
+    fake_db.add_version(OWNER, "self", "Self.")
+    fake_db.add_version(OWNER, "self", "")
+    body = client.get("/profiles", params={"owner": OWNER}).json()
+    assert body["user_version"] == 2
+    assert body["user"] is None
+    assert body["self_version"] == 2
+    assert body["self"] is None
 
 
-@pytest.mark.parametrize("outside", ["note:default:p", "note:default:z", "note:default:nope"])
-def test_write_rules_refuses_an_id_outside_the_eligible_set(consolidator, fake_db, outside):
-    _seed_rules(fake_db)
-    response = _put(**_rules_body(fake_db, ["note:default:a", outside]))
-    assert response.status_code == 400
-    assert outside in response.json()["error"]
-    assert "note:default:a" not in response.json()["error"]
-    assert fake_db.profiles == []
+def test_profile_read_with_only_a_pending_proposal(agent, fake_db):
+    fake_db.add_proposal()
+    body = client.get("/profiles", params={"owner": OWNER}).json()
+    assert body["user"] is None and body["self"] is None
+    assert body["pending_proposal"]["id"] == 1
 
 
-def test_write_rules_over_the_budget_is_refused_with_the_rendered_length(consolidator, fake_db):
-    fake_db.add_note("note:default:a", "r" * 150)
-    fake_db.add_note("note:default:b", "s" * 150)
-    response = _put(**_rules_body(fake_db, ["note:default:a", "note:default:b"], max_chars=300))
-    assert response.status_code == 400
-    assert response.json()["chars"] == 305
-    assert "305" in response.json()["error"]
-    assert fake_db.profiles == []
-
-
-def test_write_rules_with_an_empty_selection_stores_empty_content(consolidator, fake_db):
-    _seed_rules(fake_db)
-    response = _put(**_rules_body(fake_db, []))
-    assert response.json() == {"status": "written", "version": 1, "chars": 0}
-    assert fake_db.profiles[0]["content"] == ""
-    assert fake_db.profiles[0]["source_ids"] == []
-
-
-def test_an_unchanged_write_adds_no_version(consolidator, fake_db):
-    _seed_rules(fake_db)
-    assert _put(**_rules_body(fake_db, ["note:default:a"])).json()["version"] == 1
-    again = _put(**_rules_body(fake_db, ["note:default:a"]))
-    assert again.json() == {"status": "unchanged", "version": 1}
-    planned = _put(**_rules_body(fake_db, ["note:default:a"], dry_run=True))
-    assert planned.json() == {"status": "unchanged", "version": 1}
-    assert len(fake_db.profiles) == 1
-
-
-def test_a_changed_selection_writes_the_next_version(consolidator, fake_db):
-    _seed_rules(fake_db)
-    _put(**_rules_body(fake_db, ["note:default:a"]))
-    response = _put(**_rules_body(fake_db, ["note:default:a", "note:default:c"]))
-    assert response.json()["version"] == 2
-    assert [r["version"] for r in fake_db.profiles] == [1, 2]
-
-
-def test_a_dry_run_plans_without_writing(consolidator, fake_db):
-    _seed_rules(fake_db)
-    response = _put(**_rules_body(fake_db, ["note:default:c"], dry_run=True))
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "planned",
-        "content": "- Ask before merging.",
-        "chars": 21,
-    }
-    assert fake_db.profiles == []
-    assert fake_db.writes() == []
-
-
-# ---- read -------------------------------------------------------------------
-
-
-def _profile(namespace, slot, version, content):
-    return {
-        "namespace": namespace,
-        "slot": slot,
-        "version": version,
-        "content": content,
-        "source_ids": [],
-        "source_hash": "h",
-        "author": "consolidator",
-        "model": None,
-        "created_at": SAVED + version,
-    }
-
-
-def _seed_profiles(fake_db):
-    fake_db.profiles = [
-        _profile("work", "work-rules", 1, "- old rule"),
-        _profile("work", "work-rules", 2, "- new rule"),
-        _profile("default", "work-rules", 1, "- review every PR"),
-        _profile("default", "user", 1, "Lives in Seoul."),
-        _profile("personal", "user", 1, "Private fact."),
-        _profile("emptied", "work-rules", 1, "- a rule"),
-        _profile("emptied", "work-rules", 2, ""),
-    ]
-
-
-def test_profiles_returns_the_latest_non_empty_version_per_slot_in_order(fake_db):
-    _seed_profiles(fake_db)
-    response = client.get("/profiles")
+def test_versions_are_listed_newest_first_within_the_limit(agent, fake_db):
+    for text in ("one", "two", "three"):
+        fake_db.add_version(OWNER, "self", text)
+    fake_db.add_version(OWNER, "user", "user one", proposal_id=4)
+    response = client.get("/profiles/versions", params={"owner": OWNER, "part": "self", "limit": 2})
     assert response.status_code == 200
     assert response.json() == [
-        {
-            "namespace": "default",
-            "slot": "user",
-            "version": 1,
-            "content": "Lives in Seoul.",
-            "created_at": "2023-11-14T22:13:21+00:00",
-        },
-        {
-            "namespace": "default",
-            "slot": "work-rules",
-            "version": 1,
-            "content": "- review every PR",
-            "created_at": "2023-11-14T22:13:21+00:00",
-        },
-        {
-            "namespace": "personal",
-            "slot": "user",
-            "version": 1,
-            "content": "Private fact.",
-            "created_at": "2023-11-14T22:13:21+00:00",
-        },
-        {
-            "namespace": "work",
-            "slot": "work-rules",
-            "version": 2,
-            "content": "- new rule",
-            "created_at": "2023-11-14T22:13:22+00:00",
-        },
-    ]
-
-
-def test_profiles_filters_by_repeated_namespace(fake_db):
-    _seed_profiles(fake_db)
-    response = client.get("/profiles", params=[("namespace", "work"), ("namespace", "default")])
-    assert [(p["namespace"], p["slot"]) for p in response.json()] == [
-        ("default", "user"),
-        ("default", "work-rules"),
-        ("work", "work-rules"),
-    ]
-
-
-def test_profiles_default_to_the_namespaces_a_member_key_can_read(monkeypatch, fake_db):
-    _use_identity(monkeypatch, is_admin=False, authors=(), allowed=("default", "work"))
-    _seed_profiles(fake_db)
-    response = client.get("/profiles")
-    assert response.status_code == 200
-    assert {p["namespace"] for p in response.json()} == {"default", "work"}
-
-
-def test_profiles_refuse_a_namespace_the_key_cannot_read(monkeypatch, fake_db):
-    _use_identity(monkeypatch, is_admin=False, authors=(), allowed=("default",))
-    response = client.get("/profiles", params=[("namespace", "default"), ("namespace", "personal")])
-    assert response.status_code == 403
-    assert fake_db.calls == []
-
-
-# ---- versions ---------------------------------------------------------------
-
-
-def test_versions_lists_every_version_newest_first(consolidator, fake_db):
-    _seed_rules(fake_db)
-    _put(**_rules_body(fake_db, ["note:default:a"], model="m1"))
-    _put(**_rules_body(fake_db, ["note:default:c", "note:default:a"], model="m2"))
-    response = client.get(
-        "/admin/profiles/versions", params={"namespace": NS, "slot": "work-rules"}
+        {"version": 3, "content": "three", "author": OWNER, "proposal_id": None, "created_at": NOW_ISO},
+        {"version": 2, "content": "two", "author": OWNER, "proposal_id": None, "created_at": NOW_ISO},
+    ]  # fmt: skip
+    users = client.get("/profiles/versions", params={"owner": OWNER, "part": "user"}).json()
+    assert users == [
+        {"version": 1, "content": "user one", "author": "user", "proposal_id": 4, "created_at": NOW_ISO}
+    ]  # fmt: skip
+    default = client.get("/profiles/versions", params={"owner": OWNER, "part": "self"})
+    assert [row["version"] for row in default.json()] == [3, 2, 1]
+    assert ("versions", (OWNER, "self", 20)) in fake_db.calls
+    maximum = client.get(
+        "/profiles/versions", params={"owner": OWNER, "part": "self", "limit": 200}
     )
+    assert maximum.status_code == 200
+
+
+def test_proposal_list_is_newest_first_with_every_field(agent, fake_db):
+    fake_db.add_proposal(status="superseded", decided_at=NOW + 1, created_at=NOW)
+    fake_db.add_proposal(owner="natsume", created_at=NOW + 1)
+    fake_db.add_proposal(created_at=NOW + 1, reason="newer")
+    response = client.get("/profiles/user/proposals", params={"owner": OWNER})
     assert response.status_code == 200
-    body = response.json()
-    assert body["namespace"] == NS
-    assert body["slot"] == "work-rules"
-    assert [v["version"] for v in body["versions"]] == [2, 1]
-    newest = body["versions"][0]
-    assert set(newest) == {
-        "version",
-        "content",
-        "source_ids",
-        "source_hash",
-        "author",
-        "model",
-        "created_at",
+    rows = response.json()
+    assert [row["id"] for row in rows] == [3, 1]
+    assert rows[1] == {
+        "id": 1,
+        "owner": OWNER,
+        "status": "superseded",
+        "base_version": 0,
+        "reason": "learned it",
+        "content": "The user lives in Seoul.",
+        "created_at": NOW_ISO,
+        "decided_at": "2023-11-14T22:13:21+00:00",
+        "decision_note": None,
     }
-    assert newest["source_ids"] == ["note:default:c", "note:default:a"]
-    assert newest["model"] == "m2"
-    assert newest["content"] == ("- Ask before merging.\n- Delegate coding to a worktree subagent.")
-    _, args = fake_db.calls[-1]
-    assert args == (NS, "work-rules", 20)
+    assert rows[0]["decided_at"] is None
+    pending = client.get("/profiles/user/proposals", params={"owner": OWNER, "status": "pending"})
+    assert [row["id"] for row in pending.json()] == [3]
+    limited = client.get("/profiles/user/proposals", params={"owner": OWNER, "limit": 1})
+    assert [row["id"] for row in limited.json()] == [3]
+    assert ("proposals", (OWNER, None, 20)) in fake_db.calls
 
 
-@pytest.mark.parametrize(
-    "params",
-    [
-        {"namespace": NS, "slot": "user", "limit": "0"},
-        {"namespace": NS, "slot": "user", "limit": "201"},
-        {"namespace": NS, "slot": "user", "limit": "many"},
-        {"namespace": NS},
-        {"slot": "user"},
-        {"namespace": NS, "slot": "rules"},
-        {"namespace": "nowhere", "slot": "user"},
-    ],
-)
-def test_versions_rejects_a_bad_parameter(consolidator, fake_db, params):
-    response = client.get("/admin/profiles/versions", params=params)
-    assert response.status_code == 400
+def test_the_ownerless_proposal_list_is_for_user_author_keys_only(monkeypatch, fake_db):
+    fake_db.add_proposal(owner="natsume")
+    fake_db.add_proposal(owner=OWNER)
+    _use_identity(monkeypatch, authors=(OWNER, "natsume", "consolidator"), is_admin=True)
+    assert client.get("/profiles/user/proposals").status_code == 403
     assert fake_db.calls == []
+    _use_identity(monkeypatch, authors=("user",))
+    response = client.get("/profiles/user/proposals", params={"status": "pending"})
+    assert response.status_code == 200
+    assert [row["owner"] for row in response.json()] == [OWNER, "natsume"]
+    assert ("proposals", (None, "pending", 20)) in fake_db.calls
 
 
-def test_versions_takes_the_limit(consolidator, fake_db):
-    client.get("/admin/profiles/versions", params={"namespace": NS, "slot": "user", "limit": "200"})
-    _, args = fake_db.calls[-1]
-    assert args == (NS, "user", 200)
+def test_a_proposal_by_id_carries_the_current_user_content_from_one_snapshot(user, fake_db):
+    fake_db.add_version(OWNER, "user", "Lives in Busan.")
+    fake_db.add_proposal(content="Lives in Seoul.", base_version=1, reason="moved")
+    response = client.get("/profiles/user/proposals/1")
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": 1,
+        "owner": OWNER,
+        "status": "pending",
+        "base_version": 1,
+        "reason": "moved",
+        "content": "Lives in Seoul.",
+        "created_at": NOW_ISO,
+        "decided_at": None,
+        "decision_note": None,
+        "current_user_version": 1,
+        "current_user_content": "Lives in Busan.",
+    }
+    assert fake_db.transactions == [{"isolation": "repeatable_read", "readonly": True}]
+
+
+def test_a_proposal_by_id_reports_a_cleared_or_absent_user_part_as_null(user, fake_db):
+    fake_db.add_proposal(status="rejected", decided_at=NOW, decision_note="no")
+    body = client.get("/profiles/user/proposals/1").json()
+    assert body["current_user_version"] == 0
+    assert body["current_user_content"] is None
+    assert body["decision_note"] == "no"
+    fake_db.add_version(OWNER, "user", "")
+    body = client.get("/profiles/user/proposals/1").json()
+    assert body["current_user_version"] == 1
+    assert body["current_user_content"] is None
+
+
+def test_an_unknown_proposal_by_id_is_404(user, fake_db):
+    assert client.get("/profiles/user/proposals/3").status_code == 404
+
+
+def test_the_old_profile_routes_and_slot_machinery_are_gone(monkeypatch, fake_db):
+    _use_identity(monkeypatch, authors=("consolidator", OWNER, "user"), is_admin=True)
+    for method, path in (
+        ("GET", "/admin/profiles/sources?namespace=default&slot=user"),
+        ("PUT", "/admin/profiles"),
+        ("GET", "/admin/profiles/versions?namespace=default&slot=user"),
+    ):
+        assert client.request(method, path).status_code in (404, 405)
+    assert client.get("/profiles").status_code == 400
+    assert client.get("/profiles", params={"namespace": "default"}).status_code == 400
+    for name in ("PROFILE_VERSION", "source_hash", "render_rules", "SLOT_KINDS", "SLOT_FIELDS"):
+        assert not hasattr(profiles, name)

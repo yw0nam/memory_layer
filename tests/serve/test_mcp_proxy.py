@@ -66,6 +66,8 @@ def test_tool_list_includes_document_ingestion():
         "list_messages",
         "claim_message",
         "cancel_message",
+        "update_my_profile",
+        "propose_user_profile",
     }
 
 

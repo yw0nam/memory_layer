@@ -543,103 +543,126 @@ from `notes`, and an undo of an action that archived it fails with 409.
 
 ## Profiles
 
-A profile is standing text per namespace that clients deliver at session start, outside
-search: facts and rules that apply to every task match the topic of almost no message, so
-per-message prefetch rarely ranks them. Each namespace has two fixed slots:
+A profile is standing text an agent receives at every session start, outside search:
+facts and rules that apply to every task match the topic of almost no message, so
+per-message prefetch rarely ranks them. Profiles belong to agents, not to namespaces
+([ADR-0009](adr/0009-profiles-owned-by-agents-user-part-approved-by-the-user.md)).
 
-| slot | source notes | content | default `max_chars` |
-|---|---|---|---|
-| `user` | active agent notes of kind `personal` | text an agent generates from every source note | 1500 |
-| `work-rules` | active agent notes of kind `work` | the source notes an agent selects as standing working rules, rendered verbatim by the server | 6000 |
+An **owner** is an agent's author slug (`claude-code`, `natsume`; never `user` or
+`consolidator`). Each owner has two **parts**, each a versioned text:
 
-The scheduled consolidation agent writes the slots through admin routes; the server calls
-no model and judges no content. Writing agents never write a profile. Profiles are never
-embedded and never read by search, consolidation, or another profile's sources.
-
-```
- GET /admin/profiles/sources ──► eligible notes + source_hash + stale
-        │ agent: user → generate text from every note; work-rules → select note ids
-        ▼
- PUT /admin/profiles {source_hash, content | note_ids}
-   one transaction: pg_advisory_xact_lock('profile:' ns ':' slot) ──► namespace FOR SHARE
-     recompute the eligible notes and their hash ── mismatch ──► 409 stale
-     content checks ── fail ──► 400
-     latest version has this hash and this content ──► unchanged
-     dry_run ──► planned
-     insert version n+1 ──► written
-        ▼
- GET /profiles ──► SessionStart hook (Claude Code) · system_prompt_block (Hermes)
-```
-
-**Sources.** `GET /admin/profiles/sources?namespace=&slot=` takes the consolidation key (an
-admin key with `consolidator` in its authors; 403 otherwise). Both parameters are
-required and given once; the namespace is registered. It reads one read-only REPEATABLE
-READ snapshot and returns `namespace`, `slot`, `profile_version`, `source_hash`, `current`
-(`{version, source_hash, created_at}` of the latest version, or null), `stale` (no version
-yet, or its hash differs from `source_hash`), and `notes`: each eligible note's `id`,
-`kind`, `author`, `saved`, `occurred_at` (ISO 8601 UTC, or null), `tags`, and `text`, by
-save time, then id.
-
-**Source hash.** The sha256 of the canonical JSON (sorted keys, no whitespace)
-`{"v": PROFILE_VERSION, "slot", "namespace", "notes": [[id, sha256(text), kind, author,
-saved, occurred_at, sorted tags], …]}` with the notes ordered by id, absent values as null,
-and timestamps as stored epoch seconds. It changes when a source note is added, archived,
-or changes any of those fields, and when `PROFILE_VERSION` changes. `PROFILE_VERSION`
-covers the slot rules, the rendering, the budgets, and the profile-refresh procedure.
-
-**Write.** `PUT /admin/profiles` takes the consolidation key; `author` must be one of the
-key's authors. An unknown field, a wrong type, or a value out of range is a 400.
-
-| field | rule | default |
+| part | holds | written by |
 |---|---|---|
-| `namespace` | registered | required |
-| `slot` | `user` or `work-rules` | required |
-| `source_hash` | the hash the sources call returned | required |
-| `author` | one of the key's authors | required |
-| `model` | string or null; recorded, not checked | null |
-| `dry_run` | boolean | false |
-| `content` | `user` only; string | required on `user` |
-| `note_ids` | `work-rules` only; 0–200 distinct ids | required on `work-rules` |
-| `max_chars` | 200–20000 | 1500 (`user`), 6000 (`work-rules`) |
+| `self` | the agent's persona, working rules, and conventions | the owner, whenever it chooses |
+| `user` | the user as this agent needs to know them | the user, by approving the owner's proposal |
 
-| case | response |
-|---|---|
-| the recomputed hash differs from `source_hash` | 409 `{"error": "stale", "source_hash": <current>}` |
-| `user`: content blank after stripping while the slot has source notes, carrying a credential, or longer than `max_chars` | 400 |
-| `work-rules`: an id outside the slot's eligible notes | 400 naming the ids |
-| `work-rules`: rendered text longer than `max_chars` | 400 with `chars` and `max_chars`; nothing is truncated or rewritten |
-| the latest version has the same hash and the same content | 200 `{"status": "unchanged", "version"}` |
-| `dry_run` | 200 `{"status": "planned", "content", "chars"}` |
-| otherwise | 200 `{"status": "written", "version", "chars"}` |
+Each owner's `user` part is its own document. The server calls no model and judges no
+content; profiles are never embedded and never read by search or consolidation.
 
-`user` stores the stripped content with every eligible note as its source ids. With no
-eligible notes it also accepts blank content and stores it empty, so a `user` profile does
-not outlive its sources: the empty version is not served.
-`work-rules` stores the rendering of the selected notes in the submitted order, `- ` and
-the note's text per note, its inner lines indented by two spaces, joined by newlines; its
-source ids are the selection. An empty selection stores empty content, which is not
-served. A refused or failed write stores nothing, so the previous version stays served.
+**Authority** comes only from the key's authors. A key acts for an owner when the owner
+is one of its authors; a key carrying the `user` author reads every owner's profile and
+proposals and is the only key that approves or rejects. Admin status, the key label, the
+home namespace, and namespace permissions grant no profile access. Only the user's key
+carries `user`. The agents' key stays an admin key, and an admin key can rewrite any
+label's authors through `PUT /keys/{label}/authors`, so the separation prevents mistakes,
+not a determined agent on the same host. Isolation between agents on reads is the
+client's: the hook and the Hermes provider request only their configured owner.
 
-**Read.** `GET /profiles` takes any key. `namespace` is optional and repeatable; the
-default is every namespace the key can read, and a namespace outside it is a 403. The
-response is the latest version of each slot whose content is non-empty:
-`[{namespace, slot, version, content, created_at}]`, by namespace, then `user` before
-`work-rules`.
+```
+ agent ── PUT /profiles/self ──────────────────────► self v n+1   (or unchanged)
+ agent ── POST /profiles/user/proposals {base_version}
+            base == current user version? ── no ──► 409 stale {version}
+            supersede the pending proposal, insert ──► pending proposal
+ user  ── mb_profile.py show <id> ──► proposal + diff against the current user part
+ user  ── mb_profile.py approve <id>
+            pending? ── no ──► 409 not_pending {status}
+            base == current user version? ── no ──► 409 stale {version}, stays pending
+            insert user v n+1 (author "user", proposal_id) + mark approved
+ GET /profiles?owner= ──► SessionStart hook (Claude Code) · system_prompt_block (Hermes)
+```
 
-**History.** `GET /admin/profiles/versions?namespace=&slot=&limit=` takes the consolidation
-key and returns `{namespace, slot, versions}`: every version newest first with `version`,
-`content`, `source_ids`, `source_hash`, `author`, `model`, and `created_at`. `limit` is
-1–200, default 20.
+**Requests.** Every mutation body is a JSON object holding only its listed fields; a
+missing or unknown field, malformed JSON, or a wrong type is a 400. `owner` matches
+`^[a-z0-9][a-z0-9-]{0,39}$` and is neither `user` nor `consolidator`. `content`,
+`reason`, and `note` are stripped; each is scanned for credentials, and a hit is a 400
+naming only the credential type. Query parameters are each known and given at most once;
+anything else is a 400. A proposal id is a positive 64-bit integer (400 otherwise; 404
+when unknown). Lists are JSON arrays; times are ISO 8601 UTC strings.
+
+| route | key | behaviour |
+|---|---|---|
+| `GET /profiles?owner=` | the owner's, or `user` | one REPEATABLE READ snapshot: `{owner, self_version, self, user_version, user, pending_proposal}` |
+| `PUT /profiles/self` | the owner's | `{owner, content, max_chars?}`; `max_chars` 200–20000, default 4000 |
+| `POST /profiles/user/proposals` | the owner's | `{owner, content, reason, base_version, max_chars?}`; `max_chars` 200–20000, default 3000; 201 `{id, status: "pending", superseded}` |
+| `GET /profiles/user/proposals?owner=&status=&limit=` | with `owner`: the owner's, or `user`; without: `user` only | newest first; `status` one of `pending`, `approved`, `rejected`, `superseded`; `limit` 1–200, default 20 |
+| `GET /profiles/user/proposals/{id}` | the proposal owner's, or `user` | the proposal plus `current_user_version` and `current_user_content`, from one snapshot |
+| `POST /profiles/user/proposals/{id}/approve` | `user` only | `{note?}`; 200 `{status: "approved", version}` |
+| `POST /profiles/user/proposals/{id}/reject` | `user` only | `{note?}`; 200 `{status: "rejected"}` |
+| `GET /profiles/versions?owner=&part=&limit=` | the owner's, or `user` | newest first `{version, content, author, proposal_id, created_at}`; `limit` 1–200, default 20 |
+
+**Read.** `self_version` and `user_version` are the latest stored version of each part,
+0 when none. A part object `{content, created_at}` is null when no version exists or the
+latest content is empty; an older non-empty version is never served, and an emptied part
+keeps its version. `pending_proposal` is `{id, created_at, reason, base_version}` or null.
+
+**Self.** The content must fit `max_chars` (otherwise 400 with `chars` and `max_chars`).
+Content equal to the latest version returns 200 `{status: "unchanged", version}`; any
+other content is stored as the next version, 200 `{status: "written", version}`. Empty
+content stores an empty version, which clears the part.
+
+**Proposal.** `reason` holds 1–1000 characters; `base_version` is an integer
+0–2147483647 and must equal the owner's current user version (0 when none), otherwise
+409 `{"error": "stale", "version": <current>}`. The content has the same length and
+credential checks as `self`. A new proposal starts `pending` with `decided_at` and
+`decision_note` null; the owner's earlier pending proposal becomes `superseded`, with
+`decided_at` set to the new proposal's `created_at` and `decision_note` null. An owner has
+at most one pending proposal.
+
+**Decision.** `note`, when given, is a string of 0–1000 characters after stripping and is
+stored as the decision note; an omitted note is stored as null. A proposal that is not
+pending returns 409 `{"error": "not_pending", "status": <current>}`. Approval then
+requires the proposal's `base_version` to equal the current user version, otherwise 409
+`{"error": "stale", "version": <current>}` and the proposal stays pending. An approval
+stores the proposal's content as the next user version with author `user` and the
+proposal's id, and marks the proposal `approved`; a rejection marks it `rejected` without
+checking the base. Both set `decided_at` to the decision time. A refused or failed
+operation changes no field of any proposal.
+
+**Concurrency.** Every mutation runs in one READ COMMITTED transaction. A decision first
+reads the proposal's owner without a row lock (404 when absent); every mutation then
+takes `pg_advisory_xact_lock(hashtextextended('profile:' || owner, 0))` and only then
+reads the proposal status, its base, and the latest versions in fresh statements. No
+proposal row lock is taken before the owner lock. An approval's version insert and its
+decision commit or roll back together, as do a supersede and the new proposal.
 
 **Delivery.** The Claude Code SessionStart hook runs at every session start, resume,
-clear, and compaction. It calls `GET /profiles` and lists the repository's pending
-handoffs, and prints one `<memory-context>` fence: the header `Memory: standing profile.
-Apply it to every task.`, each profile under `## <slot> (<namespace>)`, then the handoffs.
-Profiles print outside a git repository too; the two fetches fail independently, and any
-failure prints nothing for that part. The Hermes provider fetches the same block body,
-without the fence, once in `initialize` and returns it from `system_prompt_block` for the
-session. Memory-context tags inside a profile are defused to `[memory-context]`.
-Per-message prefetch does not include profiles.
+clear, and compaction. It calls `GET /profiles?owner=<MEMORY_BASE_AUTHOR>` (default
+`claude-code`), lists the repository's pending handoffs, and prints one
+`<memory-context>` fence:
+
+```
+Memory: standing profile for <owner>. Apply it to every task.
+## user (v<user_version>)
+<content, or (empty)>
+## self (v<self_version>)
+<content, or (empty)>
+A proposed change to the user profile (proposal <id>) awaits the user's approval. Ask the user to run `! python3 ~/.config/memory-base/mb_profile.py show <id>` to inspect its diff, then approve or reject it with the memory-profile-approval skill.
+```
+
+then the handoffs. Both version lines print on every successful fetch, so the session
+always has the `base_version` a proposal needs; the notice prints only while a proposal is
+pending and never carries its content. A failed or malformed fetch prints no profile
+block and no version. The two fetches fail independently. The Hermes provider builds the
+same block body, without the fence, for its configured `owner` once in `initialize` and
+returns it from `system_prompt_block` for the session; without an `owner` it fetches no
+profile. Memory-context tags inside a part are defused to `[memory-context]`. Per-message
+prefetch does not include profiles.
+
+**Approval.** The user inspects and decides with `integrations/profile_approval/mb_profile.py`
+(`pending`, `show`, `approve`, `reject`), a stdlib CLI that reads only the user's key from
+`~/.config/memory-base/user.env` or the environment. The `memory-profile-approval` skill
+(`integrations/skills/memory-profile-approval/SKILL.md`) tells an agent to hand that step
+to the user and never to run it.
 
 ## Storage
 
@@ -686,12 +709,20 @@ wrote), `author`, `model`, `reason`, `result` (the response returned on apply), 
 `undone_at`, `undone_by`, `undo_result`; indexed on (`namespace`, `run_id`). It is read
 only by the consolidation routes.
 
-`memory.profiles` — every version of every profile slot: `namespace`, `slot` (`user` |
-`work-rules`), `version` (1, 2, … per namespace and slot; unique together), `content`,
-`source_ids` (`user`: every eligible note; `work-rules`: the selection in render order),
-`source_hash`, `author`, `model`, and `created_at` (epoch seconds). No embedding column;
-read only by the profile routes. A profile version counts as namespace content: a
-namespace with one is not unregistered.
+`memory.agent_profiles` — every version of every owner's parts: `owner`, `part` (`self` |
+`user`), `version` (1, 2, … per owner and part; unique together), `content` (empty when
+the version clears the part), `author` (the owner for `self`; `user` for an approved user
+version), `proposal_id` (set on user versions), and `created_at` (epoch seconds). Every
+version is kept.
+
+`memory.profile_proposals` — every proposal to replace an owner's `user` part: `owner`,
+`content`, `reason`, `base_version` (the user version it was written against; 0 when
+none), `status` (`pending` | `approved` | `rejected` | `superseded`), `created_at`, and the
+decision's `decided_at` and `decision_note`. A partial unique index keeps at most one
+pending proposal per owner. Every proposal is kept with its decision.
+
+Neither profile table has an embedding column or a namespace; both are read only by the
+profile routes, and a namespace is unregistered without regard to them.
 
 `doc_rows` and `messages` are outside the retrieval contract: they are read by compute
 and by address, respectively, and are never granted to the SQL query role or returned by

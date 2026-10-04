@@ -663,6 +663,8 @@ def test_mcp_tool_list_unaffected_by_supersede():
         "list_messages",
         "claim_message",
         "cancel_message",
+        "update_my_profile",
+        "propose_user_profile",
     }
 
 

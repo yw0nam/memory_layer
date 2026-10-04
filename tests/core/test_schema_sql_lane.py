@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from memory_base.core import schema
 
@@ -56,27 +57,64 @@ def test_api_keys_and_jobs_stamp_their_own_created_at(monkeypatch):
         assert "created_at timestamptz NOT NULL DEFAULT now()" in body, table
 
 
-def test_profiles_table_keeps_every_version_of_each_slot_unembedded(monkeypatch):
+def _table_body(sql, table):
+    body = sql.split(f'CREATE TABLE IF NOT EXISTS "scratch_schema".{table} (', 1)[1]
+    return " ".join(body.split(");", 1)[0].split())
+
+
+def test_the_legacy_profiles_table_is_dropped_in_the_configured_schema_only(monkeypatch):
     monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
     conn = RecordingConnection()
 
     asyncio.run(schema.ensure_schema(conn))
 
     sql = "\n".join(conn.queries)
-    body = sql.split('CREATE TABLE IF NOT EXISTS "scratch_schema".profiles (', 1)[1]
-    body = " ".join(body.split(");", 1)[0].split())
+    assert 'DROP TABLE IF EXISTS "scratch_schema".profiles;' in sql
+    assert 'CREATE TABLE IF NOT EXISTS "scratch_schema".profiles' not in sql
+    for statement in re.findall(r"(?:TABLE(?: IF (?:NOT )?EXISTS)?|ON) (\S*profile\S*)", sql):
+        assert statement.startswith('"scratch_schema".'), statement
+
+
+def test_agent_profiles_keep_every_version_of_each_part_unembedded(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    body = _table_body("\n".join(conn.queries), "agent_profiles")
     assert "id bigserial PRIMARY KEY" in body
-    assert "namespace text NOT NULL" in body
-    assert "slot text NOT NULL CHECK (slot IN ('user', 'work-rules'))" in body
+    assert "owner text NOT NULL" in body
+    assert "part text NOT NULL CHECK (part IN ('self', 'user'))" in body
     assert "version int NOT NULL" in body
     assert "content text NOT NULL" in body
-    assert "source_ids text[] NOT NULL" in body
-    assert "source_hash text NOT NULL" in body
     assert "author text NOT NULL" in body
-    assert "model text," in body
+    assert "proposal_id bigint," in body
     assert "created_at double precision NOT NULL" in body
-    assert "UNIQUE (namespace, slot, version)" in body
+    assert "UNIQUE (owner, part, version)" in body
     assert "embedding" not in body
+    assert "namespace" not in body
+
+
+def test_profile_proposals_hold_the_decision_metadata(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    body = _table_body("\n".join(conn.queries), "profile_proposals")
+    assert "id bigserial PRIMARY KEY" in body
+    assert "owner text NOT NULL" in body
+    assert "content text NOT NULL" in body
+    assert "reason text NOT NULL" in body
+    assert "base_version int NOT NULL" in body
+    assert (
+        "status text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'superseded'))"
+        in body
+    )
+    assert "created_at double precision NOT NULL" in body
+    assert "decided_at double precision," in body
+    assert "decision_note text" in body
+    assert "namespace" not in body
 
 
 def test_messages_table_carries_the_lifecycle_constraints_and_indexes(monkeypatch):

@@ -105,16 +105,20 @@ Note metadata that links a note to the notes that replaced or absorbed it: `supe
 _Avoid_: history, provenance, links
 
 **Profile**:
-Standing text per namespace and slot that clients deliver at session start, outside search. Written only by the scheduled consolidation agent through the profile routes; every version is kept, and the latest one is served when its content is non-empty.
+Standing text an agent receives at every session start, outside search: the two versioned parts of one owner. Every version is kept; the latest version of each part is served when its content is non-empty.
 _Avoid_: summary, persona, memory block
 
-**Slot**:
-One of the two fixed profiles of a namespace: `user`, generated from every active `personal` note, and `work-rules`, the active `work` notes an agent selects as standing working rules, rendered verbatim.
-_Avoid_: section, category
+**Owner**:
+The agent a profile belongs to, named by its author slug (`claude-code`, `natsume`); `user` and `consolidator` are never owners. A key acts for an owner only when the owner is one of its authors. Distinct from a namespace owner, which is a key label.
+_Avoid_: profile namespace, slot
 
-**Source hash**:
-A hash over a slot's eligible notes (each note's text, kind, author, save time, event date, and tags), the slot, the namespace, and the profile version. A profile write is stored only while it still matches; a slot whose latest version carries it is not stale.
-_Avoid_: checksum, snapshot id
+**Part**:
+One of an owner's two profile documents: `self`, the agent's persona, working rules, and conventions, which the owner replaces at will; and `user`, the user as this agent needs to know them, which changes only by an approved proposal. Each owner's `user` part is its own document.
+_Avoid_: slot, section
+
+**Proposal**:
+An owner's full replacement text for its `user` part with a reason and the user version it was written against. It is `pending` until a key carrying the `user` author approves or rejects it, or until the owner's next proposal supersedes it; an approval whose base is not the current user version is refused as stale.
+_Avoid_: suggestion, draft, edit
 
 **Distilled**:
 Reduced to its high-signal form before storage. The property that qualifies content for the store at all.
