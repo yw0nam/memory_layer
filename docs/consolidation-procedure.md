@@ -326,10 +326,11 @@ reverses an action.
 ## Limits
 
 - The token check compares numbers and dates, backticked spans, and names in both
-  directions. A merge that changes a name that has one capital and starts a sentence (a word with two
-or more capitals counts even there), a negation, a name in
-  a script without case (Korean), or a version inside an identifier (`v2.0` to `v3.1`)
-  passes it. Digits inside an identifier (`abc123`, `note:x9`) and numbered-list markers
+  directions. A name that has one capital and starts a sentence in either text counts as
+  present when it appears anywhere in the other, so moving a name to or from a sentence start
+  passes. A merge that changes such a name (a word with two or more capitals is checked even
+  there), a negation, a name in a script without case (Korean), or a version inside an
+  identifier (`v2.0` to `v3.1`) passes it. Digits inside an identifier (`abc123`, `note:x9`) and numbered-list markers
   are not tokens. Step 3 covers what the check cannot.
 - Each namespace takes at most `max_actions` retire and merge actions per `run_id`
   (default 20, maximum 500). `keep` is not capped.
