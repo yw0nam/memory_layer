@@ -24,7 +24,7 @@ from starlette.responses import JSONResponse
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.serve import job_store
-from memory_base.serve.http import error, json_body
+from memory_base.serve.common.http import error, json_body
 from memory_base.serve.job_store import JobBase
 
 REPO_MAX_BYTES = int(os.getenv("REPO_MAX_BYTES", str(2 * 1024**3)))

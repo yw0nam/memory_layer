@@ -15,7 +15,7 @@ from starlette.responses import JSONResponse
 
 from memory_base.core import db
 from memory_base.serve import namespaces
-from memory_base.serve.http import error, json_body
+from memory_base.serve.common.http import error, json_body
 
 ROW_CAP = 1_000
 RESPONSE_MAX_BYTES = 5 * 1024 * 1024

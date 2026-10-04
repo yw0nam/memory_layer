@@ -42,9 +42,9 @@ from memory_base.serve import repos
 from memory_base.serve import tables
 from memory_base.serve import verdicts
 from memory_base.serve.auth import ApiKeyAuthMiddleware
-from memory_base.serve.http import TEXT_LIMIT
-from memory_base.serve.http import error
-from memory_base.serve.http import json_body
+from memory_base.serve.common.http import TEXT_LIMIT
+from memory_base.serve.common.http import error
+from memory_base.serve.common.http import json_body
 from memory_base.serve.notes import (
     CredentialNoteError,
     NOTE_KINDS,

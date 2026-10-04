@@ -19,8 +19,7 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
-from memory_base.serve.consolidate import iso
-from memory_base.serve.http import error, json_body
+from memory_base.serve.common.http import error, iso, json_body
 from memory_base.serve.keys import AUTHOR_RE
 
 PARTS = ("self", "user")

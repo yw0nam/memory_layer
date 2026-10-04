@@ -12,6 +12,7 @@ from typing import Any
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.retrieval.search import metadata_dict
+from memory_base.serve.common.http import iso
 
 PROCEDURE_VERSION = "1"
 DEFAULT_THRESHOLD = 0.72
@@ -278,11 +279,6 @@ def group_key(namespace: str, members: Iterable[Note]) -> str:
 
 def _day(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
-
-
-def iso(ts: float | None) -> str | None:
-    """An epoch timestamp as an ISO 8601 UTC string; None stays None."""
-    return None if ts is None else datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
 def _member(note: Note) -> dict[str, Any]:
