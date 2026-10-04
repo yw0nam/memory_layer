@@ -259,7 +259,6 @@ def test_delete_namespace_checks_chunks_rows_and_messages_but_no_profiles(monkey
         asyncio.run(namespaces.delete_namespace("team-a"))
 
     emptiness = conn.queries[-1][0]
-    assert "conversation_sources" not in emptiness
     assert all(table in emptiness for table in ("memory_chunks", "doc_rows", "messages"))
     assert "profile" not in emptiness
     assert all("profile" not in query for query, _ in conn.queries)

@@ -148,7 +148,8 @@ def test_ensure_schema_adds_api_keys_table_and_namespace_visibility(monkeypatch)
         "visibility text NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private'))"
         in sql
     )
-    assert "owner text\n" in sql
+    namespaces = sql.split('CREATE TABLE IF NOT EXISTS "test_schema".namespaces (', 1)[1]
+    assert "owner text" in namespaces.split(");", 1)[0]
 
 
 def test_ensure_schema_adds_the_shared_jobs_table(monkeypatch):
