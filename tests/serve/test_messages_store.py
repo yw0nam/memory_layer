@@ -15,7 +15,8 @@ from datetime import datetime, timedelta, timezone
 import asyncpg
 import pytest
 
-from memory_base.serve import auth, messages, namespaces
+from memory_base.serve import auth, namespaces
+from memory_base.serve.messages import store
 
 NOW = datetime.now(timezone.utc)
 
@@ -124,8 +125,8 @@ def use(monkeypatch):
         async def acquire(timeout=None):
             yield conn
 
-        monkeypatch.setattr(messages.db, "acquire", acquire)
-        monkeypatch.setattr(messages, "ensure_schema_once", _noop)
+        monkeypatch.setattr(store.db, "acquire", acquire)
+        monkeypatch.setattr(store, "ensure_schema_once", _noop)
         return conn
 
     return _use
@@ -140,7 +141,7 @@ def _send(**overrides):
         "result": "r",
     }
     fields.update(overrides)
-    return asyncio.run(messages.send_message(KEY, **fields))
+    return asyncio.run(store.send_message(KEY, **fields))
 
 
 def _handoff(**overrides):
@@ -187,7 +188,7 @@ def test_a_handoff_sent_without_expiry_is_stored_with_null_expiry(use):
 
 
 def test_a_message_sent_without_expiry_is_stored_with_the_default_ttl(use, monkeypatch):
-    monkeypatch.setattr(messages, "MESSAGE_TTL_DAYS", 7)
+    monkeypatch.setattr(store, "MESSAGE_TTL_DAYS", 7)
     conn = use(RecordingConn())
     _send()
 
@@ -252,7 +253,7 @@ def test_identical_idempotent_retry_replays_without_inserting(use):
 def test_reusing_an_idempotency_key_for_different_content_conflicts(use):
     stored = _row(subject_key="deploy plan", content="# other", idempotency_key="k1")
     conn = use(RecordingConn(lookups=[stored]))
-    with pytest.raises(messages.MessageConflict):
+    with pytest.raises(store.MessageConflict):
         _send(idempotency_key="k1")
     assert conn.sql("INSERT") == []
 
@@ -284,7 +285,7 @@ def test_losing_the_idempotency_insert_race_replays_the_winner(use):
 
 @pytest.mark.parametrize(
     ("action", "stamp"),
-    [(messages.claim_message, "claimed_at"), (messages.cancel_message, "cancelled_at")],
+    [(store.claim_message, "claimed_at"), (store.cancel_message, "cancelled_at")],
 )
 def test_claim_and_cancel_are_one_conditional_update_checked_at_wake_up(use, action, stamp):
     message_id = uuid.uuid4()
@@ -302,8 +303,8 @@ def test_claim_and_cancel_are_one_conditional_update_checked_at_wake_up(use, act
 def test_a_claim_the_conditional_update_refuses_is_a_conflict(use):
     message_id = uuid.uuid4()
     use(RecordingConn(lookups=[_row(id=message_id)], updated=None))
-    with pytest.raises(messages.MessageConflict):
-        asyncio.run(messages.claim_message(message_id, KEY))
+    with pytest.raises(store.MessageConflict):
+        asyncio.run(store.claim_message(message_id, KEY))
 
 
 # ---- list -----------------------------------------------------------------------
@@ -312,7 +313,7 @@ def test_a_claim_the_conditional_update_refuses_is_a_conflict(use):
 def test_listing_reads_only_pending_unexpired_rows_newest_first(use):
     conn = use(RecordingConn())
     asyncio.run(
-        messages.list_messages(
+        store.list_messages(
             namespaces=["default"],
             purpose="handoff",
             scope="repo:https://GitHub.com/o/r.git",
@@ -332,7 +333,7 @@ def test_listing_reads_only_pending_unexpired_rows_newest_first(use):
 
 def test_member_purge_resolves_ownership_inside_the_delete(use):
     conn = use(RecordingConn())
-    assert asyncio.run(messages.delete_terminal_messages("alice")) == 4
+    assert asyncio.run(store.delete_terminal_messages("alice")) == 4
     ((sql, args, _),) = conn.statements
     assert sql.startswith("DELETE FROM")
     assert "namespace IN (SELECT name FROM" in sql and "WHERE owner = $1" in sql
@@ -341,7 +342,7 @@ def test_member_purge_resolves_ownership_inside_the_delete(use):
 
 def test_admin_purge_covers_every_namespace_but_only_terminal_rows(use):
     conn = use(RecordingConn())
-    asyncio.run(messages.delete_terminal_messages(None))
+    asyncio.run(store.delete_terminal_messages(None))
     ((sql, args, _),) = conn.statements
     assert "owner" not in sql
     assert args == ()

@@ -24,12 +24,12 @@ Endpoint contract pinned by these tests:
 - ``POST /admin/archive {"confirm": bool}``
   - confirm missing/false (dry-run): calls
     ``admin.archive_candidates(now, namespaces=<scope>)`` and
-    ``messages.terminal_messages(owner=<member label, or None for an admin>)``; response
+    ``store.terminal_messages(owner=<member label, or None for an admin>)``; response
     ``{"notes_to_archive": <that list>, "messages_to_delete": <terminal messages>}``;
-    neither ``admin.archive_rows`` nor ``messages.delete_terminal_messages`` is called.
+    neither ``admin.archive_rows`` nor ``store.delete_terminal_messages`` is called.
   - confirm true: calls ``admin.archive_candidates(now, namespaces=<scope>)``,
     archives the note candidates, and calls
-    ``messages.delete_terminal_messages(owner=...)`` without loading the preview;
+    ``store.delete_terminal_messages(owner=...)`` without loading the preview;
     response ``{"archived": <count>, "deleted": <count>}``.
   - with ``ids``: only rows in the caller's scope are touched;
     ``messages_to_delete`` is always ``[]`` and ``deleted`` is always 0.
@@ -58,7 +58,8 @@ import asyncio
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import admin, api, auth, messages
+from memory_base.serve import admin, api, auth
+from memory_base.serve.messages import store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -304,8 +305,8 @@ def _patch_message_purge(monkeypatch, terminal=(), deleted=0):
     async def fake_delete_terminal_messages(owner=None):
         return deleted
 
-    monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
-    monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
+    monkeypatch.setattr(store, "terminal_messages", fake_terminal_messages)
+    monkeypatch.setattr(store, "delete_terminal_messages", fake_delete_terminal_messages)
 
 
 def _member_key(monkeypatch):
@@ -345,8 +346,8 @@ def test_admin_archive_purges_only_the_namespaces_a_member_owns(monkeypatch):
 
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
-    monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
-    monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
+    monkeypatch.setattr(store, "terminal_messages", fake_terminal_messages)
+    monkeypatch.setattr(store, "delete_terminal_messages", fake_delete_terminal_messages)
     _member_key(monkeypatch)
 
     previewed = client.post("/admin/archive", json={"author": "natsume"})
@@ -379,12 +380,12 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
 
     monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
     monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
-    monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
+    monkeypatch.setattr(store, "delete_terminal_messages", fake_delete_terminal_messages)
 
     async def fake_terminal_messages(owner=None):
         return list(terminal)
 
-    monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
+    monkeypatch.setattr(store, "terminal_messages", fake_terminal_messages)
     response = client.post("/admin/archive", json={})
     assert response.status_code == 200
     assert response.json() == {"notes_to_archive": candidates, "messages_to_delete": terminal}
@@ -417,8 +418,8 @@ def test_admin_archive_confirm_archives_notes_and_deletes_terminal_messages(monk
     async def fake_terminal_messages(owner=None):
         raise AssertionError("a confirmed purge deletes without loading the preview")
 
-    monkeypatch.setattr(messages, "terminal_messages", fake_terminal_messages)
-    monkeypatch.setattr(messages, "delete_terminal_messages", fake_delete_terminal_messages)
+    monkeypatch.setattr(store, "terminal_messages", fake_terminal_messages)
+    monkeypatch.setattr(store, "delete_terminal_messages", fake_delete_terminal_messages)
     response = client.post("/admin/archive", json={"confirm": True})
     assert response.status_code == 200
     assert response.json() == {"archived": 2, "deleted": 3}

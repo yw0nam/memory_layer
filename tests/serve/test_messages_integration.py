@@ -21,7 +21,8 @@ from starlette.testclient import TestClient
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
-from memory_base.serve import api, auth, messages, namespaces, notes
+from memory_base.serve import api, auth, namespaces, notes
+from memory_base.serve.messages import store
 
 pytestmark = pytest.mark.integration
 
@@ -241,8 +242,8 @@ def test_concurrent_double_claim_exactly_one_wins():
 
         async def _run():
             async with connections(2) as (first, second):
-                first_claim = messages.claim_message(message_id, IDENTITY, connection=first)
-                second_claim = messages.claim_message(message_id, IDENTITY, connection=second)
+                first_claim = store.claim_message(message_id, IDENTITY, connection=first)
+                second_claim = store.claim_message(message_id, IDENTITY, connection=second)
                 return await asyncio.gather(first_claim, second_claim, return_exceptions=True)
 
         results = asyncio.run(_run())
@@ -250,7 +251,7 @@ def test_concurrent_double_claim_exactly_one_wins():
         refused = [r for r in results if isinstance(r, Exception)]
         assert len(claimed) == 1
         assert len(refused) == 1
-        assert isinstance(refused[0], messages.MessageConflict)
+        assert isinstance(refused[0], store.MessageConflict)
 
         async def _claimed_at():
             conn = await asyncpg.connect(db_url())
@@ -282,7 +283,7 @@ def test_concurrent_same_key_handoff_sends_leave_exactly_one_pending():
             # cross-loop contention.
             await db.get_pool()
             sends = [
-                messages.send_message(
+                store.send_message(
                     IDENTITY,
                     namespace="default",
                     author="claude-code",
@@ -337,7 +338,7 @@ def test_unrelated_subjects_send_concurrently_without_blocking():
             # cross-loop contention.
             await db.get_pool()
             sends = [
-                messages.send_message(
+                store.send_message(
                     IDENTITY,
                     namespace="default",
                     author="claude-code",
@@ -375,8 +376,8 @@ def test_claim_and_cancel_race_admit_exactly_one_winner():
 
         async def _run():
             async with connections(2) as (first, second):
-                claim = messages.claim_message(message_id, IDENTITY, connection=first)
-                cancel = messages.cancel_message(message_id, IDENTITY, connection=second)
+                claim = store.claim_message(message_id, IDENTITY, connection=first)
+                cancel = store.cancel_message(message_id, IDENTITY, connection=second)
                 return await asyncio.gather(claim, cancel, return_exceptions=True)
 
         claim, cancel = asyncio.run(_run())
@@ -386,7 +387,7 @@ def test_claim_and_cancel_race_admit_exactly_one_winner():
         cancel_won = not isinstance(cancel, Exception)
         assert claim_won != cancel_won
         refused = cancel if claim_won else claim
-        assert isinstance(refused, messages.MessageConflict)
+        assert isinstance(refused, store.MessageConflict)
         winner = claim if claim_won else cancel
         assert isinstance(winner, dict)
         assert winner["status"] == "info"
@@ -758,13 +759,13 @@ def test_a_claim_waiting_on_a_row_lock_past_expiry_is_refused():
                         message_id,
                     )
                     claim = asyncio.create_task(
-                        messages.claim_message(message_id, IDENTITY, connection=claimer)
+                        store.claim_message(message_id, IDENTITY, connection=claimer)
                     )
                     await asyncio.sleep(1.5)
                 return await asyncio.gather(claim, return_exceptions=True)
 
         (outcome,) = asyncio.run(_run())
-        assert isinstance(outcome, messages.MessageConflict)
+        assert isinstance(outcome, store.MessageConflict)
     finally:
         asyncio.run(_cleanup(marker))
 
@@ -1055,7 +1056,7 @@ def test_a_handoff_keeps_an_explicit_expiry_and_a_message_defaults_to_the_ttl():
         remaining = datetime.fromisoformat(general.json()["expires_at"]) - datetime.now(
             timezone.utc
         )
-        assert timedelta(days=messages.MESSAGE_TTL_DAYS - 0.1) < remaining
-        assert remaining <= timedelta(days=messages.MESSAGE_TTL_DAYS)
+        assert timedelta(days=store.MESSAGE_TTL_DAYS - 0.1) < remaining
+        assert remaining <= timedelta(days=store.MESSAGE_TTL_DAYS)
     finally:
         asyncio.run(_cleanup(marker))

@@ -15,7 +15,7 @@ import urllib.request
 import pytest
 
 import session_start_hook
-from memory_base.serve.messages import normalize_scope
+from memory_base.serve.messages.store import normalize_scope
 from session_start_hook import HANDOFF_HEADER
 from session_start_hook import git_origin
 from session_start_hook import repo_scope
