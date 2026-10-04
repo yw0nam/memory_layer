@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; the "low-signal data never reaches the DB" principle it cites is superseded by ADR-0007
 
 ## Context
 

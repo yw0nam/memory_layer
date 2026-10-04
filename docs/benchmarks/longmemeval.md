@@ -101,6 +101,22 @@ or `refused` with its reason. A session the provider's content filter refuses (z
 error code 1301) is recorded as a completed unit with `provider_refused:
 "content_filter"` and contributes no notes.
 
+### MCP writer
+
+`python -m memory_base.eval.mcp_writer` writes through memory_base's real MCP tools
+instead of an emulated agent. Each benchmark session goes to a fresh headless Claude Code
+process whose only MCP server is a stdio memory_base server talking to a throwaway REST
+API on a throwaway Postgres. The agent sees one fixed instruction (save what is worth
+remembering, otherwise do nothing), the session date, and the transcript, and decides by
+itself what to save. Each question has
+its own namespace and key; its sessions run in date order, and earlier memory is reachable
+only through search. Questions run concurrently up to `--concurrency` (default 1).
+`--questions` takes comma-separated ids from the seeded subset, `--model` the Claude Code
+model (default `sonnet`), and `--data-dir` the output directory (default
+`data/longmemeval/mcp-writer`). The run records every session's tool calls, saves,
+refusals, usage, and the notes it created, and exports each question's end-state notes
+with provenance.
+
 ## Retrieval
 
 `retrieve` builds `db.Dockerfile`, starts it on tmpfs bound to `127.0.0.1`, points
@@ -329,6 +345,7 @@ answer 4.9 s, and a judgment 3.3 s.
 
 ```bash
 uv run python scripts/longmemeval/extract.py --dataset PATH
+uv run python -m memory_base.eval.mcp_writer --dataset PATH --questions ID[,ID...]
 uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH
 uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH --variant dated
 uv run python scripts/longmemeval/answer.py answer --dataset PATH

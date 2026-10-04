@@ -126,8 +126,9 @@ jobs for the same document. Jobs and their spooled uploads survive API restarts;
 requeues interrupted work and fails a job clearly when its spool file is missing. Jobs are
 observable at `GET /ingest/jobs/{job_id}` and listable at `GET /ingest/jobs`, with optional
 `origin` and `status` filters. Their stages are `queued → converting → chunking →
-embedding → writing → done`, with `chunks_total`, `chunks_done`, `chunks_dropped`,
-`rows_written`, and `enrichment_retries`. Re-uploading identical bytes in `upsert` mode
+embedding → writing → done`; a CSV job passes through `enriching` after `chunking`. Jobs
+carry `chunks_total`, `chunks_done`, `chunks_dropped`, `rows_written`, and
+`enrichment_retries`. Re-uploading identical bytes in `upsert` mode
 short-circuits to `no_op`. Markdown ingest calls no LLM: chunks are stored as written, and
 the optional repeated `tags` upload field lands on every chunk of the document.
 
@@ -670,7 +671,7 @@ to the user and never to run it.
 
 | column | meaning |
 |---|---|
-| `id` | `note:<namespace>:<hash>` · `doc:<document_id>:<ordinal>` |
+| `id` | `note:<namespace>:<hash>` · `doc:<document_id>:<ordinal>` for a chunk and `doc:<document_id>:card:<n>` for a CSV card, with `<document_id>` as `<namespace>:<document_id>` outside `default` |
 | `source_type` | `agent_note` · `document` |
 | `source_ref` | `save_memory` for an agent note, or the document id for a document chunk |
 | `session_id` | the note's own id, or the document id for a document chunk — the unit the search cap (`PER_FILE_CAP` per `(namespace, session_id)`) is keyed on |

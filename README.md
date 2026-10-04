@@ -42,7 +42,7 @@ instead of search.
      └───────────────┴───────┬───────┴───────────────┘
                              ▼
               Postgres 17 + pgvector + pg_textsearch  :5439
-              memory_chunks · code_chunks · doc_rows · messages ·
+              memory_chunks · code_chunks · doc_rows · messages · namespaces ·
               jobs · retrieval_log · consolidation_actions
 
   side services:  vLLM (LLM / embedding / rerank)
@@ -71,8 +71,10 @@ Both pages are rendered from the JSON specification beside them.
 
 ## Retrieval quality
 
-Hybrid search beats vector-only on both evaluated corpora (ZX Bank hit@10 0.98 vs 0.95;
-SciFact hit@5 0.86 with rerank vs 0.82). Scores, method, single-leg ablations, and known
+Hybrid search matches or beats vector-only on both evaluated corpora. ZX Bank hit@10:
+hybrid without rerank 0.98 vs vector-only 0.95; with the default rerank, hybrid scores
+0.95. SciFact hit@5: hybrid with rerank 0.86 vs vector-only 0.82 (hybrid without rerank
+0.82). Scores, method, single-leg ablations, and known
 trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write path:
 [docs/benchmarks/longmemeval.md](docs/benchmarks/longmemeval.md).
@@ -83,7 +85,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 |---|---|---|
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
-| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `since`/`until`, `include_archived` |
+| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `namespaces`, `since`/`until`, `include_archived`; without `budget_tokens` the reranked results are capped at 10 before `top_k` applies |
 | `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the required `kind` (`personal` or `work`, a label for search and listing), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); no chat model judges the note; refused with 409 when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set, and before embedding when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind` (`personal` or `work`), `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
 | `GET` | `/profiles` | one owner's profile — `owner` (an agent's author slug) required; `{owner, self_version, self, user_version, user, pending_proposal}` from one snapshot, a part `{content, created_at}` or null when absent or emptied, its version kept; a key whose authors hold the owner or `user` only; see [data flow](docs/data-flow.md#profiles) |
@@ -98,7 +100,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
 | `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown or out-of-scope id a 404 |
 | `DELETE` | `/messages/{id}` | cancel a pending message — the sender, or an admin key for any accessible one |
-| `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, repeated `tags`; overwriting an existing `document_id` is creator-or-admin only; a credential in the filename, `document_id`, `origin`, or a tag is refused with 400, and one in the content fails the job with nothing stored |
+| `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, `namespace` (default the key's home), repeated `tags`; overwriting an existing `document_id` is creator-or-admin only; a credential in the filename, `document_id`, `origin`, or a tag is refused with 400, and one in the content fails the job with nothing stored |
 | `DELETE` | `/ingest/documents/{document_id}` | remove a document's chunks and table rows in one namespace (`namespace` query param, default the key's home) — the document's creator or an admin key only |
 | `POST` | `/tables/query` | read-only SQL over `memory.doc_rows` — `sql` (`SELECT`/`WITH`), `namespace`; 1,000-row / 5 MB / 10 s caps |
 | `GET` | `/ingest/jobs` | newest document jobs, optionally filtered by exact `origin` and `status` |
@@ -114,6 +116,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `PUT` | `/keys/{label}/authors` | replace a label's allowlist — `authors` (slugs matching `^[a-z0-9][a-z0-9-]{0,39}$`); admin keys only |
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
 | `POST` | `/admin/notes/delete` | preview, or delete with `confirm` |
+| `POST` | `/admin/notes/move` | move agent notes into another registered namespace — admin key only; `ids`, `namespace`; returns `{moved, skipped}`, rewriting each moved note's id to `note:<target>:<hash>`; an id already present in the target, or naming no agent note, is skipped |
 | `GET` | `/admin/duplicates` | near-duplicate agent-note pairs above `threshold` |
 | `GET` | `/admin/consolidate/groups` | groups of active agent notes that may state the same thing, for an agent to judge; a pair either note lists in `similar_ack` is ignored and counted; a group with a recorded verdict, or with exactly the members of an undone action, is left out and counted `cached`; changes no note — an admin key with `consolidator` in its authors only; `namespace` (repeatable, default every registered namespace), `threshold` (0 < x ≤ 1, default 0.72), `neighbors` (1–50, default 5), `max_group` (2–20, default 6), `max_group_chars` (≥ 500, default 12000), `limit` (groups per namespace, 1–1000, default 200); see [data flow](docs/data-flow.md#consolidation-groups) |
 | `POST` | `/admin/consolidate/verdicts` | apply an agent's `keep` / `retire` / `merge` verdicts on issued groups, each alone in one transaction under a per-namespace lock — same key as the groups route, `author` one of its authors; `run_id`, `model`, `dry_run` (plan only, no write), the groups call's `threshold` / `neighbors` / `max_group` / `max_group_chars`, `max_actions` (retire and merge per run and namespace, 1–500, default 20), 1–200 `verdicts`; a schema violation refuses the whole request with 400; each result is `applied`, `planned`, `cached`, `duplicate`, `stale` (with the current groups), `rejected`, or `failed` (an embedder or database error rolled that verdict back; retry it with the same idempotency key); a merge text must pass a two-direction token check (numbers, dates, backticked spans, names) that a changed sentence-initial name, a negation, a caseless-script name, or a version inside an identifier (`v2.0`) passes; see [data flow](docs/data-flow.md#consolidation-verdicts) |
@@ -294,6 +297,7 @@ uv run ruff format --check . && uv run ruff check .
 uv run python -m memory_base.eval.retrieval          # fixture retrieval eval report
 uv run python -m memory_base.eval.retrieval --notes  # labeled real-query replay against live memory
 uv run python scripts/longmemeval/extract.py --dataset PATH  # LongMemEval harness, see docs/benchmarks/longmemeval.md
+uv run python -m memory_base.eval.mcp_writer --dataset PATH --questions ID[,ID...]  # LongMemEval writer through the real MCP tools (headless Claude Code, throwaway Postgres)
 ```
 
 Work happens in a git worktree and lands via PR; `main` requires a PR and green CI (lint,
