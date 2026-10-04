@@ -450,11 +450,12 @@ def _starts_sentence(text: str, start: int) -> bool:
     )
 
 
-def tokens(text: str) -> set[str]:
+def tokens(text: str, *, sentence_starts: bool = False) -> set[str]:
     """Numbers and dates, backticked spans, and names: the facts a merge must carry over.
 
     A name is a capitalized word other than `I` that does not start a sentence, or any
-    word with two or more capitals. A numbered-list marker is not a number.
+    word with two or more capitals; `sentence_starts` also counts a capitalized word that
+    starts a sentence. A numbered-list marker is not a number.
     """
     markers = {m.start(1) for m in NUMBERED_MARKER_RE.finditer(text)}
     found = {m.group() for m in NUMBER_RE.finditer(text) if m.start() not in markers}
@@ -464,20 +465,27 @@ def tokens(text: str) -> set[str]:
         if word == "I":
             continue
         if sum(c.isupper() for c in word) >= 2 or (
-            NAME_RE.fullmatch(word) and not _starts_sentence(text, match.start())
+            NAME_RE.fullmatch(word)
+            and (sentence_starts or not _starts_sentence(text, match.start()))
         ):
             found.add(word)
     return found
 
 
 def token_check(member_texts: list[str], merged: str) -> str | None:
-    """Why the merged text fails the two-direction token check, or None when it passes."""
-    expected = set().union(*(tokens(text) for text in member_texts))
-    found = tokens(merged)
+    """Why the merged text fails the two-direction token check, or None when it passes.
+
+    A token counts as dropped or added only when no sentence-initial reading of the other
+    side carries it, so a name that moves to or from a sentence start passes.
+    """
+    strict_members = set().union(*(tokens(text) for text in member_texts))
+    lenient_members = set().union(*(tokens(text, sentence_starts=True) for text in member_texts))
+    strict_merged = tokens(merged)
+    lenient_merged = tokens(merged, sentence_starts=True)
     problems = []
-    if missing := sorted(expected - found):
+    if missing := sorted(strict_members - lenient_merged):
         problems.append(f"drops {', '.join(missing)}")
-    if added := sorted(found - expected):
+    if added := sorted(strict_merged - lenient_members):
         problems.append(f"adds {', '.join(added)}")
     return f"merged_text {' and '.join(problems)}" if problems else None
 
