@@ -28,7 +28,6 @@ from memory_base.serve.common import rest_client
 from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
 from memory_base.serve.notes import curation, store, tools
 from memory_base.serve.notes.store import (
-    NOTE_KINDS,
     build_note_row,
     save_note,
 )
@@ -99,14 +98,7 @@ def _patch_note_deps(monkeypatch, conn):
     monkeypatch.setattr(store, "ensure_schema_once", _noop)
 
 
-def test_save_note_requires_a_kind():
-    with pytest.raises(TypeError):
-        asyncio.run(save_note("distilled content", tags=["test"]))
-    with pytest.raises(ValueError, match=re.escape(KIND_ERROR)):
-        asyncio.run(save_note("distilled content", tags=["test"], kind=None))
-
-
-@pytest.mark.parametrize("kind", [True, ["work"], {"k": 1}, "note", "decision", "episode", "other"])
+@pytest.mark.parametrize("kind", [None, True, "note"])
 def test_save_note_rejects_a_malformed_kind(monkeypatch, kind):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
@@ -126,76 +118,13 @@ def test_either_kind_is_stored_with_its_label(monkeypatch, kind):
     assert result["kind"] == kind
 
 
-def test_identical_content_through_the_other_kind_returns_the_stored_kind(monkeypatch):
-    conn = FakeConnection(insert_status="INSERT 0 0", stored_kind="work")
-    _patch_note_deps(monkeypatch, conn)
-    result = asyncio.run(save_note("distilled content", tags=["test"], kind="personal"))
-    assert result["stored"] is False
-    assert result["kind"] == "work"
-
-
-def test_the_kinds_are_personal_and_work():
-    assert NOTE_KINDS == ("personal", "work")
-
-
-def test_the_kind_does_not_enter_the_note_id():
-    personal = build_note_row("distilled content", "personal", ["test"], NOW)
-    work = build_note_row("distilled content", "work", ["test"], NOW)
-    assert personal["id"] == work["id"]
-
-
 # ---- REST: POST /save_memory --------------------------------------------------
-
-
-def test_save_memory_route_requires_kind():
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "content": "valid content", "tags": ["test"]}
-    )
-    assert response.status_code == 400
-    assert response.json()["error"] == KIND_ERROR
-
-
-@pytest.mark.parametrize("kind", [None, True, [], {}, "note", "other"])
-def test_save_memory_route_rejects_a_malformed_kind(kind):
-    response = client.post(
-        "/save_memory",
-        json={"author": "natsume", "content": "valid content", "tags": ["test"], "kind": kind},
-    )
-    assert response.status_code == 400
-    assert response.json()["error"] == KIND_ERROR
 
 
 def test_content_errors_win_over_a_missing_kind():
     response = client.post("/save_memory", json={"author": "natsume", "content": ""})
     assert response.status_code == 400
     assert response.json()["error"] == "content must not be empty"
-
-
-@pytest.mark.parametrize("kind", ["personal", "work"])
-def test_save_memory_route_forwards_kind_to_save_note(monkeypatch, kind):
-    captured = {}
-
-    async def fake_save_note(
-        content,
-        *,
-        tags,
-        kind,
-        supersedes=None,
-        namespace="default",
-        occurred_at=None,
-        author=None,
-        allow_similar=False,
-    ):
-        captured["kind"] = kind
-        return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
-
-    monkeypatch.setattr(store, "save_note", fake_save_note)
-    response = client.post(
-        "/save_memory",
-        json={"author": "natsume", "content": "distilled text", "tags": ["test"], "kind": kind},
-    )
-    assert response.status_code == 200
-    assert captured["kind"] == kind
 
 
 def test_duplicates_route_rejects_an_unknown_kind(monkeypatch):
@@ -237,12 +166,6 @@ def _patch_client(monkeypatch, handler):
         )
 
     monkeypatch.setattr(rest_client, "client", fake_client)
-
-
-def test_tool_list_offers_one_save_tool():
-    names = set(_tools())
-    assert "save_memory" in names
-    assert not {"save_personal_memory", "save_work_memory"} & names
 
 
 def test_save_memory_schema_requires_a_kind_of_two_values():

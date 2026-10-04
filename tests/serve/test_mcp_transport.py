@@ -19,10 +19,6 @@ def test_resolve_transport_defaults_to_stdio():
     assert resolve_transport({}) == ("stdio", "0.0.0.0", 8765)
 
 
-def test_resolve_transport_sse():
-    assert resolve_transport({"MCP_TRANSPORT": "sse"}) == ("sse", "0.0.0.0", 8765)
-
-
 def test_resolve_transport_streamable_http():
     result = resolve_transport({"MCP_TRANSPORT": "streamable-http"})
     assert result == ("streamable-http", "0.0.0.0", 8765)

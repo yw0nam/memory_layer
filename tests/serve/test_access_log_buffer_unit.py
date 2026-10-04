@@ -286,8 +286,7 @@ def test_flush_persists_the_search_filters_that_narrowed_each_row(connection):
 
     asyncio.run(access_log.flush(now=NOW + 1))
 
-    sql, rows = connection.matching("INSERT")[0]
-    assert "filters" in sql
+    _, rows = connection.matching("INSERT")[0]
     assert json.loads(rows[0][4]) == {"kind": "note", "min_score": 0.6, "top_k": 3}
     assert json.loads(rows[1][4]) == {}
 

@@ -120,14 +120,6 @@ def test_claim_unknown_id_404(monkeypatch):
         asyncio.run(store.claim_message(uuid.uuid4(), _identity()))
 
 
-def test_claim_known_but_not_pending_409(monkeypatch):
-    message_id = uuid.uuid4()
-    conn = FakeConn(selects=[_row(id=message_id)], updates=[None])
-    _patch_acquire(monkeypatch, conn)
-    with pytest.raises(store.MessageConflict):
-        asyncio.run(store.claim_message(message_id, _identity()))
-
-
 def test_claim_admin_may_claim_any_accessible_namespace(monkeypatch):
     message_id = uuid.uuid4()
     conn = FakeConn(

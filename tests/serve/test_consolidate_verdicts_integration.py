@@ -313,8 +313,11 @@ def test_a_retire_archives_only_the_named_member(space):
     group = group_of(groups(ns), rules)
     retired, *kept = sorted(rules)
     kept_before = {i: note_row(i) for i in kept}
+    row_count = len(rows(ns))
     [applied] = submit(verdict(ns, group, "retire", retire_ids=[retired]))
     assert applied["status"] == "applied", applied
+    assert applied["replacement_id"] is None
+    assert len(rows(ns)) == row_count
     assert applied["archived_ids"] == [retired]
     assert applied["survivor_ids"] == kept
     row = note_row(retired)

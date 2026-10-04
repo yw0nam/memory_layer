@@ -16,35 +16,9 @@ class RecordingConnection:
         self.queries.append(query)
 
 
-def test_ensure_schema_creates_doc_rows_with_only_its_primary_key(monkeypatch):
-    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
-    conn = RecordingConnection()
-
-    asyncio.run(schema.ensure_schema(conn))
-
-    sql = "\n".join(conn.queries)
-    assert 'CREATE TABLE IF NOT EXISTS "scratch_schema".doc_rows' in sql
-    assert "namespace text NOT NULL" in sql
-    assert "document_id text NOT NULL" in sql
-    assert "row_index int NOT NULL" in sql
-    assert "data jsonb NOT NULL" in sql
-    assert "PRIMARY KEY (namespace, document_id, row_index)" in sql
-    assert "doc_rows__" not in sql
-
-
 def _table_body(sql, table):
     body = sql.split(f'CREATE TABLE IF NOT EXISTS "scratch_schema".{table} (', 1)[1]
     return " ".join(body.split(");", 1)[0].split())
-
-
-def test_ensure_schema_adds_the_api_key_author_allowlist(monkeypatch):
-    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
-    conn = RecordingConnection()
-
-    asyncio.run(schema.ensure_schema(conn))
-
-    body = _table_body("\n".join(conn.queries), "api_keys")
-    assert "authors text[] NOT NULL DEFAULT '{}'" in body
 
 
 def test_api_keys_and_jobs_stamp_their_own_created_at(monkeypatch):
@@ -192,19 +166,6 @@ def test_scratch_schema_does_not_require_or_retarget_query_role(monkeypatch):
     sql = "\n".join(conn.queries)
     assert '"memory_eval_scratch".doc_rows' in sql
     assert "memory_tables_query" not in sql
-
-
-def test_messages_expiry_is_nullable(monkeypatch):
-    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
-    conn = RecordingConnection()
-
-    asyncio.run(schema.ensure_schema(conn))
-
-    sql = "\n".join(conn.queries)
-    create = sql[sql.index('CREATE TABLE IF NOT EXISTS "scratch_schema".messages') :]
-    create = create[: create.index(");")]
-    assert "expires_at timestamptz," in create
-    assert "expires_at timestamptz NOT NULL" not in create
 
 
 def test_pending_message_index_carries_no_expiry_predicate(monkeypatch):

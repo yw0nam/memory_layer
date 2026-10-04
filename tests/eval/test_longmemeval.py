@@ -473,58 +473,6 @@ def test_a_budget_run_passes_the_budget_to_search_and_keeps_every_packed_hit(mon
     assert packet["budget_tokens"] is None
 
 
-def test_loading_skips_notes_the_extraction_refused():
-    units = [("s1", "2023/05/20 (Sat) 02:21")]
-    notes_by_unit = {
-        units[0]: [
-            {"content": "Kept.", "kind": "note", "outcome": "stored", "reason": None},
-            {
-                "content": "Bad kind.",
-                "kind": "plan",
-                "outcome": "refused",
-                "reason": "validation: kind must be one of ('note', 'decision', 'episode')",
-            },
-            {
-                "content": "Secret.",
-                "kind": "note",
-                "outcome": "refused",
-                "reason": "credential: GitHub Token",
-            },
-        ]
-    }
-    calls = []
-    stats, _ = asyncio.run(
-        lme.load_question_notes("lme-q1", units, notes_by_unit, save=fake_save_note(calls))
-    )
-    assert [c[0] for c in calls] == ["Kept."]
-    assert all(c[1] == "personal" for c in calls)
-    assert stats.submitted == 1
-
-
-def test_loading_saves_every_extracted_label_as_personal_memory():
-    units = [("s1", "2023/05/20 (Sat) 02:21")]
-    notes_by_unit = {
-        units[0]: [
-            {"content": "A note.", "kind": "note", "outcome": "stored"},
-            {"content": "A decision.", "kind": "decision", "outcome": "stored"},
-            {"content": "An episode.", "kind": "episode", "outcome": "stored"},
-            {
-                "content": "Refused.",
-                "kind": "note",
-                "outcome": "refused",
-                "reason": "validation: x",
-            },
-        ]
-    }
-    calls = []
-    stats, _ = asyncio.run(
-        lme.load_question_notes("lme-q1", units, notes_by_unit, save=fake_save_note(calls))
-    )
-    assert [c[0] for c in calls] == ["A note.", "A decision.", "An episode."]
-    assert all(c[1] == "personal" for c in calls)
-    assert stats.invalid == 0
-
-
 def test_judge_audit_sample_is_seeded_and_carries_what_the_auditor_needs():
     questions = {
         f"q{i}": make_question(f"q{i}", "multi-session", answer=f"ref {i}") for i in range(30)

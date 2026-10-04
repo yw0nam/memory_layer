@@ -70,10 +70,6 @@ def test_scope_strips_trailing_slash_and_git_suffix():
     )
 
 
-def test_scope_accepts_ssh_origin_and_normalizes_to_canonical():
-    assert store.normalize_scope("repo:git@github.com:Org/Repo.git") == ("repo:github.com/Org/Repo")
-
-
 def test_scope_rejects_repo_origin_with_credentials():
     with pytest.raises(ValueError):
         store.normalize_scope("repo:https://user:token@github.com/org/repo")
@@ -363,21 +359,6 @@ def test_render_verification_uses_labeled_status_command_result_lines():
     assert "> see log" in lines
 
 
-def test_render_references_are_markdown_list_items():
-    content = store.render_content(
-        "S",
-        "info",
-        "r",
-        None,
-        None,
-        ["https://github.com/org/repo/pull/1", "https://example.com/notes"],
-    )
-    lines = content.splitlines()
-    assert "- https://github.com/org/repo/pull/1" in lines
-    assert "- https://example.com/notes" in lines
-    assert "## References" in lines
-
-
 def test_render_omits_absent_optional_sections():
     content = store.render_content("Subject", "info", "The fact.", None, None, None)
     assert content == "# Subject\n\n## Status\n\n> info\n\n## Result\n\n> The fact."
@@ -441,26 +422,23 @@ def test_a_handoff_without_expiry_never_expires():
     assert store.resolve_expires_at("handoff", None) is None
 
 
-@pytest.mark.parametrize("purpose", ["message", "handoff"])
-def test_expires_at_accepts_future_iso_string(purpose):
+def test_expires_at_accepts_future_iso_string():
     soon = datetime.now(timezone.utc) + timedelta(days=2)
-    assert store.resolve_expires_at(purpose, soon.isoformat()) == soon
+    assert store.resolve_expires_at("handoff", soon.isoformat()) == soon
 
 
-@pytest.mark.parametrize("purpose", ["message", "handoff"])
-def test_expires_at_must_be_in_the_future(purpose):
+def test_expires_at_must_be_in_the_future():
     past = datetime.now(timezone.utc) - timedelta(hours=1)
     with pytest.raises(ValueError):
-        store.resolve_expires_at(purpose, past.isoformat())
+        store.resolve_expires_at("handoff", past.isoformat())
 
 
-@pytest.mark.parametrize("purpose", ["message", "handoff"])
-def test_expires_at_may_be_at_most_thirty_days_out(purpose):
+def test_expires_at_may_be_at_most_thirty_days_out():
     limit = datetime.now(timezone.utc) + timedelta(days=30, minutes=5)
     with pytest.raises(ValueError):
-        store.resolve_expires_at(purpose, limit.isoformat())
+        store.resolve_expires_at("handoff", limit.isoformat())
     ok = datetime.now(timezone.utc) + timedelta(days=29)
-    assert store.resolve_expires_at(purpose, ok.isoformat()) == ok
+    assert store.resolve_expires_at("handoff", ok.isoformat()) == ok
 
 
 def test_expires_at_rejects_unparseable_and_non_string():

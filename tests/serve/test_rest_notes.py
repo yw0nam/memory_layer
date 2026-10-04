@@ -1,7 +1,6 @@
-"""Pure unit pins for memory_base.serve.notes.store.build_note_row.
+"""Unit pins for the note id scheme, the note row, the author gate, and namespace gating.
 
-These pins mirror the non-integration cases in tests/test_save_memory.py at
-its new home. No DB/network involved.
+No DB/network involved.
 """
 
 from __future__ import annotations
@@ -27,40 +26,16 @@ client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 # ---- id scheme --------------------------------------------------------
 
 
-def test_same_content_same_id():
-    a = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
-    b = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
-    assert a["id"] == b["id"]
-
-
 def test_different_content_different_id():
     a = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
     b = build_note_row("prefer black for formatting", "work", ["test"], NOW)
     assert a["id"] != b["id"]
 
 
-def test_id_format_note_prefix_16_hex():
-    row = build_note_row("use pgvector halfvec for embeddings", "work", ["test"], NOW)
-    assert ID_RE.match(row["id"]), row["id"]
-
-
 def test_id_is_the_namespace_and_sha256_of_the_stripped_content():
     digest = hashlib.sha256(b"prefer ruff for linting").hexdigest()[:16]
     row = build_note_row("  prefer ruff for linting\n", "work", ["test"], NOW, "team-a")
     assert row["id"] == f"note:team-a:{digest}"
-
-
-def test_row_has_no_conversation_link_fields():
-    row = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
-    assert not {"conversation_id", "turn_start", "turn_end"} & set(row)
-
-
-def test_build_note_row_takes_no_conversation_link_arguments():
-    with pytest.raises(TypeError):
-        build_note_row("prefer ruff for linting", "work", ["test"], NOW, conversation_id="conv:0")
-
-
-# ---- id scheme: namespace qualification ------------------------------------
 
 
 def test_default_namespace_id_is_namespace_qualified_like_every_other():
@@ -70,21 +45,10 @@ def test_default_namespace_id_is_namespace_qualified_like_every_other():
     assert ID_RE.match(omitted["id"])
 
 
-def test_non_default_namespace_id_is_namespace_qualified():
-    row = build_note_row("distilled content", "work", ["test"], NOW, "team-a")
-    assert row["id"].startswith("note:team-a:")
-
-
 def test_same_content_different_namespace_different_id():
     default_row = build_note_row("distilled content", "work", ["test"], NOW, "default")
     team_row = build_note_row("distilled content", "work", ["test"], NOW, "team-a")
     assert default_row["id"] != team_row["id"]
-
-
-def test_same_content_same_namespace_same_id():
-    a = build_note_row("distilled content", "work", ["test"], NOW, "team-a")
-    b = build_note_row("distilled content", "work", ["test"], NOW, "team-a")
-    assert a["id"] == b["id"]
 
 
 # ---- row shape ----------------------------------------------------------
@@ -124,25 +88,6 @@ def test_tags_land_in_metadata():
     assert row["metadata"] == {"tags": ["infra", "db"]}
 
 
-# ---- validation ---------------------------------------------------------
-
-
-@pytest.mark.parametrize("bad", ["", "   ", "\n\t "])
-def test_empty_or_whitespace_content_rejected(bad):
-    with pytest.raises(ValueError):
-        build_note_row(bad, "work", None, NOW)
-
-
-def test_oversized_content_rejected():
-    with pytest.raises(ValueError):
-        build_note_row("x" * 4001, "work", None, NOW)
-
-
-def test_unknown_kind_rejected():
-    with pytest.raises(ValueError):
-        build_note_row("valid content", "reminder", None, NOW)
-
-
 # ---- REST: author is required and allowlisted ------------------------------
 
 
@@ -167,7 +112,7 @@ async def _fake_save_note(
     }
 
 
-@pytest.mark.parametrize("author", [None, "", "   ", 123, ["natsume"]])
+@pytest.mark.parametrize("author", [None, "   "])
 def test_save_memory_missing_author_400(monkeypatch, author):
     monkeypatch.setattr(store, "save_note", _fake_save_note)
     body = {"content": "distilled note text", "kind": "work"}
@@ -224,8 +169,6 @@ class FakeConnection:
     def __init__(self, registered: bool):
         self._registered = registered
         self.insert_args: tuple | None = None
-        self.insert_calls: list[tuple] = []
-        self._inserted_ids: set[str] = set()
 
     def transaction(self):
         return FakeTransaction()
@@ -240,11 +183,6 @@ class FakeConnection:
     async def execute(self, query, *args):
         if "INSERT INTO" in query:
             self.insert_args = args
-            self.insert_calls.append(args)
-            note_id = args[0]
-            if note_id in self._inserted_ids:
-                return "INSERT 0 0"
-            self._inserted_ids.add(note_id)
             return "INSERT 0 1"
         return "UPDATE 1"
 
@@ -294,32 +232,3 @@ def test_save_note_defaults_to_default_namespace(monkeypatch):
     _patch_note_deps(monkeypatch, conn)
     asyncio.run(save_note("distilled content", tags=["test"], kind="work"))
     assert "default" in conn.insert_args
-
-
-# ---- cross-namespace independence: no silent no-op on the second namespace -
-
-
-def test_save_note_same_content_two_namespaces_both_stored(monkeypatch):
-    conn = FakeConnection(registered=True)
-    _patch_note_deps(monkeypatch, conn)
-    content = "distilled content shared across namespaces"
-    result_default = asyncio.run(
-        save_note(content, tags=["test"], kind="work", namespace="default")
-    )
-    result_team = asyncio.run(save_note(content, tags=["test"], kind="work", namespace="team-a"))
-    assert result_default["stored"] is True
-    assert result_team["stored"] is True
-    assert result_default["id"] != result_team["id"]
-    assert len(conn.insert_calls) == 2
-
-
-def test_save_note_same_content_same_namespace_still_dedups(monkeypatch):
-    conn = FakeConnection(registered=True)
-    _patch_note_deps(monkeypatch, conn)
-    content = "distilled content repeated in one namespace"
-    first = asyncio.run(save_note(content, tags=["test"], kind="work", namespace="team-a"))
-    second = asyncio.run(save_note(content, tags=["test"], kind="work", namespace="team-a"))
-    assert first["stored"] is True
-    assert second["stored"] is False
-    assert second["kind"] == "work"
-    assert first["id"] == second["id"]

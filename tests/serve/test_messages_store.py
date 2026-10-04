@@ -1,8 +1,8 @@
-"""Storage contracts for the message lane, driven against a recording fake connection.
+"""Storage contracts for the message lane that the integration suite cannot reach.
 
-Postgres enforces at-most-once claims, snapshot supersede, and the namespace
-guard through the statements themselves (row locks, an advisory lock, and
-conditional UPDATEs), so these tests pin those statements and their order.
+A recording fake connection drives the lost idempotency-insert race, checks that a
+listing filters on the canonical scope, and pins the terminal-row predicate of the
+admin purge.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 import asyncpg
 import pytest
 
-from memory_base.serve.access import auth, namespaces
+from memory_base.serve.access import auth
 from memory_base.serve.messages import store
 
 NOW = datetime.now(timezone.utc)
@@ -44,11 +44,10 @@ class _Tx:
 class RecordingConn:
     """Records (sql, args, transaction depth); answers from scripted lookups."""
 
-    def __init__(self, *, registered=True, lookups=(), insert_error=None, updated=None):
+    def __init__(self, *, registered=True, lookups=(), insert_error=None):
         self.registered = registered
         self.lookups = list(lookups)
         self.insert_error = insert_error
-        self.updated = updated
         self.statements: list[tuple[str, tuple, int]] = []
         self.depth = 0
 
@@ -79,8 +78,6 @@ class RecordingConn:
                 author=args[8],
                 expires_at=args[11],
             )
-        if query.lstrip().startswith("UPDATE"):
-            return self.updated
         return self.lookups.pop(0)
 
     async def fetch(self, query, *args):
@@ -144,120 +141,6 @@ def _send(**overrides):
     return asyncio.run(store.send_message(KEY, **fields))
 
 
-def _handoff(**overrides):
-    fields = {
-        "status": "in_progress",
-        "next": "carry on",
-        "scope": "repo:github.com/o/r",
-    }
-    fields.update(overrides)
-    fields["next_text"] = fields.pop("next")
-    return _send(**fields)
-
-
-# ---- send ---------------------------------------------------------------------
-
-
-def test_handoff_send_locks_the_chain_then_inserts_then_supersedes_older_pending(use):
-    conn = use(RecordingConn())
-    row, replay = _handoff()
-
-    assert replay is False
-    kinds = [s[0].split()[0] for s in conn.statements]
-    assert kinds == ["SELECT", "SELECT", "INSERT", "UPDATE"]
-    guard, lock, insert, supersede = conn.statements
-    assert "FOR SHARE" in guard[0] and guard[1] == ("default",)
-    assert "pg_advisory_xact_lock" in lock[0]
-    assert lock[1] == ("default\x1frepo:github.com/o/r\x1fdeploy plan",)
-    assert "clock_timestamp()" in insert[0]
-    assert "SET superseded_at = clock_timestamp()" in supersede[0]
-    assert "purpose = 'handoff' AND scope = $2 AND subject_key = $3 AND id <> $4" in supersede[0]
-    assert "claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL" in supersede[0]
-    assert supersede[1] == ("default", "repo:github.com/o/r", "deploy plan", uuid.UUID(row["id"]))
-    # The guard, the lock, and the supersede share one transaction with the insert.
-    assert all(depth >= 1 for _, _, depth in conn.statements)
-
-
-def test_a_handoff_sent_without_expiry_is_stored_with_null_expiry(use):
-    conn = use(RecordingConn())
-    row, _ = _handoff()
-
-    ((_, insert_args, _),) = conn.sql("INSERT")
-    assert insert_args[11] is None
-    assert row["expires_at"] is None
-
-
-def test_a_message_sent_without_expiry_is_stored_with_the_default_ttl(use, monkeypatch):
-    monkeypatch.setattr(store, "MESSAGE_TTL_DAYS", 7)
-    conn = use(RecordingConn())
-    _send()
-
-    ((_, insert_args, _),) = conn.sql("INSERT")
-    remaining = insert_args[11] - datetime.now(timezone.utc)
-    assert timedelta(days=6.9) < remaining <= timedelta(days=7.1)
-
-
-def test_a_handoff_keeps_an_explicit_expiry(use):
-    conn = use(RecordingConn())
-    explicit = datetime.now(timezone.utc) + timedelta(days=3)
-    row, _ = _handoff(expires_at=explicit.isoformat())
-
-    ((_, insert_args, _),) = conn.sql("INSERT")
-    assert insert_args[11] == explicit
-    assert row["expires_at"] == explicit.isoformat()
-
-
-def test_general_message_takes_no_lock_and_supersedes_nothing(use):
-    conn = use(RecordingConn())
-    row, _ = _send()
-
-    assert row["purpose"] == "message"
-    assert conn.sql("pg_advisory_xact_lock") == []
-    assert conn.sql("superseded_at") == []
-
-
-def test_send_into_unregistered_namespace_writes_nothing(use):
-    conn = use(RecordingConn(registered=False))
-    with pytest.raises(namespaces.NamespaceError):
-        _send(namespace="ghost")
-    assert conn.sql("INSERT") == []
-
-
-def test_send_writes_only_the_messages_table(use):
-    conn = use(RecordingConn())
-    _handoff()
-    for sql, _, _ in conn.statements:
-        for searched in ("memory_chunks", "code_chunks", "doc_rows"):
-            assert searched not in sql
-
-
-def test_identical_idempotent_retry_replays_without_inserting(use):
-    first = use(RecordingConn(lookups=[None]))
-    original, _ = _send(idempotency_key="k1")
-    stored = _row(
-        id=uuid.UUID(original["id"]),
-        subject="Deploy Plan",
-        subject_key="deploy plan",
-        content=original["content"],
-        idempotency_key="k1",
-    )
-    assert first.sql("INSERT")
-
-    conn = use(RecordingConn(lookups=[stored]))
-    row, replay = _send(idempotency_key="k1")
-    assert replay is True
-    assert row["id"] == original["id"]
-    assert conn.sql("INSERT") == []
-
-
-def test_reusing_an_idempotency_key_for_different_content_conflicts(use):
-    stored = _row(subject_key="deploy plan", content="# other", idempotency_key="k1")
-    conn = use(RecordingConn(lookups=[stored]))
-    with pytest.raises(store.MessageConflict):
-        _send(idempotency_key="k1")
-    assert conn.sql("INSERT") == []
-
-
 def test_losing_the_idempotency_insert_race_replays_the_winner(use):
     probe = use(RecordingConn(lookups=[None]))
     winner_row, _ = _send(idempotency_key="k1")
@@ -280,64 +163,15 @@ def test_losing_the_idempotency_insert_race_replays_the_winner(use):
     assert len(conn.sql("idempotency_key = $2")) == 2
 
 
-# ---- claim / cancel -------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("action", "stamp"),
-    [(store.claim_message, "claimed_at"), (store.cancel_message, "cancelled_at")],
-)
-def test_claim_and_cancel_are_one_conditional_update_checked_at_wake_up(use, action, stamp):
-    message_id = uuid.uuid4()
-    owner = _row(id=message_id, sender_key=KEY.key_id)
-    conn = use(RecordingConn(lookups=[owner], updated=_row(id=message_id)))
-
-    asyncio.run(action(message_id, KEY))
-
-    (update,) = conn.sql("UPDATE")
-    assert f"SET {stamp} = clock_timestamp()" in update[0]
-    assert "claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL" in update[0]
-    assert "(expires_at IS NULL OR expires_at > clock_timestamp())" in update[0]
-
-
-def test_a_claim_the_conditional_update_refuses_is_a_conflict(use):
-    message_id = uuid.uuid4()
-    use(RecordingConn(lookups=[_row(id=message_id)], updated=None))
-    with pytest.raises(store.MessageConflict):
-        asyncio.run(store.claim_message(message_id, KEY))
-
-
-# ---- list -----------------------------------------------------------------------
-
-
-def test_listing_reads_only_pending_unexpired_rows_newest_first(use):
+def test_listing_filters_on_the_canonical_scope_and_subject_key(use):
     conn = use(RecordingConn())
     asyncio.run(
         store.list_messages(
-            namespaces=["default"],
-            purpose="handoff",
-            scope="repo:https://GitHub.com/o/r.git",
-            subject="  Deploy   Plan ",
-            limit=5,
+            purpose="handoff", scope="repo:https://GitHub.com/o/r.git", subject="  Deploy   Plan "
         )
     )
-    ((sql, args, _),) = conn.statements
-    assert "claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL" in sql
-    assert "(expires_at IS NULL OR expires_at > now())" in sql
-    assert "ORDER BY created_at DESC, id DESC" in sql
-    assert args == (["default"], "handoff", "repo:github.com/o/r", "deploy plan", 5)
-
-
-# ---- purge ----------------------------------------------------------------------
-
-
-def test_member_purge_resolves_ownership_inside_the_delete(use):
-    conn = use(RecordingConn())
-    assert asyncio.run(store.delete_terminal_messages("alice")) == 4
-    ((sql, args, _),) = conn.statements
-    assert sql.startswith("DELETE FROM")
-    assert "namespace IN (SELECT name FROM" in sql and "WHERE owner = $1" in sql
-    assert args == ("alice",)
+    ((_, args, _),) = conn.statements
+    assert args[:3] == ("handoff", "repo:github.com/o/r", "deploy plan")
 
 
 def test_admin_purge_covers_every_namespace_but_only_terminal_rows(use):

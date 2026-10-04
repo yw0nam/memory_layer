@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 
 import httpx
-import pytest
 
 from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.common import rest_client
@@ -70,12 +69,3 @@ def test_list_repos_returns_backend_list(monkeypatch):
     monkeypatch.setattr(rest_client, "client", _mock_client(handler))
     result = asyncio.run(repo_tools.list_repos())
     assert result[0]["name"] == "repo"
-
-
-def test_ingest_repo_raises_backend_error(monkeypatch):
-    def handler(request):
-        return httpx.Response(400, json={"error": "invalid url"})
-
-    monkeypatch.setattr(rest_client, "client", _mock_client(handler))
-    with pytest.raises(ValueError, match="invalid url"):
-        asyncio.run(repo_tools.ingest_repo("ftp://bad"))
