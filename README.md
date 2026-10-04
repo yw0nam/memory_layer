@@ -37,7 +37,7 @@ instead of search.
    ╚═╤═══════════════╤═══════════════╤═══════════════╤═════════╝
      │ WRITE         │ WRITE         │ WRITE         │ READ + LIFECYCLE
      ▼               ▼               ▼               ▼
-  notes/store  ingest_api.py     repos.py      search.py · tables.py · notes/curation
+  notes/store  documents/        repos/        search.py · tables.py · notes/curation
      │               │               │               │
      └───────────────┴───────┬───────┴───────────────┘
                              ▼
