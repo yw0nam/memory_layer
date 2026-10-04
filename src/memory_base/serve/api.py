@@ -7,7 +7,6 @@ import logging
 import math
 import os
 import time
-import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -34,7 +33,6 @@ from memory_base.serve import consolidate
 from memory_base.serve import ingest_api
 from memory_base.serve import job_store
 from memory_base.serve import keys
-from memory_base.serve import messages
 from memory_base.serve import namespaces
 from memory_base.serve import notes
 from memory_base.serve import repos
@@ -44,6 +42,7 @@ from memory_base.serve.auth import ApiKeyAuthMiddleware
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.common.http import error
 from memory_base.serve.common.http import json_body
+from memory_base.serve.messages import routes as message_routes
 from memory_base.serve.profiles import routes as profile_routes
 from memory_base.serve.notes import (
     CredentialNoteError,
@@ -348,135 +347,6 @@ def _admin_scope(key) -> list[str] | None:
     return None if key.is_admin else sorted(key.allowed)
 
 
-MESSAGE_BODY_FIELDS = frozenset(
-    {
-        "namespace",
-        "author",
-        "subject",
-        "status",
-        "result",
-        "next",
-        "verification",
-        "refs",
-        "scope",
-        "idempotency_key",
-        "expires_at",
-    }
-)
-
-
-async def messages_send_route(request: Request) -> JSONResponse:
-    """Publish a message, or a handoff snapshot when a scope is present."""
-    key = request.state.key
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    unknown = sorted(set(body) - MESSAGE_BODY_FIELDS)
-    if unknown:
-        return error(f"unknown field(s): {', '.join(unknown)}")
-    namespace = body.get("namespace", key.home)
-    if not isinstance(namespace, str) or not namespace.strip():
-        return error("namespace must be a non-empty string")
-    if not key.permits(namespace):
-        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
-    author = body.get("author")
-    if not isinstance(author, str) or not author.strip():
-        return error("author is required")
-    if author not in key.authors:
-        return error(f"author {author!r} is not permitted for this key", 403)
-    try:
-        row, replayed = await messages.send_message(
-            key,
-            namespace=namespace,
-            author=author,
-            subject=body.get("subject"),
-            status=body.get("status"),
-            result=body.get("result"),
-            next_text=body.get("next"),
-            verification=body.get("verification"),
-            refs=body.get("refs"),
-            scope=body.get("scope"),
-            idempotency_key=body.get("idempotency_key"),
-            expires_at=body.get("expires_at"),
-        )
-    except messages.MessageConflict as exc:
-        return error(str(exc), 409)
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(row, status_code=200 if replayed else 201)
-
-
-async def messages_list_route(request: Request) -> JSONResponse:
-    """List pending messages by filters alone — no query, no embedding call."""
-    key = request.state.key
-    params = request.query_params
-    try:
-        requested_namespaces = normalize_namespaces(params.getlist("namespace") or None)
-    except ValueError as exc:
-        return error(str(exc))
-    if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
-        return error("requested namespaces are outside the caller's allowed set", 403)
-    scope = requested_namespaces
-    if scope is None and not key.is_admin:
-        scope = sorted(key.allowed)
-    raw_limit = params.get("limit")
-    try:
-        limit = messages.LIST_MESSAGES_DEFAULT_LIMIT if raw_limit is None else int(raw_limit)
-    except ValueError:
-        return error("limit must be an integer")
-    if not 1 <= limit <= messages.LIST_MESSAGES_MAX_LIMIT:
-        return error(f"limit must be between 1 and {messages.LIST_MESSAGES_MAX_LIMIT}")
-    purpose = params.get("purpose") or None
-    try:
-        rows = await messages.list_messages(
-            namespaces=scope,
-            purpose=purpose,
-            scope=params.get("scope") or None,
-            subject=params.get("subject") or None,
-            limit=limit,
-        )
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(rows)
-
-
-def _message_id(request: Request) -> uuid.UUID | None:
-    raw = request.path_params["message_id"]
-    try:
-        return uuid.UUID(raw)
-    except ValueError:
-        return None
-
-
-async def message_claim_route(request: Request) -> JSONResponse:
-    """Claim a pending message at most once; stale or terminal ids get 409."""
-    message_id = _message_id(request)
-    if message_id is None:
-        return error("message id must be a UUID")
-    try:
-        row = await messages.claim_message(message_id, request.state.key)
-    except messages.MessageConflict as exc:
-        return error(str(exc), 409)
-    except messages.MessageNotFound as exc:
-        return error(str(exc), 404)
-    return JSONResponse(row)
-
-
-async def message_cancel_route(request: Request) -> JSONResponse:
-    """Cancel a pending message; the sender, or an admin for any accessible one."""
-    message_id = _message_id(request)
-    if message_id is None:
-        return error("message id must be a UUID")
-    try:
-        row = await messages.cancel_message(message_id, request.state.key)
-    except messages.MessageConflict as exc:
-        return error(str(exc), 409)
-    except messages.MessageNotFound as exc:
-        return error(str(exc), 404)
-    return JSONResponse(row)
-
-
 async def admin_notes_route(request: Request) -> JSONResponse:
     """List active agent notes older than a requested age, scoped to the caller's namespaces."""
     try:
@@ -726,14 +596,7 @@ async def admin_consolidate_actions_route(request: Request) -> JSONResponse:
 
 
 async def admin_archive_route(request: Request) -> JSONResponse:
-    """Preview or archive cold notes and delete terminal messages, in scope.
-
-    The preview distinguishes the two halves: notes_to_archive and
-    messages_to_delete (claimed, cancelled, superseded, or expired). Deleting a
-    message is permanent, so a member key purges only the namespaces it owns —
-    enough to unregister one, not enough to drain a shared namespace. An ids
-    call selects rows in the caller's scope and never touches messages.
-    """
+    """Preview or archive the agent notes named by ids, or the cold ones, in scope."""
     key = request.state.key
     try:
         body = await json_body(request)
@@ -760,18 +623,15 @@ async def admin_archive_route(request: Request) -> JSONResponse:
             return error("ids must refer only to rows in the caller's scope")
         if body.get("confirm") is True:
             archived = await admin.archive_rows(ids, now, namespaces=scope, archived_by=author)
-            return JSONResponse({"archived": archived, "deleted": 0})
-        return JSONResponse({"notes_to_archive": rows, "messages_to_delete": []})
+            return JSONResponse({"archived": archived})
+        return JSONResponse({"notes_to_archive": rows})
     candidates = await admin.archive_candidates(now, namespaces=scope)
-    owner = None if key.is_admin else key.label
     if body.get("confirm") is True:
         archived = await admin.archive_rows(
             [row["id"] for row in candidates], now, namespaces=scope, archived_by=author
         )
-        deleted = await messages.delete_terminal_messages(owner)
-        return JSONResponse({"archived": archived, "deleted": deleted})
-    terminal = await messages.terminal_messages(owner)
-    return JSONResponse({"notes_to_archive": candidates, "messages_to_delete": terminal})
+        return JSONResponse({"archived": archived})
+    return JSONResponse({"notes_to_archive": candidates})
 
 
 async def admin_restore_route(request: Request) -> JSONResponse:
@@ -934,10 +794,10 @@ app = Starlette(
             profile_routes.reject_route,
             methods=["POST"],
         ),
-        Route("/messages", messages_send_route, methods=["POST"]),
-        Route("/messages", messages_list_route, methods=["GET"]),
-        Route("/messages/{message_id}/claim", message_claim_route, methods=["POST"]),
-        Route("/messages/{message_id}", message_cancel_route, methods=["DELETE"]),
+        Route("/messages", message_routes.send_route, methods=["POST"]),
+        Route("/messages", message_routes.list_route, methods=["GET"]),
+        Route("/messages/{message_id}/claim", message_routes.claim_route, methods=["POST"]),
+        Route("/messages/{message_id}", message_routes.cancel_route, methods=["DELETE"]),
         Route("/tables/query", tables.tables_query_route, methods=["POST"]),
         Route("/ingest/document", ingest_api.ingest_document_route, methods=["POST"]),
         Route("/ingest/jobs", ingest_api.ingest_jobs_route, methods=["GET"]),
@@ -965,6 +825,7 @@ app = Starlette(
         Route("/admin/consolidate/undo", admin_consolidate_undo_route, methods=["POST"]),
         Route("/admin/consolidate/actions", admin_consolidate_actions_route, methods=["GET"]),
         Route("/admin/archive", admin_archive_route, methods=["POST"]),
+        Route("/admin/messages/purge", message_routes.purge_route, methods=["POST"]),
         Route("/admin/restore", admin_restore_route, methods=["POST"]),
     ],
 )

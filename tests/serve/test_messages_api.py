@@ -1,6 +1,6 @@
-"""Unit tests for the /messages REST endpoints (memory_base.serve.api).
+"""Unit tests for the /messages REST endpoints (memory_base.serve.messages.routes).
 
-No DB: memory_base.serve.messages functions are monkeypatched directly,
+No DB: memory_base.serve.messages.store functions are monkeypatched directly,
 matching the convention of tests/serve/test_namespaces_api.py. The fixed
 ``test-key`` header (tests/serve/conftest.py) stubs to an admin identity with
 label "test" and authors {claude-code, natsume}.
@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth, messages
+from memory_base.serve import api, auth
+from memory_base.serve.messages import store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -56,7 +57,7 @@ def test_post_message_delegates_and_returns_201_with_public_row(monkeypatch):
         captured["key"] = key
         return dict(ROW), False
 
-    monkeypatch.setattr(messages, "send_message", fake_send)
+    monkeypatch.setattr(store, "send_message", fake_send)
     response = client.post(
         "/messages",
         json={
@@ -118,7 +119,7 @@ def test_post_message_validation_error_400(monkeypatch):
     async def fake_send(key, **kwargs):
         raise ValueError("handoff status must be one of")
 
-    monkeypatch.setattr(messages, "send_message", fake_send)
+    monkeypatch.setattr(store, "send_message", fake_send)
     response = client.post(
         "/messages",
         json={"subject": "s", "status": "info", "result": "r", "author": "claude-code"},
@@ -133,7 +134,7 @@ def test_post_message_handoff_fields_reach_messages(monkeypatch):
         captured.update(kwargs)
         return dict(ROW, purpose="handoff", scope="repo:github.com/o/r"), False
 
-    monkeypatch.setattr(messages, "send_message", fake_send)
+    monkeypatch.setattr(store, "send_message", fake_send)
     response = client.post(
         "/messages",
         json={
@@ -156,9 +157,9 @@ def test_post_message_handoff_fields_reach_messages(monkeypatch):
 
 def test_post_message_idempotency_conflict_409(monkeypatch):
     async def fake_send(key, **kwargs):
-        raise messages.MessageConflict("idempotency_key already used for a different message")
+        raise store.MessageConflict("idempotency_key already used for a different message")
 
-    monkeypatch.setattr(messages, "send_message", fake_send)
+    monkeypatch.setattr(store, "send_message", fake_send)
     response = client.post(
         "/messages",
         json={
@@ -182,7 +183,7 @@ def test_get_messages_delegates_with_scope_and_filters(monkeypatch):
         captured.update(kwargs)
         return [ROW]
 
-    monkeypatch.setattr(messages, "list_messages", fake_list)
+    monkeypatch.setattr(store, "list_messages", fake_list)
     response = client.get(
         "/messages",
         params={
@@ -209,7 +210,7 @@ def test_get_messages_default_limit_50_and_max_100(monkeypatch):
         captured.update(kwargs)
         return []
 
-    monkeypatch.setattr(messages, "list_messages", fake_list)
+    monkeypatch.setattr(store, "list_messages", fake_list)
     assert client.get("/messages").json() == []
     assert captured["limit"] == 50
     assert client.get("/messages", params={"limit": "100"}).status_code == 200
@@ -240,7 +241,7 @@ def test_get_messages_member_scoped_to_allowed_namespaces(monkeypatch):
         captured.update(kwargs)
         return []
 
-    monkeypatch.setattr(messages, "list_messages", fake_list)
+    monkeypatch.setattr(store, "list_messages", fake_list)
     member = _member_client(monkeypatch, "eve", {"default", "team-a"})
     response = member.get("/messages")
     assert response.status_code == 200
@@ -263,7 +264,7 @@ def test_claim_returns_the_row_with_its_original_report_status(monkeypatch):
         captured["id"] = message_id
         return dict(ROW)
 
-    monkeypatch.setattr(messages, "claim_message", fake_claim)
+    monkeypatch.setattr(store, "claim_message", fake_claim)
     response = client.post(f"/messages/{ROW['id']}/claim")
     assert response.status_code == 200
     assert response.json()["status"] == "info"
@@ -277,17 +278,17 @@ def test_claim_malformed_id_400():
 
 def test_claim_unknown_404(monkeypatch):
     async def fake_claim(message_id, key, connection=None):
-        raise messages.MessageNotFound("no claimable message")
+        raise store.MessageNotFound("no claimable message")
 
-    monkeypatch.setattr(messages, "claim_message", fake_claim)
+    monkeypatch.setattr(store, "claim_message", fake_claim)
     assert client.post(f"/messages/{ROW['id']}/claim").status_code == 404
 
 
 def test_claim_stale_or_terminal_409(monkeypatch):
     async def fake_claim(message_id, key, connection=None):
-        raise messages.MessageConflict("message is not pending")
+        raise store.MessageConflict("message is not pending")
 
-    monkeypatch.setattr(messages, "claim_message", fake_claim)
+    monkeypatch.setattr(store, "claim_message", fake_claim)
     response = client.post(f"/messages/{ROW['id']}/claim")
     assert response.status_code == 409
 
@@ -302,7 +303,7 @@ def test_cancel_returns_the_row_with_its_original_report_status(monkeypatch):
         captured["id"] = message_id
         return dict(ROW)
 
-    monkeypatch.setattr(messages, "cancel_message", fake_cancel)
+    monkeypatch.setattr(store, "cancel_message", fake_cancel)
     response = client.delete(f"/messages/{ROW['id']}")
     assert response.status_code == 200
     assert response.json()["status"] == "info"
@@ -315,17 +316,17 @@ def test_cancel_malformed_id_400():
 
 def test_cancel_unauthorized_or_unknown_404(monkeypatch):
     async def fake_cancel(message_id, key, connection=None):
-        raise messages.MessageNotFound("no cancellable message")
+        raise store.MessageNotFound("no cancellable message")
 
-    monkeypatch.setattr(messages, "cancel_message", fake_cancel)
+    monkeypatch.setattr(store, "cancel_message", fake_cancel)
     assert client.delete(f"/messages/{ROW['id']}").status_code == 404
 
 
 def test_cancel_non_pending_409(monkeypatch):
     async def fake_cancel(message_id, key, connection=None):
-        raise messages.MessageConflict("message is not pending")
+        raise store.MessageConflict("message is not pending")
 
-    monkeypatch.setattr(messages, "cancel_message", fake_cancel)
+    monkeypatch.setattr(store, "cancel_message", fake_cancel)
     assert client.delete(f"/messages/{ROW['id']}").status_code == 409
 
 
@@ -335,3 +336,47 @@ def test_message_routes_require_auth():
     assert plain.post("/messages", json={}).status_code == 401
     assert plain.post(f"/messages/{ROW['id']}/claim").status_code == 401
     assert plain.delete(f"/messages/{ROW['id']}").status_code == 401
+
+
+# ---- POST /admin/messages/purge ---------------------------------------------------
+
+
+def _patch_purge(monkeypatch, calls):
+    async def fake_terminal_messages(owner=None):
+        calls.append(("preview", owner))
+        return [dict(ROW)]
+
+    async def fake_delete_terminal_messages(owner=None):
+        calls.append(("delete", owner))
+        return 1
+
+    monkeypatch.setattr(store, "terminal_messages", fake_terminal_messages)
+    monkeypatch.setattr(store, "delete_terminal_messages", fake_delete_terminal_messages)
+
+
+def test_purge_previews_terminal_messages_without_deleting(monkeypatch):
+    calls = []
+    _patch_purge(monkeypatch, calls)
+    response = client.post("/admin/messages/purge", json={})
+    assert response.status_code == 200
+    assert response.json() == {"messages_to_delete": [ROW]}
+    assert calls == [("preview", None)]
+
+
+def test_purge_confirm_deletes_without_loading_the_preview(monkeypatch):
+    calls = []
+    _patch_purge(monkeypatch, calls)
+    response = client.post("/admin/messages/purge", json={"confirm": True})
+    assert response.status_code == 200
+    assert response.json() == {"deleted": 1}
+    assert calls == [("delete", None)]
+
+
+def test_a_member_purge_names_only_its_own_label(monkeypatch):
+    calls = []
+    _patch_purge(monkeypatch, calls)
+    member = _member_client(monkeypatch, "eve", {"default", "team-a"})
+    assert member.post("/admin/messages/purge", json={}).status_code == 200
+    assert member.post("/admin/messages/purge", json={"confirm": True}).status_code == 200
+    # Ownership resolves inside the purge query, so a member names itself, never a list.
+    assert calls == [("preview", "eve"), ("delete", "eve")]

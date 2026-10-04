@@ -1,6 +1,6 @@
 """Pure unit contracts for the message lane's validation and rendering.
 
-No DB, no network: everything here is memory_base.serve.messages' pure layer.
+No DB, no network: everything here is memory_base.serve.messages.store's pure layer.
 """
 
 from __future__ import annotations
@@ -10,88 +10,86 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from memory_base.serve import messages
+from memory_base.serve.messages import store
 
 
 # ---- subject / subject_key ---------------------------------------------------
 
 
 def test_subject_normalizes_nfkc_trim_and_whitespace_collapse():
-    assert messages.normalize_subject("  Fix\u00a0 login   flow ") == "Fix login flow"
+    assert store.normalize_subject("  Fix\u00a0 login   flow ") == "Fix login flow"
     # NFKC folds the fullwidth Latin letters into ASCII.
-    assert messages.normalize_subject("Ｆｉｘ login") == "Fix login"
+    assert store.normalize_subject("Ｆｉｘ login") == "Fix login"
 
 
 def test_subject_collapses_newlines_so_a_heading_cannot_escape():
-    assert messages.normalize_subject("real subject\n## Injected heading") == (
+    assert store.normalize_subject("real subject\n## Injected heading") == (
         "real subject ## Injected heading"
     )
 
 
 def test_subject_rejects_non_string_and_blank():
     with pytest.raises(ValueError):
-        messages.normalize_subject(42)
+        store.normalize_subject(42)
     for blank in ("", "   ", "\n\t "):
         with pytest.raises(ValueError):
-            messages.normalize_subject(blank)
+            store.normalize_subject(blank)
 
 
 def test_subject_key_is_casefolded_normalized_subject():
-    assert messages.subject_key_for("Fix\u00a0 LOGIN flow") == "fix login flow"
+    assert store.subject_key_for("Fix\u00a0 LOGIN flow") == "fix login flow"
 
 
 # ---- scope -------------------------------------------------------------------
 
 
 def test_scope_normalizes_repo_origin_hostname_only_preserving_path_case():
-    assert messages.normalize_scope("repo:https://GitHub.com/Yw0nam/Memory-Base.git") == (
+    assert store.normalize_scope("repo:https://GitHub.com/Yw0nam/Memory-Base.git") == (
         "repo:github.com/Yw0nam/Memory-Base"
     )
 
 
 def test_scope_accepts_canonical_form_and_round_trips():
     canonical = "repo:github.com/org/repo"
-    assert messages.normalize_scope(canonical) == canonical
+    assert store.normalize_scope(canonical) == canonical
     for raw in (
         "repo:https://GitHub.com/org/repo.git",
         "repo:git@github.com:org/repo.git",
         "repo:https://github.com/org/repo/",
     ):
-        normalized = messages.normalize_scope(raw)
-        assert messages.normalize_scope(normalized) == normalized
+        normalized = store.normalize_scope(raw)
+        assert store.normalize_scope(normalized) == normalized
 
 
 def test_scope_strips_trailing_slash_and_git_suffix():
-    assert messages.normalize_scope("repo:https://github.com/org/repo/") == (
+    assert store.normalize_scope("repo:https://github.com/org/repo/") == (
         "repo:github.com/org/repo"
     )
-    assert messages.normalize_scope("repo:https://github.com/org/repo.git") == (
+    assert store.normalize_scope("repo:https://github.com/org/repo.git") == (
         "repo:github.com/org/repo"
     )
 
 
 def test_scope_accepts_ssh_origin_and_normalizes_to_canonical():
-    assert messages.normalize_scope("repo:git@github.com:Org/Repo.git") == (
-        "repo:github.com/Org/Repo"
-    )
+    assert store.normalize_scope("repo:git@github.com:Org/Repo.git") == ("repo:github.com/Org/Repo")
 
 
 def test_scope_rejects_repo_origin_with_credentials():
     with pytest.raises(ValueError):
-        messages.normalize_scope("repo:https://user:token@github.com/org/repo")
+        store.normalize_scope("repo:https://user:token@github.com/org/repo")
     with pytest.raises(ValueError):
-        messages.normalize_scope("repo:user@github.com:org/repo")
+        store.normalize_scope("repo:user@github.com:org/repo")
 
 
 def test_scope_rejects_raw_http_origin():
     with pytest.raises(ValueError):
-        messages.normalize_scope("repo:http://github.com/org/repo")
+        store.normalize_scope("repo:http://github.com/org/repo")
 
 
 def test_scope_rejects_non_url_repo_origin():
     for bad in ("repo:/home/user/checkout", "repo:not a url"):
         with pytest.raises(ValueError):
-            messages.normalize_scope(bad)
+            store.normalize_scope(bad)
 
 
 def test_scope_strips_query_and_fragment_from_every_origin_form():
@@ -102,14 +100,14 @@ def test_scope_strips_query_and_fragment_from_every_origin_form():
         "repo:git@github.com:org/repo?x=1#frag",
         "repo:git@github.com:org/repo.git#frag",
     ):
-        assert messages.normalize_scope(raw) == canonical
+        assert store.normalize_scope(raw) == canonical
 
 
 def test_scope_rejects_an_unbounded_origin():
     with pytest.raises(ValueError):
-        messages.normalize_scope("repo:github.com/" + "a" * 600)
+        store.normalize_scope("repo:github.com/" + "a" * 600)
     with pytest.raises(ValueError):
-        messages.normalize_scope("project:" + "a" * 600 + "/b")
+        store.normalize_scope("project:" + "a" * 600 + "/b")
 
 
 def test_scope_rejects_local_checkout_paths():
@@ -125,11 +123,11 @@ def test_scope_rejects_local_checkout_paths():
         "repo:git@169.254.1.1:org/repo",
     ):
         with pytest.raises(ValueError):
-            messages.normalize_scope(bad)
+            store.normalize_scope(bad)
 
 
 def test_scope_preserves_repository_path_case_on_a_dotted_host():
-    assert messages.normalize_scope("repo:Git.Example.COM/Org/Repo") == (
+    assert store.normalize_scope("repo:Git.Example.COM/Org/Repo") == (
         "repo:git.example.com/Org/Repo"
     )
 
@@ -141,7 +139,7 @@ def _reload_with_ttl_env(monkeypatch, value):
         monkeypatch.delenv("MESSAGE_TTL_DAYS", raising=False)
     else:
         monkeypatch.setenv("MESSAGE_TTL_DAYS", value)
-    return importlib.reload(messages)
+    return importlib.reload(store)
 
 
 def test_configured_default_ttl_above_thirty_days_is_refused_at_boot(monkeypatch):
@@ -150,7 +148,7 @@ def test_configured_default_ttl_above_thirty_days_is_refused_at_boot(monkeypatch
             _reload_with_ttl_env(monkeypatch, "31")
     finally:
         _reload_with_ttl_env(monkeypatch, None)
-    assert messages.MESSAGE_TTL_DAYS == 7
+    assert store.MESSAGE_TTL_DAYS == 7
 
 
 def test_configured_default_ttl_below_one_is_refused_at_boot(monkeypatch):
@@ -170,7 +168,7 @@ def test_configured_default_ttl_of_thirty_days_loads(monkeypatch):
 
 
 def test_scope_accepts_explicit_project_form_and_lowercases():
-    assert messages.normalize_scope("project:Acme/Widget-Pro") == "project:acme/widget-pro"
+    assert store.normalize_scope("project:Acme/Widget-Pro") == "project:acme/widget-pro"
 
 
 def test_scope_rejects_malformed_project_segments():
@@ -182,19 +180,19 @@ def test_scope_rejects_malformed_project_segments():
         "project: org/repo",
     ):
         with pytest.raises(ValueError):
-            messages.normalize_scope(bad)
+            store.normalize_scope(bad)
 
 
 def test_scope_rejects_cwd_and_absolute_path_forms():
     for bad in ("/home/user/project", ".", "./relative", "C:\\work\\repo", "my-scope"):
         with pytest.raises(ValueError):
-            messages.normalize_scope(bad)
+            store.normalize_scope(bad)
 
 
 def test_scope_rejects_non_string_and_blank():
     for bad in (None, "", "   "):
         with pytest.raises(ValueError):
-            messages.normalize_scope(bad)
+            store.normalize_scope(bad)
 
 
 # ---- refs --------------------------------------------------------------------
@@ -202,27 +200,27 @@ def test_scope_rejects_non_string_and_blank():
 
 def test_refs_accept_absolute_https_urls():
     refs = ["https://github.com/org/repo/pull/1", "https://example.com/notes?a=b"]
-    assert messages.validate_refs(refs) == refs
+    assert store.validate_refs(refs) == refs
 
 
 def test_refs_none_passes_through():
-    assert messages.validate_refs(None) is None
+    assert store.validate_refs(None) is None
 
 
 def test_refs_reject_more_than_ten():
     with pytest.raises(ValueError):
-        messages.validate_refs([f"https://example.com/{i}" for i in range(11)])
+        store.validate_refs([f"https://example.com/{i}" for i in range(11)])
 
 
 def test_refs_reject_userinfo():
     with pytest.raises(ValueError):
-        messages.validate_refs(["https://user:token@example.com/x"])
+        store.validate_refs(["https://user:token@example.com/x"])
 
 
 def test_refs_reject_localhost():
     for bad in ("https://localhost/x", "https://api.localhost/x"):
         with pytest.raises(ValueError):
-            messages.validate_refs([bad])
+            store.validate_refs([bad])
 
 
 def test_refs_reject_loopback_private_and_link_local_ip_literals():
@@ -236,7 +234,7 @@ def test_refs_reject_loopback_private_and_link_local_ip_literals():
         "https://[fe80::1]/x",
     ):
         with pytest.raises(ValueError):
-            messages.validate_refs([bad])
+            store.validate_refs([bad])
 
 
 def test_refs_reject_non_https_schemes_file_urls_and_local_paths():
@@ -249,14 +247,14 @@ def test_refs_reject_non_https_schemes_file_urls_and_local_paths():
         "javascript:alert(1)",
     ):
         with pytest.raises(ValueError):
-            messages.validate_refs([bad])
+            store.validate_refs([bad])
 
 
 def test_refs_reject_non_list_and_non_string_entries():
     with pytest.raises(ValueError):
-        messages.validate_refs("https://example.com")
+        store.validate_refs("https://example.com")
     with pytest.raises(ValueError):
-        messages.validate_refs([42])
+        store.validate_refs([42])
 
 
 def test_refs_are_not_fetched(monkeypatch):
@@ -267,9 +265,9 @@ def test_refs_are_not_fetched(monkeypatch):
 
     monkeypatch.setattr("httpx.AsyncClient", _explode, raising=False)
     monkeypatch.setattr("httpx.Client", _explode, raising=False)
-    messages.validate_refs(["https://example.com/never-fetched"])
+    store.validate_refs(["https://example.com/never-fetched"])
     with pytest.raises(ValueError):
-        messages.validate_refs(["https://10.0.0.9/never-fetched"])
+        store.validate_refs(["https://10.0.0.9/never-fetched"])
 
 
 # ---- verification --------------------------------------------------------------
@@ -277,39 +275,39 @@ def test_refs_are_not_fetched(monkeypatch):
 
 def test_verification_accepts_exact_shape():
     verification = {"command": "uv run pytest", "status": "passed", "result": "12 green"}
-    assert messages.validate_verification(verification) == verification
+    assert store.validate_verification(verification) == verification
 
 
 def test_verification_rejects_extra_or_missing_keys():
     with pytest.raises(ValueError):
-        messages.validate_verification(
+        store.validate_verification(
             {"command": "c", "status": "passed", "result": "r", "extra": "x"}
         )
     with pytest.raises(ValueError):
-        messages.validate_verification({"command": "c", "status": "passed"})
+        store.validate_verification({"command": "c", "status": "passed"})
 
 
 def test_verification_rejects_unknown_status():
     with pytest.raises(ValueError):
-        messages.validate_verification({"command": "c", "status": "skipped", "result": "r"})
+        store.validate_verification({"command": "c", "status": "skipped", "result": "r"})
 
 
 def test_verification_rejects_blank_fields_and_non_dict():
     with pytest.raises(ValueError):
-        messages.validate_verification({"command": " ", "status": "passed", "result": "r"})
+        store.validate_verification({"command": " ", "status": "passed", "result": "r"})
     with pytest.raises(ValueError):
-        messages.validate_verification("passed")
+        store.validate_verification("passed")
 
 
 def test_verification_none_passes_through():
-    assert messages.validate_verification(None) is None
+    assert store.validate_verification(None) is None
 
 
 # ---- rendering -----------------------------------------------------------------
 
 
 def test_render_produces_canonical_markdown():
-    content = messages.render_content(
+    content = store.render_content(
         "Fix login flow",
         "in_progress",
         "Token refresh fails on expired sessions.",
@@ -345,7 +343,7 @@ def test_render_produces_canonical_markdown():
 
 
 def test_render_verification_uses_labeled_status_command_result_lines():
-    content = messages.render_content(
+    content = store.render_content(
         "S",
         "blocked",
         "r",
@@ -366,7 +364,7 @@ def test_render_verification_uses_labeled_status_command_result_lines():
 
 
 def test_render_references_are_markdown_list_items():
-    content = messages.render_content(
+    content = store.render_content(
         "S",
         "info",
         "r",
@@ -381,12 +379,12 @@ def test_render_references_are_markdown_list_items():
 
 
 def test_render_omits_absent_optional_sections():
-    content = messages.render_content("Subject", "info", "The fact.", None, None, None)
+    content = store.render_content("Subject", "info", "The fact.", None, None, None)
     assert content == "# Subject\n\n## Status\n\n> info\n\n## Result\n\n> The fact."
 
 
 def test_render_blockquotes_every_line_of_user_controlled_scalars():
-    content = messages.render_content(
+    content = store.render_content(
         "Subject",
         "in_progress",
         "first line\n## Fake heading\n> fake quote",
@@ -411,20 +409,20 @@ def test_render_blockquotes_every_line_of_user_controlled_scalars():
 
 
 def test_render_blockquotes_blank_lines_inside_scalars():
-    content = messages.render_content("S", "info", "a\n\nb", None, None, None)
+    content = store.render_content("S", "info", "a\n\nb", None, None, None)
     assert "> \n" not in content
     assert "> a\n>\n> b" in content
 
 
 def _render_sized_to(total_bytes: int) -> bytes:
-    base = len(messages.render_content("S", "info", "x", None, None, None).encode("utf-8"))
-    return messages.render_content(
+    base = len(store.render_content("S", "info", "x", None, None, None).encode("utf-8"))
+    return store.render_content(
         "S", "info", "x" * (total_bytes - base + 1), None, None, None
     ).encode("utf-8")
 
 
 def test_render_rejects_content_over_16kib_instead_of_truncating():
-    assert messages.MESSAGE_MAX_CONTENT_BYTES == 16384
+    assert store.MESSAGE_MAX_CONTENT_BYTES == 16384
     assert len(_render_sized_to(16384)) == 16384
     with pytest.raises(ValueError):
         _render_sized_to(16385)
@@ -434,55 +432,55 @@ def test_render_rejects_content_over_16kib_instead_of_truncating():
 
 
 def test_a_message_without_expiry_expires_after_message_ttl_days(monkeypatch):
-    monkeypatch.setattr(messages, "MESSAGE_TTL_DAYS", 7)
-    expires = messages.resolve_expires_at("message", None)
+    monkeypatch.setattr(store, "MESSAGE_TTL_DAYS", 7)
+    expires = store.resolve_expires_at("message", None)
     assert timedelta(days=6.9) < expires - datetime.now(timezone.utc) <= timedelta(days=7.1)
 
 
 def test_a_handoff_without_expiry_never_expires():
-    assert messages.resolve_expires_at("handoff", None) is None
+    assert store.resolve_expires_at("handoff", None) is None
 
 
 @pytest.mark.parametrize("purpose", ["message", "handoff"])
 def test_expires_at_accepts_future_iso_string(purpose):
     soon = datetime.now(timezone.utc) + timedelta(days=2)
-    assert messages.resolve_expires_at(purpose, soon.isoformat()) == soon
+    assert store.resolve_expires_at(purpose, soon.isoformat()) == soon
 
 
 @pytest.mark.parametrize("purpose", ["message", "handoff"])
 def test_expires_at_must_be_in_the_future(purpose):
     past = datetime.now(timezone.utc) - timedelta(hours=1)
     with pytest.raises(ValueError):
-        messages.resolve_expires_at(purpose, past.isoformat())
+        store.resolve_expires_at(purpose, past.isoformat())
 
 
 @pytest.mark.parametrize("purpose", ["message", "handoff"])
 def test_expires_at_may_be_at_most_thirty_days_out(purpose):
     limit = datetime.now(timezone.utc) + timedelta(days=30, minutes=5)
     with pytest.raises(ValueError):
-        messages.resolve_expires_at(purpose, limit.isoformat())
+        store.resolve_expires_at(purpose, limit.isoformat())
     ok = datetime.now(timezone.utc) + timedelta(days=29)
-    assert messages.resolve_expires_at(purpose, ok.isoformat()) == ok
+    assert store.resolve_expires_at(purpose, ok.isoformat()) == ok
 
 
 def test_expires_at_rejects_unparseable_and_non_string():
     with pytest.raises(ValueError):
-        messages.resolve_expires_at("message", "not a date")
+        store.resolve_expires_at("message", "not a date")
     with pytest.raises(ValueError):
-        messages.resolve_expires_at("handoff", 12345)
+        store.resolve_expires_at("handoff", 12345)
 
 
 # ---- idempotency key ------------------------------------------------------------
 
 
 def test_idempotency_key_max_128_chars():
-    assert messages.validate_idempotency_key("  run-1 ") == "run-1"
-    assert messages.validate_idempotency_key("x" * 128) == "x" * 128
+    assert store.validate_idempotency_key("  run-1 ") == "run-1"
+    assert store.validate_idempotency_key("x" * 128) == "x" * 128
     with pytest.raises(ValueError):
-        messages.validate_idempotency_key("x" * 129)
+        store.validate_idempotency_key("x" * 129)
     with pytest.raises(ValueError):
-        messages.validate_idempotency_key("   ")
-    assert messages.validate_idempotency_key(None) is None
+        store.validate_idempotency_key("   ")
+    assert store.validate_idempotency_key(None) is None
 
 
 # ---- purpose / status derivation ------------------------------------------------
@@ -490,15 +488,15 @@ def test_idempotency_key_max_128_chars():
 
 def test_message_without_scope_requires_info_status():
     with pytest.raises(ValueError):
-        messages.derive_purpose_and_check_status(None, "in_progress")
-    assert messages.derive_purpose_and_check_status(None, "info") == "message"
+        store.derive_purpose_and_check_status(None, "in_progress")
+    assert store.derive_purpose_and_check_status(None, "info") == "message"
 
 
 def test_handoff_scope_requires_handoff_status():
-    assert messages.derive_purpose_and_check_status("repo:github.com/o/r", "blocked") == "handoff"
+    assert store.derive_purpose_and_check_status("repo:github.com/o/r", "blocked") == "handoff"
     for bad in ("info", "done"):
         with pytest.raises(ValueError):
-            messages.derive_purpose_and_check_status("repo:github.com/o/r", bad)
+            store.derive_purpose_and_check_status("repo:github.com/o/r", bad)
 
 
 # ---- public row shape -------------------------------------------------------------
@@ -529,7 +527,7 @@ def _stored_row(**overrides):
 
 
 def test_public_row_exposes_only_the_contracted_fields():
-    public = messages.public_row(_stored_row())
+    public = store.public_row(_stored_row())
     assert set(public) == {
         "id",
         "namespace",
@@ -543,38 +541,38 @@ def test_public_row_exposes_only_the_contracted_fields():
         "content",
     }
     row = _stored_row()
-    public = messages.public_row(row)
+    public = store.public_row(row)
     assert public["id"] == str(row["id"])
     assert public["created_at"] == row["created_at"].isoformat()
     assert public["expires_at"] == row["expires_at"].isoformat()
 
 
 def test_public_row_renders_a_missing_expiry_as_null():
-    assert messages.public_row(_stored_row(expires_at=None))["expires_at"] is None
+    assert store.public_row(_stored_row(expires_at=None))["expires_at"] is None
 
 
 def test_public_row_keeps_the_report_status_and_hides_lifecycle_timestamps():
     claimed = _stored_row(claimed_at=datetime.now(timezone.utc))
-    assert messages.public_row(claimed)["status"] == "info"
-    assert "claimed_at" not in messages.public_row(claimed)
-    assert "cancelled_at" not in messages.public_row(claimed)
-    assert "superseded_at" not in messages.public_row(claimed)
+    assert store.public_row(claimed)["status"] == "info"
+    assert "claimed_at" not in store.public_row(claimed)
+    assert "cancelled_at" not in store.public_row(claimed)
+    assert "superseded_at" not in store.public_row(claimed)
 
 
 # ---- next rules -----------------------------------------------------------------
 
 
 def test_next_rules_by_purpose_and_status():
-    messages.check_next("message", "info", None)
-    messages.check_next("message", "info", "optional next")
-    messages.check_next("handoff", "in_progress", "must be nonblank")
-    messages.check_next("handoff", "blocked", "must be nonblank")
-    messages.check_next("handoff", "completed", None)
+    store.check_next("message", "info", None)
+    store.check_next("message", "info", "optional next")
+    store.check_next("handoff", "in_progress", "must be nonblank")
+    store.check_next("handoff", "blocked", "must be nonblank")
+    store.check_next("handoff", "completed", None)
     with pytest.raises(ValueError):
-        messages.check_next("handoff", "in_progress", "   ")
+        store.check_next("handoff", "in_progress", "   ")
     with pytest.raises(ValueError):
-        messages.check_next("handoff", "in_progress", None)
+        store.check_next("handoff", "in_progress", None)
     with pytest.raises(ValueError):
-        messages.check_next("handoff", "completed", "completed carries no next")
+        store.check_next("handoff", "completed", "completed carries no next")
     with pytest.raises(ValueError):
-        messages.check_next("message", "info", 42)
+        store.check_next("message", "info", 42)

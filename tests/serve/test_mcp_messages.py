@@ -16,6 +16,7 @@ import pytest
 
 from memory_base.serve import mcp_server
 from memory_base.serve.common import rest_client
+from memory_base.serve.messages import tools
 
 MESSAGE_ID = "5f0d9d44-9a9d-4f0e-b7f6-6fa1e2b3c4d5"
 
@@ -126,7 +127,7 @@ def test_send_message_posts_report_fields(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     payload = asyncio.run(
-        mcp_server.send_message(
+        tools.send_message(
             subject="s",
             result="r",
             author="claude-code",
@@ -155,7 +156,7 @@ def test_send_message_maps_next_step_to_next_and_sends_scope(monkeypatch):
     captured = {}
     _patch_client(monkeypatch, _capturing_handler(captured))
     asyncio.run(
-        mcp_server.send_message(
+        tools.send_message(
             subject="handoff state",
             result="r",
             author="claude-code",
@@ -175,7 +176,7 @@ def test_send_message_forwards_optional_fields(monkeypatch):
     captured = {}
     _patch_client(monkeypatch, _capturing_handler(captured))
     asyncio.run(
-        mcp_server.send_message(
+        tools.send_message(
             subject="s",
             result="r",
             author="claude-code",
@@ -204,7 +205,7 @@ def test_send_message_surfaces_409_conflict_as_tool_error(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="idempotency_key already used"):
-        asyncio.run(mcp_server.send_message(subject="s", result="r", author="claude-code"))
+        asyncio.run(tools.send_message(subject="s", result="r", author="claude-code"))
 
 
 # ---- list_messages -----------------------------------------------------------------
@@ -214,7 +215,7 @@ def test_list_messages_gets_with_filters(monkeypatch):
     captured = {}
     _patch_client(monkeypatch, _capturing_handler(captured, status=200, body=[]))
     payload = asyncio.run(
-        mcp_server.list_messages(
+        tools.list_messages(
             namespace="team-a",
             purpose="handoff",
             scope="repo:github.com/o/r",
@@ -237,7 +238,7 @@ def test_list_messages_gets_with_filters(monkeypatch):
 def test_list_messages_omits_unset_filters(monkeypatch):
     captured = {}
     _patch_client(monkeypatch, _capturing_handler(captured, status=200, body=[]))
-    asyncio.run(mcp_server.list_messages())
+    asyncio.run(tools.list_messages())
     assert captured["params"] == {}
 
 
@@ -250,7 +251,7 @@ def test_claim_message_posts_to_claim_route(monkeypatch):
         monkeypatch,
         _capturing_handler(captured, status=200, body={"id": MESSAGE_ID, "status": "info"}),
     )
-    payload = asyncio.run(mcp_server.claim_message(message_id=MESSAGE_ID))
+    payload = asyncio.run(tools.claim_message(message_id=MESSAGE_ID))
     assert captured["method"] == "POST"
     assert captured["path"] == f"/messages/{MESSAGE_ID}/claim"
     assert payload["status"] == "info"
@@ -266,7 +267,7 @@ def test_cancel_message_deletes_by_id(monkeypatch):
             body={"id": MESSAGE_ID, "status": "info"},
         ),
     )
-    payload = asyncio.run(mcp_server.cancel_message(message_id=MESSAGE_ID))
+    payload = asyncio.run(tools.cancel_message(message_id=MESSAGE_ID))
     assert captured["method"] == "DELETE"
     assert captured["path"] == f"/messages/{MESSAGE_ID}"
     assert payload["status"] == "info"
@@ -281,9 +282,9 @@ def test_claim_and_cancel_reject_a_non_uuid_message_id(monkeypatch):
     _patch_client(monkeypatch, handler)
     for bad in ("../namespaces/default", "not-a-uuid", "5f0d9d44-9a9d-4f0e-b7f6-6fa1e2b3c4d5/x"):
         with pytest.raises(ValueError, match="message_id"):
-            asyncio.run(mcp_server.claim_message(message_id=bad))
+            asyncio.run(tools.claim_message(message_id=bad))
         with pytest.raises(ValueError, match="message_id"):
-            asyncio.run(mcp_server.cancel_message(message_id=bad))
+            asyncio.run(tools.cancel_message(message_id=bad))
 
 
 def test_claim_message_surfaces_404_as_tool_error(monkeypatch):
@@ -292,4 +293,4 @@ def test_claim_message_surfaces_404_as_tool_error(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="no claimable message"):
-        asyncio.run(mcp_server.claim_message(message_id=MESSAGE_ID))
+        asyncio.run(tools.claim_message(message_id=MESSAGE_ID))
