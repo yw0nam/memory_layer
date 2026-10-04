@@ -239,11 +239,17 @@ async def run_claimed(job: IngestJob) -> None:
     Path(job.spool_path).unlink(missing_ok=True)
 
 
-async def start() -> list[asyncio.Task[None]]:
-    """Recover interrupted document jobs and spool files, then start the document workers."""
+async def recover() -> None:
+    """Fail jobs whose upload is gone, requeue the rest, then prune the spool directory."""
     INGEST_SPOOL.mkdir(parents=True, exist_ok=True)
+    await store.reset_interrupted_uploads()
     await job_store.recover_and_prune("document")
-    await job_store.prune_spool(INGEST_SPOOL)
+    await store.prune_spool(INGEST_SPOOL)
+
+
+async def start() -> list[asyncio.Task[None]]:
+    """Recover interrupted document jobs, then start the document workers."""
+    await recover()
     return [
         asyncio.create_task(job_store.worker_loop("document", run_claimed))
         for _ in range(INGEST_MAX_CONCURRENT_JOBS)

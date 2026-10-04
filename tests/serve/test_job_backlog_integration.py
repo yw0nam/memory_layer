@@ -412,7 +412,9 @@ def test_fifty_sequential_uploads_are_durably_accepted_and_reach_terminal(monkey
     asyncio.run(scenario())
 
 
-def test_document_recovery_requeues_valid_spool_fails_missing_spool_and_skips_repos(tmp_path):
+def test_document_recovery_requeues_valid_spool_fails_missing_spool_and_skips_repos(
+    monkeypatch, tmp_path
+):
     async def scenario():
         marker = uuid.uuid4().hex
         key_id = f"it-{marker}"
@@ -450,7 +452,8 @@ def test_document_recovery_requeues_valid_spool_fails_missing_spool_and_skips_re
                     repo,
                     key_id,
                 )
-                await job_store.recover_and_prune("document")
+                monkeypatch.setattr(document_pipeline, "INGEST_SPOOL", spool)
+                await document_pipeline.recover()
                 recovered = await connection.fetchrow(
                     f'SELECT status, stage, filename FROM "{PG_SCHEMA}".jobs WHERE job_id = $1',
                     valid,

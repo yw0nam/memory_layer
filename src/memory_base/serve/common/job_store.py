@@ -9,7 +9,6 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, ClassVar
 
 from loguru import logger
@@ -404,56 +403,16 @@ async def list_document_jobs(
     return [_row_to_job(row) for row in rows]
 
 
-async def document_spool_rows() -> list[dict[str, Any]]:
-    async with _connection() as conn:
-        rows = await conn.fetch(
-            f'''SELECT spool_path, status FROM "{PG_SCHEMA}".jobs
-            WHERE kind = 'document' AND spool_path IS NOT NULL'''
-        )
-    return [dict(row) for row in rows]
-
-
-async def prune_spool(spool_root: Path) -> None:
-    """Remove terminal and unreferenced spool files during startup."""
-    rows = await document_spool_rows()
-    active = {row["spool_path"] for row in rows if row["status"] not in TERMINAL_STATUSES}
-    terminal = {row["spool_path"] for row in rows if row["status"] in TERMINAL_STATUSES}
-    for name in terminal:
-        Path(name).unlink(missing_ok=True)
-    if spool_root.exists():
-        for path in spool_root.iterdir():
-            if path.is_file() and str(path) not in active:
-                path.unlink(missing_ok=True)
-
-
 async def recover_and_prune(kind: str) -> None:
-    """Requeue a kind's interrupted jobs, fail documents whose upload is gone, and apply retention."""
+    """Requeue a kind's interrupted jobs and apply startup retention."""
     async with _connection() as conn:
-        rows = await conn.fetch(
-            f'''SELECT job_id, spool_path FROM "{PG_SCHEMA}".jobs
-            WHERE kind = $1 AND spool_path IS NOT NULL AND status <> ALL($2::text[])''',
-            kind,
-            list(TERMINAL_STATUSES),
-        )
-        missing = [row["job_id"] for row in rows if not Path(row["spool_path"]).is_file()]
         async with conn.transaction():
-            if missing:
-                await conn.execute(
-                    f'''UPDATE "{PG_SCHEMA}".jobs
-                    SET status = 'failed', stage = 'done',
-                        error = 'document spool file is missing during startup recovery',
-                        updated_at = now()
-                    WHERE job_id = ANY($1::text[])''',
-                    missing,
-                )
             await conn.execute(
                 f'''UPDATE "{PG_SCHEMA}".jobs
-                SET status = 'queued', stage = CASE WHEN kind = 'document' THEN 'queued' ELSE stage END,
-                    updated_at = now()
-                WHERE kind = $1 AND status <> ALL($2::text[]) AND NOT (job_id = ANY($3::text[]))''',
+                SET status = 'queued', updated_at = now()
+                WHERE kind = $1 AND status <> ALL($2::text[])''',
                 kind,
                 list(TERMINAL_STATUSES),
-                missing,
             )
             await _prune_rows(conn)
 

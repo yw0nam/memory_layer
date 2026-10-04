@@ -11,6 +11,7 @@ import pytest
 
 from memory_base.serve import api, auth, namespaces
 from memory_base.serve.common import job_store
+from memory_base.serve.documents import store as document_store
 from memory_base.serve.documents import pipeline as document_pipeline
 from memory_base.serve.repos import cache as repo_cache
 
@@ -169,8 +170,8 @@ def test_startup_prune_removes_terminal_and_orphan_spool_files(monkeypatch, tmp_
             {"spool_path": str(active), "status": "queued"},
         ]
 
-    monkeypatch.setattr(job_store, "document_spool_rows", fake_rows)
-    asyncio.run(job_store.prune_spool(Path(tmp_path)))
+    monkeypatch.setattr(document_store, "document_spool_rows", fake_rows)
+    asyncio.run(document_store.prune_spool(Path(tmp_path)))
     assert not terminal.exists()
     assert not orphan.exists()
     assert active.exists()
