@@ -312,7 +312,7 @@ out-of-scope id a 404.
 
 `GET /admin/duplicates` lists near-duplicate agent-note pairs by cosine with each side's author,
 `GET /admin/notes` lists old agent notes, and `POST /admin/restore` clears `archived_at`
-and `metadata.archived_by`, `replaced_by`, and `consolidated_into`. `POST /admin/archive` archives the rows named by `ids`, or
+and `metadata.archived_by`, `replaced_by`, and `consolidated_into`. `POST /admin/archive` archives the agent notes named by `ids`, or
 the cold agent notes when `ids` is omitted; the no-ids preview distinguishes
 `notes_to_archive` from `messages_to_delete`, and the confirm pass archives the notes
 and deletes claimed, cancelled, superseded, and expired messages, which also releases

@@ -529,7 +529,7 @@ async def admin_notes_move_route(request: Request) -> JSONResponse:
 
 
 async def admin_duplicates_route(request: Request) -> JSONResponse:
-    """List active near-duplicate memory pairs, scoped to the caller's namespaces."""
+    """List active near-duplicate agent-note pairs, scoped to the caller's namespaces."""
     try:
         threshold = float(request.query_params.get("threshold", "0.9"))
     except ValueError:
