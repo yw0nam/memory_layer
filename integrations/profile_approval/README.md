@@ -52,8 +52,9 @@ cp integrations/profile_approval/mb_profile.py ~/.config/memory-base/mb_profile.
    | tail -n 1 | sed 's/^/MEMORY_BASE_USER_KEY=/' >> ~/.config/memory-base/user.env)
 ```
 
-The `keys` command runs on the server host, in the repo. It mints the user's key with the
-`user` author and writes the key into the file without showing it.
+The `keys` command runs once, on the server host, in the repo. It mints the user's key
+with the `user` author and writes the key into the file without showing it. On another
+machine, copy that file over (for example with `scp`) without opening it.
 
 The session-start notice names `~/.config/memory-base/mb_profile.py`, so install the CLI
 at that path.

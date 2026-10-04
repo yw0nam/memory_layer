@@ -58,29 +58,7 @@ the proposal says.
   start (or ask the user), write the whole replacement again against that version, and
   propose again. Changing only `base_version` is not enough.
 
-## Install (once per machine, by the user)
+## Install (by the user)
 
-1. Copy the CLI:
-
-   ```
-   mkdir -p ~/.config/memory-base
-   cp integrations/profile_approval/mb_profile.py ~/.config/memory-base/mb_profile.py
-   ```
-
-2. Write the user's env file. It holds the key that carries the `user` author. It never
-   holds the agents' key.
-
-   ```
-   (umask 177; printf 'MEMORY_BASE_URL=http://127.0.0.1:8010\n' > ~/.config/memory-base/user.env
-    uv run python -m memory_base.serve.keys new <user label> --author user \
-      | tail -n 1 | sed 's/^/MEMORY_BASE_USER_KEY=/' >> ~/.config/memory-base/user.env)
-   ```
-
-   The `keys` command runs on the server host, in the repo. It writes the key into the
-   file without showing it.
-
-   `MEMORY_BASE_USER_ENV` can name another file. A non-empty `MEMORY_BASE_URL` or
-   `MEMORY_BASE_USER_KEY` in the environment overrides the file.
-
-3. Install this skill: copy this directory to `~/.claude/skills/memory-profile-approval/`
-   for Claude Code, and to the `skills/` directory of the Hermes profile.
+The user installs the approval CLI, writes their key file, and installs this skill as
+described in `integrations/profile_approval/README.md` of the memory-base repo.

@@ -61,7 +61,7 @@ Read from `memory.memory_base` in the Hermes profile's `config.yaml`:
 | `min_score`   | `0.25`                     | relevance floor for prefetch search          |
 | `api_key`     | *(none)*                   | API key value; takes precedence over `api_key_env` |
 | `api_key_env` | `MEMORY_BASE_API_KEY`     | env var holding the memory-base API key     |
-| `owner`       | *(none)*                   | profile owner, an author slug of the key (e.g. `natsume`); without it no profile is delivered |
+| `owner`       | *(none)*                   | profile owner, an author slug of the key (e.g. `hermes`); without it no profile is delivered |
 
 The API key is `api_key` when set, otherwise the environment variable named by
 `api_key_env`.
@@ -81,7 +81,7 @@ memory:
   provider: memory_base
   memory_base:
     url: "https://memory-base.example.com"
-    owner: natsume
+    owner: hermes
 ```
 
 The agent writes its profile through the memory-base MCP tools `update_my_profile` and

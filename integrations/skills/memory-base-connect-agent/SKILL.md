@@ -41,19 +41,24 @@ approval key, `consolidator` is the consolidation agent.
 The command writes the key straight into the agent's env file and never shows it:
 
 ```
-(umask 177; uv run python -m memory_base.serve.keys new <slug> --author <slug> --admin \
+(umask 177; uv run python -m memory_base.serve.keys new <slug> --author <slug> \
   | tail -n 1 | sed 's/^/MEMORY_BASE_API_KEY=/' >> <env file>)
 ```
 
-`new` prints the key once, on its last line. Leave out `--admin` when the agent must
-not read private namespaces that its label does not own. `<env file>` is the client's
-file from the table in step 3.
+`new` prints the key once, on its last line. `<env file>` is the client's file from the
+table in step 3. When the client runs on another machine, copy the file there (for
+example with `scp`) without opening it.
+
+Add `--admin` only when the agent must read private namespaces that its label does not
+own, such as the user's personal namespace. An admin key can also rewrite any label's
+authors over REST, so with `--admin` the one-slug limit prevents mistakes, not a
+determined agent.
 
 ## 3. Configure the client
 
 | client | env file (step 2) | owner | MCP server |
 |---|---|---|---|
-| Claude Code | `~/.config/memory-base/env` | add `MEMORY_BASE_AUTHOR=<slug>` to the env file (default `claude-code`) | `claude mcp add --transport http memory-base <mcp url> --header "X-API-Key: $(sed -n 's/^MEMORY_BASE_API_KEY=//p' ~/.config/memory-base/env)"` |
+| Claude Code | `~/.config/memory-base/env` | `MEMORY_BASE_AUTHOR=<slug>` in the process environment, for example the `env` block of `~/.claude/settings.json` (default `claude-code`) | `claude mcp add --transport http memory-base <mcp url> --header "X-API-Key: $(sed -n 's/^MEMORY_BASE_API_KEY=//p' ~/.config/memory-base/env)"` |
 | Hermes | `$HERMES_HOME/.env` | `memory.memory_base.owner: <slug>` in `$HERMES_HOME/config.yaml` | an `mcp_servers` entry with the header `X-API-Key` set to the same key |
 | other MCP client | the client's own secret store | the client's session-start hook, if any | the MCP url with the header `X-API-Key` |
 

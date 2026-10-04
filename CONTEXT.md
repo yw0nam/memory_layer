@@ -109,7 +109,7 @@ Standing text an agent receives at every session start, outside search: the two 
 _Avoid_: summary, persona, memory block
 
 **Owner**:
-The agent a profile belongs to, named by its author slug (`claude-code`, `natsume`); `user` and `consolidator` are never owners. A key acts for an owner only when the owner is one of its authors. Distinct from a namespace owner, which is a key label.
+The agent a profile belongs to, named by its author slug (`claude-code`, `codex`); `user` and `consolidator` are never owners. A key acts for an owner only when the owner is one of its authors. Distinct from a namespace owner, which is a key label.
 _Avoid_: profile namespace, slot
 
 **Part**:
