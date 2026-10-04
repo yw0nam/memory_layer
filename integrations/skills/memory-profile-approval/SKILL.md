@@ -71,9 +71,13 @@ the proposal says.
    holds the agents' key.
 
    ```
-   (umask 177; printf 'MEMORY_BASE_URL=http://127.0.0.1:8010\nMEMORY_BASE_USER_KEY=<user key>\n' \
-     > ~/.config/memory-base/user.env)
+   (umask 177; printf 'MEMORY_BASE_URL=http://127.0.0.1:8010\n' > ~/.config/memory-base/user.env
+    uv run python -m memory_base.serve.keys new <user label> --author user \
+      | tail -n 1 | sed 's/^/MEMORY_BASE_USER_KEY=/' >> ~/.config/memory-base/user.env)
    ```
+
+   The `keys` command runs on the server host, in the repo. It writes the key into the
+   file without showing it.
 
    `MEMORY_BASE_USER_ENV` can name another file. A non-empty `MEMORY_BASE_URL` or
    `MEMORY_BASE_USER_KEY` in the environment overrides the file.
