@@ -261,6 +261,15 @@ def test_search_tools_forward_budget_tokens(monkeypatch, tool):
     assert captured["json"]["budget_tokens"] == 4000
 
 
+def test_a_json_error_without_an_error_key_names_the_status(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"detail": "bad request"})
+
+    _patch_client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="backend returned 400"):
+        asyncio.run(search_tools.search_code(query="q"))
+
+
 def test_search_all_posts_with_source_all(monkeypatch):
     captured = {}
 
