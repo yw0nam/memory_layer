@@ -47,9 +47,14 @@ On every machine where the user approves:
 ```sh
 mkdir -p ~/.config/memory-base
 cp integrations/profile_approval/mb_profile.py ~/.config/memory-base/mb_profile.py
-(umask 177; printf 'MEMORY_BASE_URL=http://127.0.0.1:8010\nMEMORY_BASE_USER_KEY=<user key>\n' \
-  > ~/.config/memory-base/user.env)
+(umask 177; printf 'MEMORY_BASE_URL=http://127.0.0.1:8010\n' > ~/.config/memory-base/user.env
+ uv run python -m memory_base.serve.keys new <user label> --author user \
+   | tail -n 1 | sed 's/^/MEMORY_BASE_USER_KEY=/' >> ~/.config/memory-base/user.env)
 ```
+
+The `keys` command runs once, on the server host, in the repo. It mints the user's key
+with the `user` author and writes the key into the file without showing it. On another
+machine, copy that file over (for example with `scp`) without opening it.
 
 The session-start notice names `~/.config/memory-base/mb_profile.py`, so install the CLI
 at that path.

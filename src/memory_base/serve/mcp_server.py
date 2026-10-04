@@ -363,8 +363,8 @@ async def search_memory(
 
     `kind` is "personal", "work", or "doc" (document chunks and CSV cards).
 
-    `author` narrows the search to notes saved by one agent, e.g. claude-code
-    or natsume.
+    `author` narrows the search to notes saved by one agent's author slug,
+    e.g. claude-code.
 
     `since`/`until` bound the search to memory whose event happened in that
     window (its occurred_at, else when it was saved), for

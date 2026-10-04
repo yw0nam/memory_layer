@@ -549,7 +549,7 @@ facts and rules that apply to every task match the topic of almost no message, s
 per-message prefetch rarely ranks them. Profiles belong to agents, not to namespaces
 ([ADR-0009](adr/0009-profiles-owned-by-agents-user-part-approved-by-the-user.md)).
 
-An **owner** is an agent's author slug (`claude-code`, `natsume`; never `user` or
+An **owner** is an agent's author slug (`claude-code`, `codex`; never `user` or
 `consolidator`). Each owner has two **parts**, each a versioned text:
 
 | part | holds | written by |
@@ -564,10 +564,10 @@ content; profiles are never embedded and never read by search or consolidation.
 is one of its authors; a key carrying the `user` author reads every owner's profile and
 proposals and is the only key that approves or rejects. Admin status, the key label, the
 home namespace, and namespace permissions grant no profile access. Only the user's key
-carries `user`. The agents' key stays an admin key, and an admin key can rewrite any
-label's authors through `PUT /keys/{label}/authors`, so the separation prevents mistakes,
-not a determined agent on the same host. Isolation between agents on reads is the
-client's: the hook and the Hermes provider request only their configured owner.
+carries `user`. Each agent has its own key whose authors hold only its own slug, so one
+agent's key neither reads nor writes another owner's profile. An admin key can rewrite any
+label's authors through `PUT /keys/{label}/authors`, so for an agent whose key is an admin
+key the separation prevents mistakes, not a determined agent on the same host.
 
 ```
  agent ── PUT /profiles/self ──────────────────────► self v n+1   (or unchanged)
