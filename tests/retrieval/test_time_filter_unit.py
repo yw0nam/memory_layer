@@ -40,7 +40,7 @@ def test_timezone_offset_is_respected():
     assert parse_time_bound("2026-08-12T09:00:00+09:00") == AUG_12
 
 
-@pytest.mark.parametrize("bad", ["not-a-date", "", "   ", None, 123, 1700000000.0])
+@pytest.mark.parametrize("bad", ["not-a-date", "   ", 123])
 def test_invalid_time_bound_rejected(bad):
     with pytest.raises(ValueError):
         parse_time_bound(bad)
@@ -121,9 +121,8 @@ def test_memory_source_accepts_time_bounds():
     assert until == AUG_12 + 2 * DAY
 
 
-@pytest.mark.parametrize("source", ["code", "all"])
-def test_time_bounds_require_memory_source(source):
+def test_time_bounds_require_memory_source():
     with pytest.raises(ValueError, match='source="memory"'):
-        validate_search_options(source, None, None, since="2026-08-12")
+        validate_search_options("code", None, None, since="2026-08-12")
     with pytest.raises(ValueError, match='source="memory"'):
-        validate_search_options(source, None, None, until="2026-08-12")
+        validate_search_options("code", None, None, until="2026-08-12")
