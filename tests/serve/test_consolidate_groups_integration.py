@@ -18,7 +18,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.core.config import PG_SCHEMA, db_url
-from memory_base.serve import api, auth, consolidate, namespaces
+from memory_base.serve import api, auth, namespaces
+from memory_base.serve.consolidation import groups
 from memory_base.serve.notes.store import NOTE_SIMILAR_THRESHOLD, save_note
 
 pytestmark = pytest.mark.integration
@@ -178,11 +179,9 @@ def test_pair_search_never_uses_the_embedding_index(seeded):
         conn = await asyncpg.connect(db_url())
         try:
             async with conn.transaction(isolation="repeatable_read", readonly=True):
-                for statement in consolidate.EXACT_SEARCH_SETTINGS:
+                for statement in groups.EXACT_SEARCH_SETTINGS:
                     await conn.execute(statement)
-                rows = await conn.fetch(
-                    "EXPLAIN " + consolidate.PAIRS_SQL, seeded["main"], 5, THRESHOLD
-                )
+                rows = await conn.fetch("EXPLAIN " + groups.PAIRS_SQL, seeded["main"], 5, THRESHOLD)
             return "\n".join(row[0] for row in rows)
         finally:
             await conn.close()

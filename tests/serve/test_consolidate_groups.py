@@ -15,8 +15,9 @@ from contextlib import asynccontextmanager
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth, consolidate, namespaces
-from memory_base.serve.consolidate import (
+from memory_base.serve import api, auth, namespaces
+from memory_base.serve.consolidation import groups
+from memory_base.serve.consolidation.groups import (
     Deferred,
     Group,
     Note,
@@ -407,7 +408,7 @@ def fake_db(monkeypatch, registry):
     async def acquire(timeout=None):
         yield conn
 
-    monkeypatch.setattr(consolidate.db, "acquire", acquire)
+    monkeypatch.setattr(groups.db, "acquire", acquire)
     return conn
 
 
@@ -643,7 +644,7 @@ def test_route_surfaces_a_duplicate_beside_an_acknowledged_pair(consolidator, fa
 def test_route_takes_its_bounds_from_the_module(
     monkeypatch, consolidator, fake_db, bound, value, param, rejected
 ):
-    monkeypatch.setattr(consolidate, bound, value)
+    monkeypatch.setattr(groups, bound, value)
     response = client.get("/admin/consolidate/groups", params={param: rejected})
     assert response.status_code == 400
     assert str(value) in response.json()["error"]
@@ -694,7 +695,7 @@ def test_route_skips_the_member_set_of_an_undone_action_across_procedure_version
     monkeypatch, consolidator, fake_db
 ):
     _three_pairs(fake_db)
-    monkeypatch.setattr(consolidate, "PROCEDURE_VERSION", "2")
+    monkeypatch.setattr(groups, "PROCEDURE_VERSION", "2")
     fake_db.action_rows = [
         {"group_key": "an-old-key", "member_ids": ["note:default:d", "note:default:c"],
          "undone": True},

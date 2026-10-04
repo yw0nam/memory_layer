@@ -21,9 +21,9 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
-from memory_base.serve import consolidate
 from memory_base.serve.common.http import iso
-from memory_base.serve.consolidate import Note, Pair, build_groups, group_entry, group_key
+from memory_base.serve.consolidation import groups
+from memory_base.serve.consolidation.groups import Note, Pair, build_groups, group_entry, group_key
 from memory_base.serve.notes.store import (
     INSERT_NOTE_SQL,
     LINEAGE_FIELDS,
@@ -296,38 +296,37 @@ def _unknown(mapping: dict[str, Any], allowed: frozenset[str], where: str) -> No
 
 
 def _params(body: dict[str, Any]) -> Params:
-    threshold = body.get("threshold", consolidate.DEFAULT_THRESHOLD)
+    threshold = body.get("threshold", groups.DEFAULT_THRESHOLD)
     if (
         isinstance(threshold, bool)
         or not isinstance(threshold, (int, float))
         or not math.isfinite(threshold)
-        or not consolidate.MIN_THRESHOLD < threshold <= consolidate.MAX_THRESHOLD
+        or not groups.MIN_THRESHOLD < threshold <= groups.MAX_THRESHOLD
     ):
         raise RequestError(
-            f"threshold must be a number in ({consolidate.MIN_THRESHOLD:g}, "
-            f"{consolidate.MAX_THRESHOLD:g}]"
+            f"threshold must be a number in ({groups.MIN_THRESHOLD:g}, {groups.MAX_THRESHOLD:g}]"
         )
     return Params(
         float(threshold),
         _int(
             body,
             "neighbors",
-            consolidate.DEFAULT_NEIGHBORS,
-            consolidate.MIN_NEIGHBORS,
-            consolidate.MAX_NEIGHBORS,
+            groups.DEFAULT_NEIGHBORS,
+            groups.MIN_NEIGHBORS,
+            groups.MAX_NEIGHBORS,
         ),
         _int(
             body,
             "max_group",
-            consolidate.DEFAULT_MAX_GROUP,
-            consolidate.MIN_MAX_GROUP,
-            consolidate.MAX_MAX_GROUP,
+            groups.DEFAULT_MAX_GROUP,
+            groups.MIN_MAX_GROUP,
+            groups.MAX_MAX_GROUP,
         ),
         _int(
             body,
             "max_group_chars",
-            consolidate.DEFAULT_MAX_GROUP_CHARS,
-            consolidate.MIN_MAX_GROUP_CHARS,
+            groups.DEFAULT_MAX_GROUP_CHARS,
+            groups.MIN_MAX_GROUP_CHARS,
             math.inf,
         ),
     )
@@ -342,10 +341,9 @@ def _verdict(item: Any, index: int, registered: set[str]) -> Verdict:
     if namespace not in registered:
         raise RequestError(f"unregistered namespace: {namespace}")
     member_ids = _strings(item.get("member_ids"), f"{where}.member_ids")
-    if not consolidate.MIN_MAX_GROUP <= len(member_ids) <= consolidate.MAX_MAX_GROUP:
+    if not groups.MIN_MAX_GROUP <= len(member_ids) <= groups.MAX_MAX_GROUP:
         raise RequestError(
-            f"{where}.member_ids must hold {consolidate.MIN_MAX_GROUP} to "
-            f"{consolidate.MAX_MAX_GROUP} ids"
+            f"{where}.member_ids must hold {groups.MIN_MAX_GROUP} to {groups.MAX_MAX_GROUP} ids"
         )
     action = item.get("action")
     if action not in ACTIONS:
@@ -524,10 +522,12 @@ def _result(
 
 def _current_groups(verdict: Verdict, batch: Batch, state: State) -> list[dict[str, Any]]:
     p = batch.params
-    groups, _ = build_groups(state.pairs, state.notes, p.threshold, p.max_group, p.max_group_chars)
+    current, _ = build_groups(state.pairs, state.notes, p.threshold, p.max_group, p.max_group_chars)
     submitted = set(verdict.member_ids)
     return [
-        group_entry(verdict.namespace, g, state.notes) for g in groups if submitted & set(g.members)
+        group_entry(verdict.namespace, g, state.notes)
+        for g in current
+        if submitted & set(g.members)
     ]
 
 
@@ -624,11 +624,11 @@ def plan_verdict(verdict: Verdict, batch: Batch, state: State) -> Plan | dict[st
     if state.cached is not None:
         return _result(verdict, "cached", state.cached)
     p = batch.params
-    groups, _ = build_groups(state.pairs, state.notes, p.threshold, p.max_group, p.max_group_chars)
+    current, _ = build_groups(state.pairs, state.notes, p.threshold, p.max_group, p.max_group_chars)
     issued = next(
         (
             g
-            for g in groups
+            for g in current
             if group_key(verdict.namespace, (state.notes[i] for i in g.members))
             == verdict.group_key
         ),
@@ -657,7 +657,7 @@ def plan_verdict(verdict: Verdict, batch: Batch, state: State) -> Plan | dict[st
 
 
 async def _exact_search(conn: Any) -> None:
-    for statement in consolidate.EXACT_SEARCH_SETTINGS:
+    for statement in groups.EXACT_SEARCH_SETTINGS:
         await conn.execute(statement)
 
 
@@ -677,7 +677,7 @@ async def load_state(conn: Any, verdict: Verdict, batch: Batch) -> State:
         cached = "group matches the members of an undone action"
     if recorded is not None or cached is not None:
         return State(recorded, cached, [], {}, 0, None)
-    pairs, notes = await consolidate.read_pairs(
+    pairs, notes = await groups.read_pairs(
         conn, verdict.namespace, batch.params.threshold, batch.params.neighbors
     )
     used = await conn.fetchval(USED_ACTIONS_SQL, batch.run_id, verdict.namespace)
