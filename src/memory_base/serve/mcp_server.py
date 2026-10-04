@@ -28,20 +28,18 @@ import os
 import uuid
 from typing import Annotated, Any, Literal, Mapping
 
-import httpx
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 
 from memory_base.adapters.document import MCP_TEXT_EXTENSIONS
 from memory_base.adapters.document import extension_for
-from memory_base.core.config import SERVICE_TIMEOUT_SECONDS
 from memory_base.core.logger import setup_logging
+from memory_base.serve.common import rest_client
+from memory_base.serve.profiles import tools as profile_tools
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
-REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
-API_KEY_HEADER = "x-api-key"
 
 # Served in the initialize response, so it is stated once per client session:
 # the store's invariants only. Per-consumer usage belongs to the consumer.
@@ -127,74 +125,6 @@ mcp = FastMCP(
 )
 
 
-def _client() -> httpx.AsyncClient:
-    # Outlasts every backend ceiling, so the backend's own error arrives before this gives up.
-    return httpx.AsyncClient(base_url=REST_URL, timeout=SERVICE_TIMEOUT_SECONDS)
-
-
-def _raise_backend_error(response: httpx.Response, call: str) -> None:
-    try:
-        body = response.json()
-        message = body["error"]
-    except (ValueError, KeyError, TypeError):
-        body = response.text.strip()[:500]
-        message = f"{call} failed: backend returned {response.status_code} {response.reason_phrase}"
-        if body:
-            message += f": {body}"
-    else:
-        version = body.get("version")
-        if response.status_code == 409 and message == "stale" and type(version) is int:
-            message = (
-                f"stale: the user profile is now at version {version}. Refresh your profile "
-                "context (the next session-start delivery, or ask the user), then reconsider "
-                "the whole replacement against that version before proposing again; changing "
-                "only base_version is not enough."
-            )
-    raise ValueError(message)
-
-
-async def _call(method: str, path: str, **kwargs: Any) -> Any:
-    """Issue a REST call and return the decoded JSON body.
-
-    Any failure raises ValueError with its reason: the backend's `error` payload
-    for a non-2xx status, or which call timed out or could not reach the backend.
-    """
-    call = f"{method} {path}"
-    try:
-        async with _client() as client:
-            response = await client.request(method, path, **kwargs)
-    except httpx.TimeoutException as exc:
-        raise ValueError(f"{call} timed out waiting for the REST backend at {REST_URL}") from exc
-    except httpx.TransportError as exc:
-        reason = str(exc) or type(exc).__name__
-        raise ValueError(
-            f"{call} failed: REST backend at {REST_URL} is unreachable ({reason})"
-        ) from exc
-    if not response.is_success:
-        _raise_backend_error(response, call)
-    return response.json()
-
-
-def _api_key(ctx: "Context | None") -> str | None:
-    """The caller's API key: the request's X-API-Key header, or MEMORY_API_KEY for stdio."""
-    request = None
-    if ctx is not None:
-        try:
-            request = ctx.request_context.request
-        except ValueError:
-            request = None
-    if request is not None:
-        header = request.headers.get(API_KEY_HEADER)
-        if header:
-            return header
-    return os.environ.get("MEMORY_API_KEY")
-
-
-def _auth_headers(ctx: "Context | None") -> dict[str, str]:
-    api_key = _api_key(ctx)
-    return {API_KEY_HEADER: api_key} if api_key else {}
-
-
 async def _search(
     query: str,
     source: str,
@@ -232,11 +162,11 @@ async def _search(
         body["author"] = author
     if budget_tokens is not None:
         body["budget_tokens"] = budget_tokens
-    return await _call(
+    return await rest_client.call(
         "POST",
         "/search",
         json=body,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -444,11 +374,11 @@ async def list_notes(
         params.append(("author", author))
     if limit is not None:
         params.append(("limit", str(limit)))
-    return await _call(
+    return await rest_client.call(
         "GET",
         "/notes",
         params=params,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -537,11 +467,11 @@ async def save_memory(
         body["namespace"] = namespace
     if occurred_at is not None:
         body["occurred_at"] = occurred_at
-    return await _call(
+    return await rest_client.call(
         "POST",
         "/save_memory",
         json=body,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -609,11 +539,11 @@ async def send_message(
         body["idempotency_key"] = idempotency_key
     if expires_at is not None:
         body["expires_at"] = expires_at
-    return await _call(
+    return await rest_client.call(
         "POST",
         "/messages",
         json=body,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -653,11 +583,11 @@ async def list_messages(
         params.append(("subject", subject))
     if limit is not None:
         params.append(("limit", str(limit)))
-    return await _call(
+    return await rest_client.call(
         "GET",
         "/messages",
         params=params,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -672,10 +602,10 @@ async def claim_message(message_id: str, ctx: Context | None = None) -> dict[str
     An unknown id, or one outside the caller's namespaces, gets a 404; an
     already-claimed, cancelled, superseded, or expired id gets a 409.
     """
-    return await _call(
+    return await rest_client.call(
         "POST",
         f"/messages/{_message_uuid(message_id)}/claim",
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -688,57 +618,15 @@ async def cancel_message(message_id: str, ctx: Context | None = None) -> dict[st
     keeps its report `status`. Unknown, unauthorized, or no-longer-pending ids
     get 404/409.
     """
-    return await _call(
+    return await rest_client.call(
         "DELETE",
         f"/messages/{_message_uuid(message_id)}",
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
-@mcp.tool()
-async def update_my_profile(owner: str, content: str, ctx: Context | None = None) -> dict[str, Any]:
-    """Replace this agent's own standing document: its persona, working rules, and the
-    conventions it follows. Delivered back at every session start.
-
-    `owner` is this agent's author slug, one of the key's authors. Each call
-    replaces the whole text, so start from the current version delivered at session start
-    and send the complete document; empty content clears it. Never put facts about the user here: how
-    this agent knows the user changes only through propose_user_profile. Returns
-    {status: "written" | "unchanged", version}.
-    """
-    return await _call(
-        "PUT",
-        "/profiles/self",
-        json={"owner": owner, "content": content},
-        headers=_auth_headers(ctx),
-    )
-
-
-@mcp.tool()
-async def propose_user_profile(
-    owner: str,
-    content: str,
-    reason: str,
-    base_version: int,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Propose a full replacement of how this agent knows the user; the user approves it
-    outside the agent.
-
-    `owner` is this agent's author slug. `content` is the complete new user profile, not a
-    diff. `reason` (1-1000 characters) says why. `base_version` is the user version the
-    content was written against, as delivered at session start (0 when none). A new
-    proposal supersedes this owner's pending one. After proposing, show the user the change
-    and ask them to approve it with the profile-approval skill. Never approve on the user's
-    behalf and never run the approval command yourself. Returns {id, status: "pending",
-    superseded}.
-    """
-    return await _call(
-        "POST",
-        "/profiles/user/proposals",
-        json={"owner": owner, "content": content, "reason": reason, "base_version": base_version},
-        headers=_auth_headers(ctx),
-    )
+mcp.tool()(profile_tools.update_my_profile)
+mcp.tool()(profile_tools.propose_user_profile)
 
 
 @mcp.tool()
@@ -763,11 +651,11 @@ async def list_memory_duplicates(
         params.append(("kind", kind))
     if limit is not None:
         params.append(("limit", str(limit)))
-    return await _call(
+    return await rest_client.call(
         "GET",
         "/admin/duplicates",
         params=params,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -787,11 +675,11 @@ async def archive_notes(
     body: dict[str, Any] = {"ids": ids, "author": author}
     if confirm:
         body["confirm"] = True
-    return await _call(
+    return await rest_client.call(
         "POST",
         "/admin/archive",
         json=body,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -809,11 +697,11 @@ async def restore_notes(
     body: dict[str, Any] = {"ids": ids}
     if confirm:
         body["confirm"] = True
-    return await _call(
+    return await rest_client.call(
         "POST",
         "/admin/restore",
         json=body,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -832,11 +720,11 @@ async def delete_notes(
     body: dict[str, Any] = {"ids": ids}
     if confirm:
         body["confirm"] = True
-    return await _call(
+    return await rest_client.call(
         "POST",
         "/admin/notes/delete",
         json=body,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -859,11 +747,11 @@ async def query_table(
     body: dict[str, Any] = {"sql": sql}
     if namespace is not None:
         body["namespace"] = namespace
-    return await _call(
+    return await rest_client.call(
         "POST",
         "/tables/query",
         json=body,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -910,12 +798,12 @@ async def ingest_document(
         data["document_id"] = document_id
     if origin is not None:
         data["origin"] = origin
-    payload = await _call(
+    payload = await rest_client.call(
         "POST",
         "/ingest/document",
         data=data,
         files={"file": (filename, content.encode("utf-8"))},
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
     return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
@@ -934,11 +822,11 @@ async def remove_document(
     `doc_rows` rows are removed with them.
     """
     params = {"namespace": namespace} if namespace is not None else None
-    return await _call(
+    return await rest_client.call(
         "DELETE",
         f"/ingest/documents/{document_id}",
         params=params,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
 
 
@@ -963,11 +851,11 @@ async def ingest_repo(
         body["branch"] = branch
     if name is not None:
         body["name"] = name
-    payload = await _call(
+    payload = await rest_client.call(
         "POST",
         "/repos",
         json=body,
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
     return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
@@ -981,10 +869,10 @@ async def remove_repo(name: str, ctx: Context | None = None) -> dict[str, Any]:
     that tears down the removed repo's code chunks. Returns
     {job_id, status_url}; poll status_url for progress.
     """
-    payload = await _call(
+    payload = await rest_client.call(
         "DELETE",
         f"/repos/{name}",
-        headers=_auth_headers(ctx),
+        headers=rest_client.auth_headers(ctx),
     )
     return {"job_id": payload["job_id"], "status_url": payload["status_url"]}
 
@@ -997,7 +885,7 @@ async def list_repos(ctx: Context | None = None) -> list[dict[str, Any]]:
     short head commit, the number of indexed code chunks, and the owning
     key's label (null when unrecorded).
     """
-    return await _call("GET", "/repos", headers=_auth_headers(ctx))
+    return await rest_client.call("GET", "/repos", headers=rest_client.auth_headers(ctx))
 
 
 def quiet_request_noise() -> None:

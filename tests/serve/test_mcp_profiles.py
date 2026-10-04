@@ -1,6 +1,6 @@
 """The two MCP profile tools: what they send, which key they forward, and their errors.
 
-No DB/network: mcp_server._client is mocked via httpx.MockTransport.
+No DB/network: rest_client.client is mocked via httpx.MockTransport.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ import httpx
 import pytest
 
 from memory_base.serve import mcp_server
+from memory_base.serve.common import rest_client
+from memory_base.serve.profiles import tools
 
 
 class FakeHeaders:
@@ -44,10 +46,10 @@ def _capture(monkeypatch, status, body):
 
     def fake_client():
         return httpx.AsyncClient(
-            base_url=mcp_server.REST_URL, transport=httpx.MockTransport(handler)
+            base_url=rest_client.REST_URL, transport=httpx.MockTransport(handler)
         )
 
-    monkeypatch.setattr(mcp_server, "_client", fake_client)
+    monkeypatch.setattr(rest_client, "client", fake_client)
     return captured
 
 
@@ -94,7 +96,7 @@ def test_the_tool_descriptions_state_who_writes_what():
 def test_update_my_profile_puts_the_self_part_with_the_request_key(monkeypatch):
     captured = _capture(monkeypatch, 200, {"status": "written", "version": 3})
     ctx = FakeCtx({"X-API-Key": "agents-key"})
-    result = asyncio.run(mcp_server.update_my_profile("claude-code", "Rules.", ctx=ctx))
+    result = asyncio.run(tools.update_my_profile("claude-code", "Rules.", ctx=ctx))
     assert result == {"status": "written", "version": 3}
     assert captured == [
         {
@@ -109,9 +111,7 @@ def test_update_my_profile_puts_the_self_part_with_the_request_key(monkeypatch):
 def test_propose_user_profile_posts_a_proposal_with_the_stdio_key(monkeypatch):
     monkeypatch.setenv("MEMORY_API_KEY", "stdio-key")
     captured = _capture(monkeypatch, 201, {"id": 4, "status": "pending", "superseded": 2})
-    result = asyncio.run(
-        mcp_server.propose_user_profile("natsume", "Lives in Seoul.", "they moved", 1)
-    )
+    result = asyncio.run(tools.propose_user_profile("natsume", "Lives in Seoul.", "they moved", 1))
     assert result == {"id": 4, "status": "pending", "superseded": 2}
     assert captured == [
         {
@@ -131,7 +131,7 @@ def test_propose_user_profile_posts_a_proposal_with_the_stdio_key(monkeypatch):
 def test_a_stale_proposal_keeps_the_current_version_and_says_to_refresh(monkeypatch):
     _capture(monkeypatch, 409, {"error": "stale", "version": 5})
     with pytest.raises(ValueError) as exc:
-        asyncio.run(mcp_server.propose_user_profile("claude-code", "x", "r", 3))
+        asyncio.run(tools.propose_user_profile("claude-code", "x", "r", 3))
     message = str(exc.value)
     assert "stale" in message
     assert "version 5" in message
@@ -144,7 +144,7 @@ def test_a_stale_proposal_keeps_the_current_version_and_says_to_refresh(monkeypa
 def test_other_profile_errors_surface_the_backend_reason(monkeypatch):
     _capture(monkeypatch, 403, {"error": "owner 'natsume' is not permitted for this key"})
     with pytest.raises(ValueError, match="^owner 'natsume' is not permitted for this key$"):
-        asyncio.run(mcp_server.update_my_profile("natsume", "x"))
+        asyncio.run(tools.update_my_profile("natsume", "x"))
     _capture(monkeypatch, 409, {"error": "stale"})
     with pytest.raises(ValueError, match="^stale$"):
-        asyncio.run(mcp_server.update_my_profile("natsume", "x"))
+        asyncio.run(tools.update_my_profile("natsume", "x"))

@@ -4,7 +4,7 @@ namespace argument passing straight through instead of being resolved
 against a header-derived allowed set (namespace resolution now lives in
 REST, not MCP).
 
-No DB/network: mcp_server._client is mocked via httpx.MockTransport, matching
+No DB/network: rest_client.client is mocked via httpx.MockTransport, matching
 the convention in tests/serve/test_mcp_proxy.py. The connection's Context is
 faked with a minimal object exposing ``.request_context.request.headers``,
 mirroring the shape mcp.server.fastmcp.Context exposes over streamable HTTP.
@@ -19,6 +19,7 @@ import httpx
 import pytest
 
 from memory_base.serve import mcp_server
+from memory_base.serve.common import rest_client
 
 
 class FakeHeaders:
@@ -48,10 +49,10 @@ class FakeCtx:
 def _patch_client(monkeypatch, handler):
     def fake_client():
         return httpx.AsyncClient(
-            base_url=mcp_server.REST_URL, transport=httpx.MockTransport(handler)
+            base_url=rest_client.REST_URL, transport=httpx.MockTransport(handler)
         )
 
-    monkeypatch.setattr(mcp_server, "_client", fake_client)
+    monkeypatch.setattr(rest_client, "client", fake_client)
 
 
 # ---- _api_key: request header vs MEMORY_API_KEY fallback -------------------
@@ -59,44 +60,44 @@ def _patch_client(monkeypatch, handler):
 
 def test_api_key_from_request_header():
     ctx = FakeCtx(headers={"X-API-Key": "from-header"})
-    assert mcp_server._api_key(ctx) == "from-header"
+    assert rest_client.api_key(ctx) == "from-header"
 
 
 def test_api_key_header_lookup_is_case_insensitive():
     ctx = FakeCtx(headers={"x-api-key": "from-header"})
-    assert mcp_server._api_key(ctx) == "from-header"
+    assert rest_client.api_key(ctx) == "from-header"
 
 
 def test_api_key_no_ctx_falls_back_to_env(monkeypatch):
     monkeypatch.setenv("MEMORY_API_KEY", "from-env")
-    assert mcp_server._api_key(None) == "from-env"
+    assert rest_client.api_key(None) == "from-env"
 
 
 def test_api_key_ctx_with_no_request_falls_back_to_env(monkeypatch):
     monkeypatch.setenv("MEMORY_API_KEY", "from-env")
     ctx = FakeCtx(no_request=True)
-    assert mcp_server._api_key(ctx) == "from-env"
+    assert rest_client.api_key(ctx) == "from-env"
 
 
 def test_api_key_ctx_with_no_header_falls_back_to_env(monkeypatch):
     monkeypatch.setenv("MEMORY_API_KEY", "from-env")
     ctx = FakeCtx(headers={})
-    assert mcp_server._api_key(ctx) == "from-env"
+    assert rest_client.api_key(ctx) == "from-env"
 
 
 def test_api_key_absent_everywhere_is_none(monkeypatch):
     monkeypatch.delenv("MEMORY_API_KEY", raising=False)
-    assert mcp_server._api_key(None) is None
+    assert rest_client.api_key(None) is None
 
 
 def test_auth_headers_omits_key_when_absent(monkeypatch):
     monkeypatch.delenv("MEMORY_API_KEY", raising=False)
-    assert mcp_server._auth_headers(None) == {}
+    assert rest_client.auth_headers(None) == {}
 
 
 def test_auth_headers_includes_key_when_present():
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    assert mcp_server._auth_headers(ctx) == {"x-api-key": "secret"}
+    assert rest_client.auth_headers(ctx) == {"x-api-key": "secret"}
 
 
 # ---- every REST call forwards the resolved header ---------------------------

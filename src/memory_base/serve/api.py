@@ -37,7 +37,6 @@ from memory_base.serve import keys
 from memory_base.serve import messages
 from memory_base.serve import namespaces
 from memory_base.serve import notes
-from memory_base.serve import profiles
 from memory_base.serve import repos
 from memory_base.serve import tables
 from memory_base.serve import verdicts
@@ -45,6 +44,7 @@ from memory_base.serve.auth import ApiKeyAuthMiddleware
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.common.http import error
 from memory_base.serve.common.http import json_body
+from memory_base.serve.profiles import routes as profile_routes
 from memory_base.serve.notes import (
     CredentialNoteError,
     NOTE_KINDS,
@@ -916,20 +916,22 @@ app = Starlette(
         Route("/search", search_route, methods=["POST"]),
         Route("/save_memory", save_memory_route, methods=["POST"]),
         Route("/notes", notes_list_route, methods=["GET"]),
-        Route("/profiles", profiles.profile_route, methods=["GET"]),
-        Route("/profiles/self", profiles.self_route, methods=["PUT"]),
-        Route("/profiles/versions", profiles.versions_route, methods=["GET"]),
-        Route("/profiles/user/proposals", profiles.propose_route, methods=["POST"]),
-        Route("/profiles/user/proposals", profiles.proposals_route, methods=["GET"]),
-        Route("/profiles/user/proposals/{proposal_id}", profiles.proposal_route, methods=["GET"]),
+        Route("/profiles", profile_routes.profile_route, methods=["GET"]),
+        Route("/profiles/self", profile_routes.self_route, methods=["PUT"]),
+        Route("/profiles/versions", profile_routes.versions_route, methods=["GET"]),
+        Route("/profiles/user/proposals", profile_routes.propose_route, methods=["POST"]),
+        Route("/profiles/user/proposals", profile_routes.proposals_route, methods=["GET"]),
+        Route(
+            "/profiles/user/proposals/{proposal_id}", profile_routes.proposal_route, methods=["GET"]
+        ),
         Route(
             "/profiles/user/proposals/{proposal_id}/approve",
-            profiles.approve_route,
+            profile_routes.approve_route,
             methods=["POST"],
         ),
         Route(
             "/profiles/user/proposals/{proposal_id}/reject",
-            profiles.reject_route,
+            profile_routes.reject_route,
             methods=["POST"],
         ),
         Route("/messages", messages_send_route, methods=["POST"]),

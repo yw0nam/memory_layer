@@ -14,7 +14,8 @@ from contextlib import asynccontextmanager
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth, profiles
+from memory_base.serve import api, auth
+from memory_base.serve.profiles import routes, store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -262,9 +263,9 @@ def fake_db(monkeypatch):
     async def noop(conn):
         return None
 
-    monkeypatch.setattr(profiles.db, "acquire", acquire)
-    monkeypatch.setattr(profiles, "ensure_schema_once", noop)
-    monkeypatch.setattr(profiles, "_now", lambda: NOW)
+    monkeypatch.setattr(store.db, "acquire", acquire)
+    monkeypatch.setattr(store, "ensure_schema_once", noop)
+    monkeypatch.setattr(store, "_now", lambda: NOW)
     return conn
 
 
@@ -735,7 +736,7 @@ def test_a_proposal_starts_pending_with_no_decision(agent, fake_db):
 
 def test_a_new_proposal_supersedes_the_pending_one(agent, fake_db, monkeypatch):
     _propose("first")
-    monkeypatch.setattr(profiles, "_now", lambda: NOW + 5)
+    monkeypatch.setattr(store, "_now", lambda: NOW + 5)
     response = _propose("second")
     assert response.json() == {"id": 2, "status": "pending", "superseded": 1}
     first, second = fake_db.proposals
@@ -791,7 +792,7 @@ def test_a_proposal_for_another_owner_is_forbidden(agent, fake_db):
 
 def test_approve_writes_a_user_version_with_the_proposal_id(user, fake_db, monkeypatch):
     fake_db.add_proposal(content="The user lives in Seoul.")
-    monkeypatch.setattr(profiles, "_now", lambda: NOW + 9)
+    monkeypatch.setattr(store, "_now", lambda: NOW + 9)
     response = _approve(1, note="  looks right  ")
     assert response.status_code == 200
     assert response.json() == {"status": "approved", "version": 1}
@@ -884,7 +885,7 @@ def test_approve_over_an_existing_user_version_increments_it(user, fake_db):
 def test_reject_records_the_decision_and_writes_no_version(user, fake_db, monkeypatch):
     fake_db.add_version(OWNER, "user", "v1")
     fake_db.add_proposal(base_version=0)
-    monkeypatch.setattr(profiles, "_now", lambda: NOW + 3)
+    monkeypatch.setattr(store, "_now", lambda: NOW + 3)
     response = _reject(1, note=" not true ")
     assert response.status_code == 200
     assert response.json() == {"status": "rejected"}
@@ -1072,4 +1073,5 @@ def test_the_old_profile_routes_and_slot_machinery_are_gone(monkeypatch, fake_db
     assert client.get("/profiles").status_code == 400
     assert client.get("/profiles", params={"namespace": "default"}).status_code == 400
     for name in ("PROFILE_VERSION", "source_hash", "render_rules", "SLOT_KINDS", "SLOT_FIELDS"):
-        assert not hasattr(profiles, name)
+        assert not hasattr(store, name)
+        assert not hasattr(routes, name)

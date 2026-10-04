@@ -214,14 +214,15 @@ def rest_in_process(monkeypatch):
     proxy -> Starlette app -> notes/search -> real DB/embedder — without
     binding a port.
     """
-    from memory_base.serve import api, mcp_server
+    from memory_base.serve import api
+    from memory_base.serve.common import rest_client
 
     def _client() -> httpx.AsyncClient:
         return httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
         )
 
-    monkeypatch.setattr(mcp_server, "_client", _client)
-    # mcp_server has no request context here (ctx=None), so it falls back to this env var;
+    monkeypatch.setattr(rest_client, "client", _client)
+    # The MCP tools have no request context here (ctx=None), so it falls back to this env var;
     # tests/serve/conftest.py's auth stub resolves "test-key" to an admin identity.
     monkeypatch.setenv("MEMORY_API_KEY", "test-key")
