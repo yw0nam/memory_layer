@@ -1,26 +1,32 @@
-"""Claude Code SessionStart hook: deliver the standing profiles and this repo's handoffs.
+"""Claude Code SessionStart hook: deliver this agent's profile and this repo's handoffs.
 
 Reads the hook payload on stdin and prints one <memory-context> fence holding,
-in order, the served profiles (`GET /profiles`: each slot's latest version, for
-every namespace the key allows) and the pending handoffs addressed to this
-repository. The handoff scope `repo:<host>/<path>` comes from the `origin`
-remote of the payload's `cwd`; a cwd outside a git repository, without an
-`origin` remote, or whose origin is not a remote host gets the profiles alone.
-At most ten handoffs print, newest first; the hook never claims one: the
-session claims a handoff only when asked to continue it. Profiles and handoffs
-are fetched independently, so a failure of either keeps the other. Every
-failure mode is fail-open: no output, exit 0. Stdlib only — the script runs
-under whatever python3 Claude Code invokes, outside any venv.
+in order, the configured owner's profile (`GET /profiles?owner=<owner>`) and the
+pending handoffs addressed to this repository. The profile block names the owner,
+then prints `## user (v<n>)` and `## self (v<n>)`, each with its content or
+`(empty)`, so the session always knows the user version a proposal must be
+written against; when a proposal awaits the user's approval it adds a notice
+naming the proposal id and the approval CLI, never the proposal's content. A
+failed or malformed profile fetch prints no profile block and no version.
+The handoff scope `repo:<host>/<path>` comes from the `origin` remote of the
+payload's `cwd`; a cwd outside a git repository, without an `origin` remote, or
+whose origin is not a remote host gets the profile alone. At most ten handoffs
+print, newest first; the hook never claims one: the session claims a handoff
+only when asked to continue it. The profile and the handoffs are fetched
+independently, so a failure of either keeps the other. Every failure mode is
+fail-open: no output, exit 0. Stdlib only — the script runs under whatever
+python3 Claude Code invokes, outside any venv.
 
 The hook runs at every SessionStart source (startup, resume, clear, compact)
-through one settings.json entry without a matcher, so the profiles return after
+through one settings.json entry without a matcher, so the profile returns after
 a compaction. Its two requests take up to 3 seconds each, so the entry's
 timeout is 10 seconds. Installation, the settings.json entry, and the key file
 are shared with the UserPromptSubmit hook and documented in prefetch_hook.py.
 
 Config via environment, every var optional: MEMORY_BASE_URL (default
 http://127.0.0.1:8010), MEMORY_BASE_API_KEY, MEMORY_BASE_ENV (env file
-holding the key; default ~/.config/memory-base/env).
+holding the key; default ~/.config/memory-base/env), MEMORY_BASE_AUTHOR (the
+profile owner, an author slug of the key; default claude-code).
 """
 
 from __future__ import annotations
@@ -41,7 +47,14 @@ GIT_TIMEOUT_SECONDS = 1.0
 HANDOFF_HEADER = (
     "Memory: pending handoffs for this repo. Nothing is claimed; ask to continue one to claim it."
 )
-PROFILE_HEADER = "Memory: standing profile. Apply it to every task."
+DEFAULT_OWNER = "claude-code"
+PROFILE_HEADER = "Memory: standing profile for {owner}. Apply it to every task."
+PROFILE_CLI = "~/.config/memory-base/mb_profile.py"
+PENDING_NOTICE = (
+    "A proposed change to the user profile (proposal {id}) awaits the user's approval. "
+    f"Ask the user to run `! python3 {PROFILE_CLI} show {{id}}` to inspect its diff, then "
+    "approve or reject it with the memory-profile-approval skill."
+)
 
 _FENCE_TAG = re.compile(r"<\s*/?\s*memory-context", re.IGNORECASE)
 _SCP_ORIGIN = re.compile(r"(?:[^:@/]+@)?(?P<host>[^:/]+):(?P<path>.+)")
@@ -103,10 +116,34 @@ def _defuse(text: str) -> str:
     return _FENCE_TAG.sub("[memory-context]", text)
 
 
-def format_profiles(rows: list[dict]) -> str:
-    """The profile header, then each profile under `## <slot> (<namespace>)`; empty for none."""
-    sections = [_defuse(f"## {row['slot']} ({row['namespace']})\n{row['content']}") for row in rows]
-    return "\n\n".join([PROFILE_HEADER, *sections]) if sections else ""
+def _part(profile: dict, name: str) -> tuple[int, str]:
+    version, body = profile[f"{name}_version"], profile[name]
+    if type(version) is not int:
+        raise ValueError(f"{name}_version is not an integer")
+    if body is None:
+        return version, ""
+    if not isinstance(body, dict) or not isinstance(body.get("content"), str):
+        raise ValueError(f"{name} is malformed")
+    return version, body["content"]
+
+
+def format_profile(owner: str, profile: dict) -> str:
+    """The owner's header, both parts under their version lines, and a pending notice.
+
+    Raises on a malformed profile, so a bad response never prints a fabricated version.
+    """
+    if not isinstance(profile, dict):
+        raise ValueError("profile is not an object")
+    lines = [PROFILE_HEADER.format(owner=owner)]
+    for name in ("user", "self"):
+        version, content = _part(profile, name)
+        lines += [f"## {name} (v{version})", content or "(empty)"]
+    pending = profile["pending_proposal"]
+    if pending is not None:
+        if not isinstance(pending, dict) or type(pending.get("id")) is not int:
+            raise ValueError("pending_proposal is malformed")
+        lines.append(PENDING_NOTICE.format(id=pending["id"]))
+    return _defuse("\n".join(lines))
 
 
 def format_handoffs(rows: list[dict]) -> str:
@@ -119,9 +156,9 @@ def format_handoffs(rows: list[dict]) -> str:
     return "\n".join([HANDOFF_HEADER, *lines]) if lines else ""
 
 
-def _profiles(get) -> str:
+def _profile(get, owner: str) -> str:
     try:
-        return format_profiles(get("/profiles", {}))
+        return format_profile(owner, get("/profiles", {"owner": owner}))
     except Exception:
         return ""
 
@@ -143,9 +180,9 @@ def _handoffs(payload: dict, get, remote_of) -> str:
         return ""
 
 
-def run_hook(payload: dict, get, remote_of=git_origin) -> str:
-    """Fetch the profiles and this repo's pending handoffs via `get`; one fence, or empty."""
-    parts = [part for part in (_profiles(get), _handoffs(payload, get, remote_of)) if part]
+def run_hook(payload: dict, get, remote_of=git_origin, owner: str = DEFAULT_OWNER) -> str:
+    """Fetch the owner's profile and this repo's pending handoffs via `get`; one fence, or empty."""
+    parts = [part for part in (_profile(get, owner), _handoffs(payload, get, remote_of)) if part]
     if not parts:
         return ""
     return "\n".join(["<memory-context>", "\n\n".join(parts), "</memory-context>"])
@@ -168,7 +205,7 @@ def _resolve_api_key() -> str:
 
 
 def _get_from_server(url: str, api_key: str):
-    def get(path: str, params: dict) -> list[dict]:
+    def get(path: str, params: dict):
         query = f"?{urllib.parse.urlencode(params)}" if params else ""
         req = urllib.request.Request(
             f"{url.rstrip('/')}{path}{query}",
@@ -187,7 +224,8 @@ def main() -> int:
         if not api_key:
             return 0
         url = os.environ.get("MEMORY_BASE_URL", "http://127.0.0.1:8010")
-        block = run_hook(payload, _get_from_server(url, api_key))
+        owner = os.environ.get("MEMORY_BASE_AUTHOR") or DEFAULT_OWNER
+        block = run_hook(payload, _get_from_server(url, api_key), owner=owner)
         if block:
             print(block)
     except Exception:

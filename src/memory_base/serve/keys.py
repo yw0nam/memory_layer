@@ -5,6 +5,10 @@
     uv run python -m memory_base.serve.keys revoke <prefix-or-hash>
 
 `new` prints the plaintext key exactly once; only its sha256 hash is stored.
+
+A label's authors are the note authors its keys may save as and the profile owners
+they act for; the `user` author approves profile proposals and is held only by the
+user's key. An admin key can replace any label's authors.
 """
 
 from __future__ import annotations

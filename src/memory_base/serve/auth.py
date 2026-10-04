@@ -38,7 +38,11 @@ class KeyIdentity:
     """A request's authenticated caller: an admin sees every namespace.
 
     `authors` is the note authors this key may save as; an empty allowlist
-    means the key cannot save notes at all.
+    means the key cannot save notes at all. The same allowlist is the only
+    profile authority: a key acts for every profile owner among its authors,
+    and only a key carrying the `user` author reads every owner's profile and
+    approves or rejects proposals. Admin status, label, home, and namespace
+    permissions grant no profile access.
     """
 
     key_id: str

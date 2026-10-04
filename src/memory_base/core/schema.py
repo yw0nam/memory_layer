@@ -217,19 +217,32 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS consolidation_actions__run
           ON {schema}.consolidation_actions (namespace, run_id);
-        CREATE TABLE IF NOT EXISTS {schema}.profiles (
+        DROP TABLE IF EXISTS {schema}.profiles;
+        CREATE TABLE IF NOT EXISTS {schema}.agent_profiles (
           id bigserial PRIMARY KEY,
-          namespace text NOT NULL,
-          slot text NOT NULL CHECK (slot IN ('user', 'work-rules')),
+          owner text NOT NULL,
+          part text NOT NULL CHECK (part IN ('self', 'user')),
           version int NOT NULL,
           content text NOT NULL,
-          source_ids text[] NOT NULL,
-          source_hash text NOT NULL,
           author text NOT NULL,
-          model text,
+          proposal_id bigint,
           created_at double precision NOT NULL,
-          UNIQUE (namespace, slot, version)
+          UNIQUE (owner, part, version)
         );
+        CREATE TABLE IF NOT EXISTS {schema}.profile_proposals (
+          id bigserial PRIMARY KEY,
+          owner text NOT NULL,
+          content text NOT NULL,
+          reason text NOT NULL,
+          base_version int NOT NULL,
+          status text NOT NULL
+            CHECK (status IN ('pending', 'approved', 'rejected', 'superseded')),
+          created_at double precision NOT NULL,
+          decided_at double precision,
+          decision_note text
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS profile_proposals__pending
+          ON {schema}.profile_proposals (owner) WHERE status = 'pending';
         CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
           id bigserial PRIMARY KEY,
           query text NOT NULL,

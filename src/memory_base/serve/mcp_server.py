@@ -134,12 +134,22 @@ def _client() -> httpx.AsyncClient:
 
 def _raise_backend_error(response: httpx.Response, call: str) -> None:
     try:
-        message = response.json()["error"]
+        body = response.json()
+        message = body["error"]
     except (ValueError, KeyError, TypeError):
         body = response.text.strip()[:500]
         message = f"{call} failed: backend returned {response.status_code} {response.reason_phrase}"
         if body:
             message += f": {body}"
+    else:
+        version = body.get("version")
+        if response.status_code == 409 and message == "stale" and type(version) is int:
+            message = (
+                f"stale: the user profile is now at version {version}. Refresh your profile "
+                "context (the next session-start delivery, or ask the user), then reconsider "
+                "the whole replacement against that version before proposing again; changing "
+                "only base_version is not enough."
+            )
     raise ValueError(message)
 
 
@@ -673,6 +683,52 @@ async def cancel_message(message_id: str, ctx: Context | None = None) -> dict[st
     return await _call(
         "DELETE",
         f"/messages/{_message_uuid(message_id)}",
+        headers=_auth_headers(ctx),
+    )
+
+
+@mcp.tool()
+async def update_my_profile(owner: str, content: str, ctx: Context | None = None) -> dict[str, Any]:
+    """Replace this agent's own standing document: its persona, working rules, and the
+    conventions it follows. Delivered back at every session start.
+
+    `owner` is this agent's author slug, one of the key's authors. Each call
+    replaces the whole text, so start from the current version delivered at session start
+    and send the complete document; empty content clears it. Never put facts about the user here: how
+    this agent knows the user changes only through propose_user_profile. Returns
+    {status: "written" | "unchanged", version}.
+    """
+    return await _call(
+        "PUT",
+        "/profiles/self",
+        json={"owner": owner, "content": content},
+        headers=_auth_headers(ctx),
+    )
+
+
+@mcp.tool()
+async def propose_user_profile(
+    owner: str,
+    content: str,
+    reason: str,
+    base_version: int,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Propose a full replacement of how this agent knows the user; the user approves it
+    outside the agent.
+
+    `owner` is this agent's author slug. `content` is the complete new user profile, not a
+    diff. `reason` (1-1000 characters) says why. `base_version` is the user version the
+    content was written against, as delivered at session start (0 when none). A new
+    proposal supersedes this owner's pending one. After proposing, show the user the change
+    and ask them to approve it with the profile-approval skill. Never approve on the user's
+    behalf and never run the approval command yourself. Returns {id, status: "pending",
+    superseded}.
+    """
+    return await _call(
+        "POST",
+        "/profiles/user/proposals",
+        json={"owner": owner, "content": content, "reason": reason, "base_version": base_version},
         headers=_auth_headers(ctx),
     )
 

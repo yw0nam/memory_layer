@@ -1,8 +1,8 @@
 """memory_base Hermes memory plugin — MemoryProvider interface.
 
-Delivers the standing profiles in the system prompt, fetched once per session,
-and pre-injects a per-turn semantic prefetch over the memory-base REST API into
-every conversation turn.
+Delivers the configured owner's profile in the system prompt, fetched once per
+session, and pre-injects a per-turn semantic prefetch over the memory-base REST
+API into every conversation turn.
 
 Config via config.yaml (memory.memory_base):
   url                — memory-base REST API base URL (required)
@@ -11,6 +11,8 @@ Config via config.yaml (memory.memory_base):
   min_score          — relevance floor for prefetch search (default: 0.25)
   api_key            — API key value, takes precedence over api_key_env (optional)
   api_key_env        — env var holding the API key (default: MEMORY_BASE_API_KEY)
+  owner              — profile owner, an author slug of the key (no default; absent,
+                       no profile is fetched)
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ def _load_plugin_config() -> dict[str, Any]:
 
 
 class MemoryBaseProvider(MemoryProvider):
-    """Standing profiles at session start, semantic prefetch every turn."""
+    """The owner's profile at session start, semantic prefetch every turn."""
 
     def __init__(self) -> None:
         self._config = _load_plugin_config()
@@ -73,7 +75,8 @@ class MemoryBaseProvider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._client = self._build_client()
-        self._profile_block = self._client.build_profile_block()
+        owner = str(self._config.get("owner") or "")
+        self._profile_block = self._client.build_profile_block(owner) if owner else ""
 
     def system_prompt_block(self) -> str:
         return self._profile_block
