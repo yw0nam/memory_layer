@@ -118,7 +118,9 @@ Decide one action per group:
 | `retire` | one or more members are fully covered by another member; `retire_ids` lists the covered ones and at least one member stays |
 | `merge` | no single member covers the group and one note can state every fact |
 
-**Default verdict by overlap type.** Apply this table first, then the rules below.
+**Default verdict by overlap type.** Apply this table first, then the rules below. Check
+the members' kinds first: a group whose members have different kinds is type 8 (`keep`),
+regardless of any other type it also fits.
 
 | # | overlap type | how to recognise it | verdict |
 |---|---|---|---|
