@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -356,18 +356,18 @@ BACKGROUND = (
 
 @asynccontextmanager
 async def lifespan(app: Starlette):
-    """Start background work and the hit flusher, stop them in reverse, and close the pools last."""
+    """Start background work and the hit flusher, stop what started in reverse, close the pools last.
+
+    A failing start() still stops everything started before it.
+    """
     del app
-    started = [(stop, await start()) for start, stop in BACKGROUND]
-    flusher = access_log.start_flusher()
-    try:
+    async with AsyncExitStack() as stack:
+        stack.push_async_callback(db.close_pool)
+        stack.push_async_callback(db.close_table_query_pool)
+        for start, stop in BACKGROUND:
+            stack.push_async_callback(stop, await start())
+        stack.push_async_callback(access_log.stop_flusher, access_log.start_flusher())
         yield
-    finally:
-        await access_log.stop_flusher(flusher)
-        for stop, handle in reversed(started):
-            await stop(handle)
-        await db.close_table_query_pool()
-        await db.close_pool()
 
 
 app = Starlette(
