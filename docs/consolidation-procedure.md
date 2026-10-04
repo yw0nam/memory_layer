@@ -73,7 +73,7 @@ change is applied.
 ## The run
 
 ```
- GET groups ──► judge each group ──► verify each merge (fresh context)
+ GET groups ──► judge each group twice (two contexts) ──► verify each merge
                                               │
      report ◄── handle statuses ◄── POST verdicts ◄┘
 ```
@@ -143,11 +143,10 @@ only type 7, the agent judges whether that member is about the same subject as t
 one specific rule, event, task, or decision that the member directly qualifies. Sharing a
 person, project, tool, or vocabulary is not the same subject. Same subject: `merge`, when
 the merge requirement passes and within `merge_max_chars`. Different subject: `keep`.
-Unsure: the group is left for the owner (below).
 
-In every other case where the agent is sure that more than one type fits, the more
-conservative verdict wins (`keep` over
-`merge`). `retire` still takes precedence over `merge` whenever one member fully covers the
+When the types' applicability is settled and more than one type fits, the more
+conservative verdict wins (`keep` over `merge`). Readings that lead to different actions are
+not settled; they follow the two-judgment rule below, and `keep` does not break that tie. `retire` still takes precedence over `merge` whenever one member fully covers the
 others.
 
 Rules:
@@ -175,13 +174,19 @@ A verdict's `reason` starts with `type N: `, where N is one integer from 1 to 8:
 whose verdict the group got (for a merge kept for length, the merge type). The report
 counts types from this prefix.
 
-**Groups left for the owner.** When the agent is unsure which action this section gives a
-group, it asks the owner instead of choosing: which type fits, whether a member is about the
-same subject, whether two rules conflict, whether a later member identifies an earlier
-decision. Unsure means the agent can read the members in two ways that lead to different
-actions; two type labels with the same action do not count. Submit no verdict for such a
-group. List it in the report for the owner's decision with the passages behind each
-reading and the recommended action. A held group blocks nothing on
+**Two judgments; disagreement goes to the owner.** Judge every group in two separate
+contexts: the agent's own and a fresh one that did not see the first (a separate subagent
+or a new session; one subagent may judge all groups). Give both the same members, this
+procedure, `merge_max_chars`, and the owner's decisions from the start instruction. Neither
+sees the other's action, reason, or merged text before it finishes. Each returns an action,
+the `retire_ids` of a retire, and the passages behind it.
+
+When the two actions differ, or the two `retire_ids` differ, the group is held: submit no
+verdict and list it in the report for the owner's decision with both readings, their
+passages, and the recommended action. Confidence does not override a disagreement; do not
+reconcile, vote, or ask a third judgment. Different type labels with the same action and
+`retire_ids` are agreement. When the second context cannot be opened, hold every group of
+the run. A held group blocks nothing on
 the server; without a recorded verdict it is offered again, and listed again, on every
 run until the owner decides. The owner gives the decision in a later start instruction
 (group key and verdict). That run submits it in its own mode, with its own run id, and
@@ -201,15 +206,19 @@ the owner's decision.
 
 ### 3. Verify every merge
 
-Before verification, count characters: a merged text not shorter than the member texts
-joined with single spaces fails the merge requirement and becomes `keep`. Then, before
-submitting a merge, open a fresh context that did not write it (a separate subagent
-or a new session). Give it only the member texts and the merged text, and ask whether
-every fact of the members is preserved and nothing is added or changed. The check must
-include negations ("not", "never", "without"), which the server's token check cannot
-catch. A merge that fails verification becomes `keep`, or `retire` when one member covers
-the rest. When no separate context can be opened for a merge, that merge becomes `keep`;
-re-reading it in the same context is not verification.
+A merge goes ahead only when both judgments chose `merge`. First count characters: a merged
+text not shorter than the member texts joined with single spaces fails the merge
+requirement. Then the second context checks the first context's merged text against the
+member texts: every fact, condition, negation ("not", "never", "without"), and protected
+token is kept, and nothing is added or changed. Negations need this check because the
+server's token check cannot see them. Re-reading a merge in the context that wrote it is
+not verification.
+
+In an apply run, send each verified merge first in a request with `"dry_run": true`. The
+server's deterministic checks run, and `planned` passes. In a dry run the normal submission
+is this check. A draft that fails the length count, the verification, or the server check
+is corrected once and checked again; when it still fails, the group is held for the owner
+with the failure. Never apply a draft the server rejected.
 
 ### 4. Submit verdicts
 
