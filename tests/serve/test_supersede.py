@@ -164,6 +164,22 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
 # ---- REST: the near-duplicate gate ------------------------------------------
 
 
+def test_save_memory_similar_notes_error_409(monkeypatch, client):
+    similar = [{"id": "note:neighbour000000", "score": 0.97, "text": "nearly the same content"}]
+
+    async def fake_save_note(content, **kwargs):
+        raise SimilarNotesError(similar)
+
+    monkeypatch.setattr(store, "save_note", fake_save_note)
+    response = client.post(
+        "/save_memory", json={"author": "natsume", "kind": "work", "content": "new content"}
+    )
+    assert response.status_code == 409
+    body = response.json()
+    assert body["error"].startswith("Refused: 1 active note(s)")
+    assert body["similar"] == similar
+
+
 def test_save_memory_non_bool_allow_similar_400(monkeypatch, client):
     async def fake_save_note(content, **kwargs):
         return {"id": "note:x", "kind": "work", "stored": True, "superseded": None, "similar": []}
