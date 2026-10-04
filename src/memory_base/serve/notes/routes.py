@@ -104,7 +104,7 @@ async def list_route(request: Request) -> JSONResponse:
     return JSONResponse(rows)
 
 
-async def old_route(request: Request) -> JSONResponse:
+async def old_notes_route(request: Request) -> JSONResponse:
     """List active agent notes older than a requested age, scoped to the caller's namespaces."""
     try:
         older_than_days = int(request.query_params.get("older_than_days", "90"))
