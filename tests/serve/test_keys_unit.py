@@ -151,3 +151,46 @@ def test_cli_revoke_reports_short_prefix_cleanly():
 def test_cli_list_parses():
     args = keys.build_parser().parse_args(["list"])
     assert args.command == "list"
+
+
+# ---- authors ------------------------------------------------------------------
+
+
+def test_new_key_stores_its_authors(monkeypatch):
+    conn = FakeConnection(fetchrow_results=[{"visibility": "public", "owner": None}])
+    _patch_acquire(monkeypatch, conn)
+    asyncio.run(keys.new_key("codex", authors=["codex"]))
+    _, insert_args = conn.executed[0]
+    assert insert_args[-1] == ["codex"]
+
+
+def test_cli_new_rejects_an_invalid_author_before_minting(monkeypatch):
+    conn = FakeConnection(fetchrow_results=[{"visibility": "public", "owner": None}])
+    _patch_acquire(monkeypatch, conn)
+    with pytest.raises(SystemExit, match="each author must match"):
+        keys.main(["new", "codex", "--author", "Codex!"])
+    assert conn.executed == []
+
+
+def test_cli_authors_replaces_the_list_when_names_are_given(monkeypatch, capsys):
+    calls = []
+
+    async def set_authors(label, authors):
+        calls.append((label, authors))
+        return authors
+
+    monkeypatch.setattr(keys, "set_authors", set_authors)
+    keys.main(["authors", "codex", "codex", "user", "codex"])
+    assert calls == [("codex", ["codex", "user"])]
+    assert capsys.readouterr().out.strip() == "codex: codex, user"
+
+
+def test_cli_authors_without_names_shows_the_list_and_fails_for_an_unknown_label(monkeypatch, capsys):
+    async def get_authors(label):
+        return ["claude-code"] if label == "claude-code" else None
+
+    monkeypatch.setattr(keys, "get_authors", get_authors)
+    keys.main(["authors", "claude-code"])
+    assert capsys.readouterr().out.strip() == "claude-code: claude-code"
+    with pytest.raises(SystemExit, match="no active key"):
+        keys.main(["authors", "nobody"])
