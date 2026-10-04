@@ -450,11 +450,11 @@ def _starts_sentence(text: str, start: int) -> bool:
     )
 
 
-def tokens(text: str, *, sentence_starts: bool = False) -> set[str]:
+def tokens(text: str, *, include_sentence_starts: bool = False) -> set[str]:
     """Numbers and dates, backticked spans, and names: the facts a merge must carry over.
 
     A name is a capitalized word other than `I` that does not start a sentence, or any
-    word with two or more capitals; `sentence_starts` also counts a capitalized word that
+    word with two or more capitals; `include_sentence_starts` also counts a capitalized word that
     starts a sentence. A numbered-list marker is not a number.
     """
     markers = {m.start(1) for m in NUMBERED_MARKER_RE.finditer(text)}
@@ -466,7 +466,7 @@ def tokens(text: str, *, sentence_starts: bool = False) -> set[str]:
             continue
         if sum(c.isupper() for c in word) >= 2 or (
             NAME_RE.fullmatch(word)
-            and (sentence_starts or not _starts_sentence(text, match.start()))
+            and (include_sentence_starts or not _starts_sentence(text, match.start()))
         ):
             found.add(word)
     return found
@@ -479,9 +479,11 @@ def token_check(member_texts: list[str], merged: str) -> str | None:
     side carries it, so a name that moves to or from a sentence start passes.
     """
     strict_members = set().union(*(tokens(text) for text in member_texts))
-    lenient_members = set().union(*(tokens(text, sentence_starts=True) for text in member_texts))
+    lenient_members = set().union(
+        *(tokens(text, include_sentence_starts=True) for text in member_texts)
+    )
     strict_merged = tokens(merged)
-    lenient_merged = tokens(merged, sentence_starts=True)
+    lenient_merged = tokens(merged, include_sentence_starts=True)
     problems = []
     if missing := sorted(strict_members - lenient_merged):
         problems.append(f"drops {', '.join(missing)}")

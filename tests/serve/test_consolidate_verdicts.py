@@ -283,13 +283,17 @@ def test_a_removed_mid_sentence_name_is_still_dropped():
 
 
 def test_the_single_word_i_is_never_a_name_at_a_sentence_start():
-    assert verdicts.tokens("I left.", sentence_starts=True) == set()
+    assert verdicts.tokens("I left.", include_sentence_starts=True) == set()
     assert verdicts.token_check(["I left. Then I ran."], "I ran.") is None
 
 
-def test_sentence_starts_counts_a_sentence_initial_name_but_not_a_list_marker():
-    assert verdicts.tokens("Alice met Bob. Done.", sentence_starts=True) == {"Alice", "Bob", "Done"}
-    assert verdicts.tokens("- Alice\n1. Bob", sentence_starts=True) == {"Alice", "Bob"}
+def test_include_sentence_starts_counts_a_sentence_initial_name_but_not_a_list_marker():
+    assert verdicts.tokens("Alice met Bob. Done.", include_sentence_starts=True) == {
+        "Alice",
+        "Bob",
+        "Done",
+    }
+    assert verdicts.tokens("- Alice\n1. Bob", include_sentence_starts=True) == {"Alice", "Bob"}
 
 
 def test_a_list_marker_is_not_a_number_but_a_number_in_the_line_is():
