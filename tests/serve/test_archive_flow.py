@@ -61,6 +61,7 @@ async def _seed_row(
     ts_last_active: float,
     last_hit_at: float | None = None,
     chunk_kind: str = "work",
+    source_type: str = "agent_note",
 ) -> None:
     await conn.execute(
         f"""
@@ -68,7 +69,7 @@ async def _seed_row(
           (id, source_type, source_ref, chunk_kind, session_id, content_raw,
            distilled, embedding, ts_last_active, metadata,
            hit_count, last_hit_at)
-        VALUES ($1,'agent_note','save_memory',$6,$1,$2,$2,$3::halfvec,$4,
+        VALUES ($1,$7,'save_memory',$6,$1,$2,$2,$3::halfvec,$4,
                 '{{}}'::jsonb, 0, $5)
         ON CONFLICT (id) DO NOTHING
         """,
@@ -78,6 +79,7 @@ async def _seed_row(
         ts_last_active,
         last_hit_at,
         chunk_kind,
+        source_type,
     )
 
 
@@ -313,5 +315,49 @@ def test_duplicates_keep_pair_found_only_from_larger_id_direction():
         ]
         assert len(matching_pairs) == 1
         assert matching_pairs[0]["score"] >= 0.99
+    finally:
+        asyncio.run(_delete_rows(seeded_ids))
+
+
+@pytest.mark.integration
+def test_duplicates_and_cold_candidates_exclude_document_chunks():
+    token = time.time_ns()
+    note_a_id = f"notesonly-note-a-{token}"
+    note_b_id = f"notesonly-note-b-{token}"
+    doc_id = f"doc:notesonly-{token}:0"
+    seeded_ids = [note_a_id, note_b_id, doc_id]
+    now = time.time()
+    old = now - 400 * 86400
+
+    async def _seed() -> None:
+        conn = await asyncpg.connect(db_url())
+        try:
+            await ensure_schema(conn)
+            vec = _angled_vec(0)
+            await _seed_row(conn, note_a_id, "notes only a", vec, old)
+            await _seed_row(conn, note_b_id, "notes only b", vec, old)
+            await _seed_row(
+                conn,
+                doc_id,
+                "notes only document",
+                vec,
+                old,
+                chunk_kind="doc",
+                source_type="document",
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_delete_rows(seeded_ids))
+    asyncio.run(_seed())
+    try:
+        pairs = asyncio.run(admin.find_duplicates(0.99, None, 1000))
+        pair_ids = [{pair["a"]["id"], pair["b"]["id"]} for pair in pairs]
+        assert {note_a_id, note_b_id} in pair_ids
+        assert not any(doc_id in ids for ids in pair_ids)
+
+        candidate_ids = {row["id"] for row in asyncio.run(admin.archive_candidates(now))}
+        assert {note_a_id, note_b_id} <= candidate_ids
+        assert doc_id not in candidate_ids
     finally:
         asyncio.run(_delete_rows(seeded_ids))

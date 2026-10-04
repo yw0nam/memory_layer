@@ -261,6 +261,37 @@ def test_duplicate_pairs_carry_each_sides_author(monkeypatch):
     assert pairs[0]["b"]["author"] == "claude-code"
 
 
+def _capture_queries(monkeypatch):
+    from contextlib import asynccontextmanager
+
+    queries: list[str] = []
+
+    class FakeConnection:
+        async def fetch(self, query, *args):
+            queries.append(query)
+            return []
+
+    @asynccontextmanager
+    async def acquire(timeout=None):
+        yield FakeConnection()
+
+    monkeypatch.setattr(admin.db, "acquire", acquire)
+    return queries
+
+
+def test_find_duplicates_reads_only_agent_notes_on_both_sides(monkeypatch):
+    queries = _capture_queries(monkeypatch)
+    asyncio.run(admin.find_duplicates(0.9, None, 10))
+    assert "a.source_type = 'agent_note'" in queries[0]
+    assert "candidate.source_type = 'agent_note'" in queries[0]
+
+
+def test_archive_candidates_reads_only_agent_notes(monkeypatch):
+    queries = _capture_queries(monkeypatch)
+    asyncio.run(admin.archive_candidates(1_700_000_000.0))
+    assert "source_type = 'agent_note'" in queries[0]
+
+
 # ---- POST /admin/archive -----------------------------------------------------
 
 
