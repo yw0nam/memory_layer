@@ -313,14 +313,14 @@ def test_save_memory_personal_kind_delegates_to_save_note(monkeypatch):
 
 
 def _patch_client(monkeypatch, handler):
-    import memory_base.serve.mcp_server as mcp_server
+    from memory_base.serve.common import rest_client
 
     def fake_client():
         return httpx.AsyncClient(
-            base_url=mcp_server.REST_URL, transport=httpx.MockTransport(handler)
+            base_url=rest_client.REST_URL, transport=httpx.MockTransport(handler)
         )
 
-    monkeypatch.setattr(mcp_server, "_client", fake_client)
+    monkeypatch.setattr(rest_client, "client", fake_client)
 
 
 def test_mcp_save_memory_posts_occurred_at_in_body(monkeypatch):

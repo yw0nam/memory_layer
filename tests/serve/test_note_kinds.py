@@ -24,6 +24,7 @@ from starlette.testclient import TestClient
 
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import admin, api, mcp_server, notes
+from memory_base.serve.common import rest_client
 from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
 from memory_base.serve.notes import (
     NOTE_KINDS,
@@ -231,10 +232,10 @@ def _tools():
 def _patch_client(monkeypatch, handler):
     def fake_client():
         return httpx.AsyncClient(
-            base_url=mcp_server.REST_URL, transport=httpx.MockTransport(handler)
+            base_url=rest_client.REST_URL, transport=httpx.MockTransport(handler)
         )
 
-    monkeypatch.setattr(mcp_server, "_client", fake_client)
+    monkeypatch.setattr(rest_client, "client", fake_client)
 
 
 def test_tool_list_offers_one_save_tool():

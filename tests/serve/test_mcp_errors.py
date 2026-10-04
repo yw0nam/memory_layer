@@ -9,15 +9,16 @@ import pytest
 
 from memory_base.core.config import SERVICE_TIMEOUT_SECONDS
 from memory_base.serve import mcp_server
+from memory_base.serve.common import rest_client
 
 
 def _patch_client(monkeypatch, handler):
     def fake_client():
         return httpx.AsyncClient(
-            base_url=mcp_server.REST_URL, transport=httpx.MockTransport(handler)
+            base_url=rest_client.REST_URL, transport=httpx.MockTransport(handler)
         )
 
-    monkeypatch.setattr(mcp_server, "_client", fake_client)
+    monkeypatch.setattr(rest_client, "client", fake_client)
 
 
 def _list_repos_error(monkeypatch, handler) -> str:
@@ -51,7 +52,7 @@ def test_timeout_names_the_backend_and_the_call(monkeypatch):
 
     message = _list_repos_error(monkeypatch, handler)
     assert "timed out" in message
-    assert mcp_server.REST_URL in message
+    assert rest_client.REST_URL in message
     assert "GET /repos" in message
 
 
@@ -61,10 +62,10 @@ def test_unreachable_backend_names_the_backend_and_the_call(monkeypatch):
 
     message = _list_repos_error(monkeypatch, handler)
     assert "unreachable" in message
-    assert mcp_server.REST_URL in message
+    assert rest_client.REST_URL in message
     assert "GET /repos" in message
     assert "All connection attempts failed" in message
 
 
 def test_proxy_waits_out_the_backends_own_ceilings():
-    assert mcp_server._client().timeout.read >= SERVICE_TIMEOUT_SECONDS
+    assert rest_client.client().timeout.read >= SERVICE_TIMEOUT_SECONDS

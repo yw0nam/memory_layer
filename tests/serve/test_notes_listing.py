@@ -15,7 +15,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api, auth, notes
-from memory_base.serve.http import TEXT_LIMIT
+from memory_base.serve.common.http import TEXT_LIMIT
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 

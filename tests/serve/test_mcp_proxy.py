@@ -1,16 +1,8 @@
-"""Unit tests for the rewritten MCP server: an httpx proxy over the REST API.
+"""Unit tests for the MCP server as an httpx proxy over the REST API.
 
-memory_base.serve.mcp_server keeps FastMCP
-and the tool signatures/docstrings, but each tool body is
-an httpx call to REST_URL instead of touching the DB/search pipeline
-directly. Tests inject a mocked transport by monkeypatching
-``mcp_server._client``, a zero-arg factory returning an
-``httpx.AsyncClient(base_url=REST_URL, ...)`` -- the intended patch point for
-a client-construction hook (no real network, no DB).
-
-Collection succeeds (mcp_server.py already exists) but every proxy test below
-fails today: the module still calls the DB/search pipeline directly and has
-no REST_URL constant or _client hook.
+Each tool body is an httpx call to REST_URL, never the DB/search pipeline. Tests inject a
+mocked transport by monkeypatching ``rest_client.client``, a zero-arg factory returning an
+``httpx.AsyncClient(base_url=REST_URL, ...)`` (no real network, no DB).
 """
 
 from __future__ import annotations
@@ -23,15 +15,16 @@ import httpx
 import pytest
 
 from memory_base.serve import mcp_server
+from memory_base.serve.common import rest_client
 
 
 def _patch_client(monkeypatch, handler):
     def fake_client():
         return httpx.AsyncClient(
-            base_url=mcp_server.REST_URL, transport=httpx.MockTransport(handler)
+            base_url=rest_client.REST_URL, transport=httpx.MockTransport(handler)
         )
 
-    monkeypatch.setattr(mcp_server, "_client", fake_client)
+    monkeypatch.setattr(rest_client, "client", fake_client)
 
 
 # ---- tool registration ----------------------------------------------------

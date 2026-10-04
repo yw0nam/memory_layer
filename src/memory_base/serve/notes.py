@@ -21,7 +21,7 @@ from memory_base.retrieval.search import (
     parse_time_bound,
 )
 from memory_base.serve import namespaces
-from memory_base.serve.http import TEXT_LIMIT
+from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.namespaces import DEFAULT_NAMESPACE
 
 

@@ -1,7 +1,8 @@
-"""Shared request/response helpers for serve-layer route modules."""
+"""Shared request/response helpers for serve-layer feature modules."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from starlette.requests import Request
@@ -21,3 +22,8 @@ async def json_body(request: Request) -> dict[str, Any]:
 def error(message: str, status: int = 400) -> JSONResponse:
     """Build a `{"error": message}` JSON response with the given status code."""
     return JSONResponse({"error": message}, status_code=status)
+
+
+def iso(ts: float | None) -> str | None:
+    """An epoch timestamp as an ISO 8601 UTC string; None stays None."""
+    return None if ts is None else datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()

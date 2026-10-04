@@ -8,7 +8,7 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.serve import namespaces
-from memory_base.serve.http import TEXT_LIMIT
+from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.notes import ARCHIVE_LINEAGE_FIELDS
 
 COLD_AGE_DAYS = int(os.getenv("COLD_AGE_DAYS", "180"))

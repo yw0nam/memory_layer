@@ -13,6 +13,7 @@ from loguru import logger
 from memory_base.adapters import document
 from memory_base.ingest import enrich
 from memory_base.serve import api, ingest_api, job_store, mcp_server, notes
+from memory_base.serve.common import rest_client
 
 # Uppercase on purpose: tag normalization lowercases, which would hide it from the detector.
 AWS_KEY = "AKIA" + "Q" * 16
@@ -85,10 +86,10 @@ def _rest():
 def _mcp_through_rest(monkeypatch):
     monkeypatch.setenv("MEMORY_API_KEY", "test-key")
     monkeypatch.setattr(
-        mcp_server,
-        "_client",
+        rest_client,
+        "client",
         lambda: httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=api.app), base_url=mcp_server.REST_URL
+            transport=httpx.ASGITransport(app=api.app), base_url=rest_client.REST_URL
         ),
     )
 

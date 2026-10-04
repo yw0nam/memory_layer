@@ -22,7 +22,8 @@ from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
 from memory_base.serve import consolidate
-from memory_base.serve.consolidate import Note, Pair, build_groups, group_entry, group_key, iso
+from memory_base.serve.common.http import iso
+from memory_base.serve.consolidate import Note, Pair, build_groups, group_entry, group_key
 from memory_base.serve.notes import (
     INSERT_NOTE_SQL,
     LINEAGE_FIELDS,

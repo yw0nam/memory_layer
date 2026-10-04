@@ -39,6 +39,7 @@ from starlette.testclient import TestClient
 
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api, mcp_server
+from memory_base.serve.common import rest_client
 from memory_base.serve.notes import (
     SimilarNotesError,
     build_note_row,
@@ -531,10 +532,10 @@ def test_save_note_not_stored_is_never_gated(monkeypatch):
 def _patch_client(monkeypatch, handler):
     def fake_client():
         return httpx.AsyncClient(
-            base_url=mcp_server.REST_URL, transport=httpx.MockTransport(handler)
+            base_url=rest_client.REST_URL, transport=httpx.MockTransport(handler)
         )
 
-    monkeypatch.setattr(mcp_server, "_client", fake_client)
+    monkeypatch.setattr(rest_client, "client", fake_client)
 
 
 def test_mcp_save_memory_posts_supersedes_in_body(monkeypatch):

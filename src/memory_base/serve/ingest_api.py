@@ -44,7 +44,7 @@ from memory_base.ingest.enrich import EnrichmentError, summarize_and_tag
 from memory_base.retrieval.search import normalize_tags
 from memory_base.serve import job_store
 from memory_base.serve import namespaces
-from memory_base.serve.http import error
+from memory_base.serve.common.http import error
 from memory_base.serve.job_store import JobBase
 
 INGEST_MAX_BYTES = int(os.getenv("INGEST_MAX_BYTES", str(25 * 1024 * 1024)))

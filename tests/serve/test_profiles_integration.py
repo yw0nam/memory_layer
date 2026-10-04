@@ -17,7 +17,8 @@ from starlette.testclient import TestClient
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
-from memory_base.serve import api, keys, namespaces, profiles
+from memory_base.serve import api, keys, namespaces
+from memory_base.serve.profiles import store
 
 pytestmark = [pytest.mark.integration, pytest.mark.real_auth]
 
@@ -218,7 +219,7 @@ async def _wait_for_waiters(conn, count):
 
 
 async def _seed_proposal(owner, content="x", base_version=0):
-    result = await profiles.propose(owner, content, "seed", base_version)
+    result = await store.propose(owner, content, "seed", base_version)
     await db.close_pool()
     return result["id"]
 
@@ -227,7 +228,7 @@ def test_concurrent_self_writes_take_unique_sequential_versions():
     owner = _owner()
     results = asyncio.run(
         _queue_behind_the_lock(
-            owner, [lambda i=i: profiles.write_self(owner, f"text {i}") for i in range(4)]
+            owner, [lambda i=i: store.write_self(owner, f"text {i}") for i in range(4)]
         )
     )
     assert sorted(result["version"] for result in results) == [1, 2, 3, 4]
@@ -238,7 +239,7 @@ def test_concurrent_proposals_leave_one_pending():
     owner = _owner()
     results = asyncio.run(
         _queue_behind_the_lock(
-            owner, [lambda i=i: profiles.propose(owner, f"p{i}", "r", 0) for i in range(4)]
+            owner, [lambda i=i: store.propose(owner, f"p{i}", "r", 0) for i in range(4)]
         )
     )
     assert all(result["status"] == "pending" for result in results)
@@ -254,11 +255,11 @@ def test_duplicate_approval_writes_one_version():
     results = asyncio.run(
         _queue_behind_the_lock(
             owner,
-            [lambda: profiles.approve(proposal, None), lambda: profiles.approve(proposal, None)],
+            [lambda: store.approve(proposal, None), lambda: store.approve(proposal, None)],
         )
     )
     assert results[0] == {"status": "approved", "version": 1}
-    assert isinstance(results[1], profiles.NotPending)
+    assert isinstance(results[1], store.NotPending)
     assert results[1].status == "approved"
     assert len(_versions(owner, "user")) == 1
 
@@ -269,11 +270,11 @@ def test_approve_and_reject_race_to_one_terminal_decision():
     results = asyncio.run(
         _queue_behind_the_lock(
             owner,
-            [lambda: profiles.reject(proposal, "no"), lambda: profiles.approve(proposal, "yes")],
+            [lambda: store.reject(proposal, "no"), lambda: store.approve(proposal, "yes")],
         )
     )
     assert results[0] == {"status": "rejected"}
-    assert isinstance(results[1], profiles.NotPending)
+    assert isinstance(results[1], store.NotPending)
     assert results[1].status == "rejected"
     assert _versions(owner, "user") == []
     (row,) = _proposals(owner)
@@ -287,18 +288,18 @@ def test_a_proposal_and_an_approval_never_approve_a_stale_base():
         _queue_behind_the_lock(
             owner,
             [
-                lambda: profiles.approve(proposal, None),
-                lambda: profiles.propose(owner, "newer", "r", 0),
+                lambda: store.approve(proposal, None),
+                lambda: store.propose(owner, "newer", "r", 0),
             ],
         )
     )
     approved, proposed = results
     if isinstance(approved, dict):
         assert approved == {"status": "approved", "version": 1}
-        assert isinstance(proposed, profiles.Stale)
+        assert isinstance(proposed, store.Stale)
         assert proposed.version == 1
     else:
-        assert isinstance(approved, profiles.NotPending)
+        assert isinstance(approved, store.NotPending)
         assert approved.status == "superseded"
         assert proposed["superseded"] == proposal
     statuses = [row["status"] for row in _proposals(owner)]
@@ -365,7 +366,7 @@ def test_a_failure_between_supersede_and_insert_rolls_both_back(monkeypatch):
     owner = _owner()
     first = asyncio.run(_seed_proposal(owner))
     _inject(monkeypatch, lambda q: q.startswith("INSERT INTO") and "profile_proposals" in q)
-    asyncio.run(_attempt(lambda: profiles.propose(owner, "second", "r", 0)))
+    asyncio.run(_attempt(lambda: store.propose(owner, "second", "r", 0)))
     rows = _proposals(owner)
     assert [(row["id"], row["status"], row["decided_at"]) for row in rows] == [
         (first, "pending", None)
@@ -376,7 +377,7 @@ def test_a_failure_between_version_insert_and_decision_rolls_both_back(monkeypat
     owner = _owner()
     proposal = asyncio.run(_seed_proposal(owner))
     _inject(monkeypatch, lambda q: q.startswith("UPDATE") and "profile_proposals" in q)
-    asyncio.run(_attempt(lambda: profiles.approve(proposal, "yes")))
+    asyncio.run(_attempt(lambda: store.approve(proposal, "yes")))
     assert _versions(owner, "user") == []
     (row,) = _proposals(owner)
     assert (row["status"], row["decided_at"], row["decision_note"]) == ("pending", None, None)

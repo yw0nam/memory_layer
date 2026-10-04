@@ -1,7 +1,7 @@
 """Unit tests for the message-lane MCP tools: thin proxies over the REST API.
 
 Same harness as tests/serve/test_mcp_proxy.py: monkeypatch
-``mcp_server._client`` with a MockTransport, call the tool functions directly,
+``rest_client.client`` with a MockTransport, call the tool functions directly,
 and assert the exact REST call each tool issues. Tool registration is checked
 in-process via create_connected_server_and_client_session. No DB, no network.
 """
@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from memory_base.serve import mcp_server
+from memory_base.serve.common import rest_client
 
 MESSAGE_ID = "5f0d9d44-9a9d-4f0e-b7f6-6fa1e2b3c4d5"
 
@@ -22,10 +23,10 @@ MESSAGE_ID = "5f0d9d44-9a9d-4f0e-b7f6-6fa1e2b3c4d5"
 def _patch_client(monkeypatch, handler):
     def fake_client():
         return httpx.AsyncClient(
-            base_url=mcp_server.REST_URL, transport=httpx.MockTransport(handler)
+            base_url=rest_client.REST_URL, transport=httpx.MockTransport(handler)
         )
 
-    monkeypatch.setattr(mcp_server, "_client", fake_client)
+    monkeypatch.setattr(rest_client, "client", fake_client)
 
 
 def _tools():
