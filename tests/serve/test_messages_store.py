@@ -1,7 +1,8 @@
 """Storage contracts for the message lane that the integration suite cannot reach.
 
-A recording fake connection drives the lost idempotency-insert race and pins the
-terminal-row predicate of the admin purge.
+A recording fake connection drives the lost idempotency-insert race, checks that a
+listing filters on the canonical scope, and pins the terminal-row predicate of the
+admin purge.
 """
 
 from __future__ import annotations
@@ -160,6 +161,17 @@ def test_losing_the_idempotency_insert_race_replays_the_winner(use):
     assert replay is True
     assert row["id"] == winner_row["id"]
     assert len(conn.sql("idempotency_key = $2")) == 2
+
+
+def test_listing_filters_on_the_canonical_scope_and_subject_key(use):
+    conn = use(RecordingConn())
+    asyncio.run(
+        store.list_messages(
+            purpose="handoff", scope="repo:https://GitHub.com/o/r.git", subject="  Deploy   Plan "
+        )
+    )
+    ((_, args, _),) = conn.statements
+    assert args[:3] == ("handoff", "repo:github.com/o/r", "deploy plan")
 
 
 def test_admin_purge_covers_every_namespace_but_only_terminal_rows(use):
