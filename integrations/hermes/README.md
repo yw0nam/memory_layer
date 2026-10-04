@@ -1,16 +1,20 @@
 # Hermes memory provider
 
-`memory_base/` is a Hermes external memory provider. It delivers the standing profiles in
-the system prompt and prefetches notes into every turn. Nothing else is injected by
-recency; every prefetched note matched the turn's query at `min_score`.
+`memory_base/` is a Hermes external memory provider. It delivers the configured owner's
+profile in the system prompt and prefetches notes into every turn. Nothing else is
+injected by recency; every prefetched note matched the turn's query at `min_score`.
 
-- **Session start** — `initialize` calls `GET /profiles` once and `system_prompt_block`
-  returns the result for the whole session: the line `Memory: standing profile. Apply it
-  to every task.`, then each profile (the `user` and `work-rules` slots of every
-  namespace the key allows) under `## <slot> (<namespace>)`: the body of the block the
-  Claude Code SessionStart hook prints, without the `<memory-context>` fence.
-  Memory-context tags inside a profile are defused to `[memory-context]`. Returns nothing
-  on any error or when no profile is served.
+- **Session start** — `initialize` calls `GET /profiles?owner=<owner>` once for the
+  configured `owner` and `system_prompt_block` returns the result for the whole session:
+  the line `Memory: standing profile for <owner>. Apply it to every task.`, then
+  `## user (v<n>)` and `## self (v<n>)`, each followed by its content or `(empty)`, and,
+  while a proposal to change the user part awaits the user's approval, a notice naming the
+  proposal id and the approval CLI (never the proposal's content). This is the body of the
+  block the Claude Code SessionStart hook prints, without the `<memory-context>` fence.
+  The version lines print whenever the fetch succeeds, so the agent always has the user
+  version a `propose_user_profile` call is written against. Memory-context tags inside a
+  part are defused to `[memory-context]`. Returns nothing on any error or malformed
+  profile, and fetches nothing when `owner` is not configured.
 - **Every turn** — runs a semantic search over memory (all kinds) with the profile's
   configured `top_k`/`min_score` and returns the hits as prefetched context. Returns
   nothing on any error, timeout, or when there is nothing to add.
@@ -39,7 +43,7 @@ The provider never registers tools — the MCP server already exposes `search`/`
 ## Layout
 
 - `memory_base/client.py` — pure REST client (stdlib + httpx only, no Hermes imports).
-  Talks to the memory-base API's `/search` and `/profiles` routes. Unit-tested from this repo under
+  Talks to the memory-base API's `/search` and `GET /profiles` routes. Unit-tested from this repo under
   `tests/integrations/`.
 - `memory_base/__init__.py` — the Hermes-facing `MemoryProvider` subclass and `register(ctx)`
   entry point. Imports Hermes types at load time, so it only runs inside a Hermes process.
@@ -57,6 +61,7 @@ Read from `memory.memory_base` in the Hermes profile's `config.yaml`:
 | `min_score`   | `0.25`                     | relevance floor for prefetch search          |
 | `api_key`     | *(none)*                   | API key value; takes precedence over `api_key_env` |
 | `api_key_env` | `MEMORY_BASE_API_KEY`     | env var holding the memory-base API key     |
+| `owner`       | *(none)*                   | profile owner, an author slug of the key (e.g. `natsume`); without it no profile is delivered |
 
 The API key is `api_key` when set, otherwise the environment variable named by
 `api_key_env`.
@@ -76,4 +81,10 @@ memory:
   provider: memory_base
   memory_base:
     url: "https://memory-base.example.com"
+    owner: natsume
 ```
+
+The agent writes its profile through the memory-base MCP tools `update_my_profile` and
+`propose_user_profile`. Install the `memory-profile-approval` skill into the Hermes
+profile's `skills/` directory so the agent hands each pending proposal to the user, as
+described in [../profile_approval/README.md](../profile_approval/README.md).
