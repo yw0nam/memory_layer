@@ -12,7 +12,7 @@ document: Claude Code headless, a Hermes cron agent, or another.
 1. **Key.** Mint an admin key for the agent (operator, on the server host):
 
    ```
-   (umask 177; uv run python -m memory_base.serve.keys new consolidator --admin --author consolidator \
+   (umask 177; uv run python -m memory_base.serve.access.keys new consolidator --admin --author consolidator \
      | tail -n 1 | sed 's/^/export MEMORY_API_KEY=/' >> <env-file>)
    ```
 

@@ -37,7 +37,7 @@ instead of search.
    ╚═╤═══════════════╤═══════════════╤═══════════════╤═════════╝
      │ WRITE         │ WRITE         │ WRITE         │ READ + LIFECYCLE
      ▼               ▼               ▼               ▼
-  notes/store  documents/        repos/        search.py · tables.py · notes/curation
+  notes/store  documents/        repos/        search.py · tables/ · notes/curation
      │               │               │               │
      └───────────────┴───────┬───────┴───────────────┘
                              ▼
@@ -246,16 +246,16 @@ documents, a metrics CSV, and source repositories into the three lanes.
 ## Authentication
 
 Every route except `/health` and `/health/services` requires an `X-API-Key` header
-(`ApiKeyAuthMiddleware` in `serve/auth.py`); a missing, unknown, or revoked key gets a
+(`ApiKeyAuthMiddleware` in `serve/access/auth.py`); a missing, unknown, or revoked key gets a
 fail-closed `401`.
 
 Keys are provisioned with an operator CLI, not through the API:
 
 ```bash
-uv run python -m memory_base.serve.keys new <label> [--home <namespace>] [--admin] [--author <slug>]...
-uv run python -m memory_base.serve.keys authors <label> [<slug>...]
-uv run python -m memory_base.serve.keys list
-uv run python -m memory_base.serve.keys revoke <key-hash-prefix>
+uv run python -m memory_base.serve.access.keys new <label> [--home <namespace>] [--admin] [--author <slug>]...
+uv run python -m memory_base.serve.access.keys authors <label> [<slug>...]
+uv run python -m memory_base.serve.access.keys list
+uv run python -m memory_base.serve.access.keys revoke <key-hash-prefix>
 ```
 
 `new` prints the plaintext key once, on its last line — only its sha256 hash is stored. `--home` sets the
