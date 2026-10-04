@@ -195,3 +195,50 @@ def test_ensure_schema_drops_the_legacy_conversation_sources_and_note_links():
     assert after_first["doc_rows"][2]
     assert after_first["jobs_constraints"]
     assert after_second == after_first
+
+
+def test_ensure_schema_drops_the_legacy_profiles_table_and_keeps_agent_profiles():
+    owner = "it-schema-convergence-owner"
+
+    async def _run() -> tuple[object, object, list, list]:
+        conn = await asyncpg.connect(db_url())
+        schema = f'"{PG_SCHEMA}"'
+        try:
+            await conn.execute(f"DROP TABLE IF EXISTS {schema}.profiles")
+            await conn.execute(
+                f"CREATE TABLE {schema}.profiles (id bigserial PRIMARY KEY, namespace text NOT NULL)"
+            )
+            await conn.execute(f"INSERT INTO {schema}.profiles (namespace) VALUES ('default')")
+            await conn.execute(
+                f"INSERT INTO {schema}.agent_profiles "
+                "(owner, part, version, content, author, proposal_id, created_at) "
+                "VALUES ($1, 'self', 1, 'kept', $1, NULL, 1)",
+                owner,
+            )
+            await conn.execute(
+                f"INSERT INTO {schema}.profile_proposals "
+                "(owner, content, reason, base_version, status, created_at) "
+                "VALUES ($1, 'proposed', 'kept', 0, 'pending', 1)",
+                owner,
+            )
+            seeded = await conn.fetchval("SELECT to_regclass($1)", f"{schema}.profiles")
+            await ensure_schema(conn)
+            await ensure_schema(conn)
+            after = await conn.fetchval("SELECT to_regclass($1)", f"{schema}.profiles")
+            versions = await conn.fetch(
+                f"SELECT content FROM {schema}.agent_profiles WHERE owner = $1", owner
+            )
+            proposals = await conn.fetch(
+                f"SELECT content FROM {schema}.profile_proposals WHERE owner = $1", owner
+            )
+            await conn.execute(f"DELETE FROM {schema}.agent_profiles WHERE owner = $1", owner)
+            await conn.execute(f"DELETE FROM {schema}.profile_proposals WHERE owner = $1", owner)
+        finally:
+            await conn.close()
+        return seeded, after, versions, proposals
+
+    seeded, after, versions, proposals = asyncio.run(_run())
+    assert seeded is not None
+    assert after is None
+    assert [row["content"] for row in versions] == ["kept"]
+    assert [row["content"] for row in proposals] == ["proposed"]

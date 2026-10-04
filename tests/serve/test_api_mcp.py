@@ -168,4 +168,6 @@ def test_mcp_server_registers_expected_tools():
         "list_messages",
         "claim_message",
         "cancel_message",
+        "update_my_profile",
+        "propose_user_profile",
     }

@@ -58,19 +58,21 @@ def test_the_provider_does_not_capture_sessions(plugin, monkeypatch):
     assert not hasattr(plugin.client, "conversation_turns")
 
 
-PROFILES = [
-    {
-        "namespace": "default",
-        "slot": "work-rules",
-        "version": 1,
-        "content": "- Ask before merging.",
-        "created_at": "2026-10-01T00:00:00+00:00",
-    }
-]
+PROFILE = {
+    "owner": "natsume",
+    "self_version": 1,
+    "self": {"content": "Speak warmly.", "created_at": "2026-10-01T00:00:00+00:00"},
+    "user_version": 0,
+    "user": None,
+    "pending_proposal": None,
+}
 
 
-def _provider(plugin, monkeypatch, transport, url="http://memory-base.local"):
-    monkeypatch.setattr(plugin, "_load_plugin_config", lambda: {"url": url, "api_key": "k"})
+def _provider(plugin, monkeypatch, transport, url="http://memory-base.local", owner="natsume"):
+    config = {"url": url, "api_key": "k"}
+    if owner is not None:
+        config["owner"] = owner
+    monkeypatch.setattr(plugin, "_load_plugin_config", lambda: config)
     provider = plugin.MemoryBaseProvider()
     build = provider._build_client
 
@@ -83,28 +85,46 @@ def _provider(plugin, monkeypatch, transport, url="http://memory-base.local"):
     return provider
 
 
-def test_system_prompt_block_delivers_the_profiles_fetched_once_at_initialize(plugin, monkeypatch):
+def test_system_prompt_block_delivers_the_owners_profile_fetched_once_per_initialize(
+    plugin, monkeypatch
+):
     calls = []
 
     def handler(request):
-        calls.append(request.url.path)
-        return httpx.Response(200, json=PROFILES)
+        calls.append(str(request.url))
+        return httpx.Response(200, json=PROFILE)
 
     provider = _provider(plugin, monkeypatch, httpx.MockTransport(handler))
     assert provider.system_prompt_block() == ""
     provider.initialize("session-1")
     block = provider.system_prompt_block()
     assert block.splitlines() == [
-        plugin.client.PROFILE_HEADER,
-        "",
-        "## work-rules (default)",
-        "- Ask before merging.",
+        "Memory: standing profile for natsume. Apply it to every task.",
+        "## user (v0)",
+        "(empty)",
+        "## self (v1)",
+        "Speak warmly.",
     ]
     assert provider.system_prompt_block() == block
-    assert calls == ["/profiles"]
+    assert calls == ["http://memory-base.local/profiles?owner=natsume"]
+    provider.initialize("session-2")
+    assert len(calls) == 2
+
+
+def test_no_profile_is_fetched_without_a_configured_owner(plugin, monkeypatch):
+    def handler(request):
+        raise AssertionError(f"no request expected: {request.url}")
+
+    provider = _provider(plugin, monkeypatch, httpx.MockTransport(handler), owner=None)
+    provider.initialize("session-1")
+    assert provider.system_prompt_block() == ""
 
 
 def test_system_prompt_block_is_empty_without_the_server(plugin, monkeypatch):
     provider = _provider(plugin, monkeypatch, None, url="http://127.0.0.1:9")
     provider.initialize("session-1")
     assert provider.system_prompt_block() == ""
+
+
+def test_the_plugin_version_is_2_3_0():
+    assert "version: 2.3.0" in (PLUGIN_DIR / "plugin.yaml").read_text()

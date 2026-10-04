@@ -1,235 +1,382 @@
-"""Integration tests for profile slots against the throwaway Postgres.
+"""Integration tests for agent-owned profiles against the throwaway Postgres.
 
-Notes are seeded through ``save_note`` with the live embedder; profiles are written and
-read through the REST routes.
+Keys are real `api_keys` rows with authors, resolved by the real authentication path.
+Concurrency tests hold the owner lock on a separate connection, queue the contending
+operations behind it, and release it.
 """
 
 from __future__ import annotations
 
 import asyncio
-import time
 import uuid
+from contextlib import asynccontextmanager
 
 import asyncpg
 import pytest
 from starlette.testclient import TestClient
 
+from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
-from memory_base.serve import api, auth, namespaces
-from memory_base.serve.notes import save_note
+from memory_base.serve import api, keys, namespaces, profiles
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.real_auth]
 
-PERSONAL = (
-    "The user lives in Seoul and works from home on Fridays.",
-    "The user is vegetarian and avoids fish sauce.",
-)
-RULES = (
-    "Delegate implementation work to a subagent in its own git worktree.",
-    "Ask the user before merging any pull request.\nNever push to main directly.",
-)
-
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('profile:' || $1, 0))"
 
 
-@pytest.fixture(autouse=True)
-def consolidator(monkeypatch):
-    identity = auth.KeyIdentity(
-        key_id="consolidator-key-hash",
-        label="consolidator",
-        home="default",
-        is_admin=True,
-        allowed=frozenset(),
-        authors=frozenset({"consolidator"}),
+def _owner():
+    return f"it-{uuid.uuid4().hex[:10]}"
+
+
+async def _mint(label, is_admin, authors):
+    plaintext = await keys.new_key(label, "default", is_admin)
+    await keys.set_authors(label, authors)
+    await db.close_pool()
+    return plaintext
+
+
+def _client(owners=(), authors=None, is_admin=True):
+    label = f"it-key-{uuid.uuid4().hex[:8]}"
+    plaintext = asyncio.run(
+        _mint(label, is_admin, list(authors if authors is not None else owners))
     )
-
-    async def fake_authenticate_request(plaintext_key):
-        return identity if plaintext_key == "test-key" else None
-
-    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
+    return TestClient(api.app, headers={"X-API-Key": plaintext})
 
 
-async def _execute(sql, *args):
+def _user_client():
+    return _client(authors=["user"], is_admin=False)
+
+
+async def _fetch(sql, *args):
     conn = await asyncpg.connect(db_url())
     try:
-        return await conn.execute(sql, *args)
+        return await conn.fetch(sql, *args)
     finally:
         await conn.close()
 
 
-async def _seed(namespace):
-    await namespaces.create_namespace(namespace)
-    ids = {}
-    for kind, texts in (("personal", PERSONAL), ("work", RULES)):
-        ids[kind] = [
-            (
-                await save_note(
-                    text,
-                    kind=kind,
-                    tags=["profile-test"],
-                    namespace=namespace,
-                    author="claude-code",
-                    allow_similar=True,
-                )
-            )["id"]
-            for text in texts
-        ]
-    return ids
+def _proposals(owner):
+    return asyncio.run(
+        _fetch(
+            f'SELECT id, status, decided_at, decision_note FROM "{PG_SCHEMA}".profile_proposals '
+            "WHERE owner = $1 ORDER BY id",
+            owner,
+        )
+    )
 
 
-async def _drop(namespace):
-    for table in ("profiles", "memory_chunks", "namespaces"):
-        column = "name" if table == "namespaces" else "namespace"
-        await _execute(f'DELETE FROM "{PG_SCHEMA}".{table} WHERE {column} = $1', namespace)
+def _versions(owner, part):
+    return asyncio.run(
+        _fetch(
+            f'SELECT version, content, author, proposal_id FROM "{PG_SCHEMA}".agent_profiles '
+            "WHERE owner = $1 AND part = $2 ORDER BY version",
+            owner,
+            part,
+        )
+    )
 
 
-def _sources(namespace, slot):
-    response = client.get("/admin/profiles/sources", params={"namespace": namespace, "slot": slot})
-    assert response.status_code == 200, response.json()
-    return response.json()
+def _propose(api_client, owner, content, base_version, reason="learned it"):
+    return api_client.post(
+        "/profiles/user/proposals",
+        json={"owner": owner, "content": content, "reason": reason, "base_version": base_version},
+    )
 
 
-def _write(namespace, slot, source_hash, **fields):
-    body = {
-        "namespace": namespace,
-        "slot": slot,
-        "source_hash": source_hash,
-        "author": "consolidator",
-        "model": "test-model",
-        **fields,
-    }
-    return client.put("/admin/profiles", json=body)
+def test_an_owner_writes_self_proposes_and_the_user_approves():
+    owner, other = _owner(), _owner()
+    agents = _client([owner, other])
+    user = _user_client()
+
+    written = agents.put("/profiles/self", json={"owner": owner, "content": "I review diffs."})
+    assert written.json() == {"status": "written", "version": 1}
+
+    first = _propose(agents, owner, "Lives in Busan.", 0)
+    assert first.status_code == 201, first.json()
+    second = _propose(agents, owner, "Lives in Seoul.", 0, reason="they moved")
+    assert second.status_code == 201
+    assert second.json()["superseded"] == first.json()["id"]
+    second_id = second.json()["id"]
+
+    denied = agents.post(f"/profiles/user/proposals/{second_id}/approve", json={})
+    assert denied.status_code == 403
+    pending = user.get("/profiles/user/proposals", params={"status": "pending"}).json()
+    assert [row["id"] for row in pending if row["owner"] == owner] == [second_id]
+
+    shown = user.get(f"/profiles/user/proposals/{second_id}").json()
+    assert shown["current_user_version"] == 0
+    assert shown["current_user_content"] is None
+    assert shown["content"] == "Lives in Seoul."
+
+    approved = user.post(f"/profiles/user/proposals/{second_id}/approve", json={"note": "yes"})
+    assert approved.json() == {"status": "approved", "version": 1}
+    stale = _propose(agents, owner, "Lives in Daegu.", 0)
+    assert stale.status_code == 409
+    assert stale.json() == {"error": "stale", "version": 1}
+
+    served = agents.get("/profiles", params={"owner": owner}).json()
+    assert served["self_version"] == 1
+    assert served["self"]["content"] == "I review diffs."
+    assert served["user_version"] == 1
+    assert served["user"]["content"] == "Lives in Seoul."
+    assert served["pending_proposal"] is None
+    assert served["user"]["created_at"].endswith("+00:00")
+
+    history = user.get("/profiles/versions", params={"owner": owner, "part": "user"}).json()
+    assert [(row["version"], row["author"], row["proposal_id"]) for row in history] == [
+        (1, "user", second_id)
+    ]
+    rows = _proposals(owner)
+    assert [row["status"] for row in rows] == ["superseded", "approved"]
+    assert rows[1]["decision_note"] == "yes"
+    assert rows[0]["decision_note"] is None
+    assert rows[0]["decided_at"] is not None
+
+    untouched = agents.get("/profiles", params={"owner": other}).json()
+    assert untouched["user_version"] == 0 and untouched["self_version"] == 0
+    assert _propose(agents, other, "Natsume's view.", 0).status_code == 201
+
+    cleared = _propose(agents, owner, "", 1, reason="nothing holds")
+    assert cleared.status_code == 201
+    done = user.post(f"/profiles/user/proposals/{cleared.json()['id']}/approve", json={})
+    assert done.json() == {"status": "approved", "version": 2}
+    served = agents.get("/profiles", params={"owner": owner}).json()
+    assert served["user_version"] == 2
+    assert served["user"] is None
+    assert _propose(agents, owner, "Lives in Seoul again.", 2).status_code == 201
 
 
-def test_profiles_are_written_from_sources_served_and_kept_when_a_write_goes_stale():
-    namespace = f"it-profiles-{uuid.uuid4().hex[:8]}"
-    ids = asyncio.run(_seed(namespace))
+def test_a_key_without_the_owner_or_user_author_is_refused():
+    owner = _owner()
+    agents = _client([owner])
+    stranger = _client(authors=["natsume-other"])
+    assert stranger.get("/profiles", params={"owner": owner}).status_code == 403
+    assert stranger.put("/profiles/self", json={"owner": owner, "content": "x"}).status_code == 403
+    proposal = _propose(agents, owner, "x", 0).json()["id"]
+    assert stranger.get(f"/profiles/user/proposals/{proposal}").status_code == 403
+    assert stranger.post(f"/profiles/user/proposals/{proposal}/reject", json={}).status_code == 403
+    assert TestClient(api.app).get("/profiles", params={"owner": owner}).status_code == 401
+
+
+def test_a_revoked_user_key_cannot_decide():
+    owner = _owner()
+    agents = _client([owner])
+    label = f"it-key-{uuid.uuid4().hex[:8]}"
+    plaintext = asyncio.run(_mint(label, False, ["user"]))
+
+    async def revoke():
+        await keys.revoke_key(keys.hash_key(plaintext))
+        await db.close_pool()
+
+    asyncio.run(revoke())
+    proposal = _propose(agents, owner, "x", 0).json()["id"]
+    revoked = TestClient(api.app, headers={"X-API-Key": plaintext})
+    assert revoked.post(f"/profiles/user/proposals/{proposal}/approve", json={}).status_code == 401
+
+
+def test_namespace_deletion_ignores_profiles():
+    owner = _owner()
+    agents = _client([owner])
+    name = f"it-profiles-{uuid.uuid4().hex[:8]}"
+    asyncio.run(namespaces.create_namespace(name))
+    assert agents.put("/profiles/self", json={"owner": owner, "content": "x"}).status_code == 200
+    assert _propose(agents, owner, "y", 0).status_code == 201
+    asyncio.run(namespaces.delete_namespace(name))
+    assert not asyncio.run(namespaces.namespace_exists(name))
+
+
+# ---- concurrency ------------------------------------------------------------
+
+
+async def _queue_behind_the_lock(owner, operations):
+    """Start each operation while another connection holds the owner lock, then release it."""
+    holder = await asyncpg.connect(db_url())
+    tasks = []
     try:
-        user_sources = _sources(namespace, "user")
-        assert user_sources["stale"] is True
-        assert user_sources["current"] is None
-        assert sorted(n["id"] for n in user_sources["notes"]) == sorted(ids["personal"])
-        assert {n["kind"] for n in user_sources["notes"]} == {"personal"}
-
-        user = _write(
-            namespace,
-            "user",
-            user_sources["source_hash"],
-            content="Lives in Seoul, works from home on Fridays; vegetarian, no fish sauce.",
-        )
-        assert user.status_code == 200, user.json()
-        assert user.json()["status"] == "written"
-        assert user.json()["version"] == 1
-
-        rules_sources = _sources(namespace, "work-rules")
-        selection = [ids["work"][1], ids["work"][0]]
-        planned = _write(
-            namespace,
-            "work-rules",
-            rules_sources["source_hash"],
-            note_ids=selection,
-            dry_run=True,
-        )
-        expected = (
-            "- Ask the user before merging any pull request.\n"
-            "  Never push to main directly.\n"
-            "- Delegate implementation work to a subagent in its own git worktree."
-        )
-        assert planned.json() == {"status": "planned", "content": expected, "chars": len(expected)}
-        rules = _write(namespace, "work-rules", rules_sources["source_hash"], note_ids=selection)
-        assert rules.json() == {"status": "written", "version": 1, "chars": len(expected)}
-
-        served = client.get("/profiles", params={"namespace": namespace}).json()
-        assert [(p["slot"], p["version"]) for p in served] == [("user", 1), ("work-rules", 1)]
-        assert served[1]["content"] == expected
-        assert _sources(namespace, "work-rules")["stale"] is False
-
-        again = _write(namespace, "work-rules", rules_sources["source_hash"], note_ids=selection)
-        assert again.json() == {"status": "unchanged", "version": 1}
-
-        asyncio.run(
-            _execute(
-                f'UPDATE "{PG_SCHEMA}".memory_chunks SET archived_at = $2 WHERE id = $1',
-                ids["work"][0],
-                time.time(),
-            )
-        )
-        stale = _sources(namespace, "work-rules")
-        assert stale["stale"] is True
-        assert stale["current"]["version"] == 1
-        assert [n["id"] for n in stale["notes"]] == [ids["work"][1]]
-        refused = _write(namespace, "work-rules", rules_sources["source_hash"], note_ids=selection)
-        assert refused.status_code == 409
-        assert refused.json() == {"error": "stale", "source_hash": stale["source_hash"]}
-        served = client.get("/profiles", params={"namespace": namespace}).json()
-        assert served[1]["version"] == 1
-        assert served[1]["content"] == expected
-
-        rewritten = _write(namespace, "work-rules", stale["source_hash"], note_ids=[ids["work"][1]])
-        assert rewritten.json()["version"] == 2
-
-        history = client.get(
-            "/admin/profiles/versions", params={"namespace": namespace, "slot": "work-rules"}
-        ).json()
-        assert [v["version"] for v in history["versions"]] == [2, 1]
-        assert history["versions"][1]["source_ids"] == selection
-        assert history["versions"][1]["source_hash"] == rules_sources["source_hash"]
-        assert history["versions"][0]["author"] == "consolidator"
-        assert history["versions"][0]["model"] == "test-model"
+        transaction = holder.transaction()
+        await transaction.start()
+        await holder.execute(LOCK_SQL, owner)
+        for operation in operations:
+            tasks.append(asyncio.ensure_future(operation()))
+            await _wait_for_waiters(holder, len(tasks))
+        await transaction.commit()
+        return await asyncio.gather(*tasks, return_exceptions=True)
     finally:
-        asyncio.run(_drop(namespace))
+        await holder.close()
+        await db.close_pool()
 
 
-def test_profile_history_alone_keeps_a_namespace_registered():
-    namespace = f"it-profiles-{uuid.uuid4().hex[:8]}"
-    asyncio.run(_seed(namespace))
+async def _wait_for_waiters(conn, count):
+    for _ in range(500):
+        waiting = await conn.fetchval(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+        )
+        if waiting >= count:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"{count} operations never queued behind the owner lock")
+
+
+async def _seed_proposal(owner, content="x", base_version=0):
+    result = await profiles.propose(owner, content, "seed", base_version)
+    await db.close_pool()
+    return result["id"]
+
+
+def test_concurrent_self_writes_take_unique_sequential_versions():
+    owner = _owner()
+    results = asyncio.run(
+        _queue_behind_the_lock(
+            owner, [lambda i=i: profiles.write_self(owner, f"text {i}") for i in range(4)]
+        )
+    )
+    assert sorted(result["version"] for result in results) == [1, 2, 3, 4]
+    assert [row["version"] for row in _versions(owner, "self")] == [1, 2, 3, 4]
+
+
+def test_concurrent_proposals_leave_one_pending():
+    owner = _owner()
+    results = asyncio.run(
+        _queue_behind_the_lock(
+            owner, [lambda i=i: profiles.propose(owner, f"p{i}", "r", 0) for i in range(4)]
+        )
+    )
+    assert all(result["status"] == "pending" for result in results)
+    rows = _proposals(owner)
+    assert [row["status"] for row in rows].count("pending") == 1
+    assert [row["status"] for row in rows].count("superseded") == 3
+    assert sum(result["superseded"] is None for result in results) == 1
+
+
+def test_duplicate_approval_writes_one_version():
+    owner = _owner()
+    proposal = asyncio.run(_seed_proposal(owner))
+    results = asyncio.run(
+        _queue_behind_the_lock(
+            owner,
+            [lambda: profiles.approve(proposal, None), lambda: profiles.approve(proposal, None)],
+        )
+    )
+    assert results[0] == {"status": "approved", "version": 1}
+    assert isinstance(results[1], profiles.NotPending)
+    assert results[1].status == "approved"
+    assert len(_versions(owner, "user")) == 1
+
+
+def test_approve_and_reject_race_to_one_terminal_decision():
+    owner = _owner()
+    proposal = asyncio.run(_seed_proposal(owner))
+    results = asyncio.run(
+        _queue_behind_the_lock(
+            owner,
+            [lambda: profiles.reject(proposal, "no"), lambda: profiles.approve(proposal, "yes")],
+        )
+    )
+    assert results[0] == {"status": "rejected"}
+    assert isinstance(results[1], profiles.NotPending)
+    assert results[1].status == "rejected"
+    assert _versions(owner, "user") == []
+    (row,) = _proposals(owner)
+    assert (row["status"], row["decision_note"]) == ("rejected", "no")
+
+
+def test_a_proposal_and_an_approval_never_approve_a_stale_base():
+    owner = _owner()
+    proposal = asyncio.run(_seed_proposal(owner))
+    results = asyncio.run(
+        _queue_behind_the_lock(
+            owner,
+            [
+                lambda: profiles.approve(proposal, None),
+                lambda: profiles.propose(owner, "newer", "r", 0),
+            ],
+        )
+    )
+    approved, proposed = results
+    if isinstance(approved, dict):
+        assert approved == {"status": "approved", "version": 1}
+        assert isinstance(proposed, profiles.Stale)
+        assert proposed.version == 1
+    else:
+        assert isinstance(approved, profiles.NotPending)
+        assert approved.status == "superseded"
+        assert proposed["superseded"] == proposal
+    statuses = [row["status"] for row in _proposals(owner)]
+    assert statuses.count("pending") <= 1
+    versions = _versions(owner, "user")
+    assert len(versions) <= 1
+    assert all(row["proposal_id"] == proposal for row in versions)
+
+
+# ---- rollback ---------------------------------------------------------------
+
+
+class FailingConnection:
+    """Delegates to a real connection and fails the first statement that `fails` matches."""
+
+    def __init__(self, conn, fails):
+        self._conn = conn
+        self._fails = fails
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def _check(self, query):
+        if self._fails(" ".join(query.split())):
+            raise RuntimeError("injected failure")
+
+    async def execute(self, query, *args):
+        self._check(query)
+        return await self._conn.execute(query, *args)
+
+    async def fetchval(self, query, *args):
+        self._check(query)
+        return await self._conn.fetchval(query, *args)
+
+    async def fetchrow(self, query, *args):
+        self._check(query)
+        return await self._conn.fetchrow(query, *args)
+
+    async def fetch(self, query, *args):
+        self._check(query)
+        return await self._conn.fetch(query, *args)
+
+
+def _inject(monkeypatch, fails):
+    original = db.acquire
+
+    @asynccontextmanager
+    async def acquire(timeout=None):
+        async with original() as conn:
+            yield FailingConnection(conn, fails)
+
+    monkeypatch.setattr(db, "acquire", acquire)
+
+
+async def _attempt(operation):
     try:
-        sources = _sources(namespace, "user")
-        written = _write(namespace, "user", sources["source_hash"], content="Lives in Seoul.")
-        assert written.json()["status"] == "written"
-        asyncio.run(
-            _execute(f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE namespace = $1', namespace)
-        )
-        with pytest.raises(namespaces.NamespaceNotEmptyError):
-            asyncio.run(namespaces.delete_namespace(namespace))
-        asyncio.run(_execute(f'DELETE FROM "{PG_SCHEMA}".profiles WHERE namespace = $1', namespace))
-        asyncio.run(namespaces.delete_namespace(namespace))
-        assert not asyncio.run(namespaces.namespace_exists(namespace))
+        with pytest.raises(RuntimeError, match="injected failure"):
+            await operation()
     finally:
-        asyncio.run(_drop(namespace))
+        await db.close_pool()
 
 
-def test_a_user_profile_is_cleared_when_every_personal_note_is_archived():
-    namespace = f"it-profiles-{uuid.uuid4().hex[:8]}"
-    ids = asyncio.run(_seed(namespace))
-    try:
-        user = _write(
-            namespace, "user", _sources(namespace, "user")["source_hash"], content="Seoul."
-        )
-        assert user.json()["status"] == "written"
-        rules = _write(
-            namespace,
-            "work-rules",
-            _sources(namespace, "work-rules")["source_hash"],
-            note_ids=[ids["work"][0]],
-        )
-        assert rules.json()["status"] == "written"
-        for note_id in ids["personal"]:
-            asyncio.run(
-                _execute(
-                    f'UPDATE "{PG_SCHEMA}".memory_chunks SET archived_at = $2 WHERE id = $1',
-                    note_id,
-                    time.time(),
-                )
-            )
-        sources = _sources(namespace, "user")
-        assert sources["notes"] == []
-        assert sources["stale"] is True
-        cleared = _write(namespace, "user", sources["source_hash"], content="")
-        assert cleared.json() == {"status": "written", "version": 2, "chars": 0}
-        served = client.get("/profiles", params={"namespace": namespace}).json()
-        assert [p["slot"] for p in served] == ["work-rules"]
-        again = _write(namespace, "user", sources["source_hash"], content=" ")
-        assert again.json() == {"status": "unchanged", "version": 2}
-    finally:
-        asyncio.run(_drop(namespace))
+def test_a_failure_between_supersede_and_insert_rolls_both_back(monkeypatch):
+    owner = _owner()
+    first = asyncio.run(_seed_proposal(owner))
+    _inject(monkeypatch, lambda q: q.startswith("INSERT INTO") and "profile_proposals" in q)
+    asyncio.run(_attempt(lambda: profiles.propose(owner, "second", "r", 0)))
+    rows = _proposals(owner)
+    assert [(row["id"], row["status"], row["decided_at"]) for row in rows] == [
+        (first, "pending", None)
+    ]
+
+
+def test_a_failure_between_version_insert_and_decision_rolls_both_back(monkeypatch):
+    owner = _owner()
+    proposal = asyncio.run(_seed_proposal(owner))
+    _inject(monkeypatch, lambda q: q.startswith("UPDATE") and "profile_proposals" in q)
+    asyncio.run(_attempt(lambda: profiles.approve(proposal, "yes")))
+    assert _versions(owner, "user") == []
+    (row,) = _proposals(owner)
+    assert (row["status"], row["decided_at"], row["decision_note"]) == ("pending", None, None)
