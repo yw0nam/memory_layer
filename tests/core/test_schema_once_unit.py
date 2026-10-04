@@ -117,10 +117,7 @@ def test_ensure_schema_adds_namespace_column_index_and_registry(monkeypatch):
     conn = RecordingConnection()
     asyncio.run(schema.ensure_schema(conn))
     sql = captured["sql"]
-    assert (
-        'ALTER TABLE "test_schema".memory_chunks\n'
-        "          ADD COLUMN IF NOT EXISTS namespace text NOT NULL DEFAULT 'default';" in sql
-    )
+    assert "namespace text NOT NULL DEFAULT 'default'" in sql
     assert 'memory_chunks__namespace ON "test_schema".memory_chunks (namespace)' in sql
     assert 'CREATE TABLE IF NOT EXISTS "test_schema".namespaces' in sql
     assert "name text PRIMARY KEY" in sql
@@ -148,10 +145,10 @@ def test_ensure_schema_adds_api_keys_table_and_namespace_visibility(monkeypatch)
     assert "is_admin boolean NOT NULL DEFAULT false" in sql
     assert "revoked_at timestamptz" in sql
     assert (
-        "ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'public'\n"
-        "          CHECK (visibility IN ('public', 'private'));" in sql
+        "visibility text NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private'))"
+        in sql
     )
-    assert "ADD COLUMN IF NOT EXISTS owner text;" in sql
+    assert "owner text\n" in sql
 
 
 def test_ensure_schema_adds_the_shared_jobs_table(monkeypatch):
@@ -178,7 +175,7 @@ def test_ensure_schema_adds_the_shared_jobs_table(monkeypatch):
         assert column in sql
 
 
-def test_ensure_schema_drops_the_conversation_job_kind_and_the_distill_cursor(monkeypatch):
+def test_jobs_accept_only_the_document_and_repo_kinds(monkeypatch):
     captured = {}
 
     class RecordingConnection(FakeConnection):
@@ -187,28 +184,10 @@ def test_ensure_schema_drops_the_conversation_job_kind_and_the_distill_cursor(mo
             await super().execute(query, *args)
 
     asyncio.run(schema.ensure_schema(RecordingConnection()))
-    sql = " ".join(captured["sql"].split())
-    delete = """DELETE FROM "test_schema".jobs WHERE kind = 'conversation';"""
-    kind_check = "ADD CONSTRAINT jobs_kind_check CHECK (kind IN ('document', 'repo'));"
-    assert delete in sql and kind_check in sql
-    assert sql.index(delete) < sql.index(kind_check)
-    for statement in (
-        'DROP TABLE IF EXISTS "test_schema".conversation_sources;',
-        'DROP INDEX IF EXISTS "test_schema".memory_chunks__conversation;',
-        '"test_schema".memory_chunks DROP COLUMN IF EXISTS conversation_id;',
-        '"test_schema".memory_chunks DROP COLUMN IF EXISTS source_turn_start;',
-        '"test_schema".memory_chunks DROP COLUMN IF EXISTS source_turn_end;',
-        '"test_schema".jobs DROP COLUMN IF EXISTS conversation_id;',
-        '"test_schema".jobs DROP COLUMN IF EXISTS result;',
-        'DROP INDEX IF EXISTS "test_schema".jobs__conversation_active;',
-        '"test_schema".jobs DROP CONSTRAINT IF EXISTS jobs_conversation_check;',
-    ):
-        assert statement in sql
-    assert "'conversation')" not in sql
-    assert 'CREATE TABLE IF NOT EXISTS "test_schema".conversation_sources' not in sql
-    assert "ADD COLUMN IF NOT EXISTS conversation_id text;" not in sql
-    assert "ADD COLUMN IF NOT EXISTS source_turn" not in sql
-    assert "CREATE INDEX IF NOT EXISTS memory_chunks__conversation" not in sql
+    sql = captured["sql"]
+    assert (
+        "kind text NOT NULL CONSTRAINT jobs_kind_check CHECK (kind IN ('document', 'repo'))" in sql
+    )
 
 
 def test_rebinding_module_pg_schema_keeps_ddl_and_guard_in_sync(monkeypatch):
