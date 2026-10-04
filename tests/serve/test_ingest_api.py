@@ -17,7 +17,8 @@ from memory_base.adapters import document
 from memory_base.adapters.document import Chunk, map_document_rows
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, db_url, embed_text
 from memory_base.ingest import enrich
-from memory_base.serve import api, namespaces
+from memory_base.serve import api
+from memory_base.serve.access import namespaces
 from memory_base.serve.common import job_store
 from memory_base.serve.documents import pipeline as document_pipeline
 from memory_base.serve.documents import routes as document_routes

@@ -26,10 +26,8 @@ from memory_base.retrieval.search import UpstreamUnavailable
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
 from memory_base.serve import access_log
-from memory_base.serve import keys
-from memory_base.serve import namespaces
-from memory_base.serve import tables
-from memory_base.serve.auth import ApiKeyAuthMiddleware
+from memory_base.serve.access import routes as access_routes
+from memory_base.serve.access.auth import ApiKeyAuthMiddleware
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.common.http import error
 from memory_base.serve.common.http import json_body
@@ -42,6 +40,7 @@ from memory_base.serve.notes.store import note_date
 from memory_base.serve.profiles import routes as profile_routes
 from memory_base.serve.repos import cache as repo_cache
 from memory_base.serve.repos import routes as repo_routes
+from memory_base.serve.tables import routes as table_routes
 
 SOURCES = ("all", "code", "memory")
 # Beyond this a query is a pasted payload, not a question: it costs embedder and BM25
@@ -247,89 +246,6 @@ async def search_route(request: Request) -> JSONResponse:
     return JSONResponse([hit_to_dict(hit) for hit in hits])
 
 
-async def keys_authors_route(request: Request) -> JSONResponse:
-    """Report a label's author allowlist; a non-admin key may read only its own label."""
-    key = request.state.key
-    label = request.path_params["label"]
-    if not (key.is_admin or key.label == label):
-        return error("not permitted to read another label's authors", 403)
-    authors = await keys.get_authors(label)
-    if authors is None:
-        return JSONResponse({"error": f"unknown key label: {label}"}, status_code=404)
-    return JSONResponse({"label": label, "authors": authors})
-
-
-async def keys_authors_put_route(request: Request) -> JSONResponse:
-    """Replace a label's author allowlist; admin keys only."""
-    if not request.state.key.is_admin:
-        return error("admin key required", 403)
-    label = request.path_params["label"]
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    try:
-        authors = keys.validate_authors(body.get("authors"))
-    except keys.AuthorError as exc:
-        return error(str(exc))
-    stored = await keys.set_authors(label, authors)
-    if stored is None:
-        return JSONResponse({"error": f"unknown key label: {label}"}, status_code=404)
-    return JSONResponse({"label": label, "authors": stored})
-
-
-async def namespaces_create_route(request: Request) -> JSONResponse:
-    """Register a new namespace; 400 on a bad slug, 409 on a duplicate name.
-
-    A private namespace records the caller's key label as owner.
-    """
-    key = request.state.key
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    visibility = body.get("visibility", "public")
-    owner = key.label if visibility == "private" else None
-    try:
-        result = await namespaces.create_namespace(body.get("name"), visibility, owner)
-    except namespaces.NamespaceExistsError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=409)
-    except namespaces.NamespaceError as exc:
-        return error(str(exc))
-    return JSONResponse(result, status_code=201)
-
-
-async def namespaces_list_route(request: Request) -> JSONResponse:
-    """List the caller's allowed namespaces (every namespace for an admin key)."""
-    key = request.state.key
-    rows = await namespaces.list_namespaces()
-    if not key.is_admin:
-        rows = [row for row in rows if row["name"] in key.allowed]
-    return JSONResponse(rows)
-
-
-async def namespaces_delete_route(request: Request) -> JSONResponse:
-    """Unregister a namespace: 400 reserved, 404 unknown, 403 non-owner, 409 non-empty."""
-    key = request.state.key
-    name = request.path_params["name"]
-    if name == namespaces.DEFAULT_NAMESPACE:
-        return error("the 'default' namespace is reserved and cannot be deleted")
-    ns = await namespaces.get_namespace(name)
-    if ns is None:
-        return JSONResponse({"error": f"unknown namespace: {name}"}, status_code=404)
-    if not (key.is_admin or ns["owner"] == key.label):
-        return error(f"not permitted to delete namespace: {name}", 403)
-    try:
-        await namespaces.delete_namespace(name)
-    except namespaces.NamespaceReservedError as exc:
-        return error(str(exc))
-    except namespaces.NamespaceNotFoundError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=404)
-    except namespaces.NamespaceNotEmptyError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=409)
-    return JSONResponse({"deleted": name})
-
-
 setup_logging()
 
 
@@ -401,7 +317,7 @@ app = Starlette(
         Route("/messages", message_routes.list_route, methods=["GET"]),
         Route("/messages/{message_id}/claim", message_routes.claim_route, methods=["POST"]),
         Route("/messages/{message_id}", message_routes.cancel_route, methods=["DELETE"]),
-        Route("/tables/query", tables.tables_query_route, methods=["POST"]),
+        Route("/tables/query", table_routes.query_route, methods=["POST"]),
         Route("/ingest/document", document_routes.ingest_route, methods=["POST"]),
         Route("/ingest/jobs", document_routes.jobs_route, methods=["GET"]),
         Route("/ingest/jobs/{job_id}", document_routes.job_route, methods=["GET"]),
@@ -410,11 +326,11 @@ app = Starlette(
         Route("/repos", repo_routes.list_route, methods=["GET"]),
         Route("/repos/jobs/{job_id}", repo_routes.job_route, methods=["GET"]),
         Route("/repos/{name}", repo_routes.remove_route, methods=["DELETE"]),
-        Route("/keys/{label}/authors", keys_authors_route, methods=["GET"]),
-        Route("/keys/{label}/authors", keys_authors_put_route, methods=["PUT"]),
-        Route("/namespaces", namespaces_create_route, methods=["POST"]),
-        Route("/namespaces", namespaces_list_route, methods=["GET"]),
-        Route("/namespaces/{name}", namespaces_delete_route, methods=["DELETE"]),
+        Route("/keys/{label}/authors", access_routes.authors_route, methods=["GET"]),
+        Route("/keys/{label}/authors", access_routes.authors_put_route, methods=["PUT"]),
+        Route("/namespaces", access_routes.namespaces_create_route, methods=["POST"]),
+        Route("/namespaces", access_routes.namespaces_list_route, methods=["GET"]),
+        Route("/namespaces/{name}", access_routes.namespaces_delete_route, methods=["DELETE"]),
         Route("/admin/notes", note_routes.old_notes_route, methods=["GET"]),
         Route("/admin/notes/delete", note_routes.delete_route, methods=["POST"]),
         Route("/admin/notes/move", note_routes.move_route, methods=["POST"]),

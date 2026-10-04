@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth
+from memory_base.serve import api
+from memory_base.serve.access import auth
 from memory_base.serve.messages import store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})

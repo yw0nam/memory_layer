@@ -1,4 +1,4 @@
-"""Unit tests for the memory_base.serve.keys CLI: no real DB.
+"""Unit tests for the memory_base.serve.access.keys CLI: no real DB.
 
 memory_base.core.db.acquire is monkeypatched to a fake connection, matching
 the convention in tests/serve/test_namespaces_unit.py.
@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from memory_base.serve import keys
+from memory_base.serve.access import keys
 
 
 class FakeConnection:

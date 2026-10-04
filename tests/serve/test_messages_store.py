@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 import asyncpg
 import pytest
 
-from memory_base.serve import auth, namespaces
+from memory_base.serve.access import auth, namespaces
 from memory_base.serve.messages import store
 
 NOW = datetime.now(timezone.utc)

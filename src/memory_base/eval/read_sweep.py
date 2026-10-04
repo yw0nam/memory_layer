@@ -281,7 +281,7 @@ async def probe_question(
 ) -> list[dict[str, Any]]:
     """Load one question's notes and search every probe prompt in its namespace."""
     from memory_base.eval import retrieval
-    from memory_base.serve import namespaces
+    from memory_base.serve.access import namespaces
 
     namespace = lme.NAMESPACE_PREFIX + question["question_id"]
     await namespaces.create_namespace(namespace)

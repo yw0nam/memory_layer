@@ -13,7 +13,10 @@ import asyncpg
 import httpx
 import pytest
 
-from memory_base.serve import api, auth, tables
+from memory_base.serve import api
+from memory_base.serve.access import auth
+from memory_base.serve.tables import routes as table_routes
+from memory_base.serve.tables import store as table_store
 
 
 def _post(body, *, api_key="test-key"):
@@ -88,7 +91,7 @@ def _patch_connection(monkeypatch, connection):
     async def acquire():
         yield connection
 
-    monkeypatch.setattr(tables.db, "acquire_table_query", acquire)
+    monkeypatch.setattr(table_store.db, "acquire_table_query", acquire)
 
 
 def test_execute_table_query_uses_read_only_extended_protocol_and_normalizes_values(monkeypatch):
@@ -101,7 +104,7 @@ def test_execute_table_query_uses_read_only_extended_protocol_and_normalizes_val
     _patch_connection(monkeypatch, connection)
     sql = "SELECT 2.5::numeric, current_date, now(), gen_random_uuid(), '{}'::jsonb"
 
-    result = asyncio.run(tables.execute_table_query(sql, "team-a"))
+    result = asyncio.run(table_store.execute_table_query(sql, "team-a"))
 
     assert result == {
         "columns": ["numeric", "day", "instant", "identifier", "payload"],
@@ -115,18 +118,18 @@ def test_execute_table_query_uses_read_only_extended_protocol_and_normalizes_val
         ("prepare", sql),
         ("end", None),
     ]
-    assert connection.statement.cursor_instance.fetch_sizes == [tables.ROW_CAP + 1]
+    assert connection.statement.cursor_instance.fetch_sizes == [table_store.ROW_CAP + 1]
 
 
 def test_execute_table_query_fetches_one_extra_row_to_report_truncation(monkeypatch):
-    rows = [[index] for index in range(tables.ROW_CAP + 1)]
+    rows = [[index] for index in range(table_store.ROW_CAP + 1)]
     connection = FakeConnection(["value"], rows)
     _patch_connection(monkeypatch, connection)
 
-    result = asyncio.run(tables.execute_table_query("SELECT value FROM t", "default"))
+    result = asyncio.run(table_store.execute_table_query("SELECT value FROM t", "default"))
 
-    assert result["row_count"] == tables.ROW_CAP
-    assert len(result["rows"]) == tables.ROW_CAP
+    assert result["row_count"] == table_store.ROW_CAP
+    assert len(result["rows"]) == table_store.ROW_CAP
     assert result["truncated"] is True
 
 
@@ -134,8 +137,8 @@ def test_execute_table_query_rejects_binary_values(monkeypatch):
     connection = FakeConnection(["payload"], [[memoryview(b"secret")]])
     _patch_connection(monkeypatch, connection)
 
-    with pytest.raises(tables.UnsupportedTableValueError, match="binary"):
-        asyncio.run(tables.execute_table_query("SELECT payload FROM t", "default"))
+    with pytest.raises(table_store.UnsupportedTableValueError, match="binary"):
+        asyncio.run(table_store.execute_table_query("SELECT payload FROM t", "default"))
 
 
 @pytest.mark.parametrize("sql", ["INSERT INTO t VALUES (1)", "DELETE FROM t", "", "  "])
@@ -143,7 +146,7 @@ def test_query_route_rejects_non_select_prefix_before_opening_pool(monkeypatch, 
     async def forbidden(*args):
         raise AssertionError("rejected SQL must not reach the query pool")
 
-    monkeypatch.setattr(tables, "execute_table_query", forbidden)
+    monkeypatch.setattr(table_store, "execute_table_query", forbidden)
     response = _post({"sql": sql})
     assert response.status_code == 400
 
@@ -156,7 +159,7 @@ def test_query_route_accepts_select_and_with_prefixes(monkeypatch, sql):
         captured.update(sql=query, namespace=namespace)
         return {"columns": [], "rows": [], "row_count": 0, "truncated": False}
 
-    monkeypatch.setattr(tables, "execute_table_query", execute)
+    monkeypatch.setattr(table_store, "execute_table_query", execute)
     response = _post({"sql": sql})
     assert response.status_code == 200
     assert captured == {"sql": sql.strip(), "namespace": "default"}
@@ -181,7 +184,7 @@ def test_query_route_defaults_namespace_to_key_home(monkeypatch):
         return {"columns": [], "rows": [], "row_count": 0, "truncated": False}
 
     monkeypatch.setattr(auth, "authenticate_request", authenticate)
-    monkeypatch.setattr(tables, "execute_table_query", execute)
+    monkeypatch.setattr(table_store, "execute_table_query", execute)
     response = _post({"sql": "SELECT 1"}, api_key="member-key")
     assert response.status_code == 200
     assert captured["namespace"] == "team-a"
@@ -215,14 +218,14 @@ def test_query_route_revalidates_namespace_slug(monkeypatch):
     [
         (asyncpg.QueryCanceledError("statement timeout"), 408),
         (asyncpg.PostgresError("permission denied"), 400),
-        (tables.UnsupportedTableValueError("unsupported binary value"), 400),
+        (table_store.UnsupportedTableValueError("unsupported binary value"), 400),
     ],
 )
 def test_query_route_maps_execution_errors(monkeypatch, exception, status):
     async def execute(sql, namespace):
         raise exception
 
-    monkeypatch.setattr(tables, "execute_table_query", execute)
+    monkeypatch.setattr(table_store, "execute_table_query", execute)
     response = _post({"sql": "SELECT 1"})
     assert response.status_code == status
     assert set(response.json()) == {"error"}
@@ -232,12 +235,12 @@ def test_query_route_rejects_serialized_payload_over_five_mb(monkeypatch):
     async def execute(sql, namespace):
         return {
             "columns": ["payload"],
-            "rows": [["x" * (tables.RESPONSE_MAX_BYTES + 1)]],
+            "rows": [["x" * (table_routes.RESPONSE_MAX_BYTES + 1)]],
             "row_count": 1,
             "truncated": False,
         }
 
-    monkeypatch.setattr(tables, "execute_table_query", execute)
+    monkeypatch.setattr(table_store, "execute_table_query", execute)
     response = _post({"sql": "SELECT payload"})
     assert response.status_code == 413
 
@@ -248,7 +251,7 @@ def test_query_route_serialization_is_compact_utf8(monkeypatch):
     async def execute(sql, namespace):
         return payload
 
-    monkeypatch.setattr(tables, "execute_table_query", execute)
+    monkeypatch.setattr(table_store, "execute_table_query", execute)
     response = _post({"sql": "SELECT value"})
     assert response.status_code == 200
     assert (

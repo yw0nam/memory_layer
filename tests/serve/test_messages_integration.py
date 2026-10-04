@@ -21,7 +21,8 @@ from starlette.testclient import TestClient
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
-from memory_base.serve import api, auth, namespaces
+from memory_base.serve import api
+from memory_base.serve.access import auth, namespaces
 from memory_base.serve.messages import store
 from memory_base.serve.notes import store as note_store
 

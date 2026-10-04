@@ -7,7 +7,7 @@ import math
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from memory_base.serve import namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.common.http import error, json_body
 from memory_base.serve.consolidation import groups, verdicts
 

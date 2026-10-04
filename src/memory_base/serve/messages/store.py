@@ -25,7 +25,7 @@ import asyncpg
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
-from memory_base.serve import namespaces
+from memory_base.serve.access import namespaces
 
 MESSAGE_MAX_TTL_DAYS = 30
 MESSAGE_TTL_DAYS = int(os.getenv("MESSAGE_TTL_DAYS", "7"))

@@ -1,4 +1,4 @@
-"""Unit tests for memory_base.serve.auth: hashing, allowed-set computation,
+"""Unit tests for memory_base.serve.access.auth: hashing, allowed-set computation,
 and ApiKeyAuthMiddleware's 401/health-exempt/identity-attach behavior.
 
 No real DB: memory_base.core.db.acquire is monkeypatched to a fake connection,
@@ -18,7 +18,7 @@ from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from memory_base.serve import auth
+from memory_base.serve.access import auth
 
 pytestmark = pytest.mark.real_auth  # exercises the real auth path; opts out of the tests/serve stub
 

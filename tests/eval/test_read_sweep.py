@@ -212,7 +212,7 @@ def test_a_deployed_read_url_opens_every_transaction_read_only():
 
 def test_the_candidates_read_keeps_every_fused_candidate(monkeypatch):
     from memory_base.eval import retrieval
-    from memory_base.serve import namespaces
+    from memory_base.serve.access import namespaces
 
     class Hit:
         def __init__(self, i):
@@ -250,7 +250,7 @@ def test_the_candidates_read_keeps_every_fused_candidate(monkeypatch):
 
 def test_probe_collection_searches_each_probe_in_the_question_namespace(monkeypatch):
     from memory_base.eval import retrieval
-    from memory_base.serve import namespaces
+    from memory_base.serve.access import namespaces
 
     class Hit:
         def __init__(self, i):

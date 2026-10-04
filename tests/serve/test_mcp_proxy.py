@@ -17,6 +17,7 @@ import pytest
 from memory_base.serve import mcp_server
 from memory_base.serve.documents import tools as document_tools
 from memory_base.serve.common import rest_client
+from memory_base.serve.tables import tools as table_tools
 from memory_base.serve.notes import tools as note_tools
 
 
@@ -571,7 +572,7 @@ def test_query_table_posts_sql_and_namespace_and_returns_body(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     result = asyncio.run(
-        mcp_server.query_table(
+        table_tools.query_table(
             "SELECT data->>'group', AVG((data->>'value')::numeric) FROM memory.doc_rows",
             namespace="team-a",
         )
@@ -594,7 +595,7 @@ def test_query_table_maps_expected_backend_errors(monkeypatch, status):
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match="query rejected"):
-        asyncio.run(mcp_server.query_table("SELECT 1"))
+        asyncio.run(table_tools.query_table("SELECT 1"))
 
 
 def test_ingest_document_429_non_json_body_raises_generic_value_error(monkeypatch):

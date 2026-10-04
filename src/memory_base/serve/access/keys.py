@@ -1,9 +1,9 @@
 """API-key provisioning CLI, and the author allowlist behind /keys/{label}/authors.
 
-    uv run python -m memory_base.serve.keys new <label> [--home <ns>] [--admin] [--author <slug>]...
-    uv run python -m memory_base.serve.keys authors <label> [<slug>...]
-    uv run python -m memory_base.serve.keys list
-    uv run python -m memory_base.serve.keys revoke <prefix-or-hash>
+    uv run python -m memory_base.serve.access.keys new <label> [--home <ns>] [--admin] [--author <slug>]...
+    uv run python -m memory_base.serve.access.keys authors <label> [<slug>...]
+    uv run python -m memory_base.serve.access.keys list
+    uv run python -m memory_base.serve.access.keys revoke <prefix-or-hash>
 
 `new` prints the plaintext key exactly once, on its last line; only its sha256 hash is stored.
 `authors` prints a label's authors, or replaces them on every active key of the label when
@@ -24,7 +24,7 @@ from typing import Any
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
-from memory_base.serve.auth import generate_key, hash_key
+from memory_base.serve.access.auth import generate_key, hash_key
 
 
 AUTHOR_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
@@ -160,7 +160,7 @@ def _print_keys(rows: list[dict[str, Any]]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="memory_base.serve.keys")
+    parser = argparse.ArgumentParser(prog="memory_base.serve.access.keys")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     new_parser = subparsers.add_parser("new", help="mint a key")

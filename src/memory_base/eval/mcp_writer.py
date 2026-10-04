@@ -334,7 +334,7 @@ async def _rows(namespace: str) -> dict[str, dict[str, Any]]:
 
 
 async def _prepare_question(question_id: str) -> tuple[str, str]:
-    from memory_base.serve import keys, namespaces
+    from memory_base.serve.access import keys, namespaces
 
     namespace = NAMESPACE_PREFIX + question_id
     await namespaces.create_namespace(namespace)

@@ -9,7 +9,8 @@ import time
 import httpx
 import pytest
 
-from memory_base.serve import api, auth
+from memory_base.serve import api
+from memory_base.serve.access import auth
 from memory_base.serve.common import job_store
 from memory_base.serve.repos import cache as repo_cache
 

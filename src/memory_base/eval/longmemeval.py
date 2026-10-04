@@ -295,7 +295,7 @@ async def load_question_notes(
     both.
     """
     from memory_base.serve.notes import store as notes_module
-    from memory_base.serve.namespaces import NamespaceError
+    from memory_base.serve.access.namespaces import NamespaceError
 
     save = save or notes_module.save_note
     stats = LoadStats()
@@ -682,7 +682,7 @@ async def retrieve_question(
     run: str,
 ) -> dict[str, Any]:
     from memory_base.eval.retrieval import _search_with_retry
-    from memory_base.serve import namespaces
+    from memory_base.serve.access import namespaces
 
     namespace = NAMESPACE_PREFIX + question["question_id"]
     await namespaces.create_namespace(namespace)

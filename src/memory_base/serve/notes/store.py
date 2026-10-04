@@ -20,9 +20,9 @@ from memory_base.retrieval.search import (
     normalize_time_range,
     parse_time_bound,
 )
-from memory_base.serve import namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.common.http import TEXT_LIMIT
-from memory_base.serve.namespaces import DEFAULT_NAMESPACE
+from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 
 
 NOTE_MAX_CHARS = 4000

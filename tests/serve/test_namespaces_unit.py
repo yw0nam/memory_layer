@@ -1,4 +1,4 @@
-"""Unit tests for the namespace registry (memory_base.serve.namespaces): no real DB.
+"""Unit tests for the namespace registry (memory_base.serve.access.namespaces): no real DB.
 
 memory_base.core.db.acquire is monkeypatched to a fake connection, matching the
 convention already used in tests/serve/test_ingest_api.py
@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from memory_base.serve import namespaces
+from memory_base.serve.access import namespaces
 
 
 class FakeTransaction:
