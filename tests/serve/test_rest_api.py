@@ -340,7 +340,7 @@ def test_search_omitted_min_score_does_not_reach_search(monkeypatch):
     assert "min_score" not in captured
 
 
-@pytest.mark.parametrize("min_score", [True, -0.1, 1.5])
+@pytest.mark.parametrize("min_score", [True, "0.7", -0.1, 1.5])
 def test_search_invalid_min_score_400(min_score):
     response = client.post("/search", json={"query": "hello", "min_score": min_score})
     assert response.status_code == 400
