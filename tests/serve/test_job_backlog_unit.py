@@ -250,3 +250,36 @@ def test_lifespan_starts_background_in_order_and_stops_it_in_reverse_before_pool
         ("stop", "documents-handle"),
         "close",
     ]
+
+
+def test_lifespan_stops_earlier_starts_when_a_later_start_fails(monkeypatch):
+    events = []
+
+    async def start_documents():
+        events.append("start documents")
+        return "documents-handle"
+
+    async def stop_documents(handle):
+        events.append(("stop", handle))
+
+    async def start_repos():
+        raise RuntimeError("repo recovery failed")
+
+    async def stop_repos(handle):
+        raise AssertionError("a start that failed is never stopped")
+
+    async def close():
+        events.append("close")
+
+    monkeypatch.setattr(
+        api, "BACKGROUND", ((start_documents, stop_documents), (start_repos, stop_repos))
+    )
+    monkeypatch.setattr(api.db, "close_pool", close)
+
+    async def scenario():
+        async with api.lifespan(api.app):
+            events.append("serving")
+
+    with pytest.raises(RuntimeError, match="repo recovery failed"):
+        asyncio.run(scenario())
+    assert events == ["start documents", ("stop", "documents-handle"), "close"]
