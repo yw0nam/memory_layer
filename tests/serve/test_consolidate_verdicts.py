@@ -250,6 +250,37 @@ def test_the_single_word_i_is_not_a_name():
     assert verdicts.token_check(["The deploy I run is nightly."], "The deploy is nightly.") is None
 
 
+def test_a_name_moved_from_a_sentence_start_to_mid_sentence_is_not_added():
+    members = ["Alice asked me to draft replies.", "Replies follow the size rule."]
+    merged = "Replies follow the size rule, and Alice asked me to draft replies."
+    assert verdicts.token_check(members, merged) is None
+
+
+def test_a_name_moved_from_mid_sentence_to_a_sentence_start_is_not_dropped():
+    members = ["We met Alice in Paris."]
+    assert verdicts.token_check(members, "Alice lives in Paris.") is None
+
+
+def test_a_new_mid_sentence_name_is_still_added():
+    reason = verdicts.token_check(["Alice left."], "Alice left with Bob.")
+    assert reason == "merged_text adds Bob"
+
+
+def test_a_removed_mid_sentence_name_is_still_dropped():
+    reason = verdicts.token_check(["We met Alice in Paris."], "We met in Paris.")
+    assert reason == "merged_text drops Alice"
+
+
+def test_the_single_word_i_is_never_a_name_at_a_sentence_start():
+    assert verdicts.tokens("I left.", sentence_starts=True) == set()
+    assert verdicts.token_check(["I left. Then I ran."], "I ran.") is None
+
+
+def test_sentence_starts_counts_a_sentence_initial_name_but_not_a_list_marker():
+    assert verdicts.tokens("Alice met Bob. Done.", sentence_starts=True) == {"Alice", "Bob", "Done"}
+    assert verdicts.tokens("- Alice\n1. Bob", sentence_starts=True) == {"Alice", "Bob"}
+
+
 def test_a_list_marker_is_not_a_number_but_a_number_in_the_line_is():
     assert verdicts.tokens("1. ship at 04:00\n2) retry 3 times") == {"04:00", "3"}
     assert verdicts.tokens("costs 1. That is all") == {"1"}
