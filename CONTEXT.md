@@ -85,7 +85,7 @@ To replace a note with a newer one, archiving the old rather than deleting it. S
 _Avoid_: overwrite, replace, delete, revoke
 
 **Group**:
-A set of active notes in one namespace, every pair above the similarity threshold and none acknowledged as distinct through `similar_ack`, offered to an agent to judge whether they state the same thing. Built by `GET /admin/consolidate/groups`; a note is in at most one group.
+A set of active notes in one namespace, every pair at or above the similarity threshold and none acknowledged as distinct through `similar_ack`, offered to an agent to judge whether they state the same thing. Built by `GET /admin/consolidate/groups`; a note is in at most one group.
 _Avoid_: cluster, duplicate set
 
 **Group key**:
@@ -121,5 +121,5 @@ An owner's full replacement text for its `user` part with a reason and the user 
 _Avoid_: suggestion, draft, edit
 
 **Distilled**:
-Reduced to its high-signal form before storage. The property that qualifies content for the store at all.
+Reduced to its worth-keeping form by the writer before storage. The server stores a note without a content gate; distillation is the writer's job, guided by the tool description and the server instructions.
 _Avoid_: summarized, cleaned, processed
