@@ -134,7 +134,7 @@ async def move_notes(ids: list[str], target_namespace: str) -> dict[str, list]:
 async def find_duplicates(
     threshold: float, kind: str | None, limit: int, namespaces: list[str] | None = None
 ) -> list[dict]:
-    """Return active row pairs meeting the cosine-similarity threshold, scoped to namespaces."""
+    """Return active agent-note pairs meeting the cosine-similarity threshold, scoped to namespaces."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -160,14 +160,16 @@ async def find_duplicates(
                        candidate.metadata,
                        candidate.embedding <=> a.embedding AS distance
                 FROM "{PG_SCHEMA}".memory_chunks AS candidate
-                WHERE candidate.archived_at IS NULL
+                WHERE candidate.source_type = 'agent_note'
+                  AND candidate.archived_at IS NULL
                   AND candidate.id <> a.id
                   AND ($2::text IS NULL OR candidate.chunk_kind = $2)
                   AND ($4::text[] IS NULL OR candidate.namespace = ANY($4::text[]))
                 ORDER BY candidate.embedding <=> a.embedding
                 LIMIT {DUPLICATE_NEIGHBORS}
               ) AS b
-              WHERE a.archived_at IS NULL
+              WHERE a.source_type = 'agent_note'
+                AND a.archived_at IS NULL
                 AND ($2::text IS NULL OR a.chunk_kind = $2)
                 AND ($4::text[] IS NULL OR a.namespace = ANY($4::text[]))
             ),
@@ -212,7 +214,7 @@ async def find_duplicates(
 
 
 async def archive_candidates(now: float, namespaces: list[str] | None = None) -> list[dict]:
-    """Return active rows matching the configured cold-tier rule, scoped to namespaces."""
+    """Return active agent notes matching the configured cold-tier rule, scoped to namespaces."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -220,7 +222,8 @@ async def archive_candidates(now: float, namespaces: list[str] | None = None) ->
                    ($1 - ts_last_active) / {DAY_SECONDS} AS age_days,
                    hit_count, last_hit_at
             FROM "{PG_SCHEMA}".memory_chunks
-            WHERE archived_at IS NULL
+            WHERE source_type = 'agent_note'
+              AND archived_at IS NULL
               AND ts_last_active < $1 - $2::double precision * {DAY_SECONDS}
               AND coalesce(last_hit_at, ts_last_active)
                   < $1 - $3::double precision * {DAY_SECONDS}
