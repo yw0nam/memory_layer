@@ -449,3 +449,40 @@ def test_archive_by_ids_refuses_a_document_chunk_like_an_unknown_id():
         assert asyncio.run(_archived_at(note_id)) is not None
     finally:
         asyncio.run(_delete_rows(seeded_ids))
+
+
+@pytest.mark.integration
+def test_restore_preview_lists_an_archived_document_chunk():
+    token = time.time_ns()
+    doc_id = f"doc:notesonly-restore-{token}:0"
+    now = time.time()
+
+    async def _seed() -> None:
+        conn = await asyncpg.connect(db_url())
+        try:
+            await ensure_schema(conn)
+            await _seed_row(
+                conn,
+                doc_id,
+                "notes only restore document",
+                _angled_vec(0),
+                now,
+                chunk_kind="doc",
+                source_type="document",
+            )
+            await conn.execute(
+                f'UPDATE "{PG_SCHEMA}".memory_chunks SET archived_at = $2 WHERE id = $1',
+                doc_id,
+                now,
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_delete_rows([doc_id]))
+    asyncio.run(_seed())
+    try:
+        preview = client.post("/admin/restore", json={"ids": [doc_id]})
+        assert preview.status_code == 200
+        assert [row["id"] for row in preview.json()["rows"]] == [doc_id]
+    finally:
+        asyncio.run(_delete_rows([doc_id]))
