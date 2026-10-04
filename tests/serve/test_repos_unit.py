@@ -11,7 +11,9 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 
-from memory_base.serve import api, repos
+from memory_base.serve import api
+from memory_base.serve.common import job_store
+from memory_base.serve.repos import cache as repo_cache
 
 
 def _post(path, **kwargs):
@@ -49,7 +51,7 @@ def _delete(path):
     ],
 )
 def test_validate_repo_url_accepts_supported_forms(url):
-    assert repos.validate_repo_url(url) == url
+    assert repo_cache.validate_repo_url(url) == url
 
 
 @pytest.mark.parametrize(
@@ -71,7 +73,7 @@ def test_validate_repo_url_accepts_supported_forms(url):
 )
 def test_validate_repo_url_rejects_bad_forms(url):
     with pytest.raises(ValueError):
-        repos.validate_repo_url(url)
+        repo_cache.validate_repo_url(url)
 
 
 # ---- name derivation + path traversal -------------------------------------
@@ -87,17 +89,17 @@ def test_validate_repo_url_rejects_bad_forms(url):
     ],
 )
 def test_derive_repo_name_from_url(url, expected):
-    assert repos.derive_repo_name(url, None) == expected
+    assert repo_cache.derive_repo_name(url, None) == expected
 
 
 def test_derive_repo_name_uses_explicit_name():
-    assert repos.derive_repo_name("https://x/y.git", "custom_name") == "custom_name"
+    assert repo_cache.derive_repo_name("https://x/y.git", "custom_name") == "custom_name"
 
 
 @pytest.mark.parametrize("name", ["..", "../etc", "a/b", "a\\b", "bad:name", "with space"])
 def test_derive_repo_name_rejects_traversal_and_bad_chars(name):
     with pytest.raises(ValueError):
-        repos.derive_repo_name("https://x/y.git", name)
+        repo_cache.derive_repo_name("https://x/y.git", name)
 
 
 # ---- list_repos parsing against local temp git repos (offline) ------------
@@ -124,14 +126,14 @@ def test_list_repos_parses_local_clones(tmp_path, monkeypatch):
     cache.mkdir()
     subprocess.run(["git", "clone", "-q", str(origin), str(cache / "repo")], check=True)
 
-    monkeypatch.setattr(repos, "CACHE_ROOT", cache)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", cache)
 
     async def no_counts():
         return {"repo": 7}
 
-    monkeypatch.setattr(repos, "_repo_chunk_counts", no_counts)
+    monkeypatch.setattr(repo_cache, "_repo_chunk_counts", no_counts)
 
-    listed = asyncio.run(repos.list_repos())
+    listed = asyncio.run(repo_cache.list_repos())
     assert len(listed) == 1
     entry = listed[0]
     assert entry["name"] == "repo"
@@ -149,16 +151,16 @@ def test_list_repos_survives_db_failure(tmp_path, monkeypatch):
     cache.mkdir()
     subprocess.run(["git", "clone", "-q", str(origin), str(cache / "repo")], check=True)
 
-    monkeypatch.setattr(repos, "CACHE_ROOT", cache)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", cache)
 
     @asynccontextmanager
     async def unreachable():
         raise OSError("connection refused")
         yield
 
-    monkeypatch.setattr(repos.db, "acquire", unreachable)
+    monkeypatch.setattr(repo_cache.db, "acquire", unreachable)
 
-    listed = asyncio.run(repos.list_repos())
+    listed = asyncio.run(repo_cache.list_repos())
     assert [entry["name"] for entry in listed] == ["repo"]
     assert listed[0]["chunks"] == 0
 
@@ -167,10 +169,10 @@ def test_list_repos_survives_db_failure(tmp_path, monkeypatch):
 
 
 def test_index_command_skips_dependency_sync():
-    command = repos._index_command()
+    command = repo_cache._index_command()
     assert command[:2] == ["uv", "run"]
     assert "--no-sync" in command
-    assert command[-1] == repos.CODE_APP
+    assert command[-1] == repo_cache.CODE_APP
 
 
 # ---- RepoJob.response() shape ---------------------------------------------
@@ -178,7 +180,7 @@ def test_index_command_skips_dependency_sync():
 
 def test_repo_job_response_shape():
     now = time.time()
-    job = repos.RepoJob(
+    job = job_store.RepoJob(
         job_id="id",
         name="repo",
         action="ingest",
@@ -209,7 +211,7 @@ class AcceptingBacklog:
 
     async def admit(self, **kwargs):
         now = time.time()
-        self.job = repos.RepoJob(
+        self.job = job_store.RepoJob(
             job_id="job-1",
             name=kwargs["name"],
             action=kwargs["action"],
@@ -231,7 +233,7 @@ def test_post_repos_rejects_bad_url_with_400(monkeypatch):
 
 def test_post_repos_returns_202_and_shape(monkeypatch):
     fake = AcceptingBacklog()
-    monkeypatch.setattr(repos.job_store, "admit_repo", fake.admit)
+    monkeypatch.setattr(job_store, "admit_repo", fake.admit)
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
     assert response.status_code == 202
     body = response.json()
@@ -246,24 +248,24 @@ def test_post_repos_returns_202_and_shape(monkeypatch):
 
 def test_post_repos_returns_429_when_full(monkeypatch):
     async def full(**kwargs):
-        raise repos.job_store.BacklogFullError("repo job queue is full")
+        raise job_store.BacklogFullError("repo job queue is full")
 
-    monkeypatch.setattr(repos.job_store, "admit_repo", full)
+    monkeypatch.setattr(job_store, "admit_repo", full)
     response = _post("/repos", json={"url": "https://github.com/owner/repo.git"})
     assert response.status_code == 429
 
 
 def test_delete_unknown_repo_returns_404(monkeypatch, tmp_path):
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
     response = _delete("/repos/ghost")
     assert response.status_code == 404
 
 
 def test_delete_existing_repo_returns_202(monkeypatch, tmp_path):
     (tmp_path / "repo").mkdir()
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
     fake = AcceptingBacklog()
-    monkeypatch.setattr(repos.job_store, "admit_repo", fake.admit)
+    monkeypatch.setattr(job_store, "admit_repo", fake.admit)
     response = _delete("/repos/repo")
     assert response.status_code == 202
     assert response.json()["name"] == "repo"

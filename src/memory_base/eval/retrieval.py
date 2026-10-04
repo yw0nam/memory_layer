@@ -25,7 +25,8 @@ from memory_base.core.config import PG_SCHEMA, db_url, emb_model, rerank_model
 from memory_base.core.llm import resolve_llm_provider
 from memory_base.core.logger import setup_logging
 from memory_base.retrieval import search as search_module
-from memory_base.serve import ingest_api
+from memory_base.serve.common.job_store import IngestJob
+from memory_base.serve.documents import pipeline as document_pipeline
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "eval_docs"
@@ -213,7 +214,7 @@ def load_labels(path: Path = LABELS_PATH) -> list[EvalLabel]:
 def _scratch_schema_scope(schema_name: str):
     """Point core.schema.ensure_schema[_once] at the scratch schema for this run.
 
-    search() and ingest_api.run_document_job() take an explicit `schema` argument
+    search() and document_pipeline.run_document_job() take an explicit `schema` argument
     instead (their PG_SCHEMA reads are fully contained in functions the eval calls
     directly). ensure_schema_once has no such argument: it is also called,
     unparameterized, from serve/* modules reachable transitively while ingesting a
@@ -232,7 +233,7 @@ def _scratch_schema_scope(schema_name: str):
         schema_module.PG_SCHEMA = previous
 
 
-async def _ingest_fixture(path: Path, schema: str) -> ingest_api.IngestJob:
+async def _ingest_fixture(path: Path, schema: str) -> IngestJob:
     descriptor, temp_name = tempfile.mkstemp(
         prefix="memory-base-eval-",
         suffix=path.suffix,
@@ -242,7 +243,7 @@ async def _ingest_fixture(path: Path, schema: str) -> ingest_api.IngestJob:
     try:
         shutil.copyfile(path, temp_path)
         now = time.time()
-        job = ingest_api.IngestJob(
+        job = IngestJob(
             job_id=uuid.uuid4().hex,
             document_id=path.name.lower(),
             status="running",
@@ -250,7 +251,7 @@ async def _ingest_fixture(path: Path, schema: str) -> ingest_api.IngestJob:
             created_at=now,
             updated_at=now,
         )
-        await ingest_api.run_document_job(
+        await document_pipeline.run_document_job(
             job,
             temp_path,
             path.name,

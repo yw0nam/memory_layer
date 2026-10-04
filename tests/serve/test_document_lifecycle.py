@@ -11,7 +11,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from memory_base.serve import api, auth, ingest_api
+from memory_base.serve import api, auth, namespaces
+from memory_base.serve.common import job_store
+from memory_base.serve.documents import pipeline as document_pipeline
+from memory_base.serve.documents import store as document_store
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +24,7 @@ def _default_namespace_registered(monkeypatch):
     async def fake_namespace_exists(name):
         return name in {"default", "team-a"}
 
-    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+    monkeypatch.setattr(namespaces, "namespace_exists", fake_namespace_exists)
 
 
 def _identity(label, *, is_admin=False, allowed=frozenset({"default"})):
@@ -69,7 +72,7 @@ class AcceptingBacklog:
     async def admit(self, **kwargs):
         self.kwargs = kwargs
         now = time.time()
-        self.job = ingest_api.IngestJob(
+        self.job = job_store.IngestJob(
             job_id="job-1",
             document_id=kwargs["document_id"],
             namespace=kwargs["namespace"],
@@ -88,7 +91,7 @@ class AcceptingBacklog:
 
 def _job(document_id="guide.md", key_label="test"):
     now = time.time()
-    return ingest_api.IngestJob(
+    return job_store.IngestJob(
         "job",
         document_id,
         status="running",
@@ -122,12 +125,12 @@ def test_ingest_stamps_created_by_with_key_label(monkeypatch, tmp_path):
     async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
         written.extend(rows)
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", no_owner)
-    monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
-    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
+    monkeypatch.setattr(document_store, "existing_document_owner", no_owner)
+    monkeypatch.setattr(document_pipeline, "convert_to_markdown", converted)
+    monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
+    monkeypatch.setattr(document_store, "replace_document_rows", write)
     job = _job(key_label="alice")
-    asyncio.run(ingest_api.run_document_job(job, upload, "guide.md", "force", None))
+    asyncio.run(document_pipeline.run_document_job(job, upload, "guide.md", "force", None))
     assert written
     assert all(row["metadata"]["created_by"] == "alice" for row in written)
 
@@ -153,12 +156,12 @@ def test_reingest_preserves_original_created_by(monkeypatch, tmp_path):
     async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
         written.extend(rows)
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
-    monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
-    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
+    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_pipeline, "convert_to_markdown", converted)
+    monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
+    monkeypatch.setattr(document_store, "replace_document_rows", write)
     job = _job(key_label="root")  # an admin re-ingesting alice's document
-    asyncio.run(ingest_api.run_document_job(job, upload, "guide.md", "force", None))
+    asyncio.run(document_pipeline.run_document_job(job, upload, "guide.md", "force", None))
     assert written
     assert all(row["metadata"]["created_by"] == "alice" for row in written)
 
@@ -184,13 +187,13 @@ def test_run_document_job_rejects_oversized_csv_summary(monkeypatch, tmp_path):
     async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
         write_calls.append(rows)
 
-    monkeypatch.setattr(ingest_api, "summarize_and_tag", oversized_summary)
-    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
+    monkeypatch.setattr(document_pipeline, "summarize_and_tag", oversized_summary)
+    monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
+    monkeypatch.setattr(document_store, "replace_document_rows", write)
 
     job = _job(document_id="data.csv", key_label="alice")
     with pytest.raises(document.DocumentError, match=str(document.HARD_CHUNK_CHARS)):
-        asyncio.run(ingest_api.run_document_job(job, upload, "data.csv", "force", None))
+        asyncio.run(document_pipeline.run_document_job(job, upload, "data.csv", "force", None))
     assert not embed_calls
     assert not write_calls
 
@@ -203,10 +206,10 @@ def test_reingest_by_other_non_admin_key_gets_403(monkeypatch, mode):
     async def existing_owner(document_id, namespace="default", schema=None):
         return True, "alice"
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
     _auth_map(monkeypatch, {"intruder-key": _identity("bob")})
     fake = AcceptingBacklog()
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    monkeypatch.setattr(job_store, "admit_document", fake.admit)
 
     response = _post(
         "/ingest/document",
@@ -222,10 +225,10 @@ def test_reingest_by_creator_succeeds(monkeypatch):
     async def existing_owner(document_id, namespace="default", schema=None):
         return True, "alice"
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
     _auth_map(monkeypatch, {"alice-key": _identity("alice")})
     fake = AcceptingBacklog()
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    monkeypatch.setattr(job_store, "admit_document", fake.admit)
 
     response = _post(
         "/ingest/document",
@@ -241,10 +244,10 @@ def test_reingest_by_admin_succeeds(monkeypatch):
     async def existing_owner(document_id, namespace="default", schema=None):
         return True, "alice"
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
     _auth_map(monkeypatch, {"admin-key": _identity("root", is_admin=True)})
     fake = AcceptingBacklog()
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    monkeypatch.setattr(job_store, "admit_document", fake.admit)
 
     response = _post(
         "/ingest/document",
@@ -260,10 +263,10 @@ def test_reingest_of_ownerless_document_by_non_admin_gets_403(monkeypatch):
     async def existing_owner(document_id, namespace="default", schema=None):
         return True, None
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
     _auth_map(monkeypatch, {"member-key": _identity("member")})
     fake = AcceptingBacklog()
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    monkeypatch.setattr(job_store, "admit_document", fake.admit)
 
     response = _post(
         "/ingest/document",
@@ -279,10 +282,10 @@ def test_ingest_of_new_document_id_is_unaffected_by_gate(monkeypatch):
     async def no_owner(document_id, namespace="default", schema=None):
         return False, None
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", no_owner)
+    monkeypatch.setattr(document_store, "existing_document_owner", no_owner)
     _auth_map(monkeypatch, {"member-key": _identity("member")})
     fake = AcceptingBacklog()
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    monkeypatch.setattr(job_store, "admit_document", fake.admit)
 
     response = _post(
         "/ingest/document",
@@ -307,8 +310,8 @@ def test_delete_by_creator_removes_chunks(monkeypatch):
         deleted_calls.append((document_id, namespace))
         return 3
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
-    monkeypatch.setattr(ingest_api, "delete_document_rows", delete_rows)
+    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_store, "delete_document_rows", delete_rows)
     _auth_map(monkeypatch, {"alice-key": _identity("alice")})
 
     response = _delete("/ingest/documents/guide.md", api_key="alice-key")
@@ -324,8 +327,8 @@ def test_delete_by_admin_removes_chunks(monkeypatch):
     async def delete_rows(document_id, namespace="default"):
         return 1
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
-    monkeypatch.setattr(ingest_api, "delete_document_rows", delete_rows)
+    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_store, "delete_document_rows", delete_rows)
     _auth_map(monkeypatch, {"admin-key": _identity("root", is_admin=True)})
 
     response = _delete("/ingest/documents/guide.md", api_key="admin-key")
@@ -342,8 +345,8 @@ def test_delete_by_other_non_admin_key_gets_403(monkeypatch):
         called.append(True)
         return 1
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
-    monkeypatch.setattr(ingest_api, "delete_document_rows", delete_rows)
+    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_store, "delete_document_rows", delete_rows)
     _auth_map(monkeypatch, {"intruder-key": _identity("bob")})
 
     response = _delete("/ingest/documents/guide.md", api_key="intruder-key")
@@ -355,7 +358,7 @@ def test_delete_of_ownerless_document_by_non_admin_gets_403(monkeypatch):
     async def existing_owner(document_id, namespace="default", schema=None):
         return True, None
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
     _auth_map(monkeypatch, {"member-key": _identity("member")})
 
     response = _delete("/ingest/documents/guide.md", api_key="member-key")
@@ -366,7 +369,7 @@ def test_delete_missing_document_gets_404(monkeypatch):
     async def no_owner(document_id, namespace="default", schema=None):
         return False, None
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", no_owner)
+    monkeypatch.setattr(document_store, "existing_document_owner", no_owner)
 
     response = _delete("/ingest/documents/ghost.md")
     assert response.status_code == 404
@@ -383,8 +386,8 @@ def test_delete_respects_namespace_query_param(monkeypatch):
         captured.append(("delete", document_id, namespace))
         return 2
 
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", existing_owner)
-    monkeypatch.setattr(ingest_api, "delete_document_rows", delete_rows)
+    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_store, "delete_document_rows", delete_rows)
     _auth_map(
         monkeypatch, {"alice-key": _identity("alice", allowed=frozenset({"default", "team-a"}))}
     )
@@ -455,8 +458,8 @@ def test_delete_document_rows_scoped_to_one_namespace(monkeypatch):
     async def acquire():
         yield connection
 
-    monkeypatch.setattr(ingest_api.db, "acquire", acquire)
-    deleted = asyncio.run(ingest_api.delete_document_rows("guide.md", "default"))
+    monkeypatch.setattr(document_store.db, "acquire", acquire)
+    deleted = asyncio.run(document_store.delete_document_rows("guide.md", "default"))
     assert deleted == 1
     assert ("guide.md", "team-a") in connection.rows_by_key
     assert ("guide.md", "default") not in connection.rows_by_key

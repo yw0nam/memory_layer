@@ -26,21 +26,22 @@ from memory_base.retrieval.search import UpstreamUnavailable
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
 from memory_base.serve import access_log
-from memory_base.serve import ingest_api
-from memory_base.serve import job_store
 from memory_base.serve import keys
 from memory_base.serve import namespaces
-from memory_base.serve import repos
 from memory_base.serve import tables
 from memory_base.serve.auth import ApiKeyAuthMiddleware
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.common.http import error
 from memory_base.serve.common.http import json_body
 from memory_base.serve.consolidation import routes as consolidation_routes
+from memory_base.serve.documents import pipeline as document_pipeline
+from memory_base.serve.documents import routes as document_routes
 from memory_base.serve.messages import routes as message_routes
 from memory_base.serve.notes import routes as note_routes
 from memory_base.serve.notes.store import note_date
 from memory_base.serve.profiles import routes as profile_routes
+from memory_base.serve.repos import cache as repo_cache
+from memory_base.serve.repos import routes as repo_routes
 
 SOURCES = ("all", "code", "memory")
 # Beyond this a query is a pasted payload, not a question: it costs embedder and BM25
@@ -346,18 +347,25 @@ class HealthAccessFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(HealthAccessFilter())
 
 
+# Background work as (start, stop) pairs: started in order, stopped in reverse.
+BACKGROUND = (
+    (document_pipeline.start, document_pipeline.stop),
+    (repo_cache.start, repo_cache.stop),
+)
+
+
 @asynccontextmanager
 async def lifespan(app: Starlette):
-    """Recover durable jobs, run workers and the hit flusher, and close the pool last."""
+    """Start background work and the hit flusher, stop them in reverse, and close the pools last."""
     del app
-    await job_store.initialize()
-    workers = job_store.start_workers()
+    started = [(stop, await start()) for start, stop in BACKGROUND]
     flusher = access_log.start_flusher()
     try:
         yield
     finally:
         await access_log.stop_flusher(flusher)
-        await job_store.stop_workers(workers)
+        for stop, handle in reversed(started):
+            await stop(handle)
         await db.close_table_query_pool()
         await db.close_pool()
 
@@ -394,18 +402,14 @@ app = Starlette(
         Route("/messages/{message_id}/claim", message_routes.claim_route, methods=["POST"]),
         Route("/messages/{message_id}", message_routes.cancel_route, methods=["DELETE"]),
         Route("/tables/query", tables.tables_query_route, methods=["POST"]),
-        Route("/ingest/document", ingest_api.ingest_document_route, methods=["POST"]),
-        Route("/ingest/jobs", ingest_api.ingest_jobs_route, methods=["GET"]),
-        Route("/ingest/jobs/{job_id}", ingest_api.ingest_job_route, methods=["GET"]),
-        Route(
-            "/ingest/documents/{document_id}",
-            ingest_api.remove_document_route,
-            methods=["DELETE"],
-        ),
-        Route("/repos", repos.ingest_repo_route, methods=["POST"]),
-        Route("/repos", repos.list_repos_route, methods=["GET"]),
-        Route("/repos/jobs/{job_id}", repos.repo_job_route, methods=["GET"]),
-        Route("/repos/{name}", repos.remove_repo_route, methods=["DELETE"]),
+        Route("/ingest/document", document_routes.ingest_route, methods=["POST"]),
+        Route("/ingest/jobs", document_routes.jobs_route, methods=["GET"]),
+        Route("/ingest/jobs/{job_id}", document_routes.job_route, methods=["GET"]),
+        Route("/ingest/documents/{document_id}", document_routes.remove_route, methods=["DELETE"]),
+        Route("/repos", repo_routes.ingest_route, methods=["POST"]),
+        Route("/repos", repo_routes.list_route, methods=["GET"]),
+        Route("/repos/jobs/{job_id}", repo_routes.job_route, methods=["GET"]),
+        Route("/repos/{name}", repo_routes.remove_route, methods=["DELETE"]),
         Route("/keys/{label}/authors", keys_authors_route, methods=["GET"]),
         Route("/keys/{label}/authors", keys_authors_put_route, methods=["PUT"]),
         Route("/namespaces", namespaces_create_route, methods=["POST"]),

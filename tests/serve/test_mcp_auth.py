@@ -19,6 +19,8 @@ import httpx
 import pytest
 
 from memory_base.serve import mcp_server
+from memory_base.serve.documents import tools as document_tools
+from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.common import rest_client
 from memory_base.serve.notes import tools
 
@@ -151,7 +153,7 @@ def test_ingest_document_forwards_api_key_header(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(mcp_server.ingest_document("# Guide", "guide.md", ctx=ctx))
+    asyncio.run(document_tools.ingest_document("# Guide", "guide.md", ctx=ctx))
     assert captured["header"] == "secret"
 
 
@@ -172,7 +174,7 @@ def test_ingest_repo_forwards_api_key_header(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(mcp_server.ingest_repo("https://github.com/o/repo.git", ctx=ctx))
+    asyncio.run(repo_tools.ingest_repo("https://github.com/o/repo.git", ctx=ctx))
     assert captured["header"] == "secret"
 
 
@@ -193,7 +195,7 @@ def test_remove_repo_forwards_api_key_header(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(mcp_server.remove_repo("repo", ctx=ctx))
+    asyncio.run(repo_tools.remove_repo("repo", ctx=ctx))
     assert captured["header"] == "secret"
 
 
@@ -206,7 +208,7 @@ def test_list_repos_forwards_api_key_header(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(mcp_server.list_repos(ctx=ctx))
+    asyncio.run(repo_tools.list_repos(ctx=ctx))
     assert captured["header"] == "secret"
 
 
@@ -291,7 +293,7 @@ def test_ingest_document_omitted_namespace_sends_no_namespace_field(monkeypatch)
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.ingest_document("# Guide", "guide.md"))
+    asyncio.run(document_tools.ingest_document("# Guide", "guide.md"))
     assert b'name="namespace"' not in captured["body"]
 
 
@@ -305,7 +307,7 @@ def test_ingest_document_explicit_namespace_forwarded(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.ingest_document("# Guide", "guide.md", namespace="team-a"))
+    asyncio.run(document_tools.ingest_document("# Guide", "guide.md", namespace="team-a"))
     assert b'name="namespace"' in captured["body"]
     assert b"team-a" in captured["body"]
 
@@ -343,13 +345,13 @@ def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
         ),
         pytest.param(lambda: mcp_server.query_table("SELECT 1"), id="query-table"),
         pytest.param(
-            lambda: mcp_server.ingest_document("content", "guide.md"), id="ingest-document"
+            lambda: document_tools.ingest_document("content", "guide.md"), id="ingest-document"
         ),
         pytest.param(
-            lambda: mcp_server.ingest_repo("https://github.com/o/repo.git"), id="ingest-repo"
+            lambda: repo_tools.ingest_repo("https://github.com/o/repo.git"), id="ingest-repo"
         ),
-        pytest.param(lambda: mcp_server.remove_repo("repo"), id="remove-repo"),
-        pytest.param(lambda: mcp_server.list_repos(), id="list-repos"),
+        pytest.param(lambda: repo_tools.remove_repo("repo"), id="remove-repo"),
+        pytest.param(lambda: repo_tools.list_repos(), id="list-repos"),
     ],
 )
 def test_tools_preserve_forbidden_backend_message(monkeypatch, tool_call):

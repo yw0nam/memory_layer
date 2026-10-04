@@ -17,7 +17,11 @@ from memory_base.adapters import document
 from memory_base.adapters.document import Chunk, map_document_rows
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, db_url, embed_text
 from memory_base.ingest import enrich
-from memory_base.serve import api, ingest_api, namespaces
+from memory_base.serve import api, namespaces
+from memory_base.serve.common import job_store
+from memory_base.serve.documents import pipeline as document_pipeline
+from memory_base.serve.documents import routes as document_routes
+from memory_base.serve.documents import store as document_store
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +31,7 @@ def _default_namespace_registered(monkeypatch):
     async def fake_namespace_exists(name):
         return name == "default"
 
-    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+    monkeypatch.setattr(namespaces, "namespace_exists", fake_namespace_exists)
 
 
 def _post(path, **kwargs):
@@ -50,7 +54,7 @@ class AcceptingBacklog:
     async def admit(self, **kwargs):
         self.kwargs = kwargs
         now = time.time()
-        self.job = ingest_api.IngestJob(
+        self.job = job_store.IngestJob(
             job_id="job-1",
             document_id=kwargs["document_id"],
             namespace=kwargs["namespace"],
@@ -90,7 +94,7 @@ def test_rest_rejects_invalid_document_id_with_400(document_id):
 
 def test_rest_normalizes_document_id_and_returns_202(monkeypatch):
     fake = AcceptingBacklog()
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    monkeypatch.setattr(job_store, "admit_document", fake.admit)
     response = _post(
         "/ingest/document",
         data={"document_id": "Folder/Guide.MD", "origin": "local:item"},
@@ -109,9 +113,9 @@ def test_rest_normalizes_document_id_and_returns_202(monkeypatch):
 
 def test_rest_returns_distinct_429_when_per_key_backlog_is_full(monkeypatch):
     async def full(**kwargs):
-        raise ingest_api.job_store.BacklogFullError("document per-key backlog limit reached")
+        raise job_store.BacklogFullError("document per-key backlog limit reached")
 
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", full)
+    monkeypatch.setattr(job_store, "admit_document", full)
     response = _post(
         "/ingest/document",
         files={"file": ("guide.md", b"content")},
@@ -121,7 +125,7 @@ def test_rest_returns_distinct_429_when_per_key_backlog_is_full(monkeypatch):
 
 
 def test_rest_returns_413_when_upload_exceeds_limit(monkeypatch):
-    monkeypatch.setattr(ingest_api, "INGEST_MAX_BYTES", 5)
+    monkeypatch.setattr(document_routes, "INGEST_MAX_BYTES", 5)
     response = _post(
         "/ingest/document",
         files={"file": ("guide.md", b"123456")},
@@ -135,7 +139,7 @@ def test_rest_returns_413_when_upload_exceeds_limit(monkeypatch):
 
 def test_rest_ingest_omitted_namespace_uses_default(monkeypatch):
     fake = AcceptingBacklog()
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    monkeypatch.setattr(job_store, "admit_document", fake.admit)
     response = _post(
         "/ingest/document",
         files={"file": ("guide.md", b"content")},
@@ -149,7 +153,7 @@ def test_rest_ingest_unregistered_namespace_400(monkeypatch):
     async def fake_namespace_exists(name):
         return False
 
-    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+    monkeypatch.setattr(namespaces, "namespace_exists", fake_namespace_exists)
     response = _post(
         "/ingest/document",
         data={"namespace": "ghost"},
@@ -161,12 +165,12 @@ def test_rest_ingest_unregistered_namespace_400(monkeypatch):
 
 def test_rest_ingest_registered_namespace_is_persisted(monkeypatch):
     fake = AcceptingBacklog()
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    monkeypatch.setattr(job_store, "admit_document", fake.admit)
 
     async def fake_namespace_exists(name):
         return name == "team-a"
 
-    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", fake_namespace_exists)
+    monkeypatch.setattr(namespaces, "namespace_exists", fake_namespace_exists)
     response = _post(
         "/ingest/document",
         data={"namespace": "team-a"},
@@ -179,7 +183,7 @@ def test_rest_ingest_registered_namespace_is_persisted(monkeypatch):
 
 def test_job_response_has_exact_status_schema():
     now = time.time()
-    job = ingest_api.IngestJob(
+    job = job_store.IngestJob(
         job_id="id",
         document_id="doc.md",
         namespace="default",
@@ -238,7 +242,7 @@ def test_atomic_replacement_publishes_card_and_table_rows_together(monkeypatch):
     async def acquire():
         yield connection
 
-    monkeypatch.setattr(ingest_api.db, "acquire", acquire)
+    monkeypatch.setattr(document_store.db, "acquire", acquire)
     row = {
         "id": "doc:guide.md:0",
         "source_type": "document",
@@ -253,7 +257,7 @@ def test_atomic_replacement_publishes_card_and_table_rows_together(monkeypatch):
     }
     table_rows = [{"row_index": 0, "data": {"name": "one", "value": None}}]
     asyncio.run(
-        ingest_api.replace_document_rows("guide.md", [row], "default", table_rows=table_rows)
+        document_store.replace_document_rows("guide.md", [row], "default", table_rows=table_rows)
     )
 
     deletes = [call for call in connection.calls if "DELETE FROM" in call[1]]
@@ -271,7 +275,7 @@ def test_atomic_replacement_publishes_card_and_table_rows_together(monkeypatch):
 
 def _job(document_id="guide.md", tags=None):
     now = time.time()
-    return ingest_api.IngestJob(
+    return job_store.IngestJob(
         "job",
         document_id,
         status="running",
@@ -286,7 +290,7 @@ def test_identical_hash_markdown_is_no_op_after_the_credential_scan_without_writ
 ):
     upload = tmp_path / "guide.md"
     upload.write_text("same content")
-    expected_hash = ingest_api._file_hash(upload)
+    expected_hash = document_pipeline._file_hash(upload)
     called = []
 
     async def existing(document_id, namespace="default", schema=None):
@@ -298,11 +302,11 @@ def test_identical_hash_markdown_is_no_op_after_the_credential_scan_without_writ
     async def forbidden(*args, **kwargs):
         called.append(True)
 
-    monkeypatch.setattr(ingest_api, "_existing_document_state", existing)
-    monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", forbidden)
+    monkeypatch.setattr(document_store, "existing_document_state", existing)
+    monkeypatch.setattr(document_pipeline, "convert_to_markdown", converted)
+    monkeypatch.setattr(document_store, "replace_document_rows", forbidden)
     job = _job()
-    asyncio.run(ingest_api.run_document_job(job, upload, "guide.md", "upsert", None))
+    asyncio.run(document_pipeline.run_document_job(job, upload, "guide.md", "upsert", None))
     assert job.status == "no_op"
     assert job.stage == "done"
     assert called == []
@@ -329,13 +333,13 @@ def test_force_mode_never_consults_existing_content_hash(monkeypatch, tmp_path):
     async def converted(path):
         return document.ConversionResult("force mode content", "markitdown:0.1.2")
 
-    monkeypatch.setattr(ingest_api, "_existing_document_state", forbidden_existing_state)
-    monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
-    monkeypatch.setattr(ingest_api, "_markdown_rows", fake_markdown_rows)
-    monkeypatch.setattr(ingest_api, "_embed_rows", no_embed)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", no_write)
+    monkeypatch.setattr(document_store, "existing_document_state", forbidden_existing_state)
+    monkeypatch.setattr(document_pipeline, "convert_to_markdown", converted)
+    monkeypatch.setattr(document_pipeline, "_markdown_rows", fake_markdown_rows)
+    monkeypatch.setattr(document_pipeline, "_embed_rows", no_embed)
+    monkeypatch.setattr(document_store, "replace_document_rows", no_write)
     job = _job()
-    asyncio.run(ingest_api.run_document_job(job, upload, "guide.md", "force", None))
+    asyncio.run(document_pipeline.run_document_job(job, upload, "guide.md", "force", None))
     assert job.status == "succeeded"
     assert job.stage == "done"
     assert upload.exists()
@@ -350,17 +354,17 @@ def test_csv_persistent_enrichment_failure_names_card_and_never_writes(monkeypat
         return None
 
     async def fail(*args, **kwargs):
-        raise ingest_api.EnrichmentError("enrichment failed after retry")
+        raise document_pipeline.EnrichmentError("enrichment failed after retry")
 
     async def write(*args, **kwargs):
         writes.append(True)
 
-    monkeypatch.setattr(ingest_api, "_existing_document_state", no_existing)
-    monkeypatch.setattr(ingest_api, "summarize_and_tag", fail)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
-    with pytest.raises(ingest_api.EnrichmentError, match="CSV card 0"):
+    monkeypatch.setattr(document_store, "existing_document_state", no_existing)
+    monkeypatch.setattr(document_pipeline, "summarize_and_tag", fail)
+    monkeypatch.setattr(document_store, "replace_document_rows", write)
+    with pytest.raises(document_pipeline.EnrichmentError, match="CSV card 0"):
         asyncio.run(
-            ingest_api.run_document_job(_job("data.csv"), upload, "data.csv", "force", None)
+            document_pipeline.run_document_job(_job("data.csv"), upload, "data.csv", "force", None)
         )
     assert writes == []
     assert upload.exists()
@@ -388,13 +392,13 @@ def test_markdown_ingest_calls_no_llm_and_writes_doc_rows_with_caller_tags(monke
     async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
         written.extend(rows)
 
-    monkeypatch.setattr(ingest_api, "_existing_document_state", no_existing)
-    monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
+    monkeypatch.setattr(document_store, "existing_document_state", no_existing)
+    monkeypatch.setattr(document_pipeline, "convert_to_markdown", converted)
     monkeypatch.setattr(enrich, "chat_json", forbidden_llm)
-    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
+    monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
+    monkeypatch.setattr(document_store, "replace_document_rows", write)
     job = _job(tags=["zx bank", "policy"])
-    asyncio.run(ingest_api.run_document_job(job, upload, "guide.md", "force", None))
+    asyncio.run(document_pipeline.run_document_job(job, upload, "guide.md", "force", None))
     assert job.status == "succeeded"
     assert written
     assert {row["chunk_kind"] for row in written} == {"doc"}
@@ -404,7 +408,7 @@ def test_markdown_ingest_calls_no_llm_and_writes_doc_rows_with_caller_tags(monke
 
 def test_rest_repeated_tags_are_normalized_and_persisted_on_the_job(monkeypatch):
     fake = AcceptingBacklog()
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    monkeypatch.setattr(job_store, "admit_document", fake.admit)
     response = _post(
         "/ingest/document",
         data={"tags": ["  ZX Bank ", "policy", "zx bank"]},
@@ -418,7 +422,7 @@ def test_rest_repeated_tags_are_normalized_and_persisted_on_the_job(monkeypatch)
 
 def test_rest_omitted_tags_default_to_empty_list(monkeypatch):
     fake = AcceptingBacklog()
-    monkeypatch.setattr(ingest_api.job_store, "admit_document", fake.admit)
+    monkeypatch.setattr(job_store, "admit_document", fake.admit)
     response = _post("/ingest/document", files={"file": ("guide.md", b"content")})
     assert response.status_code == 202
     assert fake.kwargs["tags"] == []
@@ -458,12 +462,12 @@ def test_zero_accepted_chunks_fails_before_enrichment_and_write(monkeypatch, tmp
     async def write(*args, **kwargs):
         writes.append(True)
 
-    monkeypatch.setattr(ingest_api, "_existing_document_state", no_existing)
-    monkeypatch.setattr(ingest_api, "convert_to_markdown", converted)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
+    monkeypatch.setattr(document_store, "existing_document_state", no_existing)
+    monkeypatch.setattr(document_pipeline, "convert_to_markdown", converted)
+    monkeypatch.setattr(document_store, "replace_document_rows", write)
     with pytest.raises(document.DocumentError, match="zero accepted chunks"):
         asyncio.run(
-            ingest_api.run_document_job(_job("empty.md"), upload, "empty.md", "force", None)
+            document_pipeline.run_document_job(_job("empty.md"), upload, "empty.md", "force", None)
         )
     assert writes == []
 
@@ -497,7 +501,7 @@ def test_oversized_fast_worker_output_is_statted_before_read_and_removed(monkeyp
 def test_same_hash_csv_without_loaded_marker_reruns_and_writes_table_rows(monkeypatch, tmp_path):
     upload = tmp_path / "data.csv"
     upload.write_text("name,value\none,1\n")
-    expected_hash = ingest_api._file_hash(upload)
+    expected_hash = document_pipeline._file_hash(upload)
     captured = {}
 
     async def existing(document_id, namespace="default", schema=None):
@@ -515,14 +519,14 @@ def test_same_hash_csv_without_loaded_marker_reruns_and_writes_table_rows(monkey
     async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
         captured["table_rows"] = list(table_rows)
 
-    monkeypatch.setattr(ingest_api, "_existing_document_state", existing)
-    monkeypatch.setattr(ingest_api, "_csv_rows", csv_rows)
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", owner)
-    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
+    monkeypatch.setattr(document_store, "existing_document_state", existing)
+    monkeypatch.setattr(document_pipeline, "_csv_rows", csv_rows)
+    monkeypatch.setattr(document_store, "existing_document_owner", owner)
+    monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
+    monkeypatch.setattr(document_store, "replace_document_rows", write)
 
     job = _job("data.csv")
-    asyncio.run(ingest_api.run_document_job(job, upload, "data.csv", "upsert", None))
+    asyncio.run(document_pipeline.run_document_job(job, upload, "data.csv", "upsert", None))
     assert job.status == "succeeded"
     assert captured["table_rows"] == [{"row_index": 0, "data": {"name": "one"}}]
 
@@ -530,7 +534,7 @@ def test_same_hash_csv_without_loaded_marker_reruns_and_writes_table_rows(monkey
 def test_same_hash_csv_with_loaded_marker_is_no_op(monkeypatch, tmp_path):
     upload = tmp_path / "data.csv"
     upload.write_text("name,value\none,1\n")
-    expected_hash = ingest_api._file_hash(upload)
+    expected_hash = document_pipeline._file_hash(upload)
 
     async def existing(document_id, namespace="default", schema=None):
         return expected_hash, True
@@ -538,12 +542,12 @@ def test_same_hash_csv_with_loaded_marker_is_no_op(monkeypatch, tmp_path):
     async def forbidden(*args, **kwargs):
         raise AssertionError("loaded same-hash CSV must not rerun")
 
-    monkeypatch.setattr(ingest_api, "_existing_document_state", existing)
-    monkeypatch.setattr(ingest_api, "_csv_rows", forbidden)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", forbidden)
+    monkeypatch.setattr(document_store, "existing_document_state", existing)
+    monkeypatch.setattr(document_pipeline, "_csv_rows", forbidden)
+    monkeypatch.setattr(document_store, "replace_document_rows", forbidden)
 
     job = _job("data.csv")
-    asyncio.run(ingest_api.run_document_job(job, upload, "data.csv", "upsert", None))
+    asyncio.run(document_pipeline.run_document_job(job, upload, "data.csv", "upsert", None))
     assert job.status == "no_op"
     assert job.stage == "done"
 
@@ -568,13 +572,13 @@ def test_csv_pipeline_writes_every_parsed_row_and_card_metadata(monkeypatch, tmp
         captured["card"] = rows[0]
         captured["table_rows"] = list(table_rows)
 
-    monkeypatch.setattr(ingest_api, "summarize_and_tag", summarize)
-    monkeypatch.setattr(ingest_api, "_existing_document_owner", owner)
-    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
-    monkeypatch.setattr(ingest_api, "replace_document_rows", write)
+    monkeypatch.setattr(document_pipeline, "summarize_and_tag", summarize)
+    monkeypatch.setattr(document_store, "existing_document_owner", owner)
+    monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
+    monkeypatch.setattr(document_store, "replace_document_rows", write)
 
     job = _job("data.csv")
-    asyncio.run(ingest_api.run_document_job(job, upload, "data.csv", "force", None))
+    asyncio.run(document_pipeline.run_document_job(job, upload, "data.csv", "force", None))
 
     assert captured["card"]["metadata"]["columns"] == ["group", "value", "note"]
     assert captured["card"]["metadata"]["table_rows_loaded"] is True
@@ -631,7 +635,7 @@ def test_same_document_id_two_namespaces_no_pk_collision():
                 for row in rows:
                     row["embedding"] = embedding
                 # must not raise asyncpg.UniqueViolationError
-                await ingest_api.replace_document_rows(document_id, rows, ns)
+                await document_store.replace_document_rows(document_id, rows, ns)
 
             conn = await asyncpg.connect(db_url())
             try:

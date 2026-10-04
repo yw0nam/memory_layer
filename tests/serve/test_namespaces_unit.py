@@ -2,7 +2,7 @@
 
 memory_base.core.db.acquire is monkeypatched to a fake connection, matching the
 convention already used in tests/serve/test_ingest_api.py
-(``monkeypatch.setattr(ingest_api.db, "acquire", acquire)``).
+(``monkeypatch.setattr(document_store.db, "acquire", acquire)``).
 """
 
 from __future__ import annotations

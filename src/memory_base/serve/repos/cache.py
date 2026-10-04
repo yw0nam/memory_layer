@@ -1,4 +1,4 @@
-"""URL-driven multi-repo code ingestion: git cache management + REST routes.
+"""URL-driven multi-repo code ingestion: git cache management and the repo job worker.
 
 Clones/pulls git repositories into the code cache and (re)runs the CocoIndex
 code indexer over it, so repos can be added and removed at runtime.
@@ -11,29 +11,24 @@ import os
 import re
 import shutil
 import signal
-import uuid
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 from urllib.parse import urlsplit
 
 import asyncpg
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
-from memory_base.serve import job_store
-from memory_base.serve.common.http import error, json_body
-from memory_base.serve.job_store import JobBase
+from memory_base.serve.common import job_store
+from memory_base.serve.common.job_store import RepoJob
 
 REPO_MAX_BYTES = int(os.getenv("REPO_MAX_BYTES", str(2 * 1024**3)))
 DISK_HEADROOM_BYTES = int(os.getenv("REPO_DISK_HEADROOM_BYTES", str(1024**3)))
 SIZE_POLL_SECONDS = 5
 CACHE_ROOT = Path(
-    os.getenv("REPO_CACHE", Path(__file__).resolve().parents[3] / ".repos_cache")
+    os.getenv("REPO_CACHE", Path(__file__).resolve().parents[4] / ".repos_cache")
 ).resolve()
-PACKAGE_ROOT = Path(__file__).resolve().parents[3]
+PACKAGE_ROOT = Path(__file__).resolve().parents[4]
 CODE_APP = "src/memory_base/ingest/code.py"
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -70,7 +65,7 @@ def validate_repo_url(url: Any) -> str:
     return url
 
 
-def _check_name(name: str) -> str:
+def check_name(name: str) -> str:
     if not name or ".." in name or "/" in name or "\\" in name or not _NAME_RE.match(name):
         raise ValueError("invalid repo name")
     return name
@@ -81,10 +76,10 @@ def derive_repo_name(url: str, name: str | None) -> str:
     if name is None or name == "":
         base = re.split(r"[/:]", url.rstrip("/"))[-1]
         name = base[:-4] if base.endswith(".git") else base
-    return _check_name(name)
+    return check_name(name)
 
 
-def _check_branch(branch: Any) -> str | None:
+def check_branch(branch: Any) -> str | None:
     if branch is None:
         return None
     if not isinstance(branch, str) or not branch.strip():
@@ -244,7 +239,7 @@ async def list_repos() -> list[dict[str, Any]]:
                 "branch": await _git("rev-parse", "--abbrev-ref", "HEAD"),
                 "head": await _git("rev-parse", "--short", "HEAD"),
                 "chunks": counts.get(entry.name, 0),
-                "owner": _read_owner(entry.name),
+                "owner": read_owner(entry.name),
             }
         )
     return result
@@ -258,7 +253,7 @@ def _owner_path(name: str) -> Path:
     return CACHE_ROOT / ".owners" / name
 
 
-def _read_owner(name: str) -> str | None:
+def read_owner(name: str) -> str | None:
     try:
         return _owner_path(name).read_text().strip()
     except FileNotFoundError:
@@ -295,25 +290,6 @@ async def run_index() -> None:
         raise RepoError(err.decode(errors="replace").strip()[-2000:] or "cocoindex update failed")
 
 
-# ---- durable job model ----------------------------------------------------
-
-
-@dataclass
-class RepoJob(JobBase):
-    name: str
-    action: str
-    url: str | None = None
-    branch: str | None = None
-    key_id: str = ""
-    key_label: str = ""
-
-    RESPONSE_EXCLUDE: ClassVar[frozenset[str]] = frozenset({"url", "branch", "key_id", "key_label"})
-
-    @property
-    def kind(self) -> str:
-        return "repo"
-
-
 # ---- job runners ----------------------------------------------------------
 
 
@@ -342,123 +318,24 @@ async def _run_remove_job(dest: Path) -> None:
     await run_index()
 
 
-# ---- routes ---------------------------------------------------------------
-
-
-def _low_on_disk() -> bool:
-    """True when the cache volume cannot hold a full-size checkout above the headroom floor.
-
-    Walks up to the nearest existing parent when the cache dir is not yet
-    created; an unreadable volume counts as low.
-    """
-    path = CACHE_ROOT
-    while not path.exists():
-        parent = path.parent
-        if parent == path:
-            return False
-        path = parent
+async def run_claimed(job: RepoJob) -> None:
+    """Run a claimed ingest or remove job and persist its terminal state."""
     try:
-        usage = shutil.disk_usage(path)
-    except OSError:
-        return True
-    return usage.free < DISK_HEADROOM_BYTES + REPO_MAX_BYTES
-
-
-async def ingest_repo_route(request: Request) -> JSONResponse:
-    """Clone or re-sync a git repo and queue a code re-index.
-
-    `branch` applies to the initial clone only; an existing checkout is
-    fast-forwarded on its current branch. Remove and re-add to switch branch.
-    """
-    try:
-        body = await json_body(request)
+        destination = CACHE_ROOT / job.name
+        if job.action == "ingest":
+            await _run_ingest_job(job.url, destination, job.branch, job.key_label)
+        else:
+            await _run_remove_job(destination)
+        await job_store.mark_terminal(job, "succeeded")
     except Exception as exc:
-        return error(f"invalid JSON body: {exc}", 400)
-    try:
-        url = validate_repo_url(body.get("url"))
-        name = derive_repo_name(url, body.get("name"))
-        branch = _check_branch(body.get("branch"))
-    except ValueError as exc:
-        return error(str(exc), 400)
-
-    if _low_on_disk():
-        return error(
-            f"free disk space below the {DISK_HEADROOM_BYTES} byte headroom "
-            f"plus the {REPO_MAX_BYTES} byte checkout cap",
-            507,
-        )
-    try:
-        key = request.state.key
-        job = await job_store.admit_repo(
-            job_id=uuid.uuid4().hex,
-            key_id=key.key_id,
-            key_label=key.label,
-            name=name,
-            action="ingest",
-            url=url,
-            branch=branch,
-        )
-    except job_store.BacklogFullError as exc:
-        return error(str(exc), 429)
-    return JSONResponse(
-        {
-            "job_id": job.job_id,
-            "name": name,
-            "status": job.status,
-            "status_url": f"/repos/jobs/{job.job_id}",
-        },
-        status_code=202,
-    )
+        await job_store.mark_terminal(job, "failed", str(exc) or type(exc).__name__)
 
 
-async def remove_repo_route(request: Request) -> JSONResponse:
-    """Remove a cached repo and queue a code re-index to tear down its rows.
-
-    Restricted to an admin key or the repo's owner (the key label that first
-    ingested it); a repo with no owner record is admin-only (fail-closed).
-    """
-    try:
-        name = _check_name(request.path_params["name"])
-    except ValueError as exc:
-        return error(str(exc), 400)
-    dest = CACHE_ROOT / name
-    if not dest.is_dir():
-        return error("repo not found", 404)
-    key = request.state.key
-    if not key.is_admin and _read_owner(name) != key.label:
-        return error("only the repo owner or an admin can remove this repo", 403)
-    try:
-        job = await job_store.admit_repo(
-            job_id=uuid.uuid4().hex,
-            key_id=key.key_id,
-            key_label=key.label,
-            name=name,
-            action="remove",
-            url=None,
-            branch=None,
-        )
-    except job_store.BacklogFullError as exc:
-        return error(str(exc), 429)
-    return JSONResponse(
-        {
-            "job_id": job.job_id,
-            "name": name,
-            "status": job.status,
-            "status_url": f"/repos/jobs/{job.job_id}",
-        },
-        status_code=202,
-    )
+async def start() -> list[asyncio.Task[None]]:
+    """Recover interrupted repo jobs, then start the single repo worker."""
+    await job_store.recover_and_prune("repo")
+    return [asyncio.create_task(job_store.worker_loop("repo", run_claimed))]
 
 
-async def list_repos_route(request: Request) -> JSONResponse:
-    """List cached repositories."""
-    del request
-    return JSONResponse(await list_repos())
-
-
-async def repo_job_route(request: Request) -> JSONResponse:
-    """Return durable repo job state."""
-    job = await job_store.get_job(request.path_params["job_id"], kind="repo")
-    if job is None:
-        return error("repo job not found", 404)
-    return JSONResponse(job.response())
+async def stop(workers: list[asyncio.Task[None]]) -> None:
+    await job_store.stop_workers(workers)

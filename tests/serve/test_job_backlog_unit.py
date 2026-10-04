@@ -9,12 +9,15 @@ from pathlib import Path
 import httpx
 import pytest
 
-from memory_base.serve import api, auth, ingest_api, job_store, repos
+from memory_base.serve import api, auth, namespaces
+from memory_base.serve.common import job_store
+from memory_base.serve.documents import pipeline as document_pipeline
+from memory_base.serve.repos import cache as repo_cache
 
 
 def test_document_row_keeps_internal_fields_out_of_the_response():
     now = time.time()
-    job = ingest_api.IngestJob(
+    job = job_store.IngestJob(
         job_id="job-1",
         document_id="guide.md",
         namespace="default",
@@ -47,7 +50,7 @@ def test_document_row_keeps_internal_fields_out_of_the_response():
 
 def test_repo_row_keeps_persisted_runner_fields_out_of_the_response():
     now = time.time()
-    job = repos.RepoJob(
+    job = job_store.RepoJob(
         job_id="job-1",
         name="repo",
         action="ingest",
@@ -85,24 +88,24 @@ def test_worker_loop_retries_after_a_claim_error(monkeypatch):
         return None
 
     monkeypatch.setattr(job_store.asyncio, "sleep", no_sleep)
-    asyncio.run(job_store.worker_loop("document", stop=stop, claim=claim))
+    asyncio.run(job_store.worker_loop("document", run=None, stop=stop, claim=claim))
     assert events == ["document", "document"]
 
 
 def test_recovered_remove_tolerates_a_missing_checkout(monkeypatch, tmp_path):
     indexed = []
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
 
     async def fake_index():
         indexed.append(True)
 
-    monkeypatch.setattr(repos, "run_index", fake_index)
-    asyncio.run(repos._run_remove_job(tmp_path / "missing"))
+    monkeypatch.setattr(repo_cache, "run_index", fake_index)
+    asyncio.run(repo_cache._run_remove_job(tmp_path / "missing"))
     assert indexed == [True]
 
 
 def test_recovered_ingest_reclones_a_partial_checkout(monkeypatch, tmp_path):
-    monkeypatch.setattr(repos, "CACHE_ROOT", tmp_path)
+    monkeypatch.setattr(repo_cache, "CACHE_ROOT", tmp_path)
     destination = tmp_path / "partial"
     destination.mkdir()
     (destination / "incomplete").write_text("partial")
@@ -117,10 +120,12 @@ def test_recovered_ingest_reclones_a_partial_checkout(monkeypatch, tmp_path):
     async def fake_index():
         calls.append(("index",))
 
-    monkeypatch.setattr(repos, "clone", fake_clone)
-    monkeypatch.setattr(repos, "pull", forbidden_pull)
-    monkeypatch.setattr(repos, "run_index", fake_index)
-    asyncio.run(repos._run_ingest_job("https://example.com/repo.git", destination, "main", "label"))
+    monkeypatch.setattr(repo_cache, "clone", fake_clone)
+    monkeypatch.setattr(repo_cache, "pull", forbidden_pull)
+    monkeypatch.setattr(repo_cache, "run_index", fake_index)
+    asyncio.run(
+        repo_cache._run_ingest_job("https://example.com/repo.git", destination, "main", "label")
+    )
     assert calls == [
         ("clone", "https://example.com/repo.git", destination, "main"),
         ("index",),
@@ -135,8 +140,8 @@ def test_document_runner_revalidates_namespace(monkeypatch, tmp_path):
     async def missing(namespace):
         return False
 
-    monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", missing)
-    job = ingest_api.IngestJob(
+    monkeypatch.setattr(namespaces, "namespace_exists", missing)
+    job = job_store.IngestJob(
         job_id="job-1",
         document_id="guide.md",
         namespace="deleted",
@@ -148,7 +153,7 @@ def test_document_runner_revalidates_namespace(monkeypatch, tmp_path):
         key_label="label",
     )
     with pytest.raises(RuntimeError, match="namespace.*deleted"):
-        asyncio.run(ingest_api.run_document_job(job))
+        asyncio.run(document_pipeline.run_document_job(job))
 
 
 def test_startup_prune_removes_terminal_and_orphan_spool_files(monkeypatch, tmp_path):
@@ -211,25 +216,25 @@ def test_listing_scopes_non_admin_and_leaves_admin_unrestricted(monkeypatch):
     assert calls == [(["default", "team"], "manual", "failed"), (None, None, None)]
 
 
-def test_lifespan_initializes_then_starts_and_stops_workers_before_pool_close(monkeypatch):
+def test_lifespan_starts_background_in_order_and_stops_it_in_reverse_before_pool_close(
+    monkeypatch,
+):
     events = []
 
-    async def initialize():
-        events.append("initialize")
+    def pair(name):
+        async def start():
+            events.append(("start", name))
+            return f"{name}-handle"
 
-    def start():
-        events.append("start")
-        return ["workers"]
+        async def stop(handle):
+            events.append(("stop", handle))
 
-    async def stop(tasks):
-        events.append(("stop", tasks))
+        return start, stop
 
     async def close():
         events.append("close")
 
-    monkeypatch.setattr(job_store, "initialize", initialize)
-    monkeypatch.setattr(job_store, "start_workers", start)
-    monkeypatch.setattr(job_store, "stop_workers", stop)
+    monkeypatch.setattr(api, "BACKGROUND", (pair("documents"), pair("repos")))
     monkeypatch.setattr(api.db, "close_pool", close)
 
     async def scenario():
@@ -237,4 +242,11 @@ def test_lifespan_initializes_then_starts_and_stops_workers_before_pool_close(mo
             events.append("serving")
 
     asyncio.run(scenario())
-    assert events == ["initialize", "start", "serving", ("stop", ["workers"]), "close"]
+    assert events == [
+        ("start", "documents"),
+        ("start", "repos"),
+        "serving",
+        ("stop", "repos-handle"),
+        ("stop", "documents-handle"),
+        "close",
+    ]

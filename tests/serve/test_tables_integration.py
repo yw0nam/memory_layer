@@ -15,7 +15,10 @@ from memory_base.core import db
 from memory_base.core.config import EMB_DIM, PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
 from memory_base.retrieval.search import search
-from memory_base.serve import api, ingest_api, mcp_server, namespaces
+from memory_base.serve import api, mcp_server, namespaces
+from memory_base.serve.common import job_store
+from memory_base.serve.documents import pipeline as document_pipeline
+from memory_base.serve.documents import store as document_store
 
 NAMESPACE_A = "zzz-tables-a"
 NAMESPACE_B = "zzz-tables-b"
@@ -96,9 +99,9 @@ def _zero_embedding(rows):
         row.pop("embedding_text")
 
 
-def _job(document_id: str) -> ingest_api.IngestJob:
+def _job(document_id: str) -> job_store.IngestJob:
     now = time.time()
-    return ingest_api.IngestJob(
+    return job_store.IngestJob(
         job_id=f"job-{document_id}",
         document_id=document_id,
         namespace=NAMESPACE_A,
@@ -126,11 +129,11 @@ def test_two_thousand_row_csv_ingest_queries_aggregate_search_and_truncation(
     async def embed(rows):
         _zero_embedding(rows)
 
-    monkeypatch.setattr(ingest_api, "summarize_and_tag", summarize)
-    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
+    monkeypatch.setattr(document_pipeline, "summarize_and_tag", summarize)
+    monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
     job = _job(DOCUMENT_ID)
     asyncio.run(
-        ingest_api.run_document_job(
+        document_pipeline.run_document_job(
             job,
             path,
             DOCUMENT_ID,
@@ -368,18 +371,22 @@ def test_upsert_changed_csv_replaces_rows_and_loaded_same_hash_no_ops(monkeypatc
     async def embed(rows):
         _zero_embedding(rows)
 
-    monkeypatch.setattr(ingest_api, "summarize_and_tag", summarize)
-    monkeypatch.setattr(ingest_api, "_embed_rows", embed)
+    monkeypatch.setattr(document_pipeline, "summarize_and_tag", summarize)
+    monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
     first = _job(REPLACE_DOCUMENT_ID)
     asyncio.run(
-        ingest_api.run_document_job(first, path, REPLACE_DOCUMENT_ID, "upsert", None, NAMESPACE_A)
+        document_pipeline.run_document_job(
+            first, path, REPLACE_DOCUMENT_ID, "upsert", None, NAMESPACE_A
+        )
     )
     assert first.status == "succeeded"
 
     path.write_text("name,value\nthree,3\n")
     changed = _job(REPLACE_DOCUMENT_ID)
     asyncio.run(
-        ingest_api.run_document_job(changed, path, REPLACE_DOCUMENT_ID, "upsert", None, NAMESPACE_A)
+        document_pipeline.run_document_job(
+            changed, path, REPLACE_DOCUMENT_ID, "upsert", None, NAMESPACE_A
+        )
     )
     assert changed.status == "succeeded"
     response = _post(
@@ -389,7 +396,7 @@ def test_upsert_changed_csv_replaces_rows_and_loaded_same_hash_no_ops(monkeypatc
 
     unchanged = _job(REPLACE_DOCUMENT_ID)
     asyncio.run(
-        ingest_api.run_document_job(
+        document_pipeline.run_document_job(
             unchanged, path, REPLACE_DOCUMENT_ID, "upsert", None, NAMESPACE_A
         )
     )
@@ -398,7 +405,7 @@ def test_upsert_changed_csv_replaces_rows_and_loaded_same_hash_no_ops(monkeypatc
 
 def test_document_deletion_removes_table_rows_and_namespace_check_sees_them():
     async def scenario():
-        deleted = await ingest_api.delete_document_rows(REPLACE_DOCUMENT_ID, NAMESPACE_A)
+        deleted = await document_store.delete_document_rows(REPLACE_DOCUMENT_ID, NAMESPACE_A)
         conn = await asyncpg.connect(db_url())
         try:
             remaining = await conn.fetchval(
