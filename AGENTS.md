@@ -10,11 +10,13 @@
 
 ## Working principles
 
+- **Look at established products first.** Before designing a solution, look at how established products solve the same problem; adopt proven patterns and conventions instead of inventing approaches from scratch.
 - **No backward compatibility.** Delete unused paths instead of adding compat layers, fallbacks, or migrations.
-- **Simplest implementation that fully meets current requirements.** No speculative abstractions, config values, or indirection layers.
+- **Simplest implementation that fully meets current requirements.** No speculative abstractions, config values, or indirection layers. Write the least code that does the job without harming functionality, readability, or project structure; never pad it out for its own sake.
 - **Grow the system in layers.** Start from the smallest end-to-end working version and add features on top of a working result; never trade working code for unfinished complexity.
-- **Components are modules with a clear separation of concerns.**
-- **Check installed dependencies first** before hand-rolling or adding a package; never claim a library lacks a feature without reading its docs and types.
+- **Components are modules with a clear separation of concerns.** Core logic lives in its own module behind an explicit interface (inputs in, results out). `serve/api.py` and `serve/mcp_server.py` are the composing modules; both still hold handler logic, so move a block into its feature module before adding to it. Signs of logic in a composing module: handler bodies that query or mutate storage, module-level state read by nested functions, a startup routine that knows every component's internals.
+- **Packages are layered; group files by feature inside a layer.** `src/memory_base/` is ordered `core` → `adapters` · `ingest` · `retrieval` → `serve` → `eval`; a package imports only from packages to its left (the middle three do not import each other). A flat package that mixes several features and tells them apart by a name prefix or suffix (`*_api.py`) is an anti-pattern; `serve/` is one today, so split it before adding a new feature module to it.
+- **Prefer proven, maintained libraries** when they lower overall complexity or raise stability. Check installed dependencies first before hand-rolling or adding a package; never claim a library lacks a feature without reading its docs and types.
 - **Permissive licenses only.** Dependencies and Postgres extensions carry MIT-class licenses (MIT / BSD / Apache-2.0 / PostgreSQL); no copyleft (GPL/AGPL) — commercial deployment must stay unencumbered.
 - **Architecture decisions are long-term.** No stopgaps that only get past today and need replacing later.
 
@@ -22,7 +24,7 @@
 
 - **Worktree → PR.** All work happens in a git worktree and lands via PR; `main` requires a PR and green CI (`PreToolUse(Bash)` guard denies `git commit`/`git push` on `main` — the agent cannot commit/push to `main` and must request the user to run it directly).
 - **GitHub tracker in English.** Issues, issue comments, and PR titles/bodies are written in English (chat with the user is any language); enforced by the `pr-title` CI job.
-- **Tests accompany behavior.** New or changed behavior ships its test in the same PR; the `test-guard` CI job enforces this (`skip-tests` label bypasses). Write the failing test first (`test:`), then implementation (`feat:`), then refactor if needed (`refactor:`).
+- **Tests accompany behavior.** New or changed behavior ships its test in the same PR; the `test-guard` CI job enforces this (`skip-tests` label bypasses). Write the failing test first (`test:`), then implementation (`feat:`), then refactor if needed (`refactor:`). Write only the test cases needed to confirm the behavior works; piling on cases for volume is an anti-pattern, not thoroughness.
 - **Tests never touch the deployment.** Unit tests fake the database and see an unreachable `DB_URL`. Integration tests (`@pytest.mark.integration`, local only, need docker) run against a throwaway Postgres container built from `db.Dockerfile` on tmpfs that the test session starts, prepares, and removes; every on-disk path (ingest spool, repo cache, CocoIndex state, logs) lives in a session tempdir. A test seeds the rows it reads instead of relying on existing data. The embedder and reranker are the configured live endpoints.
 - **Verify what you can verify before asking the user.** Anything observable (CLI output / DB state / MCP responses / logs) — verify yourself and attach proof to the PR's Runtime-evidence section; ask the user only for things that genuinely require them.
 - **Comments: minimal, present-tense only.** Comment only what the code cannot say itself, in one line; no decision-history, spec-citation, or issue-number breadcrumbs. And Should use only English other language is not allowed.
