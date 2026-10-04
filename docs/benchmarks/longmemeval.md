@@ -108,9 +108,8 @@ instead of an emulated agent. Each benchmark session goes to a fresh headless Cl
 process whose only MCP server is a stdio memory_base server talking to a throwaway REST
 API on a throwaway Postgres. The agent sees one fixed instruction (save what is worth
 remembering, otherwise do nothing), the session date, and the transcript, and decides by
-itself what to save. Each question has
-its own namespace and key; its sessions run in date order, and earlier memory is reachable
-only through search. Questions run concurrently up to `--concurrency` (default 1).
+itself what to save. Each question has its own namespace and key; its sessions run in
+date order, and earlier memory is reachable only through search. Questions run concurrently up to `--concurrency` (default 1).
 `--questions` takes comma-separated ids from the seeded subset, `--model` the Claude Code
 model (default `sonnet`), and `--data-dir` the output directory (default
 `data/longmemeval/mcp-writer`). The run records every session's tool calls, saves,

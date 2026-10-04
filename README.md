@@ -71,11 +71,9 @@ Both pages are rendered from the JSON specification beside them.
 
 ## Retrieval quality
 
-Hybrid search matches or beats vector-only on both evaluated corpora. ZX Bank hit@10:
-hybrid without rerank 0.98 vs vector-only 0.95; with the default rerank, hybrid scores
-0.95. SciFact hit@5: hybrid with rerank 0.86 vs vector-only 0.82 (hybrid without rerank
-0.82). Scores, method, single-leg ablations, and known
-trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
+ZX Bank hit@10: hybrid without rerank 0.98 vs vector-only 0.95; with the default rerank,
+hybrid ties vector-only at 0.95. SciFact hit@5: hybrid with rerank 0.86 vs vector-only
+0.82. Scores, method, single-leg ablations, and known trade-offs: [docs/benchmarks/retrieval.md](docs/benchmarks/retrieval.md).
 End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write path:
 [docs/benchmarks/longmemeval.md](docs/benchmarks/longmemeval.md).
 

@@ -416,8 +416,8 @@ async def list_notes(
     session start), or every note saved in a time window ("what was saved last
     week"). Works without the embedding backend. Returns up to `limit` notes
     (default 50, max 200) newest-first, each with id, kind, text (truncated to
-    2000 chars), tags, author, namespace, and date (YYYY-MM-DD), plus the lineage it
-    records: `supersedes`, `archived_by`, `replaced_by` (the note that
+    2000 chars), tags, author, namespace, and date (YYYY-MM-DD), plus the
+    lineage it records: `supersedes`, `archived_by`, `replaced_by` (the note that
     superseded it), `consolidated_into` (the notes a consolidation folded it
     into), `merged_from` and `merged_dates` (the notes a consolidation merged
     into it), `consolidation_action`, and `undone_action`.

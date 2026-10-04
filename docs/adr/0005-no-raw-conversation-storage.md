@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; the content gate's judge prompt is superseded by ADR-0007, and the integrations also deliver session-start context beyond the prefetch it describes
+Accepted; the content gate's judge prompt is superseded by ADR-0007
 
 ## Context
 
