@@ -5,7 +5,7 @@ at the module level, matching the existing convention (e.g.
 ``monkeypatch.setattr(answer, "search", fake_search)`` in test_answer_mcp.py):
 
 - ``api.search``       -- delegate for POST /search (memory_base.retrieval.search.search)
-- ``api.save_note``    -- delegate for POST /save_memory (memory_base.serve.notes.save_note)
+- ``store.save_note``  -- delegate for POST /save_memory (memory_base.serve.notes.store)
 - ``api.access_log``   -- buffered access logging after a search (memory_base.serve.access_log)
 - ``api.db_healthy``, ``api.embedding_healthy``, ``api.rerank_healthy``, ``api.llm_healthy``
   -- async dependency probes used by GET /health/services
@@ -21,6 +21,7 @@ from starlette.testclient import TestClient
 
 from memory_base.retrieval.search import Hit
 from memory_base.serve import api
+from memory_base.serve.notes import store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -472,7 +473,7 @@ def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
             "similar": [],
         }
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory", json={"author": "natsume", "content": "distilled note text", "kind": "work"}
     )
@@ -517,7 +518,7 @@ def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory", json={"author": "natsume", "content": "distilled note text", "kind": "work"}
     )
@@ -542,7 +543,7 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={
@@ -570,7 +571,7 @@ def test_save_memory_unregistered_namespace_400(monkeypatch):
     ):
         raise ValueError(f"unregistered namespace: {namespace}")
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={

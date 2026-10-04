@@ -1,9 +1,9 @@
 """Contract tests for POST /admin/notes/move (red-first).
 
 Route-layer tests mirror tests/serve/test_admin_api.py (monkeypatch
-``admin.move_notes`` directly) and tests/serve/test_namespaces_api.py's
+``curation.move_notes`` directly) and tests/serve/test_namespaces_api.py's
 ``_non_admin_client`` helper for the admin-only gate. Unit tests for
-``admin.move_notes`` itself mirror the FakeConnection pattern in
+``curation.move_notes`` itself mirror the FakeConnection pattern in
 tests/serve/test_rest_notes.py: no DB/network involved.
 """
 
@@ -15,7 +15,8 @@ from contextlib import asynccontextmanager
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import admin, api, auth, namespaces
+from memory_base.serve import api, auth, namespaces
+from memory_base.serve.notes import curation
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -46,7 +47,7 @@ def test_move_notes_delegates_to_admin(monkeypatch):
             "skipped": [],
         }
 
-    monkeypatch.setattr(admin, "move_notes", fake_move_notes)
+    monkeypatch.setattr(curation, "move_notes", fake_move_notes)
     response = client.post(
         "/admin/notes/move", json={"ids": ["note:aaaaaaaaaaaaaaaa"], "namespace": "team-a"}
     )
@@ -88,7 +89,7 @@ def test_move_notes_unregistered_target_namespace_400(monkeypatch):
     async def fake_move_notes(ids, target_namespace):
         raise namespaces.NamespaceError(f"unregistered namespace: {target_namespace}")
 
-    monkeypatch.setattr(admin, "move_notes", fake_move_notes)
+    monkeypatch.setattr(curation, "move_notes", fake_move_notes)
     response = client.post(
         "/admin/notes/move", json={"ids": ["note:aaaaaaaaaaaaaaaa"], "namespace": "ghost"}
     )
@@ -108,9 +109,9 @@ def test_move_notes_malformed_json_400():
 
 def test_move_notes_non_admin_403(monkeypatch):
     async def fail_if_called(ids, target_namespace):
-        raise AssertionError("admin.move_notes must not be called for a non-admin caller")
+        raise AssertionError("curation.move_notes must not be called for a non-admin caller")
 
-    monkeypatch.setattr(admin, "move_notes", fail_if_called)
+    monkeypatch.setattr(curation, "move_notes", fail_if_called)
     member_client = _non_admin_client(monkeypatch)
     response = member_client.post(
         "/admin/notes/move", json={"ids": ["note:aaaaaaaaaaaaaaaa"], "namespace": "team-a"}
@@ -119,7 +120,7 @@ def test_move_notes_non_admin_403(monkeypatch):
     assert "error" in response.json()
 
 
-# ---- admin.move_notes: id rewriting, collisions, unit-level (no DB) --------
+# ---- curation.move_notes: id rewriting, collisions, unit-level (no DB) --------
 
 
 class FakeTransaction:
@@ -174,8 +175,8 @@ def _patch_admin_deps(monkeypatch, conn):
     async def acquire(timeout=None):
         yield conn
 
-    monkeypatch.setattr(admin.db, "acquire", acquire)
-    monkeypatch.setattr(admin, "ensure_schema_once", _noop)
+    monkeypatch.setattr(curation.db, "acquire", acquire)
+    monkeypatch.setattr(curation, "ensure_schema_once", _noop)
 
 
 DEFAULT_ID = "note:default:aaaaaaaaaaaaaaaa"
@@ -185,7 +186,7 @@ PRIVATE_ID = "note:team-a:bbbbbbbbbbbbbbbb"
 def test_move_notes_rewrites_id_default_to_private(monkeypatch):
     conn = FakeConnection(existing_notes={DEFAULT_ID}, registered_namespaces={"team-a"})
     _patch_admin_deps(monkeypatch, conn)
-    result = asyncio.run(admin.move_notes([DEFAULT_ID], "team-a"))
+    result = asyncio.run(curation.move_notes([DEFAULT_ID], "team-a"))
     assert result == {
         "moved": [{"old": DEFAULT_ID, "new": "note:team-a:aaaaaaaaaaaaaaaa"}],
         "skipped": [],
@@ -196,7 +197,7 @@ def test_move_notes_rewrites_id_default_to_private(monkeypatch):
 def test_move_notes_rewrites_id_private_to_default(monkeypatch):
     conn = FakeConnection(existing_notes={PRIVATE_ID}, registered_namespaces={"default"})
     _patch_admin_deps(monkeypatch, conn)
-    result = asyncio.run(admin.move_notes([PRIVATE_ID], "default"))
+    result = asyncio.run(curation.move_notes([PRIVATE_ID], "default"))
     assert result == {
         "moved": [{"old": PRIVATE_ID, "new": "note:default:bbbbbbbbbbbbbbbb"}],
         "skipped": [],
@@ -207,7 +208,7 @@ def test_move_notes_unregistered_target_namespace_raises(monkeypatch):
     conn = FakeConnection(existing_notes={DEFAULT_ID}, registered_namespaces=set())
     _patch_admin_deps(monkeypatch, conn)
     with pytest.raises(namespaces.NamespaceError, match="unregistered namespace"):
-        asyncio.run(admin.move_notes([DEFAULT_ID], "ghost"))
+        asyncio.run(curation.move_notes([DEFAULT_ID], "ghost"))
     assert conn.updates == []
 
 
@@ -219,7 +220,7 @@ def test_move_notes_skips_id_collision_in_target(monkeypatch):
         collisions={target_id},
     )
     _patch_admin_deps(monkeypatch, conn)
-    result = asyncio.run(admin.move_notes([DEFAULT_ID], "team-a"))
+    result = asyncio.run(curation.move_notes([DEFAULT_ID], "team-a"))
     assert result == {"moved": [], "skipped": [DEFAULT_ID]}
     assert conn.updates == []
 
@@ -227,7 +228,7 @@ def test_move_notes_skips_id_collision_in_target(monkeypatch):
 def test_move_notes_skips_ids_that_are_not_agent_notes(monkeypatch):
     conn = FakeConnection(existing_notes=set(), registered_namespaces={"team-a"})
     _patch_admin_deps(monkeypatch, conn)
-    result = asyncio.run(admin.move_notes(["note:ghost000000000"], "team-a"))
+    result = asyncio.run(curation.move_notes(["note:ghost000000000"], "team-a"))
     assert result == {"moved": [], "skipped": ["note:ghost000000000"]}
 
 
@@ -236,7 +237,7 @@ def test_move_notes_mixed_batch_reports_both_moved_and_skipped(monkeypatch):
     missing_id = "note:dddddddddddddddd"
     conn = FakeConnection(existing_notes={ok_id}, registered_namespaces={"team-a"})
     _patch_admin_deps(monkeypatch, conn)
-    result = asyncio.run(admin.move_notes([ok_id, missing_id], "team-a"))
+    result = asyncio.run(curation.move_notes([ok_id, missing_id], "team-a"))
     assert result == {
         "moved": [{"old": ok_id, "new": "note:team-a:cccccccccccccccc"}],
         "skipped": [missing_id],

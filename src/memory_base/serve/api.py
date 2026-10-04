@@ -6,7 +6,6 @@ import asyncio
 import logging
 import math
 import os
-import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -28,13 +27,11 @@ from memory_base.retrieval.search import UpstreamUnavailable
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
 from memory_base.serve import access_log
-from memory_base.serve import admin
 from memory_base.serve import consolidate
 from memory_base.serve import ingest_api
 from memory_base.serve import job_store
 from memory_base.serve import keys
 from memory_base.serve import namespaces
-from memory_base.serve import notes
 from memory_base.serve import repos
 from memory_base.serve import tables
 from memory_base.serve import verdicts
@@ -43,14 +40,9 @@ from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.common.http import error
 from memory_base.serve.common.http import json_body
 from memory_base.serve.messages import routes as message_routes
+from memory_base.serve.notes import routes as note_routes
+from memory_base.serve.notes.store import note_date
 from memory_base.serve.profiles import routes as profile_routes
-from memory_base.serve.notes import (
-    CredentialNoteError,
-    NOTE_KINDS,
-    SimilarNotesError,
-    note_date,
-    save_note,
-)
 
 SOURCES = ("all", "code", "memory")
 # Beyond this a query is a pasted payload, not a question: it costs embedder and BM25
@@ -140,13 +132,6 @@ async def _probe(check: Callable[[], Awaitable[bool]]) -> bool:
         return bool(await check())
     except Exception:
         return False
-
-
-def _ids(body: dict[str, Any]) -> list[str] | None:
-    ids = body.get("ids")
-    if not isinstance(ids, list) or not ids or any(not isinstance(item, str) for item in ids):
-        return None
-    return ids
 
 
 async def health(request: Request) -> JSONResponse:
@@ -261,160 +246,6 @@ async def search_route(request: Request) -> JSONResponse:
         return error(str(exc))
     access_log.record_retrieval(query, source, hits, filters=log_filters)
     return JSONResponse([hit_to_dict(hit) for hit in hits])
-
-
-async def save_memory_route(request: Request) -> JSONResponse:
-    """Validate and store an agent-authored memory request; omitted namespace lands in key.home."""
-    key = request.state.key
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-
-    namespace = body.get("namespace", key.home)
-    if not isinstance(namespace, str) or not namespace.strip():
-        return error("namespace must be a non-empty string")
-    if not key.permits(namespace):
-        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
-    if "occurred_at" in body and body["occurred_at"] is None:
-        return error("occurred_at must be an ISO 8601 date or datetime string")
-    author = body.get("author")
-    if not isinstance(author, str) or not author.strip():
-        return error("author is required")
-    if author not in key.authors:
-        return error(f"author {author!r} is not permitted for this key", 403)
-    allow_similar = body.get("allow_similar", False)
-    if not isinstance(allow_similar, bool):
-        return error("allow_similar must be a boolean")
-    try:
-        result = await save_note(
-            body.get("content", ""),
-            kind=body.get("kind"),
-            tags=body.get("tags"),
-            supersedes=body.get("supersedes"),
-            namespace=namespace,
-            occurred_at=body.get("occurred_at"),
-            author=author,
-            allow_similar=allow_similar,
-        )
-    except SimilarNotesError as exc:
-        return JSONResponse({"error": str(exc), "similar": exc.similar}, status_code=409)
-    except CredentialNoteError as exc:
-        return error(str(exc), 409)
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(result)
-
-
-async def notes_list_route(request: Request) -> JSONResponse:
-    """List agent notes by filters alone — no query, no embedding — scoped like search."""
-    key = request.state.key
-    params = request.query_params
-    try:
-        limit = int(params.get("limit", str(notes.LIST_NOTES_DEFAULT_LIMIT)))
-    except ValueError:
-        return error("limit must be an integer")
-    include_archived = params.get("include_archived", "false").lower()
-    if include_archived not in ("true", "false"):
-        return error("include_archived must be true or false")
-    try:
-        requested_namespaces = normalize_namespaces(params.getlist("namespace") or None)
-    except ValueError as exc:
-        return error(str(exc))
-    if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
-        return error("requested namespaces are outside the caller's allowed set", 403)
-    scope = requested_namespaces
-    if scope is None and not key.is_admin:
-        scope = sorted(key.allowed)
-    try:
-        rows = await notes.list_notes(
-            tags=params.getlist("tags") or None,
-            kind=params.get("kind") or None,
-            namespaces=scope,
-            include_archived=include_archived == "true",
-            since=params.get("since"),
-            until=params.get("until"),
-            author=params.get("author") or None,
-            limit=limit,
-        )
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(rows)
-
-
-def _admin_scope(key) -> list[str] | None:
-    """None means unfiltered (an admin key); otherwise the caller's allowed set."""
-    return None if key.is_admin else sorted(key.allowed)
-
-
-async def admin_notes_route(request: Request) -> JSONResponse:
-    """List active agent notes older than a requested age, scoped to the caller's namespaces."""
-    try:
-        older_than_days = int(request.query_params.get("older_than_days", "90"))
-    except ValueError:
-        return error("older_than_days must be an integer")
-    rows = await admin.list_old_notes(older_than_days, namespaces=_admin_scope(request.state.key))
-    return JSONResponse(rows)
-
-
-async def admin_notes_delete_route(request: Request) -> JSONResponse:
-    """Preview or delete selected agent notes, scoped to the caller's namespaces."""
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    ids = _ids(body)
-    if ids is None:
-        return error("ids must be a non-empty list")
-    scope = _admin_scope(request.state.key)
-    rows = await admin.notes_by_ids(ids, namespaces=scope)
-    if {row["id"] for row in rows} != set(ids):
-        return error("ids must refer only to agent_note rows")
-    if body.get("confirm") is True:
-        deleted = await admin.delete_notes(ids, namespaces=scope)
-        return JSONResponse({"deleted": deleted})
-    return JSONResponse({"rows": rows})
-
-
-async def admin_notes_move_route(request: Request) -> JSONResponse:
-    """Move agent notes into another registered namespace; admin keys only."""
-    key = request.state.key
-    if not key.is_admin:
-        return error("admin key required", 403)
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    ids = _ids(body)
-    if ids is None:
-        return error("ids must be a non-empty list")
-    target_namespace = body.get("namespace")
-    if not isinstance(target_namespace, str) or not target_namespace.strip():
-        return error("namespace must be a non-empty string")
-    try:
-        result = await admin.move_notes(ids, target_namespace)
-    except ValueError as exc:
-        return error(str(exc))
-    return JSONResponse(result)
-
-
-async def admin_duplicates_route(request: Request) -> JSONResponse:
-    """List active near-duplicate agent-note pairs, scoped to the caller's namespaces."""
-    try:
-        threshold = float(request.query_params.get("threshold", "0.9"))
-    except ValueError:
-        return error("threshold must be a number")
-    kind = request.query_params.get("kind") or None
-    if kind is not None and kind not in NOTE_KINDS:
-        return error(f"kind must be one of {NOTE_KINDS}")
-    try:
-        limit = int(request.query_params.get("limit", "50"))
-    except ValueError:
-        return error("limit must be an integer")
-    pairs = await admin.find_duplicates(
-        threshold, kind, limit, namespaces=_admin_scope(request.state.key)
-    )
-    return JSONResponse({"pairs": pairs})
 
 
 CONSOLIDATE_AUTHOR = "consolidator"
@@ -595,62 +426,6 @@ async def admin_consolidate_actions_route(request: Request) -> JSONResponse:
     return JSONResponse(await verdicts.list_actions(**filters, limit=limit))
 
 
-async def admin_archive_route(request: Request) -> JSONResponse:
-    """Preview or archive the agent notes named by ids, or the cold ones, in scope."""
-    key = request.state.key
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    ids = None
-    if "ids" in body:
-        ids = _ids(body)
-        if ids is None:
-            return error("ids must be a non-empty list")
-    author = body.get("author")
-    if ids is not None and author is None:
-        return error("author is required")
-    if author is not None:
-        if not isinstance(author, str) or not author.strip():
-            return error("author must be a non-empty string")
-        if author not in key.authors:
-            return error(f"author {author!r} is not permitted for this key", 403)
-    now = time.time()
-    scope = _admin_scope(key)
-    if ids is not None:
-        rows = await admin.rows_by_ids(ids, namespaces=scope, notes_only=True)
-        if {row["id"] for row in rows} != set(ids):
-            return error("ids must refer only to rows in the caller's scope")
-        if body.get("confirm") is True:
-            archived = await admin.archive_rows(ids, now, namespaces=scope, archived_by=author)
-            return JSONResponse({"archived": archived})
-        return JSONResponse({"notes_to_archive": rows})
-    candidates = await admin.archive_candidates(now, namespaces=scope)
-    if body.get("confirm") is True:
-        archived = await admin.archive_rows(
-            [row["id"] for row in candidates], now, namespaces=scope, archived_by=author
-        )
-        return JSONResponse({"archived": archived})
-    return JSONResponse({"notes_to_archive": candidates})
-
-
-async def admin_restore_route(request: Request) -> JSONResponse:
-    """Preview or restore selected memory rows, scoped to the caller's namespaces."""
-    try:
-        body = await json_body(request)
-    except Exception as exc:
-        return error(f"invalid JSON body: {exc}")
-    ids = _ids(body)
-    if ids is None:
-        return error("ids must be a non-empty list")
-    scope = _admin_scope(request.state.key)
-    if body.get("confirm") is True:
-        restored = await admin.restore_rows(ids, namespaces=scope)
-        return JSONResponse({"restored": restored})
-    rows = await admin.rows_by_ids(ids, namespaces=scope)
-    return JSONResponse({"rows": rows})
-
-
 async def keys_authors_route(request: Request) -> JSONResponse:
     """Report a label's author allowlist; a non-admin key may read only its own label."""
     key = request.state.key
@@ -774,8 +549,8 @@ app = Starlette(
         Route("/health", health, methods=["GET"]),
         Route("/health/services", health_services, methods=["GET"]),
         Route("/search", search_route, methods=["POST"]),
-        Route("/save_memory", save_memory_route, methods=["POST"]),
-        Route("/notes", notes_list_route, methods=["GET"]),
+        Route("/save_memory", note_routes.save_route, methods=["POST"]),
+        Route("/notes", note_routes.list_route, methods=["GET"]),
         Route("/profiles", profile_routes.profile_route, methods=["GET"]),
         Route("/profiles/self", profile_routes.self_route, methods=["PUT"]),
         Route("/profiles/versions", profile_routes.versions_route, methods=["GET"]),
@@ -816,16 +591,16 @@ app = Starlette(
         Route("/namespaces", namespaces_create_route, methods=["POST"]),
         Route("/namespaces", namespaces_list_route, methods=["GET"]),
         Route("/namespaces/{name}", namespaces_delete_route, methods=["DELETE"]),
-        Route("/admin/notes", admin_notes_route, methods=["GET"]),
-        Route("/admin/notes/delete", admin_notes_delete_route, methods=["POST"]),
-        Route("/admin/notes/move", admin_notes_move_route, methods=["POST"]),
-        Route("/admin/duplicates", admin_duplicates_route, methods=["GET"]),
+        Route("/admin/notes", note_routes.old_route, methods=["GET"]),
+        Route("/admin/notes/delete", note_routes.delete_route, methods=["POST"]),
+        Route("/admin/notes/move", note_routes.move_route, methods=["POST"]),
+        Route("/admin/duplicates", note_routes.duplicates_route, methods=["GET"]),
         Route("/admin/consolidate/groups", admin_consolidate_groups_route, methods=["GET"]),
         Route("/admin/consolidate/verdicts", admin_consolidate_verdicts_route, methods=["POST"]),
         Route("/admin/consolidate/undo", admin_consolidate_undo_route, methods=["POST"]),
         Route("/admin/consolidate/actions", admin_consolidate_actions_route, methods=["GET"]),
-        Route("/admin/archive", admin_archive_route, methods=["POST"]),
+        Route("/admin/archive", note_routes.archive_route, methods=["POST"]),
         Route("/admin/messages/purge", message_routes.purge_route, methods=["POST"]),
-        Route("/admin/restore", admin_restore_route, methods=["POST"]),
+        Route("/admin/restore", note_routes.restore_route, methods=["POST"]),
     ],
 )

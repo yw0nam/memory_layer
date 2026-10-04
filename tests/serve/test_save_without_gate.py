@@ -16,9 +16,10 @@ from contextlib import asynccontextmanager
 import pytest
 
 from memory_base.core import llm
-from memory_base.serve import mcp_server, notes
+from memory_base.serve import mcp_server
 from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
-from memory_base.serve.notes import save_note
+from memory_base.serve.notes import store
+from memory_base.serve.notes.store import save_note
 
 
 class FakeTransaction:
@@ -66,10 +67,10 @@ def _patch_note_deps(monkeypatch, conn):
         conn.embeds.append(text)
         return "[0]"
 
-    monkeypatch.setattr(notes.db, "acquire", acquire)
-    monkeypatch.setattr(notes, "embed_text", fake_embed_text)
-    monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
-    monkeypatch.setattr(notes, "ensure_schema_once", _noop)
+    monkeypatch.setattr(store.db, "acquire", acquire)
+    monkeypatch.setattr(store, "embed_text", fake_embed_text)
+    monkeypatch.setattr(store, "VllmEmbedder", lambda: None)
+    monkeypatch.setattr(store, "ensure_schema_once", _noop)
 
 
 @pytest.fixture

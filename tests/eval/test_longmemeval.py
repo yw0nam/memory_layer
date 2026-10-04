@@ -159,7 +159,7 @@ def test_loading_maps_each_note_back_to_every_session_it_came_from():
 
 
 def test_loading_counts_credential_and_invalid_refusals():
-    from memory_base.serve.notes import CredentialNoteError
+    from memory_base.serve.notes.store import CredentialNoteError
 
     async def save(content, **kwargs):
         if "secret" in content:

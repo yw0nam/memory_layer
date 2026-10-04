@@ -20,6 +20,7 @@ import pytest
 
 from memory_base.serve import mcp_server
 from memory_base.serve.common import rest_client
+from memory_base.serve.notes import tools
 
 
 class FakeHeaders:
@@ -135,7 +136,7 @@ def test_save_tool_forwards_api_key_header(monkeypatch, kind):
 
     _patch_client(monkeypatch, handler)
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(mcp_server.save_memory("content", "natsume", tags=["test"], kind=kind, ctx=ctx))
+    asyncio.run(tools.save_memory("content", "natsume", tags=["test"], kind=kind, ctx=ctx))
     assert captured["header"] == "secret"
 
 
@@ -253,7 +254,7 @@ def test_save_memory_omitted_namespace_sends_no_namespace_key(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.save_memory("content", "natsume", tags=["test"], kind="work"))
+    asyncio.run(tools.save_memory("content", "natsume", tags=["test"], kind="work"))
     assert "namespace" not in captured["json"]
 
 
@@ -275,7 +276,7 @@ def test_save_memory_explicit_namespace_forwarded(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     asyncio.run(
-        mcp_server.save_memory("content", "natsume", tags=["test"], namespace="team-a", kind="work")
+        tools.save_memory("content", "natsume", tags=["test"], namespace="team-a", kind="work")
     )
     assert captured["json"]["namespace"] == "team-a"
 
@@ -333,11 +334,11 @@ def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
     [
         pytest.param(lambda: mcp_server.search_memory(query="q"), id="search"),
         pytest.param(
-            lambda: mcp_server.save_memory("content", "natsume", tags=["test"], kind="personal"),
+            lambda: tools.save_memory("content", "natsume", tags=["test"], kind="personal"),
             id="save-personal-memory",
         ),
         pytest.param(
-            lambda: mcp_server.save_memory("content", "natsume", tags=["test"], kind="work"),
+            lambda: tools.save_memory("content", "natsume", tags=["test"], kind="work"),
             id="save-work-memory",
         ),
         pytest.param(lambda: mcp_server.query_table("SELECT 1"), id="query-table"),

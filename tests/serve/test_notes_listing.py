@@ -1,7 +1,7 @@
 """GET /notes: deterministic note listing without a search query.
 
-Route tests monkeypatch ``api.notes.list_notes`` (parse/validate/delegate only);
-``notes.list_notes`` itself is exercised against a fake connection, so no DB,
+Route tests monkeypatch ``store.list_notes`` (parse/validate/delegate only);
+``store.list_notes`` itself is exercised against a fake connection, so no DB,
 no network, and no embedding call anywhere on this read path.
 """
 
@@ -14,8 +14,9 @@ from datetime import datetime, timezone
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth, notes
+from memory_base.serve import api, auth
 from memory_base.serve.common.http import TEXT_LIMIT
+from memory_base.serve.notes import store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -29,7 +30,7 @@ def _capture_list_notes(monkeypatch, rows=None):
         captured.update(kwargs)
         return rows or []
 
-    monkeypatch.setattr(api.notes, "list_notes", fake_list_notes)
+    monkeypatch.setattr(store, "list_notes", fake_list_notes)
     return captured
 
 
@@ -95,7 +96,7 @@ def test_list_notes_value_error_maps_to_400(monkeypatch):
     async def fake_list_notes(**kwargs):
         raise ValueError("since must be earlier than until")
 
-    monkeypatch.setattr(api.notes, "list_notes", fake_list_notes)
+    monkeypatch.setattr(store, "list_notes", fake_list_notes)
     response = client.get("/notes?since=2026-08-13&until=2026-08-12")
     assert response.status_code == 400
     assert "earlier" in response.json()["error"]
@@ -144,7 +145,7 @@ def test_list_notes_rejects_namespace_outside_allowed_set(monkeypatch):
     assert "error" in response.json()
 
 
-# ---- notes.list_notes: SQL shape and row mapping ----------------------------
+# ---- store.list_notes: SQL shape and row mapping ----------------------------
 
 
 class FakeConnection:
@@ -164,7 +165,7 @@ def _patch_conn(monkeypatch, conn):
     async def acquire(timeout=None):
         yield conn
 
-    monkeypatch.setattr(notes.db, "acquire", acquire)
+    monkeypatch.setattr(store.db, "acquire", acquire)
 
 
 def _row(**overrides):
@@ -185,7 +186,7 @@ def _row(**overrides):
 def test_list_notes_queries_agent_notes_newest_first(monkeypatch):
     conn = FakeConnection([])
     _patch_conn(monkeypatch, conn)
-    asyncio.run(notes.list_notes())
+    asyncio.run(store.list_notes())
     assert "source_type = 'agent_note'" in conn.query
     assert "ORDER BY ts_last_active DESC" in conn.query
     assert conn.args[0] == 50  # limit rides as $1, matching the predicate offset
@@ -194,7 +195,7 @@ def test_list_notes_queries_agent_notes_newest_first(monkeypatch):
 def test_list_notes_maps_rows_to_response_shape(monkeypatch):
     conn = FakeConnection([_row()])
     _patch_conn(monkeypatch, conn)
-    rows = asyncio.run(notes.list_notes())
+    rows = asyncio.run(store.list_notes())
     assert rows == [
         {
             "id": "note:abc",
@@ -211,14 +212,14 @@ def test_list_notes_maps_rows_to_response_shape(monkeypatch):
 def test_list_notes_marks_archived_rows(monkeypatch):
     conn = FakeConnection([_row(archived_at=AUG_12)])
     _patch_conn(monkeypatch, conn)
-    rows = asyncio.run(notes.list_notes(include_archived=True))
+    rows = asyncio.run(store.list_notes(include_archived=True))
     assert rows[0]["archived"] is True
 
 
 def test_list_notes_truncates_text(monkeypatch):
     conn = FakeConnection([_row(text="x" * (TEXT_LIMIT + 100))])
     _patch_conn(monkeypatch, conn)
-    rows = asyncio.run(notes.list_notes())
+    rows = asyncio.run(store.list_notes())
     assert len(rows[0]["text"]) == TEXT_LIMIT
 
 
@@ -226,7 +227,7 @@ def test_list_notes_forwards_filters_into_predicates(monkeypatch):
     conn = FakeConnection([])
     _patch_conn(monkeypatch, conn)
     asyncio.run(
-        notes.list_notes(
+        store.list_notes(
             tags=["Infra "],
             kind="work",
             namespaces=["team-a"],
@@ -244,14 +245,14 @@ def test_list_notes_forwards_filters_into_predicates(monkeypatch):
 def test_list_notes_returns_the_recorded_author(monkeypatch):
     conn = FakeConnection([_row(metadata={"tags": [], "author": "natsume"})])
     _patch_conn(monkeypatch, conn)
-    rows = asyncio.run(notes.list_notes())
+    rows = asyncio.run(store.list_notes())
     assert rows[0]["author"] == "natsume"
 
 
 def test_list_notes_omits_archived_by_when_unrecorded(monkeypatch):
     conn = FakeConnection([_row()])
     _patch_conn(monkeypatch, conn)
-    rows = asyncio.run(notes.list_notes())
+    rows = asyncio.run(store.list_notes())
     assert "archived_by" not in rows[0]
 
 
@@ -260,28 +261,28 @@ def test_list_notes_reports_archived_by_when_recorded(monkeypatch):
         [_row(archived_at=AUG_12, metadata={"tags": [], "archived_by": "claude-code"})]
     )
     _patch_conn(monkeypatch, conn)
-    rows = asyncio.run(notes.list_notes(include_archived=True))
+    rows = asyncio.run(store.list_notes(include_archived=True))
     assert rows[0]["archived_by"] == "claude-code"
 
 
 def test_list_notes_exposes_the_superseded_id_when_recorded(monkeypatch):
     conn = FakeConnection([_row(metadata={"tags": ["infra"], "supersedes": "note:old0000000000"})])
     _patch_conn(monkeypatch, conn)
-    rows = asyncio.run(notes.list_notes())
+    rows = asyncio.run(store.list_notes())
     assert rows[0]["supersedes"] == "note:old0000000000"
 
 
 def test_list_notes_omits_the_superseded_key_when_unrecorded(monkeypatch):
     conn = FakeConnection([_row()])
     _patch_conn(monkeypatch, conn)
-    rows = asyncio.run(notes.list_notes())
+    rows = asyncio.run(store.list_notes())
     assert "supersedes" not in rows[0]
 
 
 def test_list_notes_omits_the_superseded_key_when_null(monkeypatch):
     conn = FakeConnection([_row(metadata={"tags": [], "supersedes": None})])
     _patch_conn(monkeypatch, conn)
-    rows = asyncio.run(notes.list_notes())
+    rows = asyncio.run(store.list_notes())
     assert "supersedes" not in rows[0]
 
 
@@ -294,7 +295,7 @@ def test_list_notes_reports_lineage_fields_when_recorded(monkeypatch):
     }
     conn = FakeConnection([_row(metadata=metadata)])
     _patch_conn(monkeypatch, conn)
-    [row] = asyncio.run(notes.list_notes())
+    [row] = asyncio.run(store.list_notes())
     assert row["replaced_by"] == "note:new0000000000"
     assert row["consolidated_into"] == ["note:r", "note:s"]
     assert row["merged_from"] == ["note:a", "note:b"]
@@ -310,28 +311,28 @@ def test_list_notes_reports_every_lineage_field_it_records(monkeypatch):
     }
     conn = FakeConnection([_row(metadata=metadata, archived_at=AUG_12)])
     _patch_conn(monkeypatch, conn)
-    [row] = asyncio.run(notes.list_notes(include_archived=True))
-    for field in notes.LINEAGE_FIELDS:
+    [row] = asyncio.run(store.list_notes(include_archived=True))
+    for field in store.LINEAGE_FIELDS:
         if field in metadata:
             assert row[field] == metadata[field]
 
 
 def test_restore_clears_the_archive_lineage_fields():
-    assert notes.ARCHIVE_LINEAGE_FIELDS == ("archived_by", "replaced_by", "consolidated_into")
-    assert set(notes.ARCHIVE_LINEAGE_FIELDS) <= set(notes.LINEAGE_FIELDS)
+    assert store.ARCHIVE_LINEAGE_FIELDS == ("archived_by", "replaced_by", "consolidated_into")
+    assert set(store.ARCHIVE_LINEAGE_FIELDS) <= set(store.LINEAGE_FIELDS)
 
 
 def test_list_notes_omits_lineage_fields_when_unrecorded(monkeypatch):
     conn = FakeConnection([_row()])
     _patch_conn(monkeypatch, conn)
-    [row] = asyncio.run(notes.list_notes())
+    [row] = asyncio.run(store.list_notes())
     assert not {"replaced_by", "consolidated_into", "merged_from"} & set(row)
 
 
 def test_list_notes_filters_by_author(monkeypatch):
     conn = FakeConnection([])
     _patch_conn(monkeypatch, conn)
-    asyncio.run(notes.list_notes(author="natsume"))
+    asyncio.run(store.list_notes(author="natsume"))
     assert "metadata->>'author' = $" in conn.query
     assert "natsume" in conn.args
 
@@ -340,10 +341,10 @@ def test_list_notes_filters_by_author(monkeypatch):
 def test_list_notes_rejects_bad_limit(monkeypatch, limit):
     _patch_conn(monkeypatch, FakeConnection([]))
     with pytest.raises(ValueError, match="limit"):
-        asyncio.run(notes.list_notes(limit=limit))
+        asyncio.run(store.list_notes(limit=limit))
 
 
 def test_list_notes_rejects_unknown_kind(monkeypatch):
     _patch_conn(monkeypatch, FakeConnection([]))
     with pytest.raises(ValueError, match="kind"):
-        asyncio.run(notes.list_notes(kind="reminder"))
+        asyncio.run(store.list_notes(kind="reminder"))

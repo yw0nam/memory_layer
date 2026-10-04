@@ -7,6 +7,7 @@ from pathlib import Path
 from starlette.testclient import TestClient
 
 from memory_base.serve import api, auth, ingest_api
+from memory_base.serve.notes import store
 
 HOME = "alice-notes"
 ALLOWED = {"default", HOME}
@@ -67,7 +68,7 @@ def test_save_memory_omitted_namespace_lands_in_key_home(monkeypatch):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     client = _non_admin_client(monkeypatch)
     response = client.post(
         "/save_memory", json={"author": "natsume", "content": "distilled note text", "kind": "work"}

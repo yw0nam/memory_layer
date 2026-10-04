@@ -294,7 +294,7 @@ async def load_question_notes(
     notes from two sessions collide on one row; the returned provenance maps that row to
     both.
     """
-    from memory_base.serve import notes as notes_module
+    from memory_base.serve.notes import store as notes_module
     from memory_base.serve.namespaces import NamespaceError
 
     save = save or notes_module.save_note
@@ -729,7 +729,7 @@ def _notes_by_unit(data_dir: Path) -> tuple[dict, set[tuple[str, str]]]:
 
 def _retrieval_constants() -> dict[str, Any]:
     from memory_base.retrieval import search
-    from memory_base.serve import notes
+    from memory_base.serve.notes import store as notes
 
     return {
         "NOTE_SIMILAR_THRESHOLD": notes.NOTE_SIMILAR_THRESHOLD,
@@ -775,7 +775,7 @@ async def _retrieve_all(
 
 def run_retrieve(args: argparse.Namespace) -> None:
     from memory_base.core.config import emb_model, rerank_model
-    from memory_base.serve import notes
+    from memory_base.serve.notes import store as notes
 
     code = code_revision()
     run = run_name(args.variant, args.read)

@@ -2,7 +2,7 @@
 
 Pure/unit sections mirror tests/serve/test_rest_notes.py's FakeConnection pattern:
 no DB/network involved. REST sections mirror tests/serve/test_rest_api.py (route
-delegates to a monkeypatched ``api.save_note``). MCP sections mirror
+delegates to a monkeypatched ``store.save_note``). MCP sections mirror
 tests/serve/test_supersede.py (httpx.MockTransport proxy).
 """
 
@@ -17,9 +17,10 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, notes
-from memory_base.serve.mcp_server import save_memory
-from memory_base.serve.notes import build_note_row, save_note
+from memory_base.serve import api
+from memory_base.serve.notes import store
+from memory_base.serve.notes.tools import save_memory
+from memory_base.serve.notes.store import build_note_row, save_note
 
 NOW = 1_700_000_000.0  # 2023-11-14T22:13:20Z
 
@@ -85,16 +86,16 @@ def _patch_note_deps(monkeypatch, conn):
     async def fake_embed_text(embedder, text):
         return "[0]"
 
-    monkeypatch.setattr(notes.db, "acquire", acquire)
-    monkeypatch.setattr(notes, "embed_text", fake_embed_text)
-    monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
-    monkeypatch.setattr(notes, "ensure_schema_once", _noop)
+    monkeypatch.setattr(store.db, "acquire", acquire)
+    monkeypatch.setattr(store, "embed_text", fake_embed_text)
+    monkeypatch.setattr(store, "VllmEmbedder", lambda: None)
+    monkeypatch.setattr(store, "ensure_schema_once", _noop)
 
 
 def test_occurred_at_is_stored_apart_from_the_save_time(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
-    monkeypatch.setattr(notes.time, "time", lambda: NOW)
+    monkeypatch.setattr(store.time, "time", lambda: NOW)
     asyncio.run(
         save_note("distilled content", tags=["test"], kind="personal", occurred_at="2020-01-01")
     )
@@ -106,7 +107,7 @@ def test_occurred_at_is_stored_apart_from_the_save_time(monkeypatch):
 def test_occurred_at_omitted_stores_none(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
-    monkeypatch.setattr(notes.time, "time", lambda: NOW)
+    monkeypatch.setattr(store.time, "time", lambda: NOW)
     asyncio.run(save_note("distilled content", tags=["test"], kind="personal"))
     assert conn.insert_args[11] is None
 
@@ -114,7 +115,7 @@ def test_occurred_at_omitted_stores_none(monkeypatch):
 def test_occurred_at_omitted_uses_current_time(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
-    monkeypatch.setattr(notes.time, "time", lambda: NOW)
+    monkeypatch.setattr(store.time, "time", lambda: NOW)
     asyncio.run(save_note("distilled content", tags=["test"], kind="personal"))
     assert conn.insert_args[8] == NOW
 
@@ -122,7 +123,7 @@ def test_occurred_at_omitted_uses_current_time(monkeypatch):
 def test_occurred_at_malformed_rejected(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
-    monkeypatch.setattr(notes.time, "time", lambda: NOW)
+    monkeypatch.setattr(store.time, "time", lambda: NOW)
     with pytest.raises(ValueError):
         asyncio.run(
             save_note("distilled content", tags=["test"], kind="personal", occurred_at="not-a-date")
@@ -133,7 +134,7 @@ def test_occurred_at_malformed_rejected(monkeypatch):
 def test_occurred_at_in_future_rejected(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
-    monkeypatch.setattr(notes.time, "time", lambda: NOW)
+    monkeypatch.setattr(store.time, "time", lambda: NOW)
     with pytest.raises(ValueError, match="future"):
         asyncio.run(
             save_note("distilled content", tags=["test"], kind="personal", occurred_at="2024-01-01")
@@ -144,7 +145,7 @@ def test_occurred_at_in_future_rejected(monkeypatch):
 def test_occurred_at_does_not_change_content_hash_id(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
-    monkeypatch.setattr(notes.time, "time", lambda: NOW)
+    monkeypatch.setattr(store.time, "time", lambda: NOW)
     content = "backfilled episode: shipped the search fix"
     plain_id = build_note_row(content, "personal", ["test"], NOW)["id"]
     result = asyncio.run(
@@ -173,7 +174,7 @@ def test_save_memory_forwards_occurred_at_to_save_note(monkeypatch):
         captured["occurred_at"] = occurred_at
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={
@@ -204,7 +205,7 @@ def test_save_memory_omitted_occurred_at_forwards_none(monkeypatch):
         captured["occurred_at"] = occurred_at
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory", json={"author": "natsume", "content": "distilled text", "kind": "personal"}
     )
@@ -240,7 +241,7 @@ def test_save_memory_malformed_occurred_at_400(monkeypatch):
     ):
         raise ValueError(f"invalid ISO 8601 timestamp: {occurred_at!r}")
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={
@@ -268,7 +269,7 @@ def test_save_memory_future_occurred_at_400(monkeypatch):
     ):
         raise ValueError("occurred_at must not be in the future")
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={
@@ -299,7 +300,7 @@ def test_save_memory_personal_kind_delegates_to_save_note(monkeypatch):
         captured["kind"] = kind
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={"author": "natsume", "content": "caught up with the team today", "kind": "personal"},

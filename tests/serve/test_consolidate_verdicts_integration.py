@@ -20,7 +20,7 @@ from starlette.testclient import TestClient
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api, auth, namespaces
-from memory_base.serve.notes import note_id, save_note
+from memory_base.serve.notes.store import note_id, save_note
 
 pytestmark = pytest.mark.integration
 

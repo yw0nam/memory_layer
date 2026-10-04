@@ -15,8 +15,9 @@ import asyncpg
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import admin, api, auth, namespaces, notes, verdicts
+from memory_base.serve import api, auth, namespaces, verdicts
 from memory_base.serve.consolidate import Note, Pair, group_key
+from memory_base.serve.notes import curation, store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -96,7 +97,7 @@ def plan(action="keep", state_over=None, top=None, **fields):
 
 
 def replacement_id(text=MERGED):
-    return notes.note_id(NS, text)
+    return store.note_id(NS, text)
 
 
 # ---- body schema ------------------------------------------------------------
@@ -886,9 +887,9 @@ def no_owning_helpers(monkeypatch):
     async def refuse(*args, **kwargs):
         raise AssertionError("connection-owning helper called inside the apply transaction")
 
-    monkeypatch.setattr(notes, "save_note", refuse)
-    monkeypatch.setattr(admin, "archive_rows", refuse)
-    monkeypatch.setattr(admin, "restore_rows", refuse)
+    monkeypatch.setattr(store, "save_note", refuse)
+    monkeypatch.setattr(curation, "archive_rows", refuse)
+    monkeypatch.setattr(curation, "restore_rows", refuse)
 
 
 def _merge_inputs():

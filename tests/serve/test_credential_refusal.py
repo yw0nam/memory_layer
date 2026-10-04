@@ -12,8 +12,9 @@ from loguru import logger
 
 from memory_base.adapters import document
 from memory_base.ingest import enrich
-from memory_base.serve import api, ingest_api, job_store, mcp_server, notes
+from memory_base.serve import api, ingest_api, job_store, mcp_server
 from memory_base.serve.common import rest_client
+from memory_base.serve.notes import store, tools
 
 # Uppercase on purpose: tag normalization lowercases, which would hide it from the detector.
 AWS_KEY = "AKIA" + "Q" * 16
@@ -43,7 +44,7 @@ class Calls:
 def calls(monkeypatch):
     recorder = Calls()
     for target, name in [
-        (notes, "embed_text"),
+        (store, "embed_text"),
         (enrich, "chat_json"),
         (ingest_api, "summarize_and_tag"),
         (ingest_api, "embed_text"),
@@ -62,7 +63,7 @@ def calls(monkeypatch):
     async def namespace_exists(name):
         return name == "default"
 
-    monkeypatch.setattr(notes.db, "acquire", acquire)
+    monkeypatch.setattr(store.db, "acquire", acquire)
     monkeypatch.setattr(ingest_api.namespaces, "namespace_exists", namespace_exists)
     return recorder
 
@@ -98,9 +99,9 @@ def _mcp_through_rest(monkeypatch):
 
 
 def test_save_note_refuses_a_credential_before_the_embedding_and_db(calls, log_lines):
-    with pytest.raises(notes.CredentialNoteError) as refused:
+    with pytest.raises(store.CredentialNoteError) as refused:
         asyncio.run(
-            notes.save_note(
+            store.save_note(
                 f"deploy with {AWS_KEY} from the vault", tags=["deploy"], kind="work", author="a"
             )
         )
@@ -114,9 +115,9 @@ def test_save_note_refuses_a_credential_before_the_embedding_and_db(calls, log_l
 
 
 def test_save_note_refuses_a_credential_in_a_raw_tag(calls):
-    with pytest.raises(notes.CredentialNoteError) as refused:
+    with pytest.raises(store.CredentialNoteError) as refused:
         asyncio.run(
-            notes.save_note(
+            store.save_note(
                 "prefer ruff for linting", tags=["deploy", AWS_KEY], kind="work", author="a"
             )
         )
@@ -149,7 +150,7 @@ def test_mcp_save_memory_surfaces_the_credential_refusal(monkeypatch, calls):
     _mcp_through_rest(monkeypatch)
     with pytest.raises(ValueError) as refused:
         asyncio.run(
-            mcp_server.save_memory(
+            tools.save_memory(
                 content=f"the deploy key is {AWS_KEY}",
                 author="claude-code",
                 tags=["deploy"],

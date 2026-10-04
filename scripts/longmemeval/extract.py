@@ -39,7 +39,7 @@ from memory_base.eval import extraction
 from memory_base.eval import longmemeval as lme
 from memory_base.eval.claude_code import ClaudeCodeModel
 from memory_base.eval.extraction import parse_extraction
-from memory_base.serve import notes as notes_module
+from memory_base.serve.notes import store as notes_module
 
 NOTES_FILE = lme.NOTES_FILE
 SESSIONS_FILE = lme.SESSIONS_FILE

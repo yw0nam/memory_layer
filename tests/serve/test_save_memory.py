@@ -19,8 +19,8 @@ import asyncpg
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.retrieval.search import search
 from memory_base.serve import namespaces
-from memory_base.serve.mcp_server import save_memory
-from memory_base.serve.notes import build_note_row, save_note
+from memory_base.serve.notes.store import build_note_row, save_note
+from memory_base.serve.notes.tools import save_memory
 
 NOW = 1_700_000_000.0
 ID_RE = re.compile(r"^note:default:[0-9a-f]{16}$")
