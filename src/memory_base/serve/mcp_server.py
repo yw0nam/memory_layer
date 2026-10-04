@@ -255,7 +255,9 @@ async def search_all(
     Use this when you don't know or don't need to restrict whether the
     answer lives in the codebase or in stored memory
     (e.g. broad or ambiguous questions). Returns up to `top_k` hits sorted
-    by relevance (rerank score, falling back to RRF fusion score), each with
+    by relevance (rerank score, falling back to RRF fusion score); without
+    `budget_tokens` the reranked results are capped at 10 before `top_k`
+    applies, so a `top_k` above 10 still returns at most 10 hits. Each hit has
     source ("code" or "memory"), ref (file:line-range or document ref),
     date (YYYY-MM-DD), score, text (code hits truncated to 2000 chars; memory
     hits — notes, document chunks, CSV cards — come back whole, already
@@ -302,7 +304,9 @@ async def search_code(
 
     Use this for questions about code structure, implementation location,
     function/class definitions, or "where is X implemented" style questions.
-    Returns up to `top_k` hits sorted by relevance, each with source="code",
+    Returns up to `top_k` hits sorted by relevance; the reranked results are
+    capped at 10 before `top_k` applies, so a `top_k` above 10 still returns at
+    most 10 hits. Each hit has source="code",
     repo, ref (file:line-range), date (file mtime as YYYY-MM-DD), score, text
     (truncated to 2000 chars — code chunks have no hard write-time bound, so a
     chunk can run longer than that), and optional context (neighboring code
@@ -340,8 +344,10 @@ async def search_memory(
 
     Use this for questions about past decisions, saved notes, ingested
     documents, or any knowledge stored in the memory base rather than
-    the current codebase. Returns up to `top_k` hits sorted by relevance,
-    each with source="memory", ref (document ref), date (YYYY-MM-DD),
+    the current codebase. Returns up to `top_k` hits sorted by relevance;
+    without `budget_tokens` the reranked results are capped at 10 before
+    `top_k` applies, so a `top_k` above 10 still returns at most 10 hits.
+    Each hit has source="memory", ref (document ref), date (YYYY-MM-DD),
     score, and text: the note or chunk in full, never cut in the response
     (bounded when written instead — notes up to 4000 chars, document
     chunks and CSV cards up to 2000).
@@ -354,6 +360,8 @@ async def search_memory(
     `namespace` narrows the search to one namespace the caller's API key can
     access; omitted, it covers every namespace the key can access. A
     namespace the key cannot access is rejected by the server.
+
+    `kind` is "personal", "work", or "doc" (document chunks and CSV cards).
 
     `author` narrows the search to notes saved by one agent, e.g. claude-code
     or natsume.
@@ -408,7 +416,7 @@ async def list_notes(
     session start), or every note saved in a time window ("what was saved last
     week"). Works without the embedding backend. Returns up to `limit` notes
     (default 50, max 200) newest-first, each with id, kind, text (truncated to
-    2000 chars), tags, namespace, and date (YYYY-MM-DD), plus the lineage it
+    2000 chars), tags, author, namespace, and date (YYYY-MM-DD), plus the lineage it
     records: `supersedes`, `archived_by`, `replaced_by` (the note that
     superseded it), `consolidated_into` (the notes a consolidation folded it
     into), `merged_from` and `merged_dates` (the notes a consolidation merged
@@ -842,7 +850,7 @@ async def query_table(
 
     Find the CSV card with `search_memory` first. Its `ref` is
     `<document_id>#card-N` (the part before `#` is the document_id), and its
-    meta.columns lists the available JSON keys. Rows live in `memory.doc_rows`
+    top-level `columns` field lists the available JSON keys. Rows live in `memory.doc_rows`
     as jsonb: use `(data->>'column')::numeric` for numeric calculations and
     `WHERE document_id = '...'` to scope one table.
     The server restricts the query to one permitted namespace and returns at
@@ -916,13 +924,14 @@ async def ingest_document(
 async def remove_document(
     document_id: str, namespace: str | None = None, ctx: Context | None = None
 ) -> dict[str, Any]:
-    """Delete a document's stored chunks from one namespace by its document_id.
+    """Delete a document's stored chunks and table rows from one namespace by its document_id.
 
     Restricted to an admin key or the document's creator (the key that first
     ingested it); a non-creator, non-admin caller gets a 403, and an unknown
     document in that namespace gets a 404. `namespace` defaults to the
     caller's home namespace. Returns {document_id, namespace, deleted} where
-    `deleted` is the number of chunk rows removed.
+    `deleted` is the number of chunk rows removed; a tabular document's
+    `doc_rows` rows are removed with them.
     """
     params = {"namespace": namespace} if namespace is not None else None
     return await _call(

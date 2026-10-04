@@ -13,7 +13,7 @@ def _descriptions() -> dict[str, str]:
     async def _run():
         async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
             result = await client.list_tools()
-            return {tool.name: tool.description for tool in result.tools}
+            return {tool.name: " ".join(tool.description.split()) for tool in result.tools}
 
     return asyncio.run(_run())
 
