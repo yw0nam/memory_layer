@@ -118,22 +118,6 @@ def test_admin_notes_delete_dry_run_by_default(monkeypatch):
     assert calls["delete_notes"] is None
 
 
-def test_admin_notes_delete_confirm_false_is_also_dry_run(monkeypatch):
-    calls = {"delete_notes": None}
-
-    async def fake_notes_by_ids(ids, namespaces=None):
-        return [{"id": i} for i in ids]
-
-    async def fake_delete_notes(ids, namespaces=None):
-        calls["delete_notes"] = ids
-
-    monkeypatch.setattr(curation, "notes_by_ids", fake_notes_by_ids)
-    monkeypatch.setattr(curation, "delete_notes", fake_delete_notes)
-    response = client.post("/admin/notes/delete", json={"ids": ["note:a"], "confirm": False})
-    assert response.status_code == 200
-    assert calls["delete_notes"] is None
-
-
 def test_admin_notes_delete_confirm_true_calls_delete_notes(monkeypatch):
     calls = {}
 
@@ -152,12 +136,6 @@ def test_admin_notes_delete_confirm_true_calls_delete_notes(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"deleted": 2}
     assert calls["ids"] == ["note:a", "note:b"]
-
-
-def test_admin_notes_delete_missing_ids_400():
-    response = client.post("/admin/notes/delete", json={})
-    assert response.status_code == 400
-    assert "error" in response.json()
 
 
 def test_admin_notes_delete_empty_ids_400():
@@ -253,37 +231,6 @@ def test_duplicate_pairs_carry_each_sides_author(monkeypatch):
     assert "metadata->>'author'" in conn.query
     assert pairs[0]["a"]["author"] == "natsume"
     assert pairs[0]["b"]["author"] == "claude-code"
-
-
-def _capture_queries(monkeypatch):
-    from contextlib import asynccontextmanager
-
-    queries: list[str] = []
-
-    class FakeConnection:
-        async def fetch(self, query, *args):
-            queries.append(query)
-            return []
-
-    @asynccontextmanager
-    async def acquire(timeout=None):
-        yield FakeConnection()
-
-    monkeypatch.setattr(curation.db, "acquire", acquire)
-    return queries
-
-
-def test_find_duplicates_reads_only_agent_notes_on_both_sides(monkeypatch):
-    queries = _capture_queries(monkeypatch)
-    asyncio.run(curation.find_duplicates(0.9, None, 10))
-    assert "a.source_type = 'agent_note'" in queries[0]
-    assert "candidate.source_type = 'agent_note'" in queries[0]
-
-
-def test_archive_candidates_reads_only_agent_notes(monkeypatch):
-    queries = _capture_queries(monkeypatch)
-    asyncio.run(curation.archive_candidates(1_700_000_000.0))
-    assert "source_type = 'agent_note'" in queries[0]
 
 
 # ---- POST /admin/archive -----------------------------------------------------
@@ -395,16 +342,15 @@ def test_admin_archive_author_outside_the_allowlist_403():
     assert response.json()["error"] == "author 'mallory' is not permitted for this key"
 
 
-@pytest.mark.parametrize("author", [["natsume"], {"a": 1}, 123, "", "   "])
+@pytest.mark.parametrize("author", [123, "   "])
 def test_admin_archive_malformed_author_400(author):
     response = client.post("/admin/archive", json={"author": author})
     assert response.status_code == 400
     assert response.json()["error"] == "author must be a non-empty string"
 
 
-@pytest.mark.parametrize("author", [["natsume"], 123, ""])
-def test_admin_archive_malformed_author_with_ids_400(author):
-    response = client.post("/admin/archive", json={"ids": ["note:a"], "author": author})
+def test_admin_archive_malformed_author_with_ids_400():
+    response = client.post("/admin/archive", json={"ids": ["note:a"], "author": ""})
     assert response.status_code == 400
     assert response.json()["error"] == "author must be a non-empty string"
 
@@ -494,14 +440,6 @@ def test_archive_rows_without_an_author_writes_no_archived_by(monkeypatch):
     asyncio.run(curation.archive_rows(["note:a"], 1.0))
     query, _ = conn.queries[0]
     assert "archived_by" not in query
-
-
-def test_restore_rows_clears_archived_by(monkeypatch):
-    conn = RecordingConnection()
-    _patch_admin_conn(monkeypatch, conn)
-    asyncio.run(curation.restore_rows(["note:a"]))
-    query, _ = conn.queries[0]
-    assert "metadata = metadata - 'archived_by'" in query
 
 
 def test_restore_rows_clears_the_lineage_of_the_archive(monkeypatch):

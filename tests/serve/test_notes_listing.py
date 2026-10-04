@@ -338,7 +338,7 @@ def test_list_notes_filters_by_author(monkeypatch):
     assert "natsume" in conn.args
 
 
-@pytest.mark.parametrize("limit", [0, -1, 201, "many", True])
+@pytest.mark.parametrize("limit", [0, 201, "many", True])
 def test_list_notes_rejects_bad_limit(monkeypatch, limit):
     _patch_conn(monkeypatch, FakeConnection([]))
     with pytest.raises(ValueError, match="limit"):

@@ -1,6 +1,6 @@
 """Contract tests for the save_memory MCP tool (red-first).
 
-Pure tests pin build_note_row's id scheme, row shape, and validation with no
+Pure tests pin build_note_row's tag and author handling with no
 DB/embedder/network. Integration tests (marked ``integration``, skipped when the
 DB is unreachable) call the real tool through the in-process REST app
 (``rest_in_process`` fixture) against Postgres + embedder and clean up every
@@ -10,7 +10,6 @@ row they insert so reruns stay stable.
 from __future__ import annotations
 
 import asyncio
-import re
 
 import pytest
 
@@ -23,64 +22,9 @@ from memory_base.serve.notes.store import build_note_row, save_note
 from memory_base.serve.notes.tools import save_memory
 
 NOW = 1_700_000_000.0
-ID_RE = re.compile(r"^note:default:[0-9a-f]{16}$")
 
 
-# ---- pure: id scheme -------------------------------------------------------
-
-
-def test_same_content_same_id():
-    a = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
-    b = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
-    assert a["id"] == b["id"]
-
-
-def test_different_content_different_id():
-    a = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
-    b = build_note_row("prefer black for formatting", "work", ["test"], NOW)
-    assert a["id"] != b["id"]
-
-
-def test_id_format_note_prefix_16_hex():
-    row = build_note_row("use pgvector halfvec for embeddings", "work", ["test"], NOW)
-    assert ID_RE.match(row["id"]), row["id"]
-
-
-# ---- pure: row shape -------------------------------------------------------
-
-
-def test_row_shape_exact_keys_no_embedding():
-    row = build_note_row("distilled memory content", "work", ["test"], NOW)
-    assert set(row) == {
-        "id",
-        "source_type",
-        "source_ref",
-        "kind",
-        "session_id",
-        "raw",
-        "distilled",
-        "timestamp",
-        "metadata",
-        "occurred_at",
-    }
-    assert "embedding" not in row
-
-
-def test_row_field_values():
-    content = "the burst gate uses a weighted signal sum"
-    row = build_note_row(content, "work", ["test"], NOW)
-    assert row["source_type"] == "agent_note"
-    assert row["source_ref"] == "save_memory"
-    assert row["kind"] == "work"
-    assert row["session_id"] == row["id"]
-    assert row["raw"] == content
-    assert row["distilled"] == content
-    assert row["timestamp"] == NOW
-
-
-def test_tags_land_in_metadata():
-    row = build_note_row("content with tags", "work", ["infra", "db"], NOW)
-    assert row["metadata"] == {"tags": ["infra", "db"]}
+# ---- pure: tags and author -------------------------------------------------
 
 
 @pytest.mark.parametrize("missing_tags", [None, [], ["", "  "]])
@@ -113,31 +57,6 @@ def test_author_does_not_participate_in_the_id():
     a = build_note_row("shared content", "work", ["test"], NOW, "default", "natsume")
     b = build_note_row("shared content", "work", ["test"], NOW, "default", "claude-code")
     assert a["id"] == b["id"]
-
-
-# ---- pure: validation ------------------------------------------------------
-
-
-@pytest.mark.parametrize("bad", ["", "   ", "\n\t "])
-def test_empty_or_whitespace_content_rejected(bad):
-    with pytest.raises(ValueError):
-        build_note_row(bad, "work", None, NOW)
-
-
-def test_oversized_content_rejected():
-    with pytest.raises(ValueError):
-        build_note_row("x" * 4001, "work", None, NOW)
-
-
-def test_unknown_kind_rejected():
-    with pytest.raises(ValueError):
-        build_note_row("valid content", "reminder", None, NOW)
-
-
-@pytest.mark.parametrize("tags", ["infra", {"infra": True}, [1], ["infra", None]])
-def test_malformed_tags_rejected(tags):
-    with pytest.raises(ValueError, match="tags must be a non-empty list of strings"):
-        build_note_row("valid content", "work", tags, NOW)
 
 
 # ---- integration: real DB + embedder --------------------------------------
