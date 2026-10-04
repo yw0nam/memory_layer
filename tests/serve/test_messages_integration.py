@@ -21,8 +21,9 @@ from starlette.testclient import TestClient
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
-from memory_base.serve import api, auth, namespaces, notes
+from memory_base.serve import api, auth, namespaces
 from memory_base.serve.messages import store
+from memory_base.serve.notes import store as note_store
 
 pytestmark = pytest.mark.integration
 
@@ -169,7 +170,7 @@ def test_send_stores_rendered_content_without_touching_the_note_path(monkeypatch
     def _no_embed(*args, **kwargs):
         raise AssertionError("messages must never reach the embedding path")
 
-    monkeypatch.setattr(notes, "embed_text", _no_embed)
+    monkeypatch.setattr(note_store, "embed_text", _no_embed)
     try:
         response = _send(
             f"{marker} re-seed staging",

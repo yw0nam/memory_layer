@@ -1,37 +1,36 @@
 """Unit tests for /admin/* REST endpoints and POST /search's include_archived.
 
-No DB, no network: api.py does
-``from memory_base.serve import admin`` and calls ``admin.<fn>(...)`` at
-request time, so every admin function is monkeypatched here directly on the
-``admin`` module (not on ``api``), matching the convention already used for
-``api.search``/``api.save_note`` in tests/test_rest_api.py.
+No DB, no network: the note routes call ``curation.<fn>(...)`` at request
+time, so every curation function is monkeypatched here directly on the
+``curation`` module, matching the convention already used for
+``api.search``/``store.save_note`` in tests/test_rest_api.py.
 
 Endpoint contract pinned by these tests:
 
 - ``GET /admin/notes?older_than_days=N`` (default 90) -> calls
-  ``admin.list_old_notes(N, namespaces=<caller's scope>)``, response body is
+  ``curation.list_old_notes(N, namespaces=<caller's scope>)``, response body is
   that list verbatim. Non-integer ``older_than_days`` -> 400.
 - ``POST /admin/notes/delete {"ids": [...], "confirm": bool}``
   - confirm missing/false (dry-run): calls
-    ``admin.notes_by_ids(ids, namespaces=<scope>)``; response
-    ``{"rows": <that list>}``; ``admin.delete_notes`` is NOT called.
-  - confirm true: calls ``admin.delete_notes(ids, namespaces=<scope>) -> int``;
+    ``curation.notes_by_ids(ids, namespaces=<scope>)``; response
+    ``{"rows": <that list>}``; ``curation.delete_notes`` is NOT called.
+  - confirm true: calls ``curation.delete_notes(ids, namespaces=<scope>) -> int``;
     response ``{"deleted": <count>}``.
   - missing/empty ``ids``, or malformed JSON -> 400.
 - ``GET /admin/duplicates?threshold=0.9&kind=&limit=50`` -> calls
-  ``admin.find_duplicates(threshold, kind, limit, namespaces=<scope>)``;
+  ``curation.find_duplicates(threshold, kind, limit, namespaces=<scope>)``;
   response ``{"pairs": <that list>}``. Non-numeric ``threshold`` -> 400.
 - ``POST /admin/archive {"confirm": bool}``
   - confirm missing/false (dry-run): calls
-    ``admin.archive_candidates(now, namespaces=<scope>)``; response
-    ``{"notes_to_archive": <that list>}``; ``admin.archive_rows`` is NOT called.
+    ``curation.archive_candidates(now, namespaces=<scope>)``; response
+    ``{"notes_to_archive": <that list>}``; ``curation.archive_rows`` is NOT called.
   - confirm true: archives the note candidates; response ``{"archived": <count>}``.
   - with ``ids``: only rows in the caller's scope are touched.
 - ``POST /admin/restore {"ids": [...], "confirm": bool}``
   - confirm missing/false (dry-run): calls
-    ``admin.rows_by_ids(ids, namespaces=<scope>)``; response
-    ``{"rows": <that list>}``; ``admin.restore_rows`` is NOT called.
-  - confirm true: calls ``admin.restore_rows(ids, namespaces=<scope>) -> int``;
+    ``curation.rows_by_ids(ids, namespaces=<scope>)``; response
+    ``{"rows": <that list>}``; ``curation.restore_rows`` is NOT called.
+  - confirm true: calls ``curation.restore_rows(ids, namespaces=<scope>) -> int``;
     response ``{"restored": <count>}``.
   - missing ``ids`` -> 400.
 - ``POST /search`` gains optional ``"include_archived"`` (default False),
@@ -51,7 +50,8 @@ import asyncio
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import admin, api
+from memory_base.serve import api
+from memory_base.serve.notes import curation
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -67,7 +67,7 @@ def test_admin_notes_defaults_older_than_days_to_90(monkeypatch):
         captured["older_than_days"] = older_than_days
         return rows
 
-    monkeypatch.setattr(admin, "list_old_notes", fake_list_old_notes)
+    monkeypatch.setattr(curation, "list_old_notes", fake_list_old_notes)
     response = client.get("/admin/notes")
     assert response.status_code == 200
     assert captured["older_than_days"] == 90
@@ -81,7 +81,7 @@ def test_admin_notes_custom_older_than_days_reaches_admin(monkeypatch):
         captured["older_than_days"] = older_than_days
         return []
 
-    monkeypatch.setattr(admin, "list_old_notes", fake_list_old_notes)
+    monkeypatch.setattr(curation, "list_old_notes", fake_list_old_notes)
     response = client.get("/admin/notes", params={"older_than_days": "30"})
     assert response.status_code == 200
     assert captured["older_than_days"] == 30
@@ -108,8 +108,8 @@ def test_admin_notes_delete_dry_run_by_default(monkeypatch):
         calls["delete_notes"] = ids
         return 999
 
-    monkeypatch.setattr(admin, "notes_by_ids", fake_notes_by_ids)
-    monkeypatch.setattr(admin, "delete_notes", fake_delete_notes)
+    monkeypatch.setattr(curation, "notes_by_ids", fake_notes_by_ids)
+    monkeypatch.setattr(curation, "delete_notes", fake_delete_notes)
     response = client.post("/admin/notes/delete", json={"ids": ["note:a"]})
     assert response.status_code == 200
     assert response.json() == {"rows": rows}
@@ -126,8 +126,8 @@ def test_admin_notes_delete_confirm_false_is_also_dry_run(monkeypatch):
     async def fake_delete_notes(ids, namespaces=None):
         calls["delete_notes"] = ids
 
-    monkeypatch.setattr(admin, "notes_by_ids", fake_notes_by_ids)
-    monkeypatch.setattr(admin, "delete_notes", fake_delete_notes)
+    monkeypatch.setattr(curation, "notes_by_ids", fake_notes_by_ids)
+    monkeypatch.setattr(curation, "delete_notes", fake_delete_notes)
     response = client.post("/admin/notes/delete", json={"ids": ["note:a"], "confirm": False})
     assert response.status_code == 200
     assert calls["delete_notes"] is None
@@ -143,8 +143,8 @@ def test_admin_notes_delete_confirm_true_calls_delete_notes(monkeypatch):
         calls["ids"] = ids
         return len(ids)
 
-    monkeypatch.setattr(admin, "notes_by_ids", fake_notes_by_ids)
-    monkeypatch.setattr(admin, "delete_notes", fake_delete_notes)
+    monkeypatch.setattr(curation, "notes_by_ids", fake_notes_by_ids)
+    monkeypatch.setattr(curation, "delete_notes", fake_delete_notes)
     response = client.post(
         "/admin/notes/delete", json={"ids": ["note:a", "note:b"], "confirm": True}
     )
@@ -188,7 +188,7 @@ def test_admin_duplicates_defaults(monkeypatch):
         captured["limit"] = limit
         return pairs
 
-    monkeypatch.setattr(admin, "find_duplicates", fake_find_duplicates)
+    monkeypatch.setattr(curation, "find_duplicates", fake_find_duplicates)
     response = client.get("/admin/duplicates")
     assert response.status_code == 200
     assert captured == {"threshold": 0.9, "kind": None, "limit": 50}
@@ -204,7 +204,7 @@ def test_admin_duplicates_custom_params_reach_admin(monkeypatch):
         captured["limit"] = limit
         return []
 
-    monkeypatch.setattr(admin, "find_duplicates", fake_find_duplicates)
+    monkeypatch.setattr(curation, "find_duplicates", fake_find_duplicates)
     response = client.get(
         "/admin/duplicates", params={"threshold": "0.8", "kind": "work", "limit": "5"}
     )
@@ -247,8 +247,8 @@ def test_duplicate_pairs_carry_each_sides_author(monkeypatch):
     async def acquire(timeout=None):
         yield conn
 
-    monkeypatch.setattr(admin.db, "acquire", acquire)
-    pairs = asyncio.run(admin.find_duplicates(0.9, None, 10))
+    monkeypatch.setattr(curation.db, "acquire", acquire)
+    pairs = asyncio.run(curation.find_duplicates(0.9, None, 10))
     assert "metadata->>'author'" in conn.query
     assert pairs[0]["a"]["author"] == "natsume"
     assert pairs[0]["b"]["author"] == "claude-code"
@@ -268,20 +268,20 @@ def _capture_queries(monkeypatch):
     async def acquire(timeout=None):
         yield FakeConnection()
 
-    monkeypatch.setattr(admin.db, "acquire", acquire)
+    monkeypatch.setattr(curation.db, "acquire", acquire)
     return queries
 
 
 def test_find_duplicates_reads_only_agent_notes_on_both_sides(monkeypatch):
     queries = _capture_queries(monkeypatch)
-    asyncio.run(admin.find_duplicates(0.9, None, 10))
+    asyncio.run(curation.find_duplicates(0.9, None, 10))
     assert "a.source_type = 'agent_note'" in queries[0]
     assert "candidate.source_type = 'agent_note'" in queries[0]
 
 
 def test_archive_candidates_reads_only_agent_notes(monkeypatch):
     queries = _capture_queries(monkeypatch)
-    asyncio.run(admin.archive_candidates(1_700_000_000.0))
+    asyncio.run(curation.archive_candidates(1_700_000_000.0))
     assert "source_type = 'agent_note'" in queries[0]
 
 
@@ -301,8 +301,8 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
         calls["archive_rows"] = (ids, now)
         return len(ids)
 
-    monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
-    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    monkeypatch.setattr(curation, "archive_candidates", fake_archive_candidates)
+    monkeypatch.setattr(curation, "archive_rows", fake_archive_rows)
     response = client.post("/admin/archive", json={})
     assert response.status_code == 200
     assert response.json() == {"notes_to_archive": candidates}
@@ -324,8 +324,8 @@ def test_admin_archive_confirm_archives_the_cold_notes(monkeypatch):
         calls["ids"] = ids
         return len(ids)
 
-    monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
-    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    monkeypatch.setattr(curation, "archive_candidates", fake_archive_candidates)
+    monkeypatch.setattr(curation, "archive_rows", fake_archive_rows)
     response = client.post("/admin/archive", json={"confirm": True})
     assert response.status_code == 200
     assert response.json() == {"archived": 2}
@@ -349,9 +349,9 @@ def test_admin_archive_with_ids_previews_those_rows(monkeypatch):
         calls["archive_rows"] = ids
         return len(ids)
 
-    monkeypatch.setattr(admin, "rows_by_ids", fake_rows_by_ids)
-    monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
-    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    monkeypatch.setattr(curation, "rows_by_ids", fake_rows_by_ids)
+    monkeypatch.setattr(curation, "archive_candidates", fake_archive_candidates)
+    monkeypatch.setattr(curation, "archive_rows", fake_archive_rows)
     response = client.post("/admin/archive", json={"ids": ["note:a"], "author": "natsume"})
     assert response.status_code == 200
     assert response.json() == {"notes_to_archive": rows}
@@ -371,8 +371,8 @@ def test_admin_archive_with_ids_confirm_stamps_the_author(monkeypatch):
         captured["archived_by"] = archived_by
         return len(ids)
 
-    monkeypatch.setattr(admin, "rows_by_ids", fake_rows_by_ids)
-    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    monkeypatch.setattr(curation, "rows_by_ids", fake_rows_by_ids)
+    monkeypatch.setattr(curation, "archive_rows", fake_archive_rows)
     response = client.post(
         "/admin/archive",
         json={"ids": ["note:a", "note:b"], "author": "natsume", "confirm": True},
@@ -425,8 +425,8 @@ def test_admin_archive_cold_candidates_stamp_a_given_author(monkeypatch):
         captured["archived_by"] = archived_by
         return len(ids)
 
-    monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
-    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    monkeypatch.setattr(curation, "archive_candidates", fake_archive_candidates)
+    monkeypatch.setattr(curation, "archive_rows", fake_archive_rows)
     response = client.post("/admin/archive", json={"author": "natsume", "confirm": True})
     assert response.status_code == 200
     assert captured["archived_by"] == "natsume"
@@ -443,8 +443,8 @@ def test_admin_archive_without_ids_or_author_stamps_nothing(monkeypatch):
         captured["archived_by"] = archived_by
         return len(ids)
 
-    monkeypatch.setattr(admin, "archive_candidates", fake_archive_candidates)
-    monkeypatch.setattr(admin, "archive_rows", fake_archive_rows)
+    monkeypatch.setattr(curation, "archive_candidates", fake_archive_candidates)
+    monkeypatch.setattr(curation, "archive_rows", fake_archive_rows)
     response = client.post("/admin/archive", json={"confirm": True})
     assert response.status_code == 200
     assert captured["archived_by"] is None
@@ -475,13 +475,13 @@ def _patch_admin_conn(monkeypatch, conn):
     async def acquire(timeout=None):
         yield conn
 
-    monkeypatch.setattr(admin.db, "acquire", acquire)
+    monkeypatch.setattr(curation.db, "acquire", acquire)
 
 
 def test_archive_rows_stamps_archived_by(monkeypatch):
     conn = RecordingConnection()
     _patch_admin_conn(monkeypatch, conn)
-    asyncio.run(admin.archive_rows(["note:a"], 1.0, archived_by="natsume"))
+    asyncio.run(curation.archive_rows(["note:a"], 1.0, archived_by="natsume"))
     query, args = conn.queries[0]
     assert "jsonb_build_object('archived_by'" in query
     assert args[-1] == "natsume"
@@ -490,7 +490,7 @@ def test_archive_rows_stamps_archived_by(monkeypatch):
 def test_archive_rows_without_an_author_writes_no_archived_by(monkeypatch):
     conn = RecordingConnection()
     _patch_admin_conn(monkeypatch, conn)
-    asyncio.run(admin.archive_rows(["note:a"], 1.0))
+    asyncio.run(curation.archive_rows(["note:a"], 1.0))
     query, _ = conn.queries[0]
     assert "archived_by" not in query
 
@@ -498,7 +498,7 @@ def test_archive_rows_without_an_author_writes_no_archived_by(monkeypatch):
 def test_restore_rows_clears_archived_by(monkeypatch):
     conn = RecordingConnection()
     _patch_admin_conn(monkeypatch, conn)
-    asyncio.run(admin.restore_rows(["note:a"]))
+    asyncio.run(curation.restore_rows(["note:a"]))
     query, _ = conn.queries[0]
     assert "metadata = metadata - 'archived_by'" in query
 
@@ -506,7 +506,7 @@ def test_restore_rows_clears_archived_by(monkeypatch):
 def test_restore_rows_clears_the_lineage_of_the_archive(monkeypatch):
     conn = RecordingConnection()
     _patch_admin_conn(monkeypatch, conn)
-    asyncio.run(admin.restore_rows(["note:a"]))
+    asyncio.run(curation.restore_rows(["note:a"]))
     query, _ = conn.queries[0]
     for field in ("archived_by", "replaced_by", "consolidated_into"):
         assert f"- '{field}'" in query
@@ -515,7 +515,7 @@ def test_restore_rows_clears_the_lineage_of_the_archive(monkeypatch):
 def test_rows_by_ids_reports_archived_by(monkeypatch):
     conn = RecordingConnection(rows=[{"id": "note:a", "archived_by": "natsume"}])
     _patch_admin_conn(monkeypatch, conn)
-    rows = asyncio.run(admin.rows_by_ids(["note:a"]))
+    rows = asyncio.run(curation.rows_by_ids(["note:a"]))
     query, _ = conn.queries[0]
     assert "metadata->>'archived_by'" in query
     assert rows[0]["archived_by"] == "natsume"
@@ -535,8 +535,8 @@ def test_admin_restore_dry_run_by_default(monkeypatch):
         calls["restore_rows"] = ids
         return len(ids)
 
-    monkeypatch.setattr(admin, "rows_by_ids", fake_rows_by_ids)
-    monkeypatch.setattr(admin, "restore_rows", fake_restore_rows)
+    monkeypatch.setattr(curation, "rows_by_ids", fake_rows_by_ids)
+    monkeypatch.setattr(curation, "restore_rows", fake_restore_rows)
     response = client.post("/admin/restore", json={"ids": ["note:old"]})
     assert response.status_code == 200
     assert response.json() == {"rows": rows}
@@ -553,8 +553,8 @@ def test_admin_restore_confirm_true_calls_restore_rows(monkeypatch):
         calls["ids"] = ids
         return len(ids)
 
-    monkeypatch.setattr(admin, "rows_by_ids", fake_rows_by_ids)
-    monkeypatch.setattr(admin, "restore_rows", fake_restore_rows)
+    monkeypatch.setattr(curation, "rows_by_ids", fake_rows_by_ids)
+    monkeypatch.setattr(curation, "restore_rows", fake_restore_rows)
     response = client.post("/admin/restore", json={"ids": ["a", "b"], "confirm": True})
     assert response.status_code == 200
     assert response.json() == {"restored": 2}

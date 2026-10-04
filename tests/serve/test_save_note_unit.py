@@ -7,7 +7,8 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from memory_base.serve import namespaces, notes
+from memory_base.serve import namespaces
+from memory_base.serve.notes import store
 
 
 class _Tx:
@@ -70,9 +71,9 @@ def use(monkeypatch):
         async def acquire(timeout=None):
             yield conn
 
-        monkeypatch.setattr(notes.db, "acquire", acquire)
-        monkeypatch.setattr(notes, "ensure_schema_once", _noop)
-        monkeypatch.setattr(notes, "embed_text", _embed)
+        monkeypatch.setattr(store.db, "acquire", acquire)
+        monkeypatch.setattr(store, "ensure_schema_once", _noop)
+        monkeypatch.setattr(store, "embed_text", _embed)
         return conn
 
     return _use
@@ -81,7 +82,7 @@ def use(monkeypatch):
 def _save(**overrides):
     fields = {"tags": ["test"], "kind": "work", "namespace": "team-a"}
     fields.update(overrides)
-    return asyncio.run(notes.save_note("prefer ruff for linting", **fields))
+    return asyncio.run(store.save_note("prefer ruff for linting", **fields))
 
 
 def test_save_note_holds_the_namespace_row_inside_its_transaction(use):

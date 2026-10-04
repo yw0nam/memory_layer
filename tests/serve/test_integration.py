@@ -21,7 +21,7 @@ from memory_base.core.config import EMB_DIM, PG_SCHEMA, db_url, vector_literal
 from memory_base.core.db import acquire, close_pool, get_pool
 from memory_base.retrieval.search import PER_FILE_CAP, search
 from memory_base.serve import mcp_server, repos
-from memory_base.serve.notes import build_note_row, save_note
+from memory_base.serve.notes.store import build_note_row, save_note
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("indexed_code")]
 

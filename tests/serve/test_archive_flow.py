@@ -31,7 +31,8 @@ from memory_base.core.config import (
     vector_literal,
 )
 from memory_base.core.schema import ensure_schema
-from memory_base.serve import admin, api
+from memory_base.serve import api
+from memory_base.serve.notes import curation
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -307,7 +308,7 @@ def test_duplicates_keep_pair_found_only_from_larger_id_direction():
     asyncio.run(_delete_rows(seeded_ids))
     asyncio.run(_seed_cluster())
     try:
-        pairs = asyncio.run(admin.find_duplicates(0.99, cluster_kind, 100))
+        pairs = asyncio.run(curation.find_duplicates(0.99, cluster_kind, 100))
         matching_pairs = [
             pair for pair in pairs if pair["a"]["id"] == smaller_id and pair["b"]["id"] == larger_id
         ]
@@ -349,12 +350,12 @@ def test_duplicates_and_cold_candidates_exclude_document_chunks():
     asyncio.run(_delete_rows(seeded_ids))
     asyncio.run(_seed())
     try:
-        pairs = asyncio.run(admin.find_duplicates(0.99, None, 1000))
+        pairs = asyncio.run(curation.find_duplicates(0.99, None, 1000))
         pair_ids = [{pair["a"]["id"], pair["b"]["id"]} for pair in pairs]
         assert {note_a_id, note_b_id} in pair_ids
         assert not any(doc_id in ids for ids in pair_ids)
 
-        candidate_ids = {row["id"] for row in asyncio.run(admin.archive_candidates(now))}
+        candidate_ids = {row["id"] for row in asyncio.run(curation.archive_candidates(now))}
         assert {note_a_id, note_b_id} <= candidate_ids
         assert doc_id not in candidate_ids
     finally:

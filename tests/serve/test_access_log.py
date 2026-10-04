@@ -25,7 +25,7 @@ import asyncpg
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
 from memory_base.serve import access_log, api
-from memory_base.serve.notes import build_note_row, save_note
+from memory_base.serve.notes.store import build_note_row, save_note
 
 NOW = 1_700_000_000.0
 

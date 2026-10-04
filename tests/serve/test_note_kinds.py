@@ -23,10 +23,11 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.core.config import PG_SCHEMA, db_url
-from memory_base.serve import admin, api, mcp_server, notes
+from memory_base.serve import api, mcp_server
 from memory_base.serve.common import rest_client
 from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
-from memory_base.serve.notes import (
+from memory_base.serve.notes import curation, store, tools
+from memory_base.serve.notes.store import (
     NOTE_KINDS,
     build_note_row,
     save_note,
@@ -92,10 +93,10 @@ def _patch_note_deps(monkeypatch, conn):
         conn.embeds.append(text)
         return "[0]"
 
-    monkeypatch.setattr(notes.db, "acquire", acquire)
-    monkeypatch.setattr(notes, "embed_text", fake_embed_text)
-    monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
-    monkeypatch.setattr(notes, "ensure_schema_once", _noop)
+    monkeypatch.setattr(store.db, "acquire", acquire)
+    monkeypatch.setattr(store, "embed_text", fake_embed_text)
+    monkeypatch.setattr(store, "VllmEmbedder", lambda: None)
+    monkeypatch.setattr(store, "ensure_schema_once", _noop)
 
 
 def test_save_note_requires_a_kind():
@@ -188,7 +189,7 @@ def test_save_memory_route_forwards_kind_to_save_note(monkeypatch, kind):
         captured["kind"] = kind
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={"author": "natsume", "content": "distilled text", "tags": ["test"], "kind": kind},
@@ -204,7 +205,7 @@ def test_duplicates_route_rejects_an_unknown_kind(monkeypatch):
         calls.append(kind)
         return []
 
-    monkeypatch.setattr(admin, "find_duplicates", fake_find_duplicates)
+    monkeypatch.setattr(curation, "find_duplicates", fake_find_duplicates)
     response = client.get("/admin/duplicates", params={"kind": "note"})
     assert response.status_code == 400
     assert response.json()["error"] == KIND_ERROR
@@ -282,7 +283,7 @@ def test_save_memory_posts_the_kind_it_is_given(monkeypatch, kind):
 
     _patch_client(monkeypatch, handler)
     result = asyncio.run(
-        mcp_server.save_memory("distilled content", "natsume", tags=["infra"], kind=kind)
+        tools.save_memory("distilled content", "natsume", tags=["infra"], kind=kind)
     )
     assert captured["path"] == "/save_memory"
     assert captured["json"] == {
@@ -401,10 +402,8 @@ def test_cross_kind_duplicate_is_a_no_op_that_keeps_the_first_kind(rest_in_proce
     note_id = build_note_row(content, "work", ["test"], NOW)["id"]
     asyncio.run(_delete(note_id))
     try:
-        first = asyncio.run(mcp_server.save_memory(content, "natsume", tags=["test"], kind="work"))
-        second = asyncio.run(
-            mcp_server.save_memory(content, "natsume", tags=["test"], kind="personal")
-        )
+        first = asyncio.run(tools.save_memory(content, "natsume", tags=["test"], kind="work"))
+        second = asyncio.run(tools.save_memory(content, "natsume", tags=["test"], kind="personal"))
         assert first["stored"] is True
         assert second["stored"] is False
         assert second["id"] == first["id"] == note_id
@@ -463,12 +462,10 @@ def test_cross_kind_supersede_archives_the_other_kinds_note(rest_in_process):
     new_id = build_note_row(new, "work", ["test"], NOW)["id"]
     asyncio.run(_delete(old_id, new_id))
     try:
-        saved_old = asyncio.run(mcp_server.save_memory(old, "natsume", tags=["test"], kind="work"))
+        saved_old = asyncio.run(tools.save_memory(old, "natsume", tags=["test"], kind="work"))
         assert saved_old["id"] == old_id
         saved_new = asyncio.run(
-            mcp_server.save_memory(
-                new, "natsume", tags=["test"], kind="personal", supersedes=old_id
-            )
+            tools.save_memory(new, "natsume", tags=["test"], kind="personal", supersedes=old_id)
         )
         assert saved_new["id"] == new_id
         assert saved_new["superseded"] == old_id

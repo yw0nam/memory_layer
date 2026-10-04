@@ -1,9 +1,7 @@
-"""Pure unit pins for memory_base.serve.notes.build_note_row.
+"""Pure unit pins for memory_base.serve.notes.store.build_note_row.
 
 These pins mirror the non-integration cases in tests/test_save_memory.py at
 its new home. No DB/network involved.
-
-Collection fails today: memory_base.serve.notes does not exist yet.
 """
 
 from __future__ import annotations
@@ -16,8 +14,9 @@ from contextlib import asynccontextmanager
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, notes
-from memory_base.serve.notes import build_note_row, save_note
+from memory_base.serve import api
+from memory_base.serve.notes import store
+from memory_base.serve.notes.store import build_note_row, save_note
 
 NOW = 1_700_000_000.0
 ID_RE = re.compile(r"^note:default:[0-9a-f]{16}$")
@@ -170,7 +169,7 @@ async def _fake_save_note(
 
 @pytest.mark.parametrize("author", [None, "", "   ", 123, ["natsume"]])
 def test_save_memory_missing_author_400(monkeypatch, author):
-    monkeypatch.setattr(api, "save_note", _fake_save_note)
+    monkeypatch.setattr(store, "save_note", _fake_save_note)
     body = {"content": "distilled note text", "kind": "work"}
     if author is not None:
         body["author"] = author
@@ -180,7 +179,7 @@ def test_save_memory_missing_author_400(monkeypatch, author):
 
 
 def test_save_memory_author_outside_the_allowlist_403(monkeypatch):
-    monkeypatch.setattr(api, "save_note", _fake_save_note)
+    monkeypatch.setattr(store, "save_note", _fake_save_note)
     response = client.post(
         "/save_memory", json={"author": "mallory", "content": "distilled note text", "kind": "work"}
     )
@@ -201,7 +200,7 @@ def test_save_memory_forwards_the_author_to_save_note(monkeypatch):
             "similar": [],
         }
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={"author": "claude-code", "content": "distilled note text", "kind": "work"},
@@ -261,13 +260,13 @@ def _patch_note_deps(monkeypatch, conn):
     async def fake_embed_text(embedder, text):
         return "[0]"
 
-    monkeypatch.setattr(notes.db, "acquire", acquire)
-    monkeypatch.setattr(notes, "embed_text", fake_embed_text)
+    monkeypatch.setattr(store.db, "acquire", acquire)
+    monkeypatch.setattr(store, "embed_text", fake_embed_text)
     # VllmEmbedder() is constructed eagerly as an argument to embed_text, so it
     # must be faked too: its real constructor reaches EMB_URL, which no unit
     # test/CI environment configures.
-    monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
-    monkeypatch.setattr(notes, "ensure_schema_once", _noop)
+    monkeypatch.setattr(store, "VllmEmbedder", lambda: None)
+    monkeypatch.setattr(store, "ensure_schema_once", _noop)
 
 
 async def _noop(conn):

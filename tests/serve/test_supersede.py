@@ -16,7 +16,7 @@ optional ``supersedes: <note id>`` argument (MCP tool, REST body, and
   (``None`` when not given); the tool list is exactly the registered tools.
 
 Pure/unit sections use no DB/network (REST route delegates to a monkeypatched
-``api.save_note``; MCP proxy uses ``httpx.MockTransport`` as in
+``store.save_note``; MCP proxy uses ``httpx.MockTransport`` as in
 tests/test_mcp_proxy.py). Integration section (marked ``integration``,
 skipped when the DB is unreachable) exercises the real stack via the
 ``rest_in_process``/direct REST client against Postgres + vLLM, cleaning up
@@ -40,7 +40,8 @@ from starlette.testclient import TestClient
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api, mcp_server
 from memory_base.serve.common import rest_client
-from memory_base.serve.notes import (
+from memory_base.serve.notes import store, tools
+from memory_base.serve.notes.store import (
     SimilarNotesError,
     build_note_row,
     save_note,
@@ -78,7 +79,7 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
             "similar": [],
         }
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={"author": "natsume", "kind": "work", "content": "some distilled content"},
@@ -113,7 +114,7 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
             "similar": [],
         }
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={
@@ -151,7 +152,7 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
             "similar": [],
         }
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory", json={"author": "natsume", "kind": "work", "content": "new content"}
     )
@@ -174,7 +175,7 @@ def test_save_memory_unknown_supersedes_id_400(monkeypatch, client):
     ):
         raise ValueError(f"unknown supersedes id: {supersedes}")
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={
@@ -207,7 +208,7 @@ def test_save_memory_similar_notes_error_409(monkeypatch, client):
     ):
         raise SimilarNotesError(similar)
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory", json={"author": "natsume", "kind": "work", "content": "new content"}
     )
@@ -222,7 +223,7 @@ def test_save_memory_non_bool_allow_similar_400(monkeypatch, client):
     async def fake_save_note(content, **kwargs):
         return {"id": "note:x", "kind": "work", "stored": True, "superseded": None, "similar": []}
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={
@@ -253,7 +254,7 @@ def test_save_memory_forwards_allow_similar_to_save_note(monkeypatch, client):
         captured["allow_similar"] = allow_similar
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
-    monkeypatch.setattr(api, "save_note", fake_save_note)
+    monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
         json={"author": "natsume", "kind": "work", "content": "new content", "allow_similar": True},
@@ -307,8 +308,6 @@ class FakeConnection:
 def _patch_note_deps(monkeypatch, conn):
     from contextlib import asynccontextmanager
 
-    from memory_base.serve import notes
-
     @asynccontextmanager
     async def acquire(timeout=None):
         yield conn
@@ -319,10 +318,10 @@ def _patch_note_deps(monkeypatch, conn):
     async def noop(conn):
         return None
 
-    monkeypatch.setattr(notes.db, "acquire", acquire)
-    monkeypatch.setattr(notes, "embed_text", fake_embed_text)
-    monkeypatch.setattr(notes, "VllmEmbedder", lambda: None)
-    monkeypatch.setattr(notes, "ensure_schema_once", noop)
+    monkeypatch.setattr(store.db, "acquire", acquire)
+    monkeypatch.setattr(store, "embed_text", fake_embed_text)
+    monkeypatch.setattr(store, "VllmEmbedder", lambda: None)
+    monkeypatch.setattr(store, "ensure_schema_once", noop)
 
 
 def test_supersede_stamps_archived_by_with_the_new_notes_author(monkeypatch):
@@ -360,8 +359,6 @@ class ArchivedDuplicateConnection(FakeConnection):
 def test_supersede_of_the_note_with_identical_content_is_refused_before_embed(
     monkeypatch,
 ):
-    from memory_base.serve import notes
-
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
     calls = []
@@ -370,7 +367,7 @@ def test_supersede_of_the_note_with_identical_content_is_refused_before_embed(
         calls.append("embed")
         return "[0]"
 
-    monkeypatch.setattr(notes, "embed_text", counting_embed)
+    monkeypatch.setattr(store, "embed_text", counting_embed)
     content = "prefer ruff over flake8 for linting"
     own_id = build_note_row(content, "work", ["test"], NOW)["id"]
     with pytest.raises(ValueError, match="identical to the note it supersedes"):
@@ -556,7 +553,7 @@ def test_mcp_save_memory_posts_supersedes_in_body(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     result = asyncio.run(
-        mcp_server.save_memory(
+        tools.save_memory(
             "new content", "natsume", tags=None, supersedes="note:old0000000000", kind="work"
         )
     )
@@ -588,7 +585,7 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(mcp_server.save_memory("new content", "natsume", tags=["test"], kind="work"))
+    asyncio.run(tools.save_memory("new content", "natsume", tags=["test"], kind="work"))
     assert captured["json"] == {
         "content": "new content",
         "author": "natsume",
@@ -617,9 +614,7 @@ def test_mcp_save_memory_posts_allow_similar_true_when_passed(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     asyncio.run(
-        mcp_server.save_memory(
-            "new content", "natsume", tags=["test"], allow_similar=True, kind="work"
-        )
+        tools.save_memory("new content", "natsume", tags=["test"], allow_similar=True, kind="work")
     )
     assert captured["json"]["allow_similar"] is True
 
@@ -630,7 +625,7 @@ def test_mcp_save_memory_409_surfaces_backend_message(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError, match=r"Refused: 1 active note\(s\) say the same thing"):
-        asyncio.run(mcp_server.save_memory("new content", "natsume", tags=["test"], kind="work"))
+        asyncio.run(tools.save_memory("new content", "natsume", tags=["test"], kind="work"))
 
 
 def test_mcp_tool_list_unaffected_by_supersede():
