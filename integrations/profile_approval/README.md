@@ -48,7 +48,7 @@ On every machine where the user approves:
 mkdir -p ~/.config/memory-base
 cp integrations/profile_approval/mb_profile.py ~/.config/memory-base/mb_profile.py
 (umask 177; printf 'MEMORY_BASE_URL=http://127.0.0.1:8010\n' > ~/.config/memory-base/user.env
- uv run python -m memory_base.serve.keys new <user label> --author user \
+ uv run python -m memory_base.serve.access.keys new <user label> --author user \
    | tail -n 1 | sed 's/^/MEMORY_BASE_USER_KEY=/' >> ~/.config/memory-base/user.env)
 ```
 

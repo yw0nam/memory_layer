@@ -14,7 +14,8 @@ from contextlib import asynccontextmanager
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth
+from memory_base.serve import api
+from memory_base.serve.access import auth
 from memory_base.serve.profiles import routes, store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})

@@ -19,7 +19,7 @@ from memory_base.adapters.document import (
 )
 from memory_base.core.secrets import find_secret
 from memory_base.retrieval.search import normalize_tags
-from memory_base.serve import namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.common import job_store
 from memory_base.serve.common.http import error
 from memory_base.serve.documents import pipeline, store

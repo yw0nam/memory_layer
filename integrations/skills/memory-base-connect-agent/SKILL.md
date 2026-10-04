@@ -41,7 +41,7 @@ approval key, `consolidator` is the consolidation agent.
 The command writes the key straight into the agent's env file and never shows it:
 
 ```
-(umask 177; uv run python -m memory_base.serve.keys new <slug> --author <slug> \
+(umask 177; uv run python -m memory_base.serve.access.keys new <slug> --author <slug> \
   | tail -n 1 | sed 's/^/MEMORY_BASE_API_KEY=/' >> <env file>)
 ```
 
@@ -72,7 +72,7 @@ agent as documented in `integrations/profile_approval/README.md`.
 1. The user restarts the client.
 2. The session-start context prints `Memory: standing profile for <slug>.`, then
    `## user (v0)` and `## self (v0)`, each `(empty)` for a new agent.
-3. The user runs `uv run python -m memory_base.serve.keys authors <slug>`. It prints
+3. The user runs `uv run python -m memory_base.serve.access.keys authors <slug>`. It prints
    `<slug>: <slug>`.
 
 The agent then writes its `self` part with `update_my_profile` and proposes its `user`

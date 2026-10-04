@@ -29,7 +29,7 @@ from memory_base.adapters.document import (
 from memory_base.core.config import VllmEmbedder, embed_text
 from memory_base.core.secrets import find_secret
 from memory_base.ingest.enrich import EnrichmentError, summarize_and_tag
-from memory_base.serve import namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.common import job_store
 from memory_base.serve.common.job_store import IngestJob
 from memory_base.serve.documents import store

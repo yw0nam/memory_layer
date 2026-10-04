@@ -17,7 +17,8 @@ from starlette.testclient import TestClient
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
-from memory_base.serve import api, keys, namespaces
+from memory_base.serve import api
+from memory_base.serve.access import keys, namespaces
 from memory_base.serve.profiles import store
 
 pytestmark = [pytest.mark.integration, pytest.mark.real_auth]

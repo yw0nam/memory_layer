@@ -18,7 +18,7 @@ import asyncpg
 
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.retrieval.search import search
-from memory_base.serve import namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.notes.store import build_note_row, save_note
 from memory_base.serve.notes.tools import save_memory
 

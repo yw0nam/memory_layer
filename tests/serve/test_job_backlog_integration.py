@@ -13,7 +13,8 @@ import pytest
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
-from memory_base.serve import api, auth, namespaces
+from memory_base.serve import api
+from memory_base.serve.access import auth, namespaces
 from memory_base.serve.common import job_store
 from memory_base.serve.documents import pipeline as document_pipeline
 

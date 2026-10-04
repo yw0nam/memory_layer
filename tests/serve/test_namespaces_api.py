@@ -1,6 +1,6 @@
 """Unit tests for the /namespaces REST endpoints (memory_base.serve.api).
 
-No DB: memory_base.serve.namespaces functions are monkeypatched directly,
+No DB: memory_base.serve.access.namespaces functions are monkeypatched directly,
 matching the convention used for admin.* in tests/serve/test_admin_api.py.
 The fixed ``test-key`` header (tests/serve/conftest.py) stubs to an admin
 identity with label "test"; ownership/scoping tests override the stub for a
@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth, namespaces
+from memory_base.serve import api
+from memory_base.serve.access import auth, namespaces
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 

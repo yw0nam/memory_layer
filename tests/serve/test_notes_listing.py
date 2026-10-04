@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth
+from memory_base.serve import api
+from memory_base.serve.access import auth
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.notes import store
 

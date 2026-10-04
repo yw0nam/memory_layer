@@ -11,7 +11,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from memory_base.serve import api, auth, namespaces
+from memory_base.serve import api
+from memory_base.serve.access import auth, namespaces
 from memory_base.serve.common import job_store
 from memory_base.serve.documents import pipeline as document_pipeline
 from memory_base.serve.documents import store as document_store

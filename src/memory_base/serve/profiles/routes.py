@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse
 
 from memory_base.core.secrets import find_secret
 from memory_base.serve.common.http import error, json_body
-from memory_base.serve.keys import AUTHOR_RE
+from memory_base.serve.access.keys import AUTHOR_RE
 from memory_base.serve.profiles import store
 from memory_base.serve.profiles.store import USER_AUTHOR
 

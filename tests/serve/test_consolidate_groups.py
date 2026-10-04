@@ -15,7 +15,8 @@ from contextlib import asynccontextmanager
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.serve import api, auth, namespaces
+from memory_base.serve import api
+from memory_base.serve.access import auth, namespaces
 from memory_base.serve.consolidation import groups
 from memory_base.serve.consolidation.groups import (
     Deferred,

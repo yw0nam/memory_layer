@@ -22,6 +22,7 @@ from memory_base.serve import mcp_server
 from memory_base.serve.documents import tools as document_tools
 from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.common import rest_client
+from memory_base.serve.tables import tools as table_tools
 from memory_base.serve.notes import tools
 
 
@@ -325,7 +326,7 @@ def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     ctx = FakeCtx({"X-API-Key": "caller-key"})
-    asyncio.run(mcp_server.query_table("SELECT 1", namespace="team-a", ctx=ctx))
+    asyncio.run(table_tools.query_table("SELECT 1", namespace="team-a", ctx=ctx))
 
     assert captured["headers"]["x-api-key"] == "caller-key"
     assert captured["json"] == {"sql": "SELECT 1", "namespace": "team-a"}
@@ -343,7 +344,7 @@ def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
             lambda: tools.save_memory("content", "natsume", tags=["test"], kind="work"),
             id="save-work-memory",
         ),
-        pytest.param(lambda: mcp_server.query_table("SELECT 1"), id="query-table"),
+        pytest.param(lambda: table_tools.query_table("SELECT 1"), id="query-table"),
         pytest.param(
             lambda: document_tools.ingest_document("content", "guide.md"), id="ingest-document"
         ),

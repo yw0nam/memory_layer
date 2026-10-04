@@ -15,7 +15,8 @@ from memory_base.core import db
 from memory_base.core.config import EMB_DIM, PG_SCHEMA, db_url
 from memory_base.core.schema import ensure_schema
 from memory_base.retrieval.search import search
-from memory_base.serve import api, mcp_server, namespaces
+from memory_base.serve import api, mcp_server
+from memory_base.serve.access import namespaces
 from memory_base.serve.common import job_store
 from memory_base.serve.documents import pipeline as document_pipeline
 from memory_base.serve.documents import store as document_store

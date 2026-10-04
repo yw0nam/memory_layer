@@ -18,7 +18,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.core.config import PG_SCHEMA, db_url
-from memory_base.serve import api, auth, namespaces
+from memory_base.serve import api
+from memory_base.serve.access import auth, namespaces
 from memory_base.serve.consolidation import groups
 from memory_base.serve.notes.store import NOTE_SIMILAR_THRESHOLD, save_note
 

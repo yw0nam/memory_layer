@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from memory_base.serve import namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.notes import store
 
 

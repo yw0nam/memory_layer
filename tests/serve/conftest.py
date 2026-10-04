@@ -1,7 +1,7 @@
 """Shared fixtures for tests/serve: stub API-key auth for REST-layer tests.
 
 Every REST test in this package sends ``X-API-Key: test-key``; this fixture
-stubs ``memory_base.serve.auth.authenticate_request`` to resolve that key to
+stubs ``memory_base.serve.access.auth.authenticate_request`` to resolve that key to
 an admin identity (sees every namespace) so pre-existing tests that exercise
 arbitrary namespace names keep working without a real namespace registry or
 DB. Tests exercising the real auth/namespace-visibility behavior mark
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from memory_base.serve import auth
+from memory_base.serve.access import auth
 from memory_base.serve.documents import pipeline as document_pipeline
 from memory_base.serve.documents import store as document_store
 

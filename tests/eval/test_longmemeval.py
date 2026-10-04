@@ -402,7 +402,7 @@ def test_run_names_pair_the_variant_and_the_read_setting():
 
 def test_a_prefetch_run_searches_with_the_prefetch_floor_and_keeps_five_hits(monkeypatch):
     from memory_base.eval import retrieval
-    from memory_base.serve import namespaces
+    from memory_base.serve.access import namespaces
 
     class Hit:
         def __init__(self, i):
@@ -440,7 +440,7 @@ def test_the_budget_read_setting_names_its_own_runs():
 
 def test_a_budget_run_passes_the_budget_to_search_and_keeps_every_packed_hit(monkeypatch):
     from memory_base.eval import retrieval
-    from memory_base.serve import namespaces
+    from memory_base.serve.access import namespaces
 
     class Hit:
         def __init__(self, i):
