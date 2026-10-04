@@ -107,11 +107,11 @@ async def flusher_loop(stop: asyncio.Event | None = None) -> None:
         await flush()
 
 
-def start_flusher() -> asyncio.Task[None]:
+async def start() -> asyncio.Task[None]:
     return asyncio.create_task(flusher_loop())
 
 
-async def stop_flusher(task: asyncio.Task[None]) -> None:
+async def stop(task: asyncio.Task[None]) -> None:
     """Cancel the flusher, then persist whatever the buffer still holds."""
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)

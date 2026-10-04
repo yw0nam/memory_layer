@@ -12,14 +12,16 @@ from starlette.testclient import TestClient
 
 from memory_base.retrieval.search import UpstreamUnavailable
 from memory_base.serve import api
+from memory_base.serve.search import access_log
+from memory_base.serve.search import routes as search_routes
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 
 @pytest.fixture(autouse=True)
 def _empty_access_log_buffer(monkeypatch):
-    monkeypatch.setattr(api.access_log, "_pending_logs", [])
-    monkeypatch.setattr(api.access_log, "_pending_hits", {})
+    monkeypatch.setattr(access_log, "_pending_logs", [])
+    monkeypatch.setattr(access_log, "_pending_hits", {})
 
 
 def _raising(service: str):
@@ -31,7 +33,7 @@ def _raising(service: str):
 
 @pytest.mark.parametrize("service", ["embedding", "reranking"])
 def test_unreachable_backend_returns_503_naming_the_service(monkeypatch, service):
-    monkeypatch.setattr(api, "search", _raising(service))
+    monkeypatch.setattr(search_routes, "search", _raising(service))
     response = client.post("/search", json={"query": "what did we decide"})
     assert response.status_code == 503
     message = response.json()["error"]
@@ -40,9 +42,9 @@ def test_unreachable_backend_returns_503_naming_the_service(monkeypatch, service
 
 
 def test_unreachable_backend_records_no_access_log_row(monkeypatch):
-    monkeypatch.setattr(api, "search", _raising("embedding"))
+    monkeypatch.setattr(search_routes, "search", _raising("embedding"))
     client.post("/search", json={"query": "what did we decide"})
-    assert api.access_log._pending_logs == []
+    assert access_log._pending_logs == []
 
 
 def test_long_query_is_truncated_before_search(monkeypatch):
@@ -52,20 +54,20 @@ def test_long_query_is_truncated_before_search(monkeypatch):
         captured["query"] = query
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
-    response = client.post("/search", json={"query": "x" * (api.MAX_QUERY_CHARS + 500)})
+    monkeypatch.setattr(search_routes, "search", fake_search)
+    response = client.post("/search", json={"query": "x" * (search_routes.MAX_QUERY_CHARS + 500)})
     assert response.status_code == 200
-    assert captured["query"] == "x" * api.MAX_QUERY_CHARS
+    assert captured["query"] == "x" * search_routes.MAX_QUERY_CHARS
 
 
 def test_long_query_is_truncated_in_the_access_log(monkeypatch):
     async def fake_search(query, **kwargs):
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
-    client.post("/search", json={"query": "y" * (api.MAX_QUERY_CHARS + 500)})
-    logged_query = api.access_log._pending_logs[0][0]
-    assert logged_query == "y" * api.MAX_QUERY_CHARS
+    monkeypatch.setattr(search_routes, "search", fake_search)
+    client.post("/search", json={"query": "y" * (search_routes.MAX_QUERY_CHARS + 500)})
+    logged_query = access_log._pending_logs[0][0]
+    assert logged_query == "y" * search_routes.MAX_QUERY_CHARS
 
 
 def test_query_within_the_bound_is_untouched(monkeypatch):
@@ -75,6 +77,6 @@ def test_query_within_the_bound_is_untouched(monkeypatch):
         captured["query"] = query
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     client.post("/search", json={"query": "short question"})
     assert captured["query"] == "short question"

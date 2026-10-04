@@ -4,12 +4,12 @@ No DB, no network: routes only parse/validate/delegate/JSON, so the hooks a rout
 at the module level, matching the existing convention (e.g.
 ``monkeypatch.setattr(answer, "search", fake_search)`` in test_answer_mcp.py):
 
-- ``api.search``       -- delegate for POST /search (memory_base.retrieval.search.search)
+- ``search_routes.search``  -- delegate for POST /search (memory_base.retrieval.search.search)
 - ``store.save_note``  -- delegate for POST /save_memory (memory_base.serve.notes.store)
-- ``api.access_log``   -- buffered access logging after a search (memory_base.serve.access_log)
-- ``api.db_healthy``, ``api.embedding_healthy``, ``api.rerank_healthy``, ``api.llm_healthy``
-  -- async dependency probes used by GET /health/services
-- ``api.hit_to_dict``  -- Hit -> {source, ref, date, score, text[, context]} serializer
+- ``access_log``   -- buffered access logging after a search (memory_base.serve.search.access_log)
+- ``health.db_healthy``, ``health.embedding_healthy``, ``health.rerank_healthy``,
+  ``health.llm_healthy`` -- async dependency probes used by GET /health/services
+- ``search_routes.hit_to_dict``  -- Hit -> {source, ref, date, score, text[, context]} serializer
 
 Collection fails today: memory_base.serve.api does not exist yet.
 """
@@ -20,7 +20,9 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.retrieval.search import Hit
-from memory_base.serve import api
+from memory_base.serve import api, health
+from memory_base.serve.search import access_log
+from memory_base.serve.search import routes as search_routes
 from memory_base.serve.notes import store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
@@ -48,8 +50,8 @@ def _hit(
 
 @pytest.fixture(autouse=True)
 def _empty_access_log_buffer(monkeypatch):
-    monkeypatch.setattr(api.access_log, "_pending_logs", [])
-    monkeypatch.setattr(api.access_log, "_pending_hits", {})
+    monkeypatch.setattr(access_log, "_pending_logs", [])
+    monkeypatch.setattr(access_log, "_pending_hits", {})
 
 
 # ---- GET /health and /health/services -------------------------------------------------------
@@ -62,7 +64,7 @@ def test_health_is_200_without_reaching_any_dependency(monkeypatch):
         raise AssertionError("liveness must not probe a dependency")
 
     for probe in ("db_healthy", "embedding_healthy", "rerank_healthy", "llm_healthy"):
-        monkeypatch.setattr(api, probe, unreachable)
+        monkeypatch.setattr(health, probe, unreachable)
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
@@ -75,10 +77,10 @@ def _all_probes_up(monkeypatch):
     async def up():
         return True
 
-    monkeypatch.setattr(api, "db_healthy", up)
-    monkeypatch.setattr(api, "embedding_healthy", up)
-    monkeypatch.setattr(api, "rerank_healthy", up)
-    monkeypatch.setattr(api, "llm_healthy", up)
+    monkeypatch.setattr(health, "db_healthy", up)
+    monkeypatch.setattr(health, "embedding_healthy", up)
+    monkeypatch.setattr(health, "rerank_healthy", up)
+    monkeypatch.setattr(health, "llm_healthy", up)
 
 
 def test_health_ok_when_all_dependencies_reachable(_all_probes_up):
@@ -94,7 +96,7 @@ def test_health_503_when_db_unreachable(_all_probes_up, monkeypatch):
     async def fake_db_healthy():
         raise ConnectionError("db down")
 
-    monkeypatch.setattr(api, "db_healthy", fake_db_healthy)
+    monkeypatch.setattr(health, "db_healthy", fake_db_healthy)
     response = client.get("/health/services")
     assert response.status_code == 503
     body = response.json()
@@ -106,7 +108,7 @@ def test_health_503_when_embedding_unreachable(_all_probes_up, monkeypatch):
     async def fake_embedding_healthy():
         return False
 
-    monkeypatch.setattr(api, "embedding_healthy", fake_embedding_healthy)
+    monkeypatch.setattr(health, "embedding_healthy", fake_embedding_healthy)
     response = client.get("/health/services")
     assert response.status_code == 503
     body = response.json()
@@ -118,7 +120,7 @@ def test_health_503_when_rerank_unreachable(_all_probes_up, monkeypatch):
     async def fake_rerank_healthy():
         return False
 
-    monkeypatch.setattr(api, "rerank_healthy", fake_rerank_healthy)
+    monkeypatch.setattr(health, "rerank_healthy", fake_rerank_healthy)
     response = client.get("/health/services")
     assert response.status_code == 503
     body = response.json()
@@ -130,7 +132,7 @@ def test_health_200_when_only_llm_unreachable(_all_probes_up, monkeypatch):
     async def fake_llm_healthy():
         return False
 
-    monkeypatch.setattr(api, "llm_healthy", fake_llm_healthy)
+    monkeypatch.setattr(health, "llm_healthy", fake_llm_healthy)
     response = client.get("/health/services")
     assert response.status_code == 200
     body = response.json()
@@ -142,7 +144,7 @@ def test_health_probe_raising_is_reported_as_false_not_propagated(_all_probes_up
     async def fake_llm_healthy():
         raise TimeoutError("connect timed out")
 
-    monkeypatch.setattr(api, "llm_healthy", fake_llm_healthy)
+    monkeypatch.setattr(health, "llm_healthy", fake_llm_healthy)
     response = client.get("/health/services")
     assert response.status_code == 200
     assert response.json()["checks"]["llm"] is False
@@ -193,7 +195,7 @@ def test_search_forwards_raw_kind_and_tags(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post(
         "/search",
         json={
@@ -216,7 +218,7 @@ def test_search_silently_ignores_include_atoms(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post(
         "/search",
         json={"query": "hello", "source": "memory", "include_atoms": False},
@@ -233,7 +235,7 @@ def test_search_forwards_raw_repo_filter(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post(
         "/search", json={"query": "marker", "source": "code", "repo": [" repo_a ", "repo_a"]}
     )
@@ -254,7 +256,7 @@ def test_search_forwards_namespaces_filter(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post(
         "/search", json={"query": "hello", "namespaces": [" team-a ", "team-a", "team-b"]}
     )
@@ -269,7 +271,7 @@ def test_search_omitted_namespaces_does_not_reach_search(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello"})
     assert response.status_code == 200
     assert "namespaces" not in captured
@@ -287,11 +289,11 @@ def test_search_returns_hit_to_dict_shape(monkeypatch):
     async def fake_search(query, source="all", include_archived=False):
         return hits
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello"})
     assert response.status_code == 200
     body = response.json()
-    assert body == [api.hit_to_dict(h) for h in hits]
+    assert body == [search_routes.hit_to_dict(h) for h in hits]
     assert set(body[0]) >= {"source", "ref", "date", "score", "text"}
 
 
@@ -303,7 +305,7 @@ def test_search_defaults_source_to_all(monkeypatch):
         captured["source"] = source
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello"})
     assert response.status_code == 200
     assert captured["query"] == "hello"
@@ -317,7 +319,7 @@ def test_search_passes_requested_source_through(monkeypatch):
         captured["source"] = source
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello", "source": "code"})
     assert response.status_code == 200
     assert captured["source"] == "code"
@@ -329,7 +331,7 @@ def test_search_default_top_k_is_10(monkeypatch):
     async def fake_search(query, source="all", include_archived=False):
         return hits
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello"})
     assert response.status_code == 200
     assert len(response.json()) == 10
@@ -341,7 +343,7 @@ def test_search_respects_custom_top_k(monkeypatch):
     async def fake_search(query, source="all", include_archived=False):
         return hits
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello", "top_k": 2})
     assert response.status_code == 200
     assert len(response.json()) == 2
@@ -354,7 +356,7 @@ def test_search_forwards_min_score(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello", "min_score": 0.3})
     assert response.status_code == 200
     assert captured["min_score"] == 0.3
@@ -367,7 +369,7 @@ def test_search_omitted_min_score_does_not_reach_search(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello"})
     assert response.status_code == 200
     assert "min_score" not in captured
@@ -388,7 +390,7 @@ def test_search_boundary_min_score_accepted(monkeypatch, min_score):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello", "min_score": min_score})
     assert response.status_code == 200
     assert captured["min_score"] == min_score
@@ -614,7 +616,7 @@ def test_search_memory_source_accepted(monkeypatch):
     async def fake_search(query, **options):
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello", "source": "memory"})
     assert response.status_code == 200
 
@@ -630,7 +632,7 @@ def test_search_forwards_raw_since_and_until(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post(
         "/search",
         json={"query": "q", "source": "memory", "since": "2026-08-01", "until": "2026-08-12"},
@@ -647,7 +649,7 @@ def test_search_omitted_time_bounds_do_not_reach_search(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "q", "source": "memory"})
     assert response.status_code == 200
     assert "since" not in captured
@@ -684,7 +686,7 @@ def test_search_forwards_budget_tokens_and_ignores_top_k(monkeypatch):
         captured.update(options)
         return hits
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello", "top_k": 2, "budget_tokens": 800})
     assert response.status_code == 200
     assert captured["budget_tokens"] == 800
@@ -698,7 +700,7 @@ def test_search_omitted_budget_tokens_does_not_reach_search(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello"})
     assert response.status_code == 200
     assert "budget_tokens" not in captured

@@ -10,6 +10,7 @@ from memory_base.serve import api
 from memory_base.serve.access import auth, namespaces
 from memory_base.serve.common import job_store
 from memory_base.serve.notes import store
+from memory_base.serve.search import routes as search_routes
 
 HOME = "alice-notes"
 ALLOWED = {"default", HOME}
@@ -46,7 +47,7 @@ def test_search_omitted_namespaces_uses_full_allowed_set(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     client = _non_admin_client(monkeypatch)
     response = client.post("/search", json={"query": "hello"})
     assert response.status_code == 200

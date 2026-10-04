@@ -1,4 +1,4 @@
-"""Tests for serve/api.py's hit serialization and the MCP tool list.
+"""Tests for serve/search/routes.py's hit serialization and the MCP tool list.
 
 Runs without LLM/DB access: pure-function unit tests use hand-built
 search.Hit objects, and the MCP in-process check only lists tools (the
@@ -11,8 +11,8 @@ import asyncio
 
 from memory_base.retrieval.search import Hit
 
-from memory_base.serve import api
 from memory_base.serve import mcp_server
+from memory_base.serve.search import routes as search_routes
 
 
 def _hit(
@@ -43,14 +43,14 @@ MEMORY_META = {
 }
 
 
-# ---- api.py pure functions ---------------------------------------------------
+# ---- hit serialization -------------------------------------------------------
 
 
 def test_hit_to_dict_basic_fields():
     h = _hit(
         source="code", ref="a.py:L1-L2", text="body", ts=1_700_000_000.0, rrf=0.4, rerank_score=0.8
     )
-    d = api.hit_to_dict(h)
+    d = search_routes.hit_to_dict(h)
     assert d["source"] == "code"
     assert d["ref"] == "a.py:L1-L2"
     assert d["score"] == 0.8  # prefers rerank_score over rrf
@@ -61,64 +61,64 @@ def test_hit_to_dict_basic_fields():
 
 def test_hit_to_dict_falls_back_to_rrf_when_no_rerank_score():
     h = _hit(rrf=0.4, rerank_score=None)
-    d = api.hit_to_dict(h)
+    d = search_routes.hit_to_dict(h)
     assert d["score"] == 0.4
 
 
 def test_hit_to_dict_truncates_text_and_includes_context():
     h = _hit(text="z" * 5000, meta={"context": "CTX"})
-    d = api.hit_to_dict(h)
+    d = search_routes.hit_to_dict(h)
     assert len(d["text"]) == 2000
     assert d["context"] == "CTX"
 
 
 def test_hit_to_dict_returns_memory_text_whole():
     h = _hit(source="memory", text="n" * 4000, meta=MEMORY_META)
-    d = api.hit_to_dict(h)
+    d = search_routes.hit_to_dict(h)
     assert len(d["text"]) == 4000
 
 
 def test_hit_to_dict_includes_repo_for_code_hits():
-    assert api.hit_to_dict(_hit(meta={"repo": "YUI"}))["repo"] == "YUI"
-    assert "repo" not in api.hit_to_dict(_hit())
+    assert search_routes.hit_to_dict(_hit(meta={"repo": "YUI"}))["repo"] == "YUI"
+    assert "repo" not in search_routes.hit_to_dict(_hit())
 
 
 def test_hit_to_dict_marks_archived_hits():
-    d = api.hit_to_dict(_hit(meta={"archived": True}))
+    d = search_routes.hit_to_dict(_hit(meta={"archived": True}))
     assert d["archived"] is True
 
 
 def test_hit_to_dict_omits_archived_key_for_live_hits():
-    assert "archived" not in api.hit_to_dict(_hit(meta={"archived": False}))
-    assert "archived" not in api.hit_to_dict(_hit())
+    assert "archived" not in search_routes.hit_to_dict(_hit(meta={"archived": False}))
+    assert "archived" not in search_routes.hit_to_dict(_hit())
 
 
 def test_hit_to_dict_exposes_the_note_author_when_present():
     hit = _hit(source="memory", meta={**MEMORY_META, "author": "natsume"})
-    assert api.hit_to_dict(hit)["author"] == "natsume"
+    assert search_routes.hit_to_dict(hit)["author"] == "natsume"
 
 
 def test_hit_to_dict_omits_the_author_when_unrecorded():
-    assert "author" not in api.hit_to_dict(
+    assert "author" not in search_routes.hit_to_dict(
         _hit(source="memory", meta={**MEMORY_META, "author": None})
     )
-    assert "author" not in api.hit_to_dict(_hit())
+    assert "author" not in search_routes.hit_to_dict(_hit())
 
 
 def test_hit_to_dict_exposes_the_superseded_id_when_present():
     hit = _hit(source="memory", meta={**MEMORY_META, "supersedes": "note:old0000000000"})
-    assert api.hit_to_dict(hit)["supersedes"] == "note:old0000000000"
+    assert search_routes.hit_to_dict(hit)["supersedes"] == "note:old0000000000"
 
 
 def test_hit_to_dict_omits_the_superseded_id_when_unrecorded():
-    assert "supersedes" not in api.hit_to_dict(
+    assert "supersedes" not in search_routes.hit_to_dict(
         _hit(source="memory", meta={**MEMORY_META, "supersedes": None})
     )
-    assert "supersedes" not in api.hit_to_dict(_hit(source="memory", meta=MEMORY_META))
+    assert "supersedes" not in search_routes.hit_to_dict(_hit(source="memory", meta=MEMORY_META))
 
 
 def test_hit_to_dict_exposes_csv_columns_when_present():
-    assert api.hit_to_dict(_hit(meta={"columns": ["group", "value"]}))["columns"] == [
+    assert search_routes.hit_to_dict(_hit(meta={"columns": ["group", "value"]}))["columns"] == [
         "group",
         "value",
     ]
@@ -126,7 +126,7 @@ def test_hit_to_dict_exposes_csv_columns_when_present():
 
 def test_memory_hit_dict_carries_no_conversation_link_keys():
     meta = {**MEMORY_META, "conversation_id": "conv:0", "turn_start": 0, "turn_end": 1}
-    d = api.hit_to_dict(_hit(source="memory", meta=meta))
+    d = search_routes.hit_to_dict(_hit(source="memory", meta=meta))
     assert not {"conversation_id", "turn_start", "turn_end"} & set(d)
 
 

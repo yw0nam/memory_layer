@@ -7,9 +7,10 @@ those, so plain LogRecords stand in for real requests.
 
 from __future__ import annotations
 
+import importlib
 import logging
 
-from memory_base.serve import api, mcp_server
+from memory_base.serve import health, mcp_server
 
 
 def _access_record(method: str, path: str, status: int) -> logging.LogRecord:
@@ -25,12 +26,12 @@ def _access_record(method: str, path: str, status: int) -> logging.LogRecord:
 
 
 def test_health_200_access_lines_are_dropped():
-    f = api.HealthAccessFilter()
+    f = health.HealthAccessFilter()
     assert f.filter(_access_record("GET", "/health", 200)) is False
 
 
 def test_other_access_lines_pass_through():
-    f = api.HealthAccessFilter()
+    f = health.HealthAccessFilter()
     assert f.filter(_access_record("GET", "/health/services", 200)) is True
     assert f.filter(_access_record("GET", "/health", 500)) is True
     assert f.filter(_access_record("POST", "/search", 200)) is True
@@ -46,12 +47,14 @@ def test_malformed_records_pass_through():
         args=None,
         exc_info=None,
     )
-    assert api.HealthAccessFilter().filter(record) is True
+    assert health.HealthAccessFilter().filter(record) is True
 
 
 def test_api_module_attaches_the_filter_to_uvicorn_access():
+    importlib.import_module("memory_base.serve.api")
     assert any(
-        isinstance(f, api.HealthAccessFilter) for f in logging.getLogger("uvicorn.access").filters
+        isinstance(f, health.HealthAccessFilter)
+        for f in logging.getLogger("uvicorn.access").filters
     )
 
 

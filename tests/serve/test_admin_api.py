@@ -3,7 +3,7 @@
 No DB, no network: the note routes call ``curation.<fn>(...)`` at request
 time, so every curation function is monkeypatched here directly on the
 ``curation`` module, matching the convention already used for
-``api.search``/``store.save_note`` in tests/test_rest_api.py.
+``search_routes.search``/``store.save_note`` in tests/test_rest_api.py.
 
 Endpoint contract pinned by these tests:
 
@@ -52,6 +52,7 @@ from starlette.testclient import TestClient
 
 from memory_base.serve import api
 from memory_base.serve.notes import curation
+from memory_base.serve.search import routes as search_routes
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
@@ -577,7 +578,7 @@ def test_search_include_archived_true_reaches_search(monkeypatch):
         captured["include_archived"] = include_archived
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello", "include_archived": True})
     assert response.status_code == 200
     assert captured["include_archived"] is True
@@ -590,7 +591,7 @@ def test_search_forwards_the_author_filter(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post(
         "/search", json={"query": "hello", "source": "memory", "author": "natsume"}
     )
@@ -605,7 +606,7 @@ def test_search_omitted_author_is_not_forwarded(monkeypatch):
         captured.update(options)
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello"})
     assert response.status_code == 200
     assert "author" not in captured
@@ -624,7 +625,7 @@ def test_search_include_archived_defaults_to_false(monkeypatch):
         captured["include_archived"] = include_archived
         return []
 
-    monkeypatch.setattr(api, "search", fake_search)
+    monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello"})
     assert response.status_code == 200
     assert captured["include_archived"] is False
