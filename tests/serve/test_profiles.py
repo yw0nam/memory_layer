@@ -600,6 +600,7 @@ def test_versions_reject_a_bad_query(monkeypatch, fake_db, query):
         "status=pending&status=approved",
         "limit=0",
         "limit=201",
+        "limit=ten",
         "owner=user",
         "part=user",
     ],
