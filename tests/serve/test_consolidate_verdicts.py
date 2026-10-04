@@ -261,6 +261,17 @@ def test_a_name_moved_from_mid_sentence_to_a_sentence_start_is_not_dropped():
     assert verdicts.token_check(members, "Alice lives in Paris.") is None
 
 
+def test_a_hyphenated_name_moved_from_a_sentence_start_is_not_added():
+    members = ["Youngwoo-kun asked me to draft replies.", "Replies follow the size rule."]
+    merged = "Replies follow the size rule, and Youngwoo-kun asked me to draft replies."
+    assert verdicts.token_check(members, merged) is None
+
+
+def test_a_changed_spelling_of_a_name_is_dropped_and_added():
+    reason = verdicts.token_check(["We asked Youngwoo today."], "We asked Youngwoo-kun today.")
+    assert reason == "merged_text drops Youngwoo and adds Youngwoo-kun"
+
+
 def test_a_new_mid_sentence_name_is_still_added():
     reason = verdicts.token_check(["Alice left."], "Alice left with Bob.")
     assert reason == "merged_text adds Bob"
