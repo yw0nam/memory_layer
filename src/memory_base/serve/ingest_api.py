@@ -133,24 +133,21 @@ async def _existing_document_owner(
         return True, row["created_by"]
 
 
-async def delete_document_rows(
-    document_id: str, namespace: str = "default", schema: str | None = None
-) -> int:
+async def delete_document_rows(document_id: str, namespace: str = "default") -> int:
     """Delete a document's chunks in one namespace; returns the number of rows removed."""
-    schema = PG_SCHEMA if schema is None else schema
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
             status = await conn.execute(
                 f"""
-                DELETE FROM "{schema}".memory_chunks
+                DELETE FROM "{PG_SCHEMA}".memory_chunks
                 WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
                 """,
                 document_id,
                 namespace,
             )
             await conn.execute(
-                f'DELETE FROM "{schema}".doc_rows WHERE namespace = $1 AND document_id = $2',
+                f'DELETE FROM "{PG_SCHEMA}".doc_rows WHERE namespace = $1 AND document_id = $2',
                 namespace,
                 document_id,
             )
