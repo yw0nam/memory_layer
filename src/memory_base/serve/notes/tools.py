@@ -114,7 +114,7 @@ async def save_memory(
     keeps its reason. Do NOT save session progress (send_message carries it), what a PR,
     issue, commit, or file already says, generic advice, or filler. A credential is always
     refused. The session-start profile may narrow or widen these rules; the more specific
-    rule wins.
+    rule wins, and the user's part over the agent's own.
 
     Write `content` in English, standalone, subject first, with absolute dates ("on
     2026-09-30"). Before saving, search_memory the same subject; if the new note replaces
