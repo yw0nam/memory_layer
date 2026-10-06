@@ -71,11 +71,17 @@ def system_prompt(policy: str) -> str:
 
 
 def judge_prompt(fact: dict[str, Any]) -> str:
+    # The dataset's category and its "<category>_N" item ids read as a tracker to a judge.
+    value = {
+        key: v
+        for key, v in fact["value"].items()
+        if not (key == "item" and str(v).startswith(f"{fact['category']}_"))
+    }
     return (
         f"Conversation date: {fact['date']}\n"
         f"What the user said:\n{fact['evidence']}\n\n"
-        f"The fact in it, as the dataset records it ({fact['operation']}, {fact['category']}): "
-        f"{json.dumps(fact['value'], ensure_ascii=False)}\n"
+        f"The fact in it, as the dataset records it ({fact['operation']}): "
+        f"{json.dumps(value, ensure_ascii=False)}\n"
     )
 
 
