@@ -75,12 +75,12 @@ agent as documented in `integrations/profile_approval/README.md`.
 3. The user runs `uv run python -m memory_base.serve.access.keys authors <slug>`. It prints
    `<slug>: <slug>`.
 
-The agent then writes its `self` part with `update_my_profile` and proposes its `user`
-part with `propose_user_profile`. Either part may carry `Remember` and `Don't remember`
-sections: rules that narrow or widen what the agent keeps with `save_memory`, never facts
-about the user. A companion agent's `self` part may say `Remember: moments we share`; a
-user's wish such as `Don't remember: my spending` goes in the `user` part, whose sections
-win.
+The agent reads its profile with `get_my_profile`, writes its `self` part with
+`update_my_profile`, and proposes its `user` part with `propose_user_profile`. Either part
+may carry `Remember` and `Don't remember` sections: rules that narrow or widen what the
+agent keeps with `save_memory`, never facts about the user. A companion agent's `self`
+part may say `Remember: moments we share`; a user's wish such as `Don't remember: my
+spending` goes in the `user` part, whose sections win.
 
 ## Change or remove an agent
 

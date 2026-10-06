@@ -1,4 +1,4 @@
-"""The two MCP profile tools: what they send, which key they forward, and their errors.
+"""The three MCP profile tools: what they send, which key they forward, and their errors.
 
 No DB/network: rest_client.client is mocked via httpx.MockTransport.
 """
@@ -38,6 +38,7 @@ def _capture(monkeypatch, status, body):
             {
                 "method": request.method,
                 "path": request.url.path,
+                "query": dict(request.url.params),
                 "key": request.headers.get("x-api-key"),
                 "json": json.loads(request.content) if request.content else None,
             }
@@ -64,13 +65,15 @@ def _tools():
     return asyncio.run(_run())
 
 
-def test_exactly_two_profile_tools_are_registered():
+def test_exactly_three_profile_tools_are_registered():
     tools = _tools()
     assert {name for name in tools if "profile" in name} == {
+        "get_my_profile",
         "update_my_profile",
         "propose_user_profile",
     }
     assert not {name for name in tools if "approve" in name or "reject" in name}
+    assert set(tools["get_my_profile"].inputSchema["required"]) == {"owner"}
     assert set(tools["update_my_profile"].inputSchema["required"]) == {"owner", "content"}
     assert set(tools["propose_user_profile"].inputSchema["required"]) == {
         "owner",
@@ -103,6 +106,23 @@ def test_the_tool_descriptions_name_the_save_policy_sections():
     assert "outrank this agent's own" in propose
 
 
+def test_get_my_profile_reads_the_profile_with_the_request_key(monkeypatch):
+    body = {"owner": "claude-code", "self_version": 2, "user_version": 1, "pending_proposal": None}
+    captured = _capture(monkeypatch, 200, body)
+    ctx = FakeCtx({"X-API-Key": "agents-key"})
+    result = asyncio.run(tools.get_my_profile("claude-code", ctx=ctx))
+    assert result == body
+    assert captured == [
+        {
+            "method": "GET",
+            "path": "/profiles",
+            "query": {"owner": "claude-code"},
+            "key": "agents-key",
+            "json": None,
+        }
+    ]
+
+
 def test_update_my_profile_puts_the_self_part_with_the_request_key(monkeypatch):
     captured = _capture(monkeypatch, 200, {"status": "written", "version": 3})
     ctx = FakeCtx({"X-API-Key": "agents-key"})
@@ -112,6 +132,7 @@ def test_update_my_profile_puts_the_self_part_with_the_request_key(monkeypatch):
         {
             "method": "PUT",
             "path": "/profiles/self",
+            "query": {},
             "key": "agents-key",
             "json": {"owner": "claude-code", "content": "Rules."},
         }
@@ -127,6 +148,7 @@ def test_propose_user_profile_posts_a_proposal_with_the_stdio_key(monkeypatch):
         {
             "method": "POST",
             "path": "/profiles/user/proposals",
+            "query": {},
             "key": "stdio-key",
             "json": {
                 "owner": "natsume",
@@ -146,7 +168,7 @@ def test_a_stale_proposal_keeps_the_current_version_and_says_to_refresh(monkeypa
     assert "stale" in message
     assert "version 5" in message
     assert "refresh" in message.lower()
-    assert "session-start" in message
+    assert "get_my_profile" in message
     assert "base_version" in message
     assert "not enough" in message
 
@@ -158,3 +180,6 @@ def test_other_profile_errors_surface_the_backend_reason(monkeypatch):
     _capture(monkeypatch, 409, {"error": "stale"})
     with pytest.raises(ValueError, match="^stale$"):
         asyncio.run(tools.update_my_profile("natsume", "x"))
+    _capture(monkeypatch, 403, {"error": "owner 'natsume' is not permitted for this key"})
+    with pytest.raises(ValueError, match="^owner 'natsume' is not permitted for this key$"):
+        asyncio.run(tools.get_my_profile("natsume"))
