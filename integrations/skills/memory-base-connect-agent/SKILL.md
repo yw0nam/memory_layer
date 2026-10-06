@@ -76,7 +76,9 @@ agent as documented in `integrations/profile_approval/README.md`.
    `<slug>: <slug>`.
 
 The agent then writes its `self` part with `update_my_profile` and proposes its `user`
-part with `propose_user_profile`.
+part with `propose_user_profile`. Either part may carry `Remember` and `Don't remember` sections
+that narrow or widen what the agent keeps with `save_memory`, for example `Remember:
+moments we share` in a companion agent's `self` part; the `user` part's sections win.
 
 ## Change or remove an agent
 
