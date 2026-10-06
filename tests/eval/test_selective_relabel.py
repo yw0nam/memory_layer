@@ -77,3 +77,8 @@ def test_disagreements_and_an_agreement_sample_go_to_the_owner_and_come_back(tmp
     assert (labels[audited]["label"], labels[audited]["source"]) == ("skip", "owner")
     others = [row for fid, row in labels.items() if fid not in {"software_engineer:0", audited}]
     assert {(row["label"], row["source"]) for row in others} == {("keep", "judges")}
+
+
+def test_the_judge_sees_what_the_user_said_not_the_dataset_category():
+    prompt = relabel.judge_prompt(fact("software_engineer", 1))
+    assert "Joan | Crawford" in prompt and "actors" not in prompt
