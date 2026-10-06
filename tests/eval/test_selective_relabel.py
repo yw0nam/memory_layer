@@ -88,3 +88,23 @@ def test_the_judge_sees_what_the_user_said_not_the_dataset_category():
     }
     prompt = relabel.judge_prompt(proposal)
     assert "Order engine" in prompt and "proposal" not in prompt
+
+
+def test_owner_entries_survive_a_line_break_in_evidence_and_a_redrawn_sample(tmp_path):
+    dev = tmp_path / "memora" / "software_engineer"
+    dev.mkdir(parents=True)
+    facts = [fact("software_engineer", i) for i in range(20)]
+    facts[0]["evidence"] = "line one\r\nline two"
+    append_jsonl(dev / "facts.jsonl", facts)
+
+    async def keeps(f):
+        return {"label": "keep", "reason": "asked again later"}
+
+    judges = {"sonnet": keeps, "glm": keeps}
+    asyncio.run(relabel.relabel(tmp_path, judges, contract="c1", seed=0))
+    audit = tmp_path / "relabel" / "audit.md"
+    [audited] = [line.split("|")[1].strip() for line in audit.read_text().splitlines()
+                 if line.startswith("| software_")][:1]  # fmt: skip
+    fill_owner(audit, audited, "skip")
+    asyncio.run(relabel.relabel(tmp_path, judges, contract="c1", seed=1))
+    assert relabel.read_owner(audit) == {audited: "skip"}
