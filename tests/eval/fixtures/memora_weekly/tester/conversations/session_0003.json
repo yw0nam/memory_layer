@@ -1,4 +1,0 @@
-{"session_id": 3, "session_type": "preference", "operation": "update", "operation_details": {"item": "Grace Kelly", "preference": "like", "subcategory": "actors", "update_type": "value_update", "old_preference": "like", "old_item": "Joan Crawford"}, "date": "2025-06-02", "persona": "tester",
- "conversation": [
-  {"turn": 1, "speaker": "user_agent", "message": "These days I prefer Grace Kelly over Joan Crawford.", "share_memory": true},
-  {"turn": 2, "speaker": "ai_agent", "message": "Noted, a fine choice.", "share_memory": false}]}

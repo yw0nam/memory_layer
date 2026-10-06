@@ -1,6 +1,0 @@
-{"session_id": 1, "session_type": "no_memory", "operation": null, "operation_details": {}, "date": "2025-06-01", "persona": "tester",
- "conversation": [
-  {"turn": 1, "speaker": "user_agent", "message": "Hi there.", "share_memory": false},
-  {"turn": 2, "speaker": "ai_agent", "message": "Hello!", "share_memory": false},
-  {"turn": 3, "speaker": "ai_agent", "message": "What is on your mind?", "share_memory": false},
-  {"turn": 4, "speaker": "user_agent", "message": "Just saying hello.", "share_memory": false}]}
