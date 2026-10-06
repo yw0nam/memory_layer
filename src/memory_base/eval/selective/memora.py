@@ -57,6 +57,7 @@ def _category(details: dict[str, Any]) -> str:
 def _session_ids(node: Any) -> set[int]:
     if isinstance(node, dict):
         found = {node["session_id"]} if "session_id" in node else set()
+        found |= set(node.get("session_history", []))
         return found.union(*(_session_ids(value) for value in node.values()))
     if isinstance(node, list):
         return set().union(*(_session_ids(value) for value in node))
