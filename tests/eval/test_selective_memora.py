@@ -35,8 +35,9 @@ def test_a_weekly_persona_converts_to_sessions_facts_and_questions(tmp_path):
     assert (updated["operation"], updated["update_of"]) == ("update", "tester:2")
     assert updated["value"]["old_item"] == "Joan Crawford"
 
-    [question] = read_jsonl(out / "questions.jsonl")
+    question, content = read_jsonl(out / "questions.jsonl")
     assert question["question"] == "Can you suggest me a movie?"
     assert question["evidence_session_ids"] == [3]
     assert question["forgetting"] == [{"value": "Joan Crawford", "session_id": 2}]
     assert [c["expected_answer"] for c in question["checks"]] == ["yes", "no"]
+    assert content["evidence_session_ids"] == [2, 3]

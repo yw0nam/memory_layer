@@ -5,4 +5,8 @@
    "forgetting_evidence": {"forgotten_items": [{"value": "Joan Crawford", "session_id": 2}], "total_forgotten_items": 1},
    "evaluation": {"evaluation_questions": [
     {"evaluation_question_id": "pref_movies_general_3_eval_memory_presence_like_0", "evaluation_question": "Does the response reflect the user's preference for Grace Kelly?", "expected_answer": "yes", "evaluation_type": "memory_presence"},
-    {"evaluation_question_id": "pref_movies_general_3_eval_forgetting_0", "evaluation_question": "Does the response mention the user's preference for Joan Crawford?", "expected_answer": "no", "evaluation_type": "forgetting_absence"}]}}]}}
+    {"evaluation_question_id": "pref_movies_general_3_eval_forgetting_0", "evaluation_question": "Does the response mention the user's preference for Joan Crawford?", "expected_answer": "no", "evaluation_type": "forgetting_absence"}]}}],
+ "remembering": [
+  {"question_id": "content_project_proposal_3_project_proposal_1", "question": "What was the budget of my proposal?", "question_date": "2025-06-07",
+   "memory_evidence": {"content_data": {"budget": 575000}, "session_history": [2, 3]},
+   "evaluation": {"evaluation_questions": []}}]}}
