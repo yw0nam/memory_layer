@@ -137,10 +137,6 @@ def test_server_instructions_state_the_write_policy_without_a_refusal_loop():
 
 def test_save_tool_description_states_no_refusal_loop():
     description = " ".join(_tools()["save_memory"].description.split())
-    assert (
-        "The server stores a note once it passes the validation, credential, and near-duplicate"
-        in description
-    )
     for stale in ("rewrite it once", "refused as low signal", "store nothing"):
         assert stale not in description
 
@@ -153,4 +149,3 @@ def test_server_instructions_tell_agents_to_search_before_superseding():
 def test_save_tool_description_tells_agents_to_search_before_superseding():
     description = _tools()["save_memory"].description
     assert "search_memory the same subject" in description
-    assert "archive them with archive_notes" in description

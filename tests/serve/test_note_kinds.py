@@ -220,21 +220,21 @@ def test_save_memory_posts_the_kind_it_is_given(monkeypatch, kind):
     assert result == {"id": "note:abc", "kind": kind, "stored": True}
 
 
-def test_save_memory_description_states_both_bars_and_the_label():
+def test_save_memory_description_states_the_decision_points_only():
     description = " ".join(_tools()["save_memory"].description.split())
     for anchor in (
-        "`kind` labels the note for a later search",
-        "The label never decides whether a note is stored",
-        "a moment between you, or something you made or gave them",
-        "a decision and its reason, a reproduced bug and its fix",
-        "a decision without its reason is not worth keeping",
-        "Do NOT save progress or next steps of the current session",
+        "the user would otherwise be asked again",
+        "something you gave them that they may want again",
+        "code, version control, the tracker, and documents cannot answer",
+        "A work decision keeps its reason.",
+        "Do NOT save session progress",
         "send_message",
+        "A credential is always refused.",
+        "The session-start profile may narrow or widen these rules",
+        "the more specific rule wins",
         "English",
         "search_memory the same subject",
-        "archive them with archive_notes",
-        "The server stores a note once it passes the validation, credential, and near-duplicate "
-        "checks",
+        "`supersedes`",
     ):
         assert anchor in description
     for stale in (
@@ -242,6 +242,11 @@ def test_save_memory_description_states_both_bars_and_the_label():
         "save_work_memory",
         "the other save tool",
         "rewrite it once",
+        "`kind` labels the note",
+        "a habit or possession",
+        "a reproduced bug and its fix",
+        "archive_notes",
+        "The server stores a note once",
     ):
         assert stale not in description
 
