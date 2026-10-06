@@ -137,7 +137,8 @@ prompt block (config `owner`, [integrations/hermes/README.md](integrations/herme
 Both print the two parts under their version lines and a notice while a proposal is
 pending. `Remember` and `Don't remember` sections in either part narrow or widen what the
 agent keeps with `save_memory`; the user part's sections outrank the agent's own
-([ADR-0010](docs/adr/0010-save-policy-a-minimal-default-that-profiles-refine.md)). The user decides with the approval CLI and the agents follow the
+([ADR-0010](docs/adr/0010-save-policy-a-minimal-default-that-profiles-refine.md)).
+The user decides with the approval CLI and the agents follow the
 `memory-profile-approval` skill; install both as described in
 [integrations/profile_approval/README.md](integrations/profile_approval/README.md).
 

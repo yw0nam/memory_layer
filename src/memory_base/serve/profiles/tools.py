@@ -13,12 +13,13 @@ async def update_my_profile(owner: str, content: str, ctx: Context | None = None
     """Replace this agent's own standing document: its persona, working rules, and the
     conventions it follows. Delivered back at every session start.
 
-    `owner` is this agent's author slug, one of the key's authors. Each call
-    replaces the whole text, so start from the current version delivered at session start
-    and send the complete document; empty content clears it. Never put facts about the user here: how
+    `owner` is this agent's author slug, one of the key's authors. Each call replaces the
+    whole text, so start from the current version delivered at session start and send the
+    complete document; empty content clears it. Never put facts about the user here: how
     this agent knows the user changes only through propose_user_profile. `Remember` and
-    `Don't remember` sections here narrow or widen what this agent keeps with save_memory.
-    Returns {status: "written" | "unchanged", version}.
+    `Don't remember` sections here are rules for what this agent keeps with save_memory,
+    not facts; the user part's sections win over them. Returns
+    {status: "written" | "unchanged", version}.
     """
     return await rest_client.call(
         "PUT",
@@ -43,10 +44,9 @@ async def propose_user_profile(
     content was written against, as delivered at session start (0 when none). A new
     proposal supersedes this owner's pending one. What the user wants kept or left out of
     save_memory goes in its `Remember` and `Don't remember` sections, which outrank this
-    agent's own. After proposing, show the user the change
-    and ask them to approve it with the profile-approval skill. Never approve on the user's
-    behalf and never run the approval command yourself. Returns {id, status: "pending",
-    superseded}.
+    agent's own. After proposing, show the user the change and ask them to approve it with
+    the profile-approval skill. Never approve on the user's behalf and never run the
+    approval command yourself. Returns {id, status: "pending", superseded}.
     """
     try:
         return await rest_client.call(
