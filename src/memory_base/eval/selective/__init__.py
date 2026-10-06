@@ -1,10 +1,8 @@
-"""Selective-memory benchmark data: Memora weekly timelines, MemOps update units, keep labels.
+"""Selective-memory benchmark data: Memora weekly timelines and MemOps update units.
 
 Steps, each writing under one output root (default ~/.local/share/memory-base/bench/v1):
   uv run python -m memory_base.eval.selective.memora --source PATH/Memora
   uv run python -m memory_base.eval.selective.memops --source PATH/MemOps
-  uv run python -m memory_base.eval.selective.relabel run
-  uv run python -m memory_base.eval.selective.relabel labels
 """
 
 from __future__ import annotations
