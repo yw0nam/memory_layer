@@ -160,7 +160,7 @@ async def _judge_all(
 
 
 def _cell(value: Any) -> str:
-    return str(value).replace("|", "\\|").replace("\n", "<br>")
+    return "<br>".join(str(value).replace("|", "\\|").splitlines())
 
 
 def read_owner(path: Path) -> dict[str, str]:
@@ -168,7 +168,7 @@ def read_owner(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     owners = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text().split("\n"):
         if not line.startswith("| "):
             continue
         # An escaped pipe inside a cell only shifts the middle cells; the ends stay put.
@@ -184,8 +184,8 @@ def _write_table(
     facts: list[dict[str, Any]],
     verdicts: dict[str, dict[str, dict[str, Any]]],
     judges: list[str],
+    owners: dict[str, str],
 ) -> None:
-    owners = read_owner(path)
     header = ["fact_id", "date", "category", "operation", "fact", "evidence", *judges, "owner"]
     lines = [
         f"# {title}",
@@ -231,9 +231,13 @@ async def relabel(
         (agreed if len(labels) == 1 else disagreed).append(fact)
     agreed_ids = sorted(f["fact_id"] for f in agreed)
     sampled = set(random.Random(seed).sample(agreed_ids, round(AUDIT_SHARE * len(agreed_ids))))
-    audit = [f for f in agreed if f["fact_id"] in sampled]
-    _write_table(out / "disagreements.md", "Judge disagreements", disagreed, verdicts, names)
-    _write_table(out / "audit.md", "Agreement audit sample", audit, verdicts, names)
+    owners = read_owner(out / "disagreements.md") | read_owner(out / "audit.md")
+    # A fact the owner already decided stays in a table, so a redrawn sample never drops it.
+    audit = [f for f in agreed if f["fact_id"] in sampled or f["fact_id"] in owners]
+    tables = [("disagreements.md", "Judge disagreements", disagreed),
+              ("audit.md", "Agreement audit sample", audit)]  # fmt: skip
+    for name, title, rows in tables:
+        _write_table(out / name, title, rows, verdicts, names, owners)
     counts = {
         "facts": len(facts),
         "judged": len(judged),
