@@ -168,7 +168,7 @@ def test_a_stale_proposal_keeps_the_current_version_and_says_to_refresh(monkeypa
     assert "stale" in message
     assert "version 5" in message
     assert "refresh" in message.lower()
-    assert "session-start" in message
+    assert "get_my_profile" in message
     assert "base_version" in message
     assert "not enough" in message
 
