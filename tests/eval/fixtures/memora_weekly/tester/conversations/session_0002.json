@@ -1,0 +1,5 @@
+{"session_id": 2, "session_type": "preference", "operation": "add", "operation_details": {"item": "Joan Crawford", "preference": "like", "subcategory": "actors"}, "date": "2025-06-01", "persona": "tester",
+ "conversation": [
+  {"turn": 1, "speaker": "user_agent", "message": "Do you like old films?", "share_memory": false},
+  {"turn": 2, "speaker": "ai_agent", "message": "I find them fascinating.", "share_memory": false},
+  {"turn": 3, "speaker": "user_agent", "message": "I really like Joan Crawford.", "share_memory": true}]}

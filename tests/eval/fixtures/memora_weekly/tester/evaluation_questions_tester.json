@@ -1,0 +1,8 @@
+{"persona": "tester", "date_range": {"start_date": "2025-06-01", "end_date": "2025-06-07"},
+ "questions": {"recommending": [
+  {"question_id": "pref_movies_general_3", "question": "Can you suggest me a movie?", "question_date": "2025-06-03",
+   "memory_evidence": {"item_count": 1, "memory_items": {"actors": {"likes": [{"item": "Grace Kelly", "session_id": 3}], "dislikes": []}}},
+   "forgetting_evidence": {"forgotten_items": [{"value": "Joan Crawford", "session_id": 2}], "total_forgotten_items": 1},
+   "evaluation": {"evaluation_questions": [
+    {"evaluation_question_id": "pref_movies_general_3_eval_memory_presence_like_0", "evaluation_question": "Does the response reflect the user's preference for Grace Kelly?", "expected_answer": "yes", "evaluation_type": "memory_presence"},
+    {"evaluation_question_id": "pref_movies_general_3_eval_forgetting_0", "evaluation_question": "Does the response mention the user's preference for Joan Crawford?", "expected_answer": "no", "evaluation_type": "forgetting_absence"}]}}]}}
