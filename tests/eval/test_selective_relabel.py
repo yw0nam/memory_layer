@@ -82,3 +82,9 @@ def test_disagreements_and_an_agreement_sample_go_to_the_owner_and_come_back(tmp
 def test_the_judge_sees_what_the_user_said_not_the_dataset_category():
     prompt = relabel.judge_prompt(fact("software_engineer", 1))
     assert "Joan | Crawford" in prompt and "actors" not in prompt
+    proposal = fact("software_engineer", 2) | {
+        "category": "project_proposal",
+        "value": {"item": "project_proposal_1", "content_data": {"title": "Order engine"}},
+    }
+    prompt = relabel.judge_prompt(proposal)
+    assert "Order engine" in prompt and "proposal" not in prompt
