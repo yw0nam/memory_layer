@@ -13,9 +13,9 @@ async def update_my_profile(owner: str, content: str, ctx: Context | None = None
     """Replace this agent's own standing document: its persona, working rules, and the
     conventions it follows. Delivered back at every session start.
 
-    `owner` is this agent's author slug, one of the key's authors. Each call replaces the
-    whole text, so start from the current version delivered at session start and send the
-    complete document; empty content clears it. Never put facts about the user here: how
+    `owner` is this agent's author slug, one of the key's authors. Each call
+    replaces the whole text, so start from the current version delivered at session start
+    and send the complete document; empty content clears it. Never put facts about the user here: how
     this agent knows the user changes only through propose_user_profile. `Remember` and
     `Don't remember` sections here are rules for what this agent keeps with save_memory,
     not facts; the user part's sections win over them. Returns
