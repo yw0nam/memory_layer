@@ -1,4 +1,4 @@
-"""MCP tools for agent-owned profiles: an agent writes its `self` part and proposes its `user` part."""
+"""MCP tools for agent-owned profiles: an agent reads its profile, writes its `self` part, and proposes its `user` part."""
 
 from __future__ import annotations
 
@@ -9,13 +9,30 @@ from mcp.server.fastmcp import Context
 from memory_base.serve.common import rest_client
 
 
+async def get_my_profile(owner: str, ctx: Context | None = None) -> dict[str, Any]:
+    """Return this agent's current profile: its `self` part and its `user` part (how it
+    knows the user), each with its version, and the pending proposal if any.
+
+    `owner` is this agent's author slug, one of the key's authors. Read it before
+    update_my_profile or propose_user_profile when the session-start delivery is missing
+    or may be stale; `user_version` is the base_version a proposal must be written against.
+    Returns {owner, self_version, self, user_version, user, pending_proposal}.
+    """
+    return await rest_client.call(
+        "GET",
+        "/profiles",
+        params={"owner": owner},
+        headers=rest_client.auth_headers(ctx),
+    )
+
+
 async def update_my_profile(owner: str, content: str, ctx: Context | None = None) -> dict[str, Any]:
     """Replace this agent's own standing document: its persona, working rules, and the
     conventions it follows. Delivered back at every session start.
 
     `owner` is this agent's author slug, one of the key's authors. Each call
-    replaces the whole text, so start from the current version delivered at session start
-    and send the complete document; empty content clears it. Never put facts about the user here: how
+    replaces the whole text, so start from the current version, delivered at session start or
+    read with get_my_profile, and send the complete document; empty content clears it. Never put facts about the user here: how
     this agent knows the user changes only through propose_user_profile. `Remember` and
     `Don't remember` sections here are rules for what this agent keeps with save_memory,
     not facts; the user part's sections win over them. Returns
@@ -41,7 +58,7 @@ async def propose_user_profile(
 
     `owner` is this agent's author slug. `content` is the complete new user profile, not a
     diff. `reason` (1-1000 characters) says why. `base_version` is the user version the
-    content was written against, as delivered at session start (0 when none). A new
+    content was written against, as delivered at session start or read with get_my_profile (0 when none). A new
     proposal supersedes this owner's pending one. What the user wants kept or left out of
     save_memory goes in its `Remember` and `Don't remember` sections, which outrank this
     agent's own. After proposing, show the user the change and ask them to approve it with
