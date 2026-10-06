@@ -93,6 +93,16 @@ def test_the_tool_descriptions_state_who_writes_what():
     assert "approval command" in propose
 
 
+def test_the_tool_descriptions_name_the_save_policy_sections():
+    tools = _tools()
+    own = " ".join(tools["update_my_profile"].description.split())
+    propose = " ".join(tools["propose_user_profile"].description.split())
+    for description in (own, propose):
+        assert "`Remember` and `Don't remember` sections" in description
+        assert "save_memory" in description
+    assert "outrank this agent's own" in propose
+
+
 def test_update_my_profile_puts_the_self_part_with_the_request_key(monkeypatch):
     captured = _capture(monkeypatch, 200, {"status": "written", "version": 3})
     ctx = FakeCtx({"X-API-Key": "agents-key"})
