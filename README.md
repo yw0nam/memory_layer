@@ -127,10 +127,10 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 
 An agent runs the consolidation routes on a schedule by following [docs/consolidation-procedure.md](docs/consolidation-procedure.md).
 
-Profiles belong to agents ([ADR-0009](docs/adr/0009-profiles-owned-by-agents-user-part-approved-by-the-user.md)). Each owner (an agent's author slug) has a `self` part it writes
-with the MCP tool `update_my_profile` (`get_my_profile` reads it) and a `user` part that changes only when the user
-approves the agent's `propose_user_profile` proposal with a key carrying the `user`
-author. Clients deliver the configured owner's profile at session start: the Claude Code
+Profiles belong to agents ([ADR-0009](docs/adr/0009-profiles-owned-by-agents-user-part-approved-by-the-user.md)). Each owner (an agent's author slug) reads both parts
+with the MCP tool `get_my_profile`, has a `self` part it writes with `update_my_profile`,
+and a `user` part that changes only when the user approves the agent's
+`propose_user_profile` proposal with a key carrying the `user` author. Clients deliver the configured owner's profile at session start: the Claude Code
 SessionStart hook (`integrations/claude_code/session_start_hook.py`, owner
 `MEMORY_BASE_AUTHOR`, default `claude-code`, installed with a 10-second timeout as
 documented in `integrations/claude_code/prefetch_hook.py`) and the Hermes provider's system
@@ -198,11 +198,12 @@ general message is operational and expires after `MESSAGE_TTL_DAYS`; a handoff s
 pending until it is claimed, superseded, or cancelled unless its sender gives an
 `expires_at`; a note is durable knowledge.
 
-The profile tools read and write an agent's own profile: `get_my_profile` returns both parts with their versions and the pending proposal, `update_my_profile` replaces its whole
+The profile tools read and write an agent's own profile: `get_my_profile` returns both
+parts with their versions and the pending proposal, `update_my_profile` replaces its whole
 `self` part, and `propose_user_profile` proposes a full replacement of its `user` part
-against the user version delivered at session start or read with `get_my_profile`. A stale proposal fails with the
-current version and asks the agent to refresh its profile context and reconsider the
-replacement. No MCP tool approves or rejects a profile; the user decides with the
+against the user version delivered at session start or read with `get_my_profile`. A
+stale proposal fails with the current version and asks the agent to refresh its profile
+context and reconsider the replacement. No MCP tool approves or rejects a profile; the user decides with the
 approval CLI.
 
 ## Running

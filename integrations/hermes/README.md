@@ -85,6 +85,6 @@ memory:
 ```
 
 The agent writes its profile through the memory-base MCP tools `update_my_profile` and
-`propose_user_profile` and reads it back with `get_my_profile`. Install the `memory-profile-approval` skill into the Hermes
-profile's `skills/` directory so the agent hands each pending proposal to the user, as
+`propose_user_profile` and reads it back with `get_my_profile`. Install the
+`memory-profile-approval` skill into the Hermes profile's `skills/` directory so the agent hands each pending proposal to the user, as
 described in [../profile_approval/README.md](../profile_approval/README.md).

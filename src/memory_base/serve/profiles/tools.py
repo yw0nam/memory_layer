@@ -1,4 +1,6 @@
-"""MCP tools for agent-owned profiles: an agent reads its profile, writes its `self` part, and proposes its `user` part."""
+"""MCP tools for agent-owned profiles: an agent reads its profile, writes its `self` part,
+and proposes its `user` part.
+"""
 
 from __future__ import annotations
 
@@ -31,9 +33,10 @@ async def update_my_profile(owner: str, content: str, ctx: Context | None = None
     conventions it follows. Delivered back at every session start.
 
     `owner` is this agent's author slug, one of the key's authors. Each call
-    replaces the whole text, so start from the current version, delivered at session start or
-    read with get_my_profile, and send the complete document; empty content clears it. Never put facts about the user here: how
-    this agent knows the user changes only through propose_user_profile. `Remember` and
+    replaces the whole text, so start from the current version, delivered at session start
+    or read with get_my_profile, and send the complete document; empty content clears it.
+    Never put facts about the user here: how this agent knows the user changes only through
+    propose_user_profile. `Remember` and
     `Don't remember` sections here are rules for what this agent keeps with save_memory,
     not facts; the user part's sections win over them. Returns
     {status: "written" | "unchanged", version}.
@@ -58,8 +61,8 @@ async def propose_user_profile(
 
     `owner` is this agent's author slug. `content` is the complete new user profile, not a
     diff. `reason` (1-1000 characters) says why. `base_version` is the user version the
-    content was written against, as delivered at session start or read with get_my_profile (0 when none). A new
-    proposal supersedes this owner's pending one. What the user wants kept or left out of
+    content was written against, as delivered at session start or read with get_my_profile
+    (0 when none). A new proposal supersedes this owner's pending one. What the user wants kept or left out of
     save_memory goes in its `Remember` and `Don't remember` sections, which outrank this
     agent's own. After proposing, show the user the change and ask them to approve it with
     the profile-approval skill. Never approve on the user's behalf and never run the

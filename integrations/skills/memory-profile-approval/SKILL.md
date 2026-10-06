@@ -9,8 +9,8 @@ metadata:
 
 # Memory profile approval
 
-Your profile in memory-base has two parts; `get_my_profile` reads both. You replace your `self` part with
-`update_my_profile`. Your `user` part (how you know the user) changes only when the
+Your profile in memory-base has two parts, and `get_my_profile` reads both. You replace
+your `self` part with `update_my_profile`. Your `user` part (how you know the user) changes only when the
 user approves a proposal you submitted with `propose_user_profile`. The user decides
 with a command-line tool and a key that only they hold.
 
