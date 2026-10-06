@@ -25,7 +25,8 @@ session, whatever the topic of the first message.
   before saving and supersede a changed value.
 - The server enforces one of these rules: a note carrying a credential is refused. The
   rest is a default the writer applies.
-- The session-start profile may narrow or widen the default. The more specific rule wins,
+- The session-start profile may narrow or widen the default, in `Remember` and
+  `Don't remember` sections of either part. The more specific rule wins,
   and the user's part of the profile wins over the agent's own. A restriction the user
   sets belongs in the user's part, which changes only with the user's approval, so an
   agent editing its own part cannot relax it.
