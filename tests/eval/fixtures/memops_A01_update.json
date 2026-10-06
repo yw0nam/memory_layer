@@ -1,0 +1,25 @@
+{"target_fact": "Current job title at Bridgemark Solutions", "operation_type": "Update",
+ "conversations": [
+  {"segment_index": 1, "segment_role": "establish the title", "dialogue": [
+   {"role": "user", "content": "I started at Bridgemark as Junior Data Analyst. My bike lock combination is 7-24-33."},
+   {"role": "assistant", "content": "Noted."}]},
+  {"segment_index": 2, "segment_role": "promotion", "dialogue": [
+   {"role": "user", "content": "My title changed to Senior Data Analyst effective immediately."},
+   {"role": "assistant", "content": "Congratulations!"}]},
+  {"segment_index": 3, "segment_role": "tentative plan", "dialogue": [
+   {"role": "user", "content": "HR plans to rename it Lead Data Analyst next quarter."},
+   {"role": "assistant", "content": "I will keep that in mind."}]}],
+ "operations": [
+  {"operation_id": "op1", "type": "remember", "validity": "confirmed", "chain_id": "title_chain", "chain_step": 1,
+   "trigger_span": {"segment_index": 1, "turn_index": 1, "quote": "I started at Bridgemark as Junior Data Analyst"},
+   "target": {"target_id": "job_title", "target_name": "Current job title"}, "old_value": null, "new_value": "Junior Data Analyst"},
+  {"operation_id": "op3", "type": "update", "validity": "tentative", "chain_id": "title_chain", "chain_step": 3,
+   "trigger_span": {"segment_index": 3, "turn_index": 1, "quote": "HR plans to rename it Lead Data Analyst next quarter"},
+   "target": {"target_id": "job_title", "target_name": "Current job title"}, "old_value": "Senior Data Analyst", "new_value": "Lead Data Analyst"},
+  {"operation_id": "op2", "type": "update", "validity": "confirmed", "chain_id": "title_chain", "chain_step": 2,
+   "trigger_span": {"segment_index": 2, "turn_index": 1, "quote": "My title changed to Senior Data Analyst effective immediately"},
+   "target": {"target_id": "job_title", "target_name": "Current job title"}, "old_value": "Junior Data Analyst", "new_value": "Senior Data Analyst"},
+  {"operation_id": "op4", "type": "remember", "validity": "confirmed",
+   "trigger_span": {"segment_index": 1, "turn_index": 1, "quote": "My bike lock combination is 7-24-33"},
+   "target": {"target_id": "bike_lock_combination", "target_name": "bike lock combination"}, "old_value": null, "new_value": "7-24-33"}],
+ "answer": []}
