@@ -231,7 +231,7 @@ def test_save_memory_description_states_the_decision_points_only():
         "send_message",
         "A credential is always refused.",
         "The session-start profile may narrow or widen these rules",
-        "the more specific rule wins",
+        "the more specific rule wins, and the user's part over the agent's own",
         "English",
         "search_memory the same subject",
         "`supersedes`",
