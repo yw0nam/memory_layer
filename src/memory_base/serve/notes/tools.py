@@ -108,33 +108,18 @@ async def save_memory(
 ) -> dict[str, Any]:
     """Remember the user and their work for later sessions.
 
-    `kind` labels the note for a later search: "personal" for the user, their life, their
-    day, and moments with you, even during work; "work" for their work and projects. The
-    label never decides whether a note is stored; a note touching both takes the label it
-    mostly serves.
+    Save a note when a later session needs it and cannot get it elsewhere: the user would
+    otherwise be asked again, it is something you gave them that they may want again, or
+    code, version control, the tracker, and documents cannot answer it. A work decision
+    keeps its reason. Do NOT save session progress (send_message carries it), what a PR,
+    issue, commit, or file already says, generic advice, or filler. A credential is always
+    refused. The session-start profile may narrow or widen these rules; the more specific
+    rule wins, and the user's part over the agent's own.
 
-    Save what a later conversation or session would want: a fact about the user or someone
-    close to them, a habit or possession, a preference and its reason, an event with its
-    date and outcome, a plan or a choice, a change to something remembered before, a
-    moment between you, or something you made or gave them that they may want again (a
-    recommendation, number, list, or schedule, with its specifics). From their work, save
-    what code, version control, the tracker, and documentation cannot answer: a decision
-    and its reason, a reproduced bug and its fix, a non-obvious environment fact, an
-    approach that failed and why, or a convention the user set; a decision without its
-    reason is not worth keeping. Do NOT save progress or next steps of the current session
-    (send_message carries those), what a PR, issue, commit, file, or document already
-    says, what a file or function does, generic advice, greetings, or filler.
-
-    Write `content` in English whatever the conversation language, already distilled,
-    opening with the subject, standalone, with absolute dates ("on 2026-09-30", never
-    "yesterday"). A note carrying a credential is refused.
-
-    Before saving, search_memory the same subject. If the new note replaces one, pass
-    `supersedes` with its id and write the current value with the previous one stated,
-    e.g. "20 dozen eggs as of 2023-05 (30 dozen as of 2023-01)"; if other active notes
-    state the same stale value, archive them with archive_notes. The server stores a note
-    once it passes the validation, credential, and near-duplicate checks, so what is worth
-    keeping is your call.
+    Write `content` in English, standalone, subject first, with absolute dates ("on
+    2026-09-30"). Before saving, search_memory the same subject; if the new note replaces
+    one, pass `supersedes` and state the previous value, e.g. "20 dozen eggs as of 2023-05
+    (30 dozen as of 2023-01)".
     """
     body: dict[str, Any] = {
         "content": content,

@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted; the judge prompt and the refusal recovery are superseded by ADR-0007
+Accepted; the judge prompt and the refusal recovery are superseded by ADR-0007, and what
+the tool description states by ADR-0010
 
 ## Context
 
