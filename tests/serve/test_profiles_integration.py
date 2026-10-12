@@ -2,20 +2,20 @@
 
 Keys are real `api_keys` rows with authors, resolved by the real authentication path.
 Concurrency tests hold the owner lock on a separate connection, queue the contending
-operations behind it, and release it.
+operations behind it, and release it. The migration test runs `ensure_schema` over the
+earlier table shapes in a scratch schema.
 """
 
 from __future__ import annotations
 
 import asyncio
 import uuid
-from contextlib import asynccontextmanager
 
 import asyncpg
 import pytest
 from starlette.testclient import TestClient
 
-from memory_base.core import db
+from memory_base.core import db, schema
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api
 from memory_base.serve.access import keys, namespaces
@@ -57,35 +57,29 @@ async def _fetch(sql, *args):
         await conn.close()
 
 
-def _proposals(owner):
-    return asyncio.run(
-        _fetch(
-            f'SELECT id, status, decided_at, decision_note FROM "{PG_SCHEMA}".profile_proposals '
-            "WHERE owner = $1 ORDER BY id",
-            owner,
-        )
-    )
-
-
 def _versions(owner, part):
     return asyncio.run(
         _fetch(
-            f'SELECT version, content, author, proposal_id FROM "{PG_SCHEMA}".agent_profiles '
-            "WHERE owner = $1 AND part = $2 ORDER BY version",
+            "SELECT version, content, author, reason, consent_method, consented_at "
+            f'FROM "{PG_SCHEMA}".agent_profiles WHERE owner = $1 AND part = $2 ORDER BY version',
             owner,
             part,
         )
     )
 
 
-def _propose(api_client, owner, content, base_version, reason="learned it"):
-    return api_client.post(
-        "/profiles/user/proposals",
-        json={"owner": owner, "content": content, "reason": reason, "base_version": base_version},
-    )
+def _put_user(api_client, owner, content, base_version, **fields):
+    body = {
+        "owner": owner,
+        "content": content,
+        "reason": "learned it",
+        "base_version": base_version,
+        "consent_method": "conversation",
+    }
+    return api_client.put("/profiles/user", json={**body, **fields})
 
 
-def test_an_owner_writes_self_proposes_and_the_user_approves():
+def test_an_owner_writes_self_and_the_user_part_with_consent():
     owner, other = _owner(), _owner()
     agents = _client([owner, other])
     user = _user_client()
@@ -93,87 +87,59 @@ def test_an_owner_writes_self_proposes_and_the_user_approves():
     written = agents.put("/profiles/self", json={"owner": owner, "content": "I review diffs."})
     assert written.json() == {"status": "written", "version": 1}
 
-    first = _propose(agents, owner, "Lives in Busan.", 0)
-    assert first.status_code == 201, first.json()
-    second = _propose(agents, owner, "Lives in Seoul.", 0, reason="they moved")
-    assert second.status_code == 201
-    assert second.json()["superseded"] == first.json()["id"]
-    second_id = second.json()["id"]
+    dry = _put_user(agents, owner, "Lives in Seoul.", 0, dry_run=True)
+    assert dry.json() == {"status": "valid", "version": 0, "current": ""}
+    assert _versions(owner, "user") == []
 
-    denied = agents.post(f"/profiles/user/proposals/{second_id}/approve", json={})
-    assert denied.status_code == 403
-    pending = user.get("/profiles/user/proposals", params={"status": "pending"}).json()
-    assert [row["id"] for row in pending if row["owner"] == owner] == [second_id]
-
-    shown = user.get(f"/profiles/user/proposals/{second_id}").json()
-    assert shown["current_user_version"] == 0
-    assert shown["current_user_content"] is None
-    assert shown["content"] == "Lives in Seoul."
-
-    approved = user.post(f"/profiles/user/proposals/{second_id}/approve", json={"note": "yes"})
-    assert approved.json() == {"status": "approved", "version": 1}
-    stale = _propose(agents, owner, "Lives in Daegu.", 0)
+    first = _put_user(agents, owner, "Lives in Seoul.", 0, reason="they moved")
+    assert first.json() == {"status": "written", "version": 1}
+    assert _put_user(agents, owner, "Lives in Seoul.", 1).json() == {
+        "status": "unchanged",
+        "version": 1,
+    }
+    stale = _put_user(agents, owner, "Lives in Daegu.", 0)
     assert stale.status_code == 409
     assert stale.json() == {"error": "stale", "version": 1}
+    dry = _put_user(agents, owner, "Lives in Daegu.", 1, dry_run=True)
+    assert dry.json() == {"status": "valid", "version": 1, "current": "Lives in Seoul."}
 
-    served = agents.get("/profiles", params={"owner": owner}).json()
-    assert served["self_version"] == 1
-    assert served["self"]["content"] == "I review diffs."
+    (row,) = _versions(owner, "user")
+    assert (row["author"], row["reason"], row["consent_method"]) == (
+        owner,
+        "they moved",
+        "conversation",
+    )
+    assert row["consented_at"] is not None
+
+    served = user.get("/profiles", params={"owner": owner}).json()
     assert served["user_version"] == 1
     assert served["user"]["content"] == "Lives in Seoul."
-    assert served["pending_proposal"] is None
-    assert served["user"]["created_at"].endswith("+00:00")
-
     history = user.get("/profiles/versions", params={"owner": owner, "part": "user"}).json()
-    assert [(row["version"], row["author"], row["proposal_id"]) for row in history] == [
-        (1, "user", second_id)
-    ]
-    rows = _proposals(owner)
-    assert [row["status"] for row in rows] == ["superseded", "approved"]
-    assert rows[1]["decision_note"] == "yes"
-    assert rows[0]["decision_note"] is None
-    assert rows[0]["decided_at"] is not None
+    assert [(r["version"], r["consent_method"]) for r in history] == [(1, "conversation")]
+    assert history[0]["consented_at"].endswith("+00:00")
 
-    untouched = agents.get("/profiles", params={"owner": other}).json()
-    assert untouched["user_version"] == 0 and untouched["self_version"] == 0
-    assert _propose(agents, other, "Natsume's view.", 0).status_code == 201
-
-    cleared = _propose(agents, owner, "", 1, reason="nothing holds")
-    assert cleared.status_code == 201
-    done = user.post(f"/profiles/user/proposals/{cleared.json()['id']}/approve", json={})
-    assert done.json() == {"status": "approved", "version": 2}
-    served = agents.get("/profiles", params={"owner": owner}).json()
-    assert served["user_version"] == 2
-    assert served["user"] is None
-    assert _propose(agents, owner, "Lives in Seoul again.", 2).status_code == 201
+    cleared = _put_user(agents, owner, "", 1, consent_method="elicitation")
+    assert cleared.json() == {"status": "written", "version": 2}
+    assert agents.get("/profiles", params={"owner": owner}).json()["user"] is None
+    assert agents.get("/profiles", params={"owner": other}).json()["user_version"] == 0
 
 
 def test_a_key_without_the_owner_or_user_author_is_refused():
     owner = _owner()
-    agents = _client([owner])
     stranger = _client(authors=["natsume-other"])
     assert stranger.get("/profiles", params={"owner": owner}).status_code == 403
     assert stranger.put("/profiles/self", json={"owner": owner, "content": "x"}).status_code == 403
-    proposal = _propose(agents, owner, "x", 0).json()["id"]
-    assert stranger.get(f"/profiles/user/proposals/{proposal}").status_code == 403
-    assert stranger.post(f"/profiles/user/proposals/{proposal}/reject", json={}).status_code == 403
+    assert _put_user(stranger, owner, "x", 0).status_code == 403
     assert TestClient(api.app).get("/profiles", params={"owner": owner}).status_code == 401
 
 
-def test_a_revoked_user_key_cannot_decide():
+def test_the_import_method_needs_an_admin_key_with_the_user_author():
     owner = _owner()
-    agents = _client([owner])
-    label = f"it-key-{uuid.uuid4().hex[:8]}"
-    plaintext = asyncio.run(_mint(label, False, ["user"]))
-
-    async def revoke():
-        await keys.revoke_key(keys.hash_key(plaintext))
-        await db.close_pool()
-
-    asyncio.run(revoke())
-    proposal = _propose(agents, owner, "x", 0).json()["id"]
-    revoked = TestClient(api.app, headers={"X-API-Key": plaintext})
-    assert revoked.post(f"/profiles/user/proposals/{proposal}/approve", json={}).status_code == 401
+    plain = _client([owner], is_admin=False)
+    assert _put_user(plain, owner, "x", 0, consent_method="import").status_code == 403
+    importer = _client([owner, "user"], is_admin=True)
+    assert _put_user(importer, owner, "x", 0, consent_method="import").status_code == 200
+    assert _versions(owner, "user")[0]["consent_method"] == "import"
 
 
 def test_namespace_deletion_ignores_profiles():
@@ -182,7 +148,7 @@ def test_namespace_deletion_ignores_profiles():
     name = f"it-profiles-{uuid.uuid4().hex[:8]}"
     asyncio.run(namespaces.create_namespace(name))
     assert agents.put("/profiles/self", json={"owner": owner, "content": "x"}).status_code == 200
-    assert _propose(agents, owner, "y", 0).status_code == 201
+    assert _put_user(agents, owner, "y", 0).status_code == 200
     asyncio.run(namespaces.delete_namespace(name))
     assert not asyncio.run(namespaces.namespace_exists(name))
 
@@ -219,12 +185,6 @@ async def _wait_for_waiters(conn, count):
     raise AssertionError(f"{count} operations never queued behind the owner lock")
 
 
-async def _seed_proposal(owner, content="x", base_version=0):
-    result = await store.propose(owner, content, "seed", base_version)
-    await db.close_pool()
-    return result["id"]
-
-
 def test_concurrent_self_writes_take_unique_sequential_versions():
     owner = _owner()
     results = asyncio.run(
@@ -236,149 +196,80 @@ def test_concurrent_self_writes_take_unique_sequential_versions():
     assert [row["version"] for row in _versions(owner, "self")] == [1, 2, 3, 4]
 
 
-def test_concurrent_proposals_leave_one_pending():
+def test_concurrent_user_writes_against_one_base_store_exactly_one_version():
     owner = _owner()
-    results = asyncio.run(
-        _queue_behind_the_lock(
-            owner, [lambda i=i: store.propose(owner, f"p{i}", "r", 0) for i in range(4)]
-        )
-    )
-    assert all(result["status"] == "pending" for result in results)
-    rows = _proposals(owner)
-    assert [row["status"] for row in rows].count("pending") == 1
-    assert [row["status"] for row in rows].count("superseded") == 3
-    assert sum(result["superseded"] is None for result in results) == 1
-
-
-def test_duplicate_approval_writes_one_version():
-    owner = _owner()
-    proposal = asyncio.run(_seed_proposal(owner))
-    results = asyncio.run(
-        _queue_behind_the_lock(
-            owner,
-            [lambda: store.approve(proposal, None), lambda: store.approve(proposal, None)],
-        )
-    )
-    assert results[0] == {"status": "approved", "version": 1}
-    assert isinstance(results[1], store.NotPending)
-    assert results[1].status == "approved"
-    assert len(_versions(owner, "user")) == 1
-
-
-def test_approve_and_reject_race_to_one_terminal_decision():
-    owner = _owner()
-    proposal = asyncio.run(_seed_proposal(owner))
-    results = asyncio.run(
-        _queue_behind_the_lock(
-            owner,
-            [lambda: store.reject(proposal, "no"), lambda: store.approve(proposal, "yes")],
-        )
-    )
-    assert results[0] == {"status": "rejected"}
-    assert isinstance(results[1], store.NotPending)
-    assert results[1].status == "rejected"
-    assert _versions(owner, "user") == []
-    (row,) = _proposals(owner)
-    assert (row["status"], row["decision_note"]) == ("rejected", "no")
-
-
-def test_a_proposal_and_an_approval_never_approve_a_stale_base():
-    owner = _owner()
-    proposal = asyncio.run(_seed_proposal(owner))
     results = asyncio.run(
         _queue_behind_the_lock(
             owner,
             [
-                lambda: store.approve(proposal, None),
-                lambda: store.propose(owner, "newer", "r", 0),
+                lambda i=i: store.write_user(owner, f"text {i}", "r", 0, "conversation", False)
+                for i in range(4)
             ],
         )
     )
-    approved, proposed = results
-    if isinstance(approved, dict):
-        assert approved == {"status": "approved", "version": 1}
-        assert isinstance(proposed, store.Stale)
-        assert proposed.version == 1
-    else:
-        assert isinstance(approved, store.NotPending)
-        assert approved.status == "superseded"
-        assert proposed["superseded"] == proposal
-    statuses = [row["status"] for row in _proposals(owner)]
-    assert statuses.count("pending") <= 1
-    versions = _versions(owner, "user")
-    assert len(versions) <= 1
-    assert all(row["proposal_id"] == proposal for row in versions)
+    assert [r for r in results if isinstance(r, dict)] == [{"status": "written", "version": 1}]
+    assert sum(isinstance(r, store.Stale) for r in results) == 3
+    assert [row["version"] for row in _versions(owner, "user")] == [1]
 
 
-# ---- rollback ---------------------------------------------------------------
+# ---- migration --------------------------------------------------------------
 
 
-class FailingConnection:
-    """Delegates to a real connection and fails the first statement that `fails` matches."""
-
-    def __init__(self, conn, fails):
-        self._conn = conn
-        self._fails = fails
-
-    def __getattr__(self, name):
-        return getattr(self._conn, name)
-
-    def _check(self, query):
-        if self._fails(" ".join(query.split())):
-            raise RuntimeError("injected failure")
-
-    async def execute(self, query, *args):
-        self._check(query)
-        return await self._conn.execute(query, *args)
-
-    async def fetchval(self, query, *args):
-        self._check(query)
-        return await self._conn.fetchval(query, *args)
-
-    async def fetchrow(self, query, *args):
-        self._check(query)
-        return await self._conn.fetchrow(query, *args)
-
-    async def fetch(self, query, *args):
-        self._check(query)
-        return await self._conn.fetch(query, *args)
-
-
-def _inject(monkeypatch, fails):
-    original = db.acquire
-
-    @asynccontextmanager
-    async def acquire(timeout=None):
-        async with original() as conn:
-            yield FailingConnection(conn, fails)
-
-    monkeypatch.setattr(db, "acquire", acquire)
-
-
-async def _attempt(operation):
+async def _run_migration(monkeypatch):
+    name = f"it_migrate_{uuid.uuid4().hex[:8]}"
+    conn = await asyncpg.connect(db_url())
     try:
-        with pytest.raises(RuntimeError, match="injected failure"):
-            await operation()
+        await conn.execute(
+            f"""
+            CREATE SCHEMA "{name}";
+            CREATE TABLE "{name}".profile_proposals (
+              id bigserial PRIMARY KEY, owner text NOT NULL, content text NOT NULL,
+              reason text NOT NULL, base_version int NOT NULL, status text NOT NULL,
+              created_at double precision NOT NULL, decided_at double precision,
+              decision_note text
+            );
+            CREATE TABLE "{name}".agent_profiles (
+              id bigserial PRIMARY KEY, owner text NOT NULL, part text NOT NULL,
+              version int NOT NULL, content text NOT NULL, author text NOT NULL,
+              proposal_id bigint, created_at double precision NOT NULL,
+              UNIQUE (owner, part, version)
+            );
+            INSERT INTO "{name}".profile_proposals
+              (owner, content, reason, base_version, status, created_at)
+              VALUES ('o', 'c', 'they moved', 0, 'approved', 1);
+            INSERT INTO "{name}".agent_profiles
+              (owner, part, version, content, author, proposal_id, created_at)
+              VALUES ('o', 'user', 1, 'c', 'user', 1, 1), ('o', 'self', 1, 's', 'o', NULL, 1);
+            """
+        )
+        monkeypatch.setattr(schema, "PG_SCHEMA", name)
+        await schema.ensure_schema(conn)
+        await schema.ensure_schema(conn)
+        rows = await conn.fetch(
+            f'SELECT part, reason, consent_method FROM "{name}".agent_profiles ORDER BY part'
+        )
+        columns = await conn.fetchval(
+            "SELECT array_agg(column_name::text) FROM information_schema.columns "
+            "WHERE table_schema = $1 AND table_name = 'agent_profiles'",
+            name,
+        )
+        remaining = await conn.fetchval(
+            "SELECT to_regclass($1)::text", f'"{name}".profile_proposals'
+        )
+        return rows, columns, remaining
     finally:
-        await db.close_pool()
+        await conn.execute(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
+        await conn.close()
 
 
-def test_a_failure_between_supersede_and_insert_rolls_both_back(monkeypatch):
-    owner = _owner()
-    first = asyncio.run(_seed_proposal(owner))
-    _inject(monkeypatch, lambda q: q.startswith("INSERT INTO") and "profile_proposals" in q)
-    asyncio.run(_attempt(lambda: store.propose(owner, "second", "r", 0)))
-    rows = _proposals(owner)
-    assert [(row["id"], row["status"], row["decided_at"]) for row in rows] == [
-        (first, "pending", None)
+def test_ensure_schema_carries_a_proposal_reason_onto_its_version_and_drops_the_table(
+    monkeypatch,
+):
+    rows, columns, remaining = asyncio.run(_run_migration(monkeypatch))
+    assert [(r["part"], r["reason"], r["consent_method"]) for r in rows] == [
+        ("self", None, None),
+        ("user", "they moved", None),
     ]
-
-
-def test_a_failure_between_version_insert_and_decision_rolls_both_back(monkeypatch):
-    owner = _owner()
-    proposal = asyncio.run(_seed_proposal(owner))
-    _inject(monkeypatch, lambda q: q.startswith("UPDATE") and "profile_proposals" in q)
-    asyncio.run(_attempt(lambda: store.approve(proposal, "yes")))
-    assert _versions(owner, "user") == []
-    (row,) = _proposals(owner)
-    assert (row["status"], row["decided_at"], row["decision_note"]) == ("pending", None, None)
+    assert "proposal_id" not in columns
+    assert {"reason", "consent_method", "consented_at"} <= set(columns)
+    assert remaining is None

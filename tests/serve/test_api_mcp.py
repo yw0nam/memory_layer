@@ -170,7 +170,7 @@ def test_mcp_server_registers_expected_tools():
         "cancel_message",
         "get_my_profile",
         "update_my_profile",
-        "propose_user_profile",
+        "update_user_profile",
         "list_entities",
         "register_entity",
     }

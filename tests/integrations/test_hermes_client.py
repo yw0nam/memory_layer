@@ -354,7 +354,6 @@ PROFILE = {
     "self": {"content": "Speak warmly.", "created_at": "2026-10-01T00:00:00+00:00"},
     "user_version": 2,
     "user": {"content": "Lives in Seoul.\nVegetarian.", "created_at": "2026-10-01T00:00:00+00:00"},
-    "pending_proposal": None,
 }
 
 PROFILE_LINES = [
@@ -403,15 +402,8 @@ def test_build_profile_block_prints_both_parts_under_their_versions():
     assert client.build_profile_block("natsume").splitlines() == PROFILE_LINES
 
 
-def test_build_profile_block_prints_empty_parts_and_the_pending_notice():
-    profile = dict(
-        PROFILE,
-        self_version=0,
-        self=None,
-        user_version=3,
-        user=None,
-        pending_proposal={"id": 12, "created_at": "x", "reason": "secret plan", "base_version": 3},
-    )
+def test_build_profile_block_prints_empty_parts():
+    profile = dict(PROFILE, self_version=0, self=None, user_version=3, user=None)
     block = _client(lambda request: httpx.Response(200, json=profile)).build_profile_block(
         "natsume"
     )
@@ -421,11 +413,7 @@ def test_build_profile_block_prints_empty_parts_and_the_pending_notice():
         "(empty)",
         "## self (v0)",
         "(empty)",
-        "A proposed change to the user profile (proposal 12) awaits the user's approval. "
-        "Ask the user to run `! python3 ~/.config/memory-base/mb_profile.py show 12` to inspect "
-        "its diff, then approve or reject it with the memory-profile-approval skill.",
     ]
-    assert "secret plan" not in block
 
 
 def test_build_profile_block_defuses_fence_tags_in_content():
@@ -443,7 +431,6 @@ def test_build_profile_block_is_empty_on_an_error_or_a_malformed_profile():
         dict(PROFILE, user_version="2"),
         dict(PROFILE, self_version=False),
         dict(PROFILE, user={"content": None}),
-        dict(PROFILE, pending_proposal={"id": "12"}),
     ):
         client = _client(lambda request, body=body: httpx.Response(200, json=body))
         assert client.build_profile_block("natsume") == ""

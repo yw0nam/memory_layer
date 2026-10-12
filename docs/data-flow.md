@@ -561,14 +561,14 @@ An **owner** is an agent's author slug (`claude-code`, `codex`; never `user` or
 | part | holds | written by |
 |---|---|---|
 | `self` | the agent's persona, working rules, and conventions | the owner, whenever it chooses |
-| `user` | the user as this agent needs to know them | the user, by approving the owner's proposal |
+| `user` | the user as this agent needs to know them | the owner, with the user's consent to each change |
 
 Each owner's `user` part is its own document. The server calls no model and judges no
 content; profiles are never embedded and never read by search or consolidation.
 
 **Authority** comes only from the key's authors. A key acts for an owner when the owner
-is one of its authors; a key carrying the `user` author reads every owner's profile and
-proposals and is the only key that approves or rejects. Admin status, the key label, the
+is one of its authors; a key carrying the `user` author reads every owner's profile.
+Together with admin, that author marks an `import`. Admin status, the key label, the
 home namespace, and namespace permissions grant no profile access. Only the user's key
 carries `user`. Each agent has its own key whose authors hold only its own slug, so one
 agent's key neither reads nor writes another owner's profile. An admin key can rewrite any
@@ -577,70 +577,55 @@ key the separation prevents mistakes, not a determined agent on the same host.
 
 ```
  agent ── PUT /profiles/self ──────────────────────► self v n+1   (or unchanged)
- agent ── POST /profiles/user/proposals {base_version}
-            base == current user version? ── no ──► 409 stale {version}
-            supersede the pending proposal, insert ──► pending proposal
- user  ── mb_profile.py show <id> ──► proposal + diff against the current user part
- user  ── mb_profile.py approve <id>
-            pending? ── no ──► 409 not_pending {status}
-            base == current user version? ── no ──► 409 stale {version}, stays pending
-            insert user v n+1 (author "user", proposal_id) + mark approved
+ agent ── update_user_profile (MCP) ── PUT /profiles/user {dry_run, base_version}
+            base == current user version? ── no ──► 409 stale {version}, no consent asked
+            content == current? ── yes ──► unchanged
+            otherwise ──► valid {version, current}
+ user  ── consent: dialog in the call, or needs_consent → conversation → confirmed=true
+ agent ── PUT /profiles/user {consent_method}
+            (base re-checked under the owner lock)
+            insert user v n+1 (author = owner, reason, consent_method, consented_at)
  GET /profiles?owner= ──► SessionStart hook (Claude Code) · system_prompt_block (Hermes)
 ```
 
 **Requests.** Every mutation body is a JSON object holding only its listed fields; a
 missing or unknown field, malformed JSON, or a wrong type is a 400. `owner` matches
 `^[a-z0-9][a-z0-9-]{0,39}$` and is neither `user` nor `consolidator`. `content`,
-`reason`, and `note` are stripped; each is scanned for credentials, and a hit is a 400
+and `reason` are stripped; each is scanned for credentials, and a hit is a 400
 naming only the credential type. Query parameters are each known and given at most once;
-anything else is a 400. A proposal id is a positive 64-bit integer (400 otherwise; 404
-when unknown). Lists are JSON arrays; times are ISO 8601 UTC strings.
+anything else is a 400. Lists are JSON arrays; times are ISO 8601 UTC strings.
 
 | route | key | behaviour |
 |---|---|---|
-| `GET /profiles?owner=` | the owner's, or `user` | one REPEATABLE READ snapshot: `{owner, self_version, self, user_version, user, pending_proposal}` |
+| `GET /profiles?owner=` | the owner's, or `user` | one REPEATABLE READ snapshot: `{owner, self_version, self, user_version, user}` |
 | `PUT /profiles/self` | the owner's | `{owner, content, max_chars?}`; `max_chars` 200–20000, default 4000 |
-| `POST /profiles/user/proposals` | the owner's | `{owner, content, reason, base_version, max_chars?}`; `max_chars` 200–20000, default 3000; 201 `{id, status: "pending", superseded}` |
-| `GET /profiles/user/proposals?owner=&status=&limit=` | with `owner`: the owner's, or `user`; without: `user` only | newest first; `status` one of `pending`, `approved`, `rejected`, `superseded`; `limit` 1–200, default 20 |
-| `GET /profiles/user/proposals/{id}` | the proposal owner's, or `user` | the proposal plus `current_user_version` and `current_user_content`, from one snapshot |
-| `POST /profiles/user/proposals/{id}/approve` | `user` only | `{note?}`; 200 `{status: "approved", version}` |
-| `POST /profiles/user/proposals/{id}/reject` | `user` only | `{note?}`; 200 `{status: "rejected"}` |
-| `GET /profiles/versions?owner=&part=&limit=` | the owner's, or `user` | newest first `{version, content, author, proposal_id, created_at}`; `limit` 1–200, default 20 |
+| `PUT /profiles/user` | the owner's; `import` needs admin and `user` | `{owner, content, reason, base_version, consent_method, dry_run?, max_chars?}`; `consent_method` one of `elicitation`, `conversation`, `import`; `max_chars` 200–20000, default 3000; 200 `{status: "written", version}`, `{status: "unchanged", version}`, or with `dry_run` `{status: "valid", version, current}` |
+| `GET /profiles/versions?owner=&part=&limit=` | the owner's, or `user` | newest first `{version, content, author, reason, consent_method, consented_at, created_at}`; the consent fields are null on `self` versions; `limit` 1–200, default 20 |
 
 **Read.** `self_version` and `user_version` are the latest stored version of each part,
 0 when none. A part object `{content, created_at}` is null when no version exists or the
 latest content is empty; an older non-empty version is never served, and an emptied part
-keeps its version. `pending_proposal` is `{id, created_at, reason, base_version}` or null.
+keeps its version.
 
 **Self.** The content must fit `max_chars` (otherwise 400 with `chars` and `max_chars`).
 Content equal to the latest version returns 200 `{status: "unchanged", version}`; any
 other content is stored as the next version, 200 `{status: "written", version}`. Empty
 content stores an empty version, which clears the part.
 
-**Proposal.** `reason` holds 1–1000 characters; `base_version` is an integer
+**User.** `reason` holds 1–1000 characters; `base_version` is an integer
 0–2147483647 and must equal the owner's current user version (0 when none), otherwise
-409 `{"error": "stale", "version": <current>}`. The content has the same length and
-credential checks as `self`. A new proposal starts `pending` with `decided_at` and
-`decision_note` null; the owner's earlier pending proposal becomes `superseded`, with
-`decided_at` set to the new proposal's `created_at` and `decision_note` null. An owner has
-at most one pending proposal.
+409 `{"error": "stale", "version": <current>}`, for a dry run and for the real write alike.
+The content has the same length and credential checks as `self`. Content equal to the
+latest version returns `unchanged`; with `dry_run` any other content returns
+`{status: "valid", version, current}` and nothing is stored; otherwise the content is stored
+as the next user version with author = owner, `reason`, `consent_method`, and
+`consented_at`. The consent method is what the client reported, not proof that a person
+answered ([consent](#entity-registry)).
 
-**Decision.** `note`, when given, is a string of 0–1000 characters after stripping and is
-stored as the decision note; an omitted note is stored as null. A proposal that is not
-pending returns 409 `{"error": "not_pending", "status": <current>}`. Approval then
-requires the proposal's `base_version` to equal the current user version, otherwise 409
-`{"error": "stale", "version": <current>}` and the proposal stays pending. An approval
-stores the proposal's content as the next user version with author `user` and the
-proposal's id, and marks the proposal `approved`; a rejection marks it `rejected` without
-checking the base. Both set `decided_at` to the decision time. A refused or failed
-operation changes no field of any proposal.
-
-**Concurrency.** Every mutation runs in one READ COMMITTED transaction. A decision first
-reads the proposal's owner without a row lock (404 when absent); every mutation then
-takes `pg_advisory_xact_lock(hashtextextended('profile:' || owner, 0))` and only then
-reads the proposal status, its base, and the latest versions in fresh statements. No
-proposal row lock is taken before the owner lock. An approval's version insert and its
-decision commit or roll back together, as do a supersede and the new proposal.
+**Concurrency.** Every mutation runs in one READ COMMITTED transaction that first takes
+`pg_advisory_xact_lock(hashtextextended('profile:' || owner, 0))` and only then reads the
+latest versions in fresh statements, so a base that advanced since a dry run is refused as
+stale at the write.
 
 **Delivery.** The Claude Code SessionStart hook runs at every session start, resume,
 clear, and compaction. It calls `GET /profiles?owner=<MEMORY_BASE_AUTHOR>` (default
@@ -653,23 +638,15 @@ Memory: standing profile for <owner>. Apply it to every task.
 <content, or (empty)>
 ## self (v<self_version>)
 <content, or (empty)>
-A proposed change to the user profile (proposal <id>) awaits the user's approval. Ask the user to run `! python3 ~/.config/memory-base/mb_profile.py show <id>` to inspect its diff, then approve or reject it with the memory-profile-approval skill.
 ```
 
 then the handoffs. Both version lines print on every successful fetch, so the session
-always has the `base_version` a proposal needs; the notice prints only while a proposal is
-pending and never carries its content. A failed or malformed fetch prints no profile
+always has the `base_version` an update needs. A failed or malformed fetch prints no profile
 block and no version. The two fetches fail independently. The Hermes provider builds the
 same block body, without the fence, for its configured `owner` once in `initialize` and
 returns it from `system_prompt_block` for the session; without an `owner` it fetches no
 profile. Memory-context tags inside a part are defused to `[memory-context]`. Per-message
 prefetch does not include profiles.
-
-**Approval.** The user inspects and decides with `integrations/profile_approval/mb_profile.py`
-(`pending`, `show`, `approve`, `reject`), a stdlib CLI that reads only the user's key from
-`~/.config/memory-base/user.env` or the environment. The `memory-profile-approval` skill
-(`integrations/skills/memory-profile-approval/SKILL.md`) tells an agent to hand that step
-to the user and never to run it.
 
 ## Entity registry
 
@@ -686,14 +663,15 @@ checked over the registry as it would be after the batch; a clash is refused wit
 A write runs under one advisory lock, so concurrent writes cannot both take a name. A name,
 alias, or description carrying a credential is refused. An archived entity cannot be edited.
 
-**Consent.** Every create, edit, and archive passes one step (`serve/common/consent.py`)
+**Consent.** Every create, edit, and archive of an entity, and every change of a profile's
+`user` part, passes one step (`serve/common/consent.py`)
 before the REST call:
 
 | client | path | recorded method |
 |---|---|---|
 | advertises form elicitation | a dialog inside the tool call; accept applies the change, decline or cancel applies nothing; `confirmed` is refused | `elicitation` |
 | no elicitation | the tool returns `{status: "needs_consent", summary}` and writes nothing; the agent asks the user and calls again with `confirmed=true` and the same input | `conversation` |
-| admin key carrying the `user` author | a bulk load of an edited file through `POST /entities` | `import` |
+| admin key carrying the `user` author | a bulk load of an edited file through `POST /entities` or `PUT /profiles/user` | `import` |
 
 The method is what the client reported, not proof that a person answered. The server
 cannot tell an unattended session from an interactive one; the server instructions tell an
@@ -758,18 +736,12 @@ only by the consolidation routes.
 
 `memory.agent_profiles` — every version of every owner's parts: `owner`, `part` (`self` |
 `user`), `version` (1, 2, … per owner and part; unique together), `content` (empty when
-the version clears the part), `author` (the owner for `self`; `user` for an approved user
-version), `proposal_id` (set on user versions), and `created_at` (epoch seconds). Every
-version is kept.
+the version clears the part), `author` (the owner), `reason`, `consent_method`, and
+`consented_at` (set on user versions), and `created_at` (epoch seconds). Every version is
+kept.
 
-`memory.profile_proposals` — every proposal to replace an owner's `user` part: `owner`,
-`content`, `reason`, `base_version` (the user version it was written against; 0 when
-none), `status` (`pending` | `approved` | `rejected` | `superseded`), `created_at`, and the
-decision's `decided_at` and `decision_note`. A partial unique index keeps at most one
-pending proposal per owner. Every proposal is kept with its decision.
-
-Neither profile table has an embedding column or a namespace; both are read only by the
-profile routes, and a namespace is unregistered without regard to them.
+The profile table has no embedding column or namespace; it is read only by the profile
+routes, and a namespace is unregistered without regard to it.
 
 `doc_rows` and `messages` are outside the retrieval contract: they are read by compute
 and by address, respectively, and are never granted to the SQL query role or returned by

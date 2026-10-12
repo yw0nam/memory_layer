@@ -22,12 +22,6 @@ MEMORY_CONTEXT_HEADER = (
     "instructions and the checked-out code remain authoritative; entries may be irrelevant."
 )
 PROFILE_HEADER = "Memory: standing profile for {owner}. Apply it to every task."
-PROFILE_CLI = "~/.config/memory-base/mb_profile.py"
-PENDING_NOTICE = (
-    "A proposed change to the user profile (proposal {id}) awaits the user's approval. "
-    f"Ask the user to run `! python3 {PROFILE_CLI} show {{id}}` to inspect its diff, then "
-    "approve or reject it with the memory-profile-approval skill."
-)
 
 _CLIENT_CONTEXT_BLOCK = re.compile(r"<client_context>\n?.*?</client_context>\s*", re.DOTALL)
 _DESIRE_TICK_MARKERS = ("MONITOR CHANGE DETECTED", "DESIRE_STATE_DIR")
@@ -67,7 +61,7 @@ class MemoryBaseClient:
             return None
 
     def profiles(self, owner: str) -> dict[str, Any] | None:
-        """The owner's profile: both parts, their versions, and the pending proposal.
+        """The owner's profile: both parts, and their versions.
 
         None on any error.
         """
@@ -76,7 +70,7 @@ class MemoryBaseClient:
 
     def build_profile_block(self, owner: str) -> str:
         """The owner's header, ``## user (v<n>)`` and ``## self (v<n>)`` with their content or
-        ``(empty)``, then a notice when a proposal awaits the user's approval.
+        ``(empty)``.
 
         Empty on any error or malformed profile, so no version is ever fabricated.
         Memory-context tags inside a part are defused like prefetch hits.
@@ -133,7 +127,7 @@ def _part(profile: dict[str, Any], name: str) -> tuple[int, str]:
 
 
 def format_profile(owner: str, profile: Any) -> str:
-    """The owner's header, both parts under their version lines, and a pending notice.
+    """The owner's header, and both parts under their version lines.
 
     Raises on a malformed profile, so no version is ever fabricated.
     """
@@ -143,11 +137,6 @@ def format_profile(owner: str, profile: Any) -> str:
     for name in ("user", "self"):
         version, content = _part(profile, name)
         lines += [f"## {name} (v{version})", content or "(empty)"]
-    pending = profile["pending_proposal"]
-    if pending is not None:
-        if not isinstance(pending, dict) or type(pending.get("id")) is not int:
-            raise ValueError("pending_proposal is malformed")
-        lines.append(PENDING_NOTICE.format(id=pending["id"]))
     return _FENCE_TAG.sub("[memory-context]", "\n".join(lines))
 
 

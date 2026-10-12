@@ -50,7 +50,6 @@ PROFILE = {
     },
     "user_version": 3,
     "user": {"content": "Lives in Seoul.\nVegetarian.", "created_at": "2026-10-01T00:00:00+00:00"},
-    "pending_proposal": None,
 }
 
 PROFILE_LINES = [
@@ -62,19 +61,6 @@ PROFILE_LINES = [
     "- Delegate coding to a worktree subagent.",
     "- Ask before merging.",
 ]
-
-PENDING = {
-    "id": 7,
-    "created_at": "2026-10-02T00:00:00+00:00",
-    "reason": "the user moved",
-    "base_version": 3,
-}
-
-PENDING_LINE = (
-    "A proposed change to the user profile (proposal 7) awaits the user's approval. "
-    "Ask the user to run `! python3 ~/.config/memory-base/mb_profile.py show 7` to inspect "
-    "its diff, then approve or reject it with the memory-profile-approval skill."
-)
 
 HANDOFF_LINES = [
     HANDOFF_HEADER,
@@ -248,27 +234,6 @@ def test_a_cleared_part_keeps_its_version_line():
     assert lines[4] == "## self (v2)"
 
 
-def test_a_pending_proposal_adds_the_approval_notice_without_its_content():
-    profile = dict(PROFILE, pending_proposal=PENDING)
-    block = run_hook(_payload(), RecordingGet(profile=profile), _origin(None))
-    assert block.splitlines() == [
-        "<memory-context>",
-        *PROFILE_LINES,
-        PENDING_LINE,
-        "</memory-context>",
-    ]
-    assert "the user moved" not in block
-
-
-def test_a_pending_proposal_alone_is_delivered():
-    profile = dict(
-        PROFILE, self_version=0, self=None, user_version=0, user=None, pending_proposal=PENDING
-    )
-    lines = run_hook(_payload(), RecordingGet(profile=profile), _origin(None)).splitlines()
-    assert lines[-2] == PENDING_LINE
-    assert "## user (v0)" in lines and "## self (v0)" in lines
-
-
 def test_a_failed_profile_fetch_keeps_the_handoffs_and_prints_no_version():
     get = RecordingGet(HANDOFFS)
     block = run_hook(_payload(), get, _origin("git@github.com:o/r.git"))
@@ -290,17 +255,12 @@ def test_a_failed_handoff_fetch_keeps_the_profile():
         [PROFILE],
         {"unexpected": True},
         {k: v for k, v in PROFILE.items() if k != "self_version"},
-        {k: v for k, v in PROFILE.items() if k != "pending_proposal"},
         dict(PROFILE, self_version="2"),
         dict(PROFILE, user_version=True),
         dict(PROFILE, user_version=None),
         dict(PROFILE, self={"created_at": "x"}),
         dict(PROFILE, user={"content": 5}),
         dict(PROFILE, user="Lives in Seoul."),
-        dict(PROFILE, pending_proposal={"reason": "x"}),
-        dict(PROFILE, pending_proposal=dict(PENDING, id="7; rm -rf ~")),
-        dict(PROFILE, pending_proposal=dict(PENDING, id=True)),
-        dict(PROFILE, pending_proposal="7"),
     ],
 )
 def test_a_malformed_profile_prints_no_profile_block_and_keeps_the_handoffs(profile):

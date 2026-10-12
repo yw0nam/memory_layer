@@ -66,21 +66,7 @@ app = Starlette(
         Route("/profiles", profile_routes.profile_route, methods=["GET"]),
         Route("/profiles/self", profile_routes.self_route, methods=["PUT"]),
         Route("/profiles/versions", profile_routes.versions_route, methods=["GET"]),
-        Route("/profiles/user/proposals", profile_routes.propose_route, methods=["POST"]),
-        Route("/profiles/user/proposals", profile_routes.proposals_route, methods=["GET"]),
-        Route(
-            "/profiles/user/proposals/{proposal_id}", profile_routes.proposal_route, methods=["GET"]
-        ),
-        Route(
-            "/profiles/user/proposals/{proposal_id}/approve",
-            profile_routes.approve_route,
-            methods=["POST"],
-        ),
-        Route(
-            "/profiles/user/proposals/{proposal_id}/reject",
-            profile_routes.reject_route,
-            methods=["POST"],
-        ),
+        Route("/profiles/user", profile_routes.user_route, methods=["PUT"]),
         Route("/entities", entity_routes.list_route, methods=["GET"]),
         Route("/entities", entity_routes.upsert_route, methods=["POST"]),
         Route("/entities/{slug}/archive", entity_routes.archive_route, methods=["POST"]),

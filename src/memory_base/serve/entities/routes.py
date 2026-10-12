@@ -13,6 +13,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.serve.access.keys import AUTHOR_RE
+from memory_base.serve.common import consent
+from memory_base.serve.common.consent import CONSENT_METHODS
 from memory_base.serve.common.http import (
     RequestError,
     bounded_text,
@@ -24,8 +26,6 @@ from memory_base.serve.common.http import (
 from memory_base.serve.entities import store
 
 KINDS = ("person", "agent", "project", "org", "place", "thing")
-CONSENT_METHODS = ("elicitation", "conversation", "import")
-USER_AUTHOR = "user"
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 MAX_ITEMS = 50
 MAX_NAME_CHARS = 200
@@ -86,7 +86,7 @@ def parse_upsert(body: Any) -> tuple[list[dict[str, Any]], str, str, bool]:
 def _denied(key: Any, author: str, method: str) -> JSONResponse | None:
     if author not in key.authors:
         return error(f"author {author!r} is not one of this key's authors", 403)
-    if method == "import" and not (key.is_admin and USER_AUTHOR in key.authors):
+    if method == "import" and not consent.may_import(key):
         return error("consent_method import needs an admin key carrying the 'user' author", 403)
     return None
 

@@ -19,7 +19,7 @@ can write only its own notes and its own profile.
  agent's client config: url + key + owner = <slug>  ◄──────────────────────────┘
                                                                                │
  session start ──► GET /profiles?owner=<slug> ──► "Memory: standing profile for <slug>"
- save_memory / update_my_profile / propose_user_profile ──► author or owner = <slug>
+ save_memory / update_my_profile / update_user_profile ──► author or owner = <slug>
 ```
 
 ## Rules
@@ -34,7 +34,7 @@ can write only its own notes and its own profile.
 
 The slug matches `^[a-z0-9][a-z0-9-]{0,39}$` and is unique per agent, for example
 `claude-code` or `codex`. `user` and `consolidator` are reserved: `user` is the user's
-approval key, `consolidator` is the consolidation agent.
+import marker, `consolidator` is the consolidation agent.
 
 ## 2. Mint the key (user, on the server host, in the repo)
 
@@ -64,8 +64,7 @@ determined agent.
 
 Install the client's integration once: the Claude Code hooks as documented in
 `integrations/claude_code/prefetch_hook.py`, the Hermes provider as documented in
-`integrations/hermes/README.md`. Install the `memory-profile-approval` skill for the
-agent as documented in `integrations/profile_approval/README.md`.
+`integrations/hermes/README.md`.
 
 ## 4. Check the connection
 
@@ -76,8 +75,8 @@ agent as documented in `integrations/profile_approval/README.md`.
    `<slug>: <slug>`.
 
 The agent reads its profile with `get_my_profile`, writes its `self` part with
-`update_my_profile`, and proposes its `user` part with `propose_user_profile`. Either part
-may carry `Remember` and `Don't remember` sections: rules that narrow or widen what the
+`update_my_profile`, and changes its `user` part with `update_user_profile`, with the
+user's consent. Either part may carry `Remember` and `Don't remember` sections: rules that narrow or widen what the
 agent keeps with `save_memory`, never facts about the user. A companion agent's `self`
 part may say `Remember: moments we share`; a user's wish such as `Don't remember: my
 spending` goes in the `user` part, whose sections win.
