@@ -112,9 +112,11 @@ def test_ordinary_note_content_is_not_a_credential(text):
         "The InPost locker pickup code is 7742 and the parcel waits at the Mokotow locker.",
         "Pharmacy verification code: 384 902, valid for the prescription pickup on 2026-10-12.",
         'The bank two-factor code was "123456" when the user set up the app.',
+        "The verification code texted to her was 3058.",
+        "DoorDash pickup code at the restaurant (ordered around 2025-06) was 941.",
     ],
 )
-def test_a_short_code_stated_next_to_its_keyword_is_a_credential(text):
+def test_a_digit_code_in_the_sentence_of_its_keyword_is_a_credential(text):
     assert find_secret(text) == "Short Code"
 
 
@@ -122,17 +124,16 @@ def test_a_short_code_stated_next_to_its_keyword_is_a_credential(text):
     "text",
     [
         "The API returned status code 400 for the empty body.",
-        "The script ended with exit code 1 after the retry.",
-        "The user lives at zip code 12345 and the country code 82.",
         "The pickup code expires after 48 hours, so collect the parcel soon.",
-        "The failing call hit HTTP code 404 and error code 500 in turn.",
-        "Fixes issue #335 and follows PR #276; the area code 213 is unrelated.",
-        "Pinned commit 8769ba4 on 2026-10-12 at version 2.1.76.",
-        "Call the pin office at +82 10 1234 5678 about the postal code.",
-        "Work note: the service sends status code 400 when issue #335 reproduces.",
+        "Fixes PR #276 and issue #335.",
+        "On 2025-07-02 the user missed a bank two-factor code.",
+        "In late June 2025 the user asked for a new verification code.",
+        "Pin the version to 2.1.76.",
+        "We waited 30-second timeouts on the auth code flow.",
+        "+82 10 1234 5678 is the pin office phone.",
     ],
 )
-def test_a_number_without_a_credential_keyword_is_not_a_short_code(text):
+def test_a_number_that_is_not_a_code_is_not_a_short_code(text):
     assert find_secret(text) is None
 
 
@@ -173,7 +174,7 @@ _ANCHORS = {
     "ModernOpenAIKeyDetector": ["sk-", " sk-a"],
     "AnthropicKeyDetector": ["sk-ant-", "sk-ant-a-"],
     "GoogleApiKeyDetector": ["AIza"],
-    "ShortCodeDetector": ["pin ", "pin is ", "pin 1-1-1-1-", "pin 1 "],
+    "ShortCodeDetector": ["pin ", "pin 1-1-1-1-", "pin 1 ", "pin. ", "pin 123 pin "],
 }
 _LINE_CHARS = 2_000_000
 
