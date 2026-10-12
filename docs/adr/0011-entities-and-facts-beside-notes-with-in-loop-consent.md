@@ -21,8 +21,9 @@ a profile to the notes behind it. A spike over 415 notes measured three things. 
 decompose a note into 2 to 5 (entity, attribute, value) rows. 15 of 17 confirmed stale
 values are one such row, which a writer handling the update would look up. Two writers
 choose the same entity slug 89% of the time when they see the existing names, and 25% of
-the time when they do not; for slug and attribute together the figures are 83% and 15%. The two stale values no row could address
-were lists stored as one value ("Embedded Software Team and Head of Engineering").
+the time when they do not; for slug and attribute together the figures are 83% and 15%.
+The two stale values no row could address were lists stored as one value ("Embedded
+Software Team and Head of Engineering").
 
 The user wants to approve every new entity, in the conversation where the agent is
 working, without a separate key or command. The user part of a profile changes the same
@@ -52,11 +53,11 @@ evidence quote. Notes stay as they are.
 
 ### Facts
 
-- `facts` holds `id` (a uuid), `namespace`, `entity`, `attribute` (a free slug), `value_text`
-  (at most 300 characters), `value_entity` (a slug when the value is itself an entity; this
-  is how a relation between two entities is stored), `valid_from`, `valid_to`, `note_id`,
-  `evidence`, `author`, `created_at`, `archived_at`. A fact is current while `valid_to` is
-  null. Facts are never embedded.
+- `facts` holds `id` (a uuid), `namespace`, `entity`, `attribute` (a free slug),
+  `value_text` (at most 300 characters), `value_entity` (a slug when the value is itself
+  an entity; this is how a relation between two entities is stored), `valid_from`,
+  `valid_to`, `note_id`, `evidence`, `author`, `created_at`, `archived_at`. A fact is
+  current while `valid_to` is null. Facts are never embedded.
 - A write is one of three operations. `add` inserts a current row. `replace(fact_id)`
   closes that row at the new row's `valid_from` (else now) and inserts the new value.
   `remove(fact_id)` closes the row. A removed row stays readable as history and can be
