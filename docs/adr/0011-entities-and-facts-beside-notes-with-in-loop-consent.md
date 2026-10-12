@@ -7,21 +7,21 @@ Accepted
 ## Context
 
 A note is free text. The thing a note is about, and the values it holds, exist only
-inside that text. Measured on the selective pilot's stored notes, this is where notes go
-wrong: a composite note (a proposal with six stakeholders, a financial setup with several
-rates, a person's title) keeps an old value after the user changes it, because the update
-turn does not resemble the bundle, so a cosine search misses it, and the near-duplicate
-refusal at 0.85 refuses an update that does resemble it. Confirmed stale notes were 3 to
-6% of a persona's active notes after a week and the dominant junk after a quarter. Storing
-the source turns verbatim did not raise read recall (0.578 against 0.578), so the lever
-is not more text but a key: the thing and the property an update names.
+inside that text. The selective pilot's stored notes show where this fails. A composite
+note, such as a proposal with six stakeholders or a financial setup with several rates,
+keeps an old value after the user changes it. The update turn does not resemble the
+bundle, so a cosine search misses it. An update that does resemble the bundle is refused
+by the near-duplicate check at 0.85. Confirmed stale notes were 3 to 6% of a persona's
+active notes after a week, and the dominant junk after a quarter. Storing the source
+turns verbatim did not raise read recall (0.578 against 0.578). The lever is not more
+text but a key: the thing and the property an update names.
 
 Nothing links notes to the people, projects, and things they describe, and nothing links
-a profile to the notes behind it. A spike over 414 notes showed that writers decompose a
-note into (entity, attribute, value) rows at 2 to 5 rows per note, that 15 of 17 confirmed
-stale values are one such row a writer handling the update would look up, and that two
-writers name the same entity and attribute alike 89% of the time when they see the
-existing names, against 25% when they do not. The two stale values no row could address
+a profile to the notes behind it. A spike over 415 notes measured three things. Writers
+decompose a note into 2 to 5 (entity, attribute, value) rows. 15 of 17 confirmed stale
+values are one such row, which a writer handling the update would look up. Two writers
+choose the same entity slug 89% of the time when they see the existing names, and 25% of
+the time when they do not; for slug and attribute together the figures are 83% and 15%. The two stale values no row could address
 were lists stored as one value ("Embedded Software Team and Head of Engineering").
 
 The user wants to approve every new entity, in the conversation where the agent is
@@ -39,8 +39,9 @@ evidence quote. Notes stay as they are.
 - `entities` holds `slug` (the key, `^[a-z0-9][a-z0-9-]{0,39}$`), `kind` (`person`,
   `agent`, `project`, `org`, `place`, `thing`), `name`, `aliases`, `description`,
   `created_by`, `consent_method`, `consented_at`, `archived_at`. A proposal or a meeting
-  is an entity of kind `thing` when it has properties of its own (stakeholders, dates,
-  decisions); a fact belongs to the entity the user would name when asking about it later.
+  is an entity of kind `thing` when it has properties of its own, such as stakeholders,
+  dates, or decisions. A fact belongs to the entity the user would name when asking about
+  it later.
 - The user is an entity of kind `person`; a project entity carries its repository origin
   among its aliases.
 - The server normalizes names and aliases (NFKC, case fold, whitespace) and refuses a slug
@@ -51,7 +52,7 @@ evidence quote. Notes stay as they are.
 
 ### Facts
 
-- `facts` holds `id`, `namespace`, `entity`, `attribute` (a free slug), `value_text`
+- `facts` holds `id` (a uuid), `namespace`, `entity`, `attribute` (a free slug), `value_text`
   (at most 300 characters), `value_entity` (a slug when the value is itself an entity; this
   is how a relation between two entities is stored), `valid_from`, `valid_to`, `note_id`,
   `evidence`, `author`, `created_at`, `archived_at`. A fact is current while `valid_to` is
@@ -68,10 +69,10 @@ evidence quote. Notes stay as they are.
   written when there is a reason or a context worth keeping, not for every value.
 - Attribute names are free. The server shows the writer the entities it may use and the
   attribute names already in use, and refuses nothing about the name.
-- `evidence` is the user's own words the fact was taken from, at most 500 characters,
-  supplied by the writer and not verified by the server, scanned for credentials, never
-  embedded, and returned only on request. This narrows ADR-0005: no conversation turn is
-  stored, but a bounded quote attached to a fact is.
+- `evidence` is the user's own words the fact was taken from, at most 500 characters.
+  The writer supplies it and the server does not verify it. It is scanned for credentials,
+  never embedded, and returned only on request. A note carries no evidence. This narrows
+  ADR-0005: no conversation turn is stored, but a bounded quote attached to a fact is.
 
 ### Reading
 
@@ -80,9 +81,9 @@ evidence quote. Notes stay as they are.
 - `search_memory` matches the query against entity names and aliases and returns the
   current facts of the matched entities beside the note hits, up to three entities and
   twenty facts each.
-- At session start the client receives the current facts of the user entity and of the
-  entity whose alias is the repository's origin, up to thirty rows, as knowledge beside
-  the profile, which stays the agent's policy text.
+- At session start the client receives up to thirty current facts: those of the user
+  entity and those of the entity whose alias is the repository's origin. They are
+  delivered as knowledge beside the profile, which stays the agent's policy text.
 
 ### Consent inside the loop
 
@@ -91,12 +92,13 @@ by the MCP client:
 
 - A client that advertises elicitation gets a dialog inside the tool call; accept applies
   the change in the same call, decline or cancel applies nothing.
-- A client without elicitation gets `needs_consent` with a summary and writes nothing; the
-  agent asks the user in the conversation and calls again with `confirmed` and the same
-  payload, which the server validates again (a profile's base version must still be
-  current). A client that advertises elicitation cannot use `confirmed`.
-- An unattended session (the Hermes integration marks its cron turns) is refused; the
-  agent leaves a message on the messages lane and the next interactive session asks.
+- A client without elicitation gets `needs_consent` with a summary, and nothing is
+  written. The agent asks the user in the conversation and calls again with `confirmed`
+  and the same payload. The server validates the payload again; a profile's base version
+  must still be current. A client that advertises elicitation cannot use `confirmed`.
+- An unattended session (the Hermes integration marks its cron turns) is refused: no
+  entity is created and no fact is stored. The agent leaves a message on the messages
+  lane, and the next interactive session asks the user.
 - The row records `consent_method` (`elicitation`, `conversation`, or `import`) and
   `consented_at`. The method is what the client reported, not proof that a person
   answered, and the tool descriptions say so.
@@ -106,9 +108,9 @@ by the MCP client:
 
 ### Existing notes
 
-The active notes are decomposed once by a writer into a file of entities and facts; the
-user edits the file and imports it with their own key through an admin route, recorded
-with `consent_method = import`. After that, facts accumulate from saves.
+A writer decomposes the active notes once into a file of entities and facts. The user
+edits the file and imports it with their own key through an admin route. The import is
+recorded with `consent_method = import`. After that, facts accumulate from saves.
 
 ### Surface
 
@@ -121,9 +123,9 @@ through the REST API. The server calls no chat model for entities, facts, or con
 - An update names its key. A stale value is one row to replace or remove, and the other
   facts of the same entity are untouched; the near-duplicate threshold no longer decides
   whether an update is stored.
-- A writer sees the existing names on every save, which is what makes two writers agree;
-  a writer that ignores them creates a second slug the user must merge by hand, since the
-  server infers no equivalence.
+- A writer sees the existing names on every save; that is what makes two writers agree.
+  A writer that ignores them creates a second slug. The user merges it by hand, because
+  the server infers no equivalence.
 - Every new entity costs the user one answer; the first import of the existing notes is
   one review of a file instead of a hundred answers.
 - Conversational consent is the agent's word. Only elicitation puts the question in front
@@ -133,6 +135,6 @@ through the REST API. The server calls no chat model for entities, facts, or con
 - Memory now has three layers: episodic notes, semantic facts about entities, and the
   profile as policy; consolidation can later turn facts into profile text, which it could
   not do from prose.
-- A fact about a meeting's subject and a fact about the meeting are both allowed; the rule
-  "the entity the user would name later" is guidance a writer applies, and the spike shows
-  it is the residual source of naming disagreement.
+- A fact about a meeting's subject and a fact about the meeting are both allowed. The rule
+  "the entity the user would name later" is guidance a writer applies. The spike shows
+  this choice is the residual source of naming disagreement.

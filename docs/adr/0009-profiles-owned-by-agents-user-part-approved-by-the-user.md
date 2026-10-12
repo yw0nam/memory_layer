@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; the approval path is superseded by ADR-0011: the user part changes by the user's consent inside the agent loop, not by a user-held key and a CLI
+Accepted; the approval path is superseded by ADR-0011 (consent inside the agent loop)
 
 ## Context
 
