@@ -60,6 +60,7 @@ def test_the_detector_tuple_is_exactly_the_fixed_format_set():
         "ModernOpenAIKeyDetector",
         "AnthropicKeyDetector",
         "GoogleApiKeyDetector",
+        "ShortCodeDetector",
     ]
 
 
@@ -104,6 +105,37 @@ def test_ordinary_note_content_is_not_a_credential(text):
     assert find_secret(text) is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "User's bike lock combination is 7-24-33; they keep forgetting it.",
+        "The InPost locker pickup code is 7742 and the parcel waits at the Mokotow locker.",
+        "Pharmacy verification code: 384 902, valid for the prescription pickup on 2026-10-12.",
+        "The bank two-factor login code was \"123456\" when the user set up the app.",
+    ],
+)
+def test_a_short_code_stated_next_to_its_keyword_is_a_credential(text):
+    assert find_secret(text) == "Short Code"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The API returned status code 400 for the empty body.",
+        "The script ended with exit code 1 after the retry.",
+        "The user lives at zip code 12345 and the country code 82.",
+        "The pickup code expires after 48 hours, so collect the parcel soon.",
+        "The failing call hit HTTP code 404 and error code 500 in turn.",
+        "Fixes issue #335 and follows PR #276; the area code 213 is unrelated.",
+        "Pinned commit 8769ba4 on 2026-10-12 at version 2.1.76.",
+        "Call the pin office at +82 10 1234 5678 about the postal code.",
+        "Work note: the service sends status code 400 when issue #335 reproduces.",
+    ],
+)
+def test_a_number_without_a_credential_keyword_is_not_a_short_code(text):
+    assert find_secret(text) is None
+
+
 _UUID_SHAPE = "-".join("0" * width for width in (8, 4, 4, 4, 12))
 _JWT = _jwt(json.dumps({"sub": "agent"}).encode())
 
@@ -141,6 +173,7 @@ _ANCHORS = {
     "ModernOpenAIKeyDetector": ["sk-", " sk-a"],
     "AnthropicKeyDetector": ["sk-ant-", "sk-ant-a-"],
     "GoogleApiKeyDetector": ["AIza"],
+    "ShortCodeDetector": ["pin ", "pin is ", "pin 1-1-1-1-", "pin 1 "],
 }
 _LINE_CHARS = 2_000_000
 
