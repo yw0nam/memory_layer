@@ -84,11 +84,14 @@ _CODE_KEYWORD = re.compile(
     r"|login|auth|confirmation|unlock|lock|entry|parcel|bank)[ -]code)"
     rf"(?![{_TOKEN}])"
 )
-# 3-8 digits that are not a date, year, measured quantity, version, path, or phone number.
+# 3-8 digits that are not a date, year, quantity, version, path, phone, line, or PR number.
 _CODE = re.compile(
-    r"(?i)(?<![A-Za-z0-9_.+$#%/:-])(?<!\d[- ])(?!\d{4}-\d{2}-\d{2})(?!(?:19|20)\d{2}(?![- ]?\d))"
+    r"(?i)(?<![A-Za-z0-9_.+$#%/:-])(?<!\d[- ])(?<!\bline )(?<!\bport )(?<!\bpage )(?<!\brow )"
+    r"(?<!\bpr )(?<!\bissue )(?<!\bticket )(?<!\bbuild )(?<!\brun )(?<!\bjob )"
+    r"(?!\d{4}-\d{2}-\d{2})(?!(?:19|20)\d{2}(?![- ]?\d))"
     r"\d(?:[- ]?\d){2,7}"
-    r"(?![A-Za-z0-9_%]|[.:/-]\d|-?(?:second|minute|hour|day|week|month|year|ms|km|kg|ml|cm|mm|px)s?\b)"
+    r"(?![A-Za-z0-9_%]|[.:/-]\d|[ -]?(?:second|minute|hour|day|week|month|year|ms|km|kg|ml|cm|mm|px"
+    r"|bytes?|kb|mb|gb|tb|lines?|chars?|characters?|users?|messages?|requests?|rows?|items?)s?\b)"
 )
 
 
