@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; the content gate's judge prompt is superseded by ADR-0007
+Accepted; the content gate's judge prompt is superseded by ADR-0007, and ADR-0011 narrows the scope: a fact may carry a bounded quote of the user's words as evidence, while no conversation turn is stored
 
 ## Context
 
