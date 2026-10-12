@@ -671,6 +671,44 @@ prefetch does not include profiles.
 (`integrations/skills/memory-profile-approval/SKILL.md`) tells an agent to hand that step
 to the user and never to run it.
 
+## Entity registry
+
+`memory.entities` holds the people, agents, projects, organisations, places, and things
+that facts are about: `slug` (the key, `^[a-z0-9][a-z0-9-]{0,39}$`), `kind` (`person`,
+`agent`, `project`, `org`, `place`, `thing`), `name`, `aliases`, `description`,
+`created_by`, `updated_by`, `consent_method`, `consented_at`, the timestamps, and
+`archived_at`. The table has no namespace and is never embedded or searched.
+
+**Uniqueness.** A slug, a normalized name (NFKC, case-folded, whitespace collapsed), and
+each normalized alias belong to at most one entity, archived entities included. A write is
+checked over the registry as it would be after the batch; a clash is refused with 409
+`{error, holder, value}`, and no row of the batch is written. Stored spelling is kept.
+A write runs under one advisory lock, so concurrent writes cannot both take a name. A name,
+alias, or description carrying a credential is refused. An archived entity cannot be edited.
+
+**Consent.** Every create, edit, and archive passes one step (`serve/common/consent.py`)
+before the REST call:
+
+| client | path | recorded method |
+|---|---|---|
+| advertises form elicitation | a dialog inside the tool call; accept applies the change, decline or cancel applies nothing; `confirmed` is refused | `elicitation` |
+| no elicitation | the tool returns `{status: "needs_consent", summary}` and writes nothing; the agent asks the user and calls again with `confirmed=true` and the same input | `conversation` |
+| admin key carrying the `user` author | a bulk load of an edited file through `POST /entities` | `import` |
+
+The method is what the client reported, not proof that a person answered. The server
+cannot tell an unattended session from an interactive one; the server instructions tell an
+agent without a user present never to pass `confirmed` and to leave a message instead.
+
+```
+register_entity(entities, author, confirmed?)
+  -> GET /entities                 (summary: create / edit old -> new / archive)
+  -> consent.obtain(summary)       elicitation dialog | needs_consent | confirmed
+  -> POST /entities | /entities/{slug}/archive   {author, consent_method}
+```
+
+A write names an `author` that is one of the key's authors; `import` needs the key to be
+admin and to carry `user`.
+
 ## Storage
 
 `memory.memory_chunks` — one table for every non-code source.

@@ -120,6 +120,14 @@ _Avoid_: slot, section
 An owner's full replacement text for its `user` part with a reason and the user version it was written against. It is `pending` until a key carrying the `user` author approves or rejects it, or until the owner's next proposal supersedes it; an approval whose base is not the current user version is refused as stale.
 _Avoid_: suggestion, draft, edit
 
+**Entity**:
+A registered person, agent, project, organisation, place, or thing that facts are about, keyed by a slug the user consented to. Aliases resolve other spellings of its name; the server infers no equivalence between names and merges nothing.
+_Avoid_: node, subject, topic
+
+**Consent**:
+The user's answer, inside the conversation, to a change of the entity registry (and, later, of the user part of a profile); recorded as the method the client reported: `elicitation`, `conversation`, or `import`.
+_Avoid_: approval, permission, authorization
+
 **Distilled**:
 Reduced to its worth-keeping form by the writer before storage. The server stores a note without a content gate; distillation is the writer's job, guided by the tool description and the server instructions.
 _Avoid_: summarized, cleaned, processed

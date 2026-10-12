@@ -59,6 +59,8 @@ conversation turns are stored ([ADR-0005](docs/adr/0005-no-raw-conversation-stor
 server issued; the server judges no content ([ADR-0008](docs/adr/0008-consolidation-judged-by-an-agent-applied-by-the-server.md)).
 `agent_profiles` and `profile_proposals` hold each agent's profile versions and the
 proposals the user decides; they are never embedded or searched.
+`entities` holds the registry of people, projects, and things that facts are about, each
+change made with the user's consent; it is never embedded or searched.
 
 The same components as an explorable diagram, with guided views and image export:
 [docs/diagrams/memory-base-architecture.html](docs/diagrams/memory-base-architecture.html)
@@ -87,6 +89,9 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `namespaces`, `since`/`until`, `include_archived`; without `budget_tokens` the reranked results are capped at 10 before `top_k` applies |
 | `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the required `kind` (`personal` or `work`, a label for search and listing), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); no chat model judges the note; refused with 409 when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set, and before embedding when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind` (`personal` or `work`), `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
+| `GET` | `/entities` | the entity registry ordered by slug — `include_archived` (`true`\|`false`, default `false`); see [data flow](docs/data-flow.md#entity-registry) |
+| `POST` | `/entities` | create or edit 1–50 entities in one batch — `entities` (`slug`, and `kind`, `name`, `aliases`, `description` on a create), `author` (one of the key's authors), `consent_method` (`elicitation`\|`conversation`\|`import`; `import` needs an admin key carrying `user`); 409 `{error, holder, value}` when a slug, name, or alias is held by another entity |
+| `POST` | `/entities/{slug}/archive` | archive an active entity — `author`, `consent_method` as for `POST /entities`; its name stays reserved |
 | `GET` | `/profiles` | one owner's profile — `owner` (an agent's author slug) required; `{owner, self_version, self, user_version, user, pending_proposal}` from one snapshot, a part `{content, created_at}` or null when absent or emptied, its version kept; a key whose authors hold the owner or `user` only; see [data flow](docs/data-flow.md#profiles) |
 | `PUT` | `/profiles/self` | replace the owner's `self` part (persona, working rules, conventions) — `owner` one of the key's authors, `content`, `max_chars` (200–20000, default 4000); `written` or `unchanged` with the version; empty content clears the part; 400 for an over-budget or credential-bearing text |
 | `POST` | `/profiles/user/proposals` | propose a full replacement of the owner's `user` part — `owner` one of the key's authors, `content`, `reason` (1–1000 chars), `base_version` (the current user version, 0 when none), `max_chars` (200–20000, default 3000); 201 `{id, status, superseded}`, superseding the owner's pending proposal; 409 `{error: "stale", version}` when the base is not current |
@@ -176,7 +181,7 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
 `list_messages` · `claim_message` · `cancel_message` · `get_my_profile` ·
-`update_my_profile` · `propose_user_profile`
+`update_my_profile` · `propose_user_profile` · `list_entities` · `register_entity`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,
