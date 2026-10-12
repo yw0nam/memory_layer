@@ -701,12 +701,14 @@ agent without a user present never to pass `confirmed` and to leave a message in
 
 ```
 register_entity(entities, author, confirmed?)
-  -> GET /entities                 (summary: create / edit old -> new / archive)
-  -> consent.obtain(summary)       elicitation dialog | needs_consent | confirmed
+  -> GET /entities                 (summary: create / edit old -> new / archive;
+                                    an edit that changes nothing returns `unchanged`)
+  -> POST ... dry_run=true         every check runs, nothing is written; a refusal ends here
+  -> consent.obtain(prompt)        elicitation dialog | needs_consent | confirmed
   -> POST /entities | /entities/{slug}/archive   {author, consent_method}
 ```
 
-A write names an `author` that is one of the key's authors; `import` needs the key to be
+A request refused by its checks never reaches the user. A write names an `author` that is one of the key's authors; `import` needs the key to be
 admin and to carry `user`.
 
 ## Storage

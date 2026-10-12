@@ -125,7 +125,7 @@ A registered person, agent, project, organisation, place, or thing that facts ar
 _Avoid_: node, subject, topic
 
 **Consent**:
-The user's answer, inside the conversation, to a change of the entity registry (and, later, of the user part of a profile); recorded as the method the client reported: `elicitation`, `conversation`, or `import`.
+The user's answer, inside the conversation, to a change of the entity registry; recorded as the method the client reported: `elicitation`, `conversation`, or `import`.
 _Avoid_: approval, permission, authorization
 
 **Distilled**:

@@ -6,18 +6,27 @@ one of them. The `import` consent method is for an admin key carrying the `user`
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.serve.access.keys import AUTHOR_RE
-from memory_base.serve.common.http import error, iso, json_body
+from memory_base.serve.common.http import (
+    RequestError,
+    bounded_text,
+    error,
+    iso,
+    object_fields,
+    request_body,
+)
 from memory_base.serve.entities import store
 
 KINDS = ("person", "agent", "project", "org", "place", "thing")
 CONSENT_METHODS = ("elicitation", "conversation", "import")
 USER_AUTHOR = "user"
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 MAX_ITEMS = 50
 MAX_NAME_CHARS = 200
 MAX_ALIASES = 20
@@ -26,46 +35,30 @@ ITEM_FIELDS = {"slug", "kind", "name", "aliases", "description"}
 TIMESTAMPS = ("consented_at", "created_at", "updated_at", "archived_at")
 
 
-class RequestError(ValueError):
-    """A request breaks the schema; REST maps it to 400."""
-
-
-def _fields(body: Any, required: set[str], optional: set[str] = frozenset()) -> dict[str, Any]:
-    if not isinstance(body, dict):
-        raise RequestError("JSON body must be an object")
-    unknown = sorted(set(body) - required - optional)
-    if unknown:
-        raise RequestError(f"unknown field: {', '.join(unknown)}")
-    missing = sorted(required - set(body))
-    if missing:
-        raise RequestError(f"missing field: {', '.join(missing)}")
-    return body
-
-
-def _text(value: Any, name: str, high: int, low: int = 1) -> str:
-    if not isinstance(value, str) or not low <= len(value.strip()) <= high:
-        raise RequestError(f"{name} must be a string of {low} to {high} characters")
-    return value.strip()
+def _slug(value: Any) -> str:
+    if not isinstance(value, str) or not SLUG_RE.fullmatch(value):
+        raise RequestError("slug must match ^[a-z0-9][a-z0-9-]{0,39}$")
+    return value
 
 
 def _item(raw: Any) -> dict[str, Any]:
-    fields = _fields(raw, {"slug"}, ITEM_FIELDS - {"slug"})
-    if not isinstance(fields["slug"], str) or not AUTHOR_RE.fullmatch(fields["slug"]):
-        raise RequestError("slug must match ^[a-z0-9][a-z0-9-]{0,39}$")
-    item = {"slug": fields["slug"]}
+    fields = object_fields(raw, {"slug"}, ITEM_FIELDS - {"slug"})
+    item = {"slug": _slug(fields["slug"])}
     if "kind" in fields:
         if fields["kind"] not in KINDS:
             raise RequestError(f"kind must be one of {KINDS}")
         item["kind"] = fields["kind"]
     if "name" in fields:
-        item["name"] = _text(fields["name"], "name", MAX_NAME_CHARS)
+        item["name"] = bounded_text(fields["name"], "name", 1, MAX_NAME_CHARS)
     if "aliases" in fields:
         aliases = fields["aliases"]
         if not isinstance(aliases, list) or len(aliases) > MAX_ALIASES:
             raise RequestError(f"aliases must be a list of at most {MAX_ALIASES} strings")
-        item["aliases"] = [_text(alias, "alias", MAX_NAME_CHARS) for alias in aliases]
+        item["aliases"] = [bounded_text(alias, "alias", 1, MAX_NAME_CHARS) for alias in aliases]
     if "description" in fields:
-        item["description"] = _text(fields["description"], "description", MAX_DESCRIPTION_CHARS, 0)
+        item["description"] = bounded_text(
+            fields["description"], "description", 0, MAX_DESCRIPTION_CHARS
+        )
     return item
 
 
@@ -83,7 +76,7 @@ def _consent(fields: dict[str, Any]) -> tuple[str, str, bool]:
 
 def parse_upsert(body: Any) -> tuple[list[dict[str, Any]], str, str, bool]:
     """`{entities, author, consent_method, dry_run?}` → (items, author, method, dry_run)."""
-    fields = _fields(body, {"entities", "author", "consent_method"}, {"dry_run"})
+    fields = object_fields(body, {"entities", "author", "consent_method"}, {"dry_run"})
     items = fields["entities"]
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_ITEMS:
         raise RequestError(f"entities must be a list of 1 to {MAX_ITEMS} items")
@@ -102,13 +95,6 @@ def _public(row: dict[str, Any]) -> dict[str, Any]:
     return {**row, **{name: iso(row[name]) for name in TIMESTAMPS}}
 
 
-async def _body(request: Request) -> dict[str, Any]:
-    try:
-        return await json_body(request)
-    except Exception as exc:
-        raise RequestError(f"invalid JSON body: {exc}") from None
-
-
 async def list_route(request: Request) -> JSONResponse:
     """The registry ordered by slug; archived entities only with include_archived=true."""
     flag = request.query_params.get("include_archived", "false")
@@ -124,7 +110,7 @@ async def upsert_route(request: Request) -> JSONResponse:
 
     With `dry_run`, every check runs and nothing is written."""
     try:
-        items, author, method, dry_run = parse_upsert(await _body(request))
+        items, author, method, dry_run = parse_upsert(await request_body(request))
     except RequestError as exc:
         return error(str(exc))
     if (denied := _denied(request.state.key, author, method)) is not None:
@@ -143,14 +129,17 @@ async def upsert_route(request: Request) -> JSONResponse:
 async def archive_route(request: Request) -> JSONResponse:
     """Archive one active entity; `dry_run` checks without writing."""
     try:
-        fields = _fields(await _body(request), {"author", "consent_method"}, {"dry_run"})
+        slug = _slug(request.path_params["slug"])
+        fields = object_fields(
+            await request_body(request), {"author", "consent_method"}, {"dry_run"}
+        )
         author, method, dry_run = _consent(fields)
     except RequestError as exc:
         return error(str(exc))
     if (denied := _denied(request.state.key, author, method)) is not None:
         return denied
     try:
-        row = await store.archive(request.path_params["slug"], author, method, dry_run)
+        row = await store.archive(slug, author, method, dry_run)
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse({"entity": _public(row)})
