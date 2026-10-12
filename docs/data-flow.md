@@ -72,8 +72,9 @@ splits the text into sentences (on `.`, `;`, `!`, `?`, and newlines) and flags a
 sentence that carries both a code keyword (`pin`, `password`, `combination`, `otp`, or a
 `verification`, `pickup`, `locker`, `two-factor`, or similar `... code`) and a digit code
 of 3 to 8 digits; sentences about a `status`, `exit`, `error`, or similar code, dates,
-years, quantities with units, and versions are not flagged. It recognizes provider API keys (AWS access key ids, GitHub, GitLab, Slack, Stripe,
-SendGrid, npm, PyPI, OpenAI, Anthropic, Google), private-key headers, JSON Web Tokens, and
+years, quantities with units, and versions are not flagged. It recognizes provider API
+keys (AWS access key ids, GitHub, GitLab, Slack, Stripe, SendGrid, npm, PyPI, OpenAI,
+Anthropic, Google), private-key headers, JSON Web Tokens, and
 credentials embedded in URLs (`scheme://user:pass@host`). A hit refuses the write whole —
 nothing is redacted — and the reason names only the detector type, never the matched
 value. A note is scanned together with its raw tags before embedding and refused
