@@ -111,7 +111,7 @@ def test_ordinary_note_content_is_not_a_credential(text):
         "User's bike lock combination is 7-24-33; they keep forgetting it.",
         "The InPost locker pickup code is 7742 and the parcel waits at the Mokotow locker.",
         "Pharmacy verification code: 384 902, valid for the prescription pickup on 2026-10-12.",
-        'The bank two-factor login code was "123456" when the user set up the app.',
+        'The bank two-factor code was "123456" when the user set up the app.',
     ],
 )
 def test_a_short_code_stated_next_to_its_keyword_is_a_credential(text):
