@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; the approval path is superseded by ADR-0011 (consent inside the agent loop)
 
 ## Context
 

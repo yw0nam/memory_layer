@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; the content gate's judge prompt is superseded by ADR-0007
+Accepted; the content gate's judge prompt is superseded by ADR-0007; the no-quote rule is narrowed by ADR-0011, which lets a fact carry a bounded quote of the user's words
 
 ## Context
 
