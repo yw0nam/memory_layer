@@ -30,7 +30,7 @@ consumed by claiming instead of search.
           │                   restore_notes / delete_notes / send_message /
           │                   list_messages / claim_message / cancel_message /
           │                   get_my_profile / update_my_profile /
-          │                   propose_user_profile
+          │                   update_user_profile
           │                   (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
@@ -57,8 +57,8 @@ searched ([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)). No
 conversation turns are stored ([ADR-0005](docs/adr/0005-no-raw-conversation-storage.md)).
 `consolidation_actions` records each verdict an agent applied to a group of notes the
 server issued; the server judges no content ([ADR-0008](docs/adr/0008-consolidation-judged-by-an-agent-applied-by-the-server.md)).
-`agent_profiles` and `profile_proposals` hold each agent's profile versions and the
-proposals the user decides; they are never embedded or searched.
+`agent_profiles` holds each agent's profile versions, a `user` version with the consent it
+was written under; it is never embedded or searched.
 `entities` holds the registry of people, projects, and things that facts are about, each
 change made with the user's consent; it is never embedded or searched.
 
@@ -92,14 +92,10 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/entities` | the entity registry ordered by slug — `include_archived` (`true`\|`false`, default `false`); see [data flow](docs/data-flow.md#entity-registry) |
 | `POST` | `/entities` | create or edit 1–50 entities in one batch — `entities` (`slug`, and `kind`, `name`, `aliases`, `description` on a create), `author` (one of the key's authors), `dry_run` (run every check, write nothing), `consent_method` (`elicitation`\|`conversation`\|`import`; `import` needs an admin key carrying `user`); 409 `{error, holder, value}` when a slug, name, or alias is held by another entity |
 | `POST` | `/entities/{slug}/archive` | archive an active entity — `author`, `consent_method`, `dry_run` as for `POST /entities`; its name stays reserved |
-| `GET` | `/profiles` | one owner's profile — `owner` (an agent's author slug) required; `{owner, self_version, self, user_version, user, pending_proposal}` from one snapshot, a part `{content, created_at}` or null when absent or emptied, its version kept; a key whose authors hold the owner or `user` only; see [data flow](docs/data-flow.md#profiles) |
+| `GET` | `/profiles` | one owner's profile — `owner` (an agent's author slug) required; `{owner, self_version, self, user_version, user}` from one snapshot, a part `{content, created_at}` or null when absent or emptied, its version kept; a key whose authors hold the owner or `user` only; see [data flow](docs/data-flow.md#profiles) |
 | `PUT` | `/profiles/self` | replace the owner's `self` part (persona, working rules, conventions) — `owner` one of the key's authors, `content`, `max_chars` (200–20000, default 4000); `written` or `unchanged` with the version; empty content clears the part; 400 for an over-budget or credential-bearing text |
-| `POST` | `/profiles/user/proposals` | propose a full replacement of the owner's `user` part — `owner` one of the key's authors, `content`, `reason` (1–1000 chars), `base_version` (the current user version, 0 when none), `max_chars` (200–20000, default 3000); 201 `{id, status, superseded}`, superseding the owner's pending proposal; 409 `{error: "stale", version}` when the base is not current |
-| `GET` | `/profiles/user/proposals` | proposals newest first — `owner`, `status`, `limit` (1–200, default 20); without `owner`, every owner's, for keys carrying the `user` author only |
-| `GET` | `/profiles/user/proposals/{id}` | one proposal with `current_user_version` and `current_user_content` — the proposal owner's key or a `user` key |
-| `POST` | `/profiles/user/proposals/{id}/approve` | store a pending proposal as the owner's next user version (author `user`) — keys carrying the `user` author only; optional `note`; 409 `not_pending` with the status, or `stale` with the current version (the proposal stays pending) |
-| `POST` | `/profiles/user/proposals/{id}/reject` | reject a pending proposal — keys carrying the `user` author only; optional `note`; 409 `not_pending` with the status |
-| `GET` | `/profiles/versions` | one part's versions newest first with `content`, `author`, `proposal_id`, `created_at` — `owner`, `part` (`self`\|`user`), `limit` (1–200, default 20) |
+| `PUT` | `/profiles/user` | replace the owner's `user` part with the user's consent — `owner` one of the key's authors, `content`, `reason` (1–1000 chars), `base_version` (the current user version, 0 when none), `consent_method` (`elicitation`, `conversation`, or `import`; `import` needs an admin key carrying the `user` author), `dry_run`, `max_chars` (200–20000, default 3000); 200 `{status: "written" \| "unchanged", version}`, or with `dry_run` `{status: "valid", version, current}`; 409 `{error: "stale", version}` when the base is not current |
+| `GET` | `/profiles/versions` | one part's versions newest first with `content`, `author`, `reason`, `consent_method`, `consented_at`, `created_at` — `owner`, `part` (`self`\|`user`), `limit` (1–200, default 20) |
 | `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, `author`, optional `idempotency_key` and `expires_at`; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
 | `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown or out-of-scope id a 404 |
@@ -136,20 +132,16 @@ Profiles belong to agents
 ([ADR-0009](docs/adr/0009-profiles-owned-by-agents-user-part-approved-by-the-user.md)).
 Each owner (an agent's author slug) reads both parts with the MCP tool `get_my_profile`,
 has a `self` part it writes with `update_my_profile`, and a `user` part that changes only
-when the user approves the agent's `propose_user_profile` proposal with a key carrying the
-`user` author. Clients deliver the configured owner's profile at session start: the Claude
+when the user consents to the agent's `update_user_profile` call. Clients deliver the configured owner's profile at session start: the Claude
 Code SessionStart hook (`integrations/claude_code/session_start_hook.py`, owner
 `MEMORY_BASE_AUTHOR`, default `claude-code`, installed with a 10-second timeout as
 documented in `integrations/claude_code/prefetch_hook.py`) and the Hermes provider's
 system prompt block (config `owner`,
 [integrations/hermes/README.md](integrations/hermes/README.md)). Both print the two parts
-under their version lines and a notice while a proposal is pending. `Remember` and `Don't
-remember` sections in either part narrow or widen what the agent keeps with `save_memory`;
-the user part's sections outrank the agent's own
-([ADR-0010](docs/adr/0010-save-policy-a-minimal-default-that-profiles-refine.md)). The
-user decides with the approval CLI and the agents follow the `memory-profile-approval`
-skill; install both as described in
-[integrations/profile_approval/README.md](integrations/profile_approval/README.md).
+under their version lines. `Remember` and `Don't remember` sections in either part narrow
+or widen what the agent keeps with `save_memory`; the user part's sections outrank the
+agent's own
+([ADR-0010](docs/adr/0010-save-policy-a-minimal-default-that-profiles-refine.md)).
 
 Filters are bound to the source they belong to: `kind`, `tags`, `author`, and
 `since`/`until` require `source="memory"`, `repo` requires `source="code"`, and
@@ -181,7 +173,7 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
 `list_messages` · `claim_message` · `cancel_message` · `get_my_profile` ·
-`update_my_profile` · `propose_user_profile` · `list_entities` · `register_entity`
+`update_my_profile` · `update_user_profile` · `list_entities` · `register_entity`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,
@@ -207,12 +199,13 @@ pending until it is claimed, superseded, or cancelled unless its sender gives an
 `expires_at`; a note is durable knowledge.
 
 The profile tools read and write an agent's own profile: `get_my_profile` returns both
-parts with their versions and the pending proposal, `update_my_profile` replaces its whole
-`self` part, and `propose_user_profile` proposes a full replacement of its `user` part
-against the user version delivered at session start or read with `get_my_profile`. A stale
-proposal fails with the current version and asks the agent to refresh its profile context
-and reconsider the replacement. No MCP tool approves or rejects a profile; the user
-decides with the approval CLI.
+parts with their versions, `update_my_profile` replaces its whole
+`self` part, and `update_user_profile` replaces its `user` part with the user's consent
+against the user version delivered at session start or read with `get_my_profile`: a dialog
+inside the call on a client with elicitation, otherwise a `needs_consent` reply the agent
+puts to the user before calling again with `confirmed=true`. A stale base fails with the
+current version before any consent and asks the agent to refresh its profile context and
+reconsider the replacement.
 
 ## Running
 

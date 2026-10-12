@@ -69,7 +69,7 @@ def test_the_profile_proposal_table_is_migrated_away(monkeypatch):
     sql = " ".join("\n".join(conn.queries).split())
     assert 'CREATE TABLE IF NOT EXISTS "scratch_schema".profile_proposals' not in sql
     assert 'DROP TABLE IF EXISTS "scratch_schema".profile_proposals' in sql
-    assert 'DROP COLUMN IF EXISTS proposal_id' in sql
+    assert "DROP COLUMN IF EXISTS proposal_id" in sql
 
 
 def test_messages_table_carries_the_lifecycle_constraints_and_indexes(monkeypatch):

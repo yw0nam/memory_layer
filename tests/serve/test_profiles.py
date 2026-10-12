@@ -270,7 +270,6 @@ def test_a_revoked_key_is_never_resolved(monkeypatch, fake_db):
     assert fake_db.calls == []
 
 
-
 # ---- authority --------------------------------------------------------------
 
 

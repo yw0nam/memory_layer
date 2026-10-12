@@ -13,6 +13,8 @@ from typing import Any, Literal
 from mcp.server.fastmcp import Context
 from pydantic import BaseModel
 
+CONSENT_METHODS = ("elicitation", "conversation", "import")
+
 
 @dataclass(frozen=True)
 class Consent:

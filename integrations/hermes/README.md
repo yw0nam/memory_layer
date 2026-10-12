@@ -7,12 +7,10 @@ injected by recency; every prefetched note matched the turn's query at `min_scor
 - **Session start** — `initialize` calls `GET /profiles?owner=<owner>` once for the
   configured `owner` and `system_prompt_block` returns the result for the whole session:
   the line `Memory: standing profile for <owner>. Apply it to every task.`, then
-  `## user (v<n>)` and `## self (v<n>)`, each followed by its content or `(empty)`, and,
-  while a proposal to change the user part awaits the user's approval, a notice naming the
-  proposal id and the approval CLI (never the proposal's content). This is the body of the
+  `## user (v<n>)` and `## self (v<n>)`, each followed by its content or `(empty)`. This is the body of the
   block the Claude Code SessionStart hook prints, without the `<memory-context>` fence.
   The version lines print whenever the fetch succeeds, so the agent always has the user
-  version a `propose_user_profile` call is written against. Memory-context tags inside a
+  version a `update_user_profile` call is written against. Memory-context tags inside a
   part are defused to `[memory-context]`. Returns nothing on any error or malformed
   profile, and fetches nothing when `owner` is not configured.
 - **Every turn** — runs a semantic search over memory (all kinds) with the profile's
@@ -85,7 +83,5 @@ memory:
 ```
 
 The agent writes its profile through the memory-base MCP tools `update_my_profile` and
-`propose_user_profile` and reads it back with `get_my_profile`. Install the
-`memory-profile-approval` skill into the Hermes profile's `skills/` directory so the agent
-hands each pending proposal to the user, as described in
-[../profile_approval/README.md](../profile_approval/README.md).
+`update_user_profile` (the user consents to each change of the user part) and reads it back
+with `get_my_profile`.

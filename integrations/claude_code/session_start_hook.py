@@ -4,10 +4,9 @@ Reads the hook payload on stdin and prints one <memory-context> fence holding,
 in order, the configured owner's profile (`GET /profiles?owner=<owner>`) and the
 pending handoffs addressed to this repository. The profile block names the owner,
 then prints `## user (v<n>)` and `## self (v<n>)`, each with its content or
-`(empty)`, so the session always knows the user version a proposal must be
-written against; when a proposal awaits the user's approval it adds a notice
-naming the proposal id and the approval CLI, never the proposal's content. A
-failed or malformed profile fetch prints no profile block and no version.
+`(empty)`, so the session always knows the user version an update must be
+written against. A failed or malformed profile fetch prints no profile block
+and no version.
 The handoff scope `repo:<host>/<path>` comes from the `origin` remote of the
 payload's `cwd`; a cwd outside a git repository, without an `origin` remote, or
 whose origin is not a remote host gets the profile alone. At most ten handoffs
@@ -49,12 +48,6 @@ HANDOFF_HEADER = (
 )
 DEFAULT_OWNER = "claude-code"
 PROFILE_HEADER = "Memory: standing profile for {owner}. Apply it to every task."
-PROFILE_CLI = "~/.config/memory-base/mb_profile.py"
-PENDING_NOTICE = (
-    "A proposed change to the user profile (proposal {id}) awaits the user's approval. "
-    f"Ask the user to run `! python3 {PROFILE_CLI} show {{id}}` to inspect its diff, then "
-    "approve or reject it with the memory-profile-approval skill."
-)
 
 _FENCE_TAG = re.compile(r"<\s*/?\s*memory-context", re.IGNORECASE)
 _SCP_ORIGIN = re.compile(r"(?:[^:@/]+@)?(?P<host>[^:/]+):(?P<path>.+)")
@@ -128,7 +121,7 @@ def _part(profile: dict, name: str) -> tuple[int, str]:
 
 
 def format_profile(owner: str, profile: dict) -> str:
-    """The owner's header, both parts under their version lines, and a pending notice.
+    """The owner's header, and both parts under their version lines.
 
     Raises on a malformed profile, so a bad response never prints a fabricated version.
     """
@@ -138,11 +131,6 @@ def format_profile(owner: str, profile: dict) -> str:
     for name in ("user", "self"):
         version, content = _part(profile, name)
         lines += [f"## {name} (v{version})", content or "(empty)"]
-    pending = profile["pending_proposal"]
-    if pending is not None:
-        if not isinstance(pending, dict) or type(pending.get("id")) is not int:
-            raise ValueError("pending_proposal is malformed")
-        lines.append(PENDING_NOTICE.format(id=pending["id"]))
     return _defuse("\n".join(lines))
 
 

@@ -113,19 +113,15 @@ The agent a profile belongs to, named by its author slug (`claude-code`, `codex`
 _Avoid_: profile namespace, slot
 
 **Part**:
-One of an owner's two profile documents: `self`, the agent's persona, working rules, and conventions, which the owner replaces at will; and `user`, the user as this agent needs to know them, which changes only by an approved proposal. Each owner's `user` part is its own document.
+One of an owner's two profile documents: `self`, the agent's persona, working rules, and conventions, which the owner replaces at will; and `user`, the user as this agent needs to know them, which changes only with the user's consent, recorded on the version. Each owner's `user` part is its own document.
 _Avoid_: slot, section
-
-**Proposal**:
-An owner's full replacement text for its `user` part with a reason and the user version it was written against. It is `pending` until a key carrying the `user` author approves or rejects it, or until the owner's next proposal supersedes it; an approval whose base is not the current user version is refused as stale.
-_Avoid_: suggestion, draft, edit
 
 **Entity**:
 A registered person, agent, project, organisation, place, or thing that facts are about, keyed by a slug the user consented to. Aliases resolve other spellings of its name; the server infers no equivalence between names and merges nothing.
 _Avoid_: node, subject, topic
 
 **Consent**:
-The user's answer, inside the conversation, to a change of the entity registry; recorded as the method the client reported: `elicitation`, `conversation`, or `import`.
+The user's answer, inside the conversation, to a change of the entity registry or of a profile's `user` part; recorded as the method the client reported: `elicitation`, `conversation`, or `import`.
 _Avoid_: approval, permission, authorization
 
 **Distilled**:

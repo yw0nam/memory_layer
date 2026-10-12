@@ -13,6 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.serve.access.keys import AUTHOR_RE
+from memory_base.serve.common.consent import CONSENT_METHODS
 from memory_base.serve.common.http import (
     RequestError,
     bounded_text,
@@ -24,7 +25,6 @@ from memory_base.serve.common.http import (
 from memory_base.serve.entities import store
 
 KINDS = ("person", "agent", "project", "org", "place", "thing")
-CONSENT_METHODS = ("elicitation", "conversation", "import")
 USER_AUTHOR = "user"
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 MAX_ITEMS = 50

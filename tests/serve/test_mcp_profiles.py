@@ -230,7 +230,7 @@ def test_a_base_that_advances_after_the_dry_run_is_stale_on_the_write(monkeypatc
 
 
 def test_the_body_is_a_diff_for_a_one_line_edit():
-    current = "\n".join(f"line {i}" for i in range(10))
+    current = "\n".join(f"line {i}" for i in range(40))
     content = current.replace("line 4", "line four")
     body = tools.change_body(current, content, 3)
     assert body.startswith("--- v3\n+++ v4\n")
