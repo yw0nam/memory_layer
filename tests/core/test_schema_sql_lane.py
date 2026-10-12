@@ -47,33 +47,29 @@ def test_agent_profiles_keep_every_version_of_each_part_unembedded(monkeypatch):
     assert "version int NOT NULL" in body
     assert "content text NOT NULL" in body
     assert "author text NOT NULL" in body
-    assert "proposal_id bigint," in body
+    assert "reason text," in body
+    assert (
+        "consent_method text CHECK (consent_method IN ('elicitation', 'conversation', 'import'))"
+        in body
+    )
+    assert "consented_at double precision," in body
+    assert "proposal_id" not in body
     assert "created_at double precision NOT NULL" in body
     assert "UNIQUE (owner, part, version)" in body
     assert "embedding" not in body
     assert "namespace" not in body
 
 
-def test_profile_proposals_hold_the_decision_metadata(monkeypatch):
+def test_the_profile_proposal_table_is_migrated_away(monkeypatch):
     monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
     conn = RecordingConnection()
 
     asyncio.run(schema.ensure_schema(conn))
 
-    body = _table_body("\n".join(conn.queries), "profile_proposals")
-    assert "id bigserial PRIMARY KEY" in body
-    assert "owner text NOT NULL" in body
-    assert "content text NOT NULL" in body
-    assert "reason text NOT NULL" in body
-    assert "base_version int NOT NULL" in body
-    assert (
-        "status text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'superseded'))"
-        in body
-    )
-    assert "created_at double precision NOT NULL" in body
-    assert "decided_at double precision," in body
-    assert "decision_note text" in body
-    assert "namespace" not in body
+    sql = " ".join("\n".join(conn.queries).split())
+    assert 'CREATE TABLE IF NOT EXISTS "scratch_schema".profile_proposals' not in sql
+    assert 'DROP TABLE IF EXISTS "scratch_schema".profile_proposals' in sql
+    assert 'DROP COLUMN IF EXISTS proposal_id' in sql
 
 
 def test_messages_table_carries_the_lifecycle_constraints_and_indexes(monkeypatch):

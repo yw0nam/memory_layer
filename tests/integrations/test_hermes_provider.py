@@ -64,7 +64,6 @@ PROFILE = {
     "self": {"content": "Speak warmly.", "created_at": "2026-10-01T00:00:00+00:00"},
     "user_version": 0,
     "user": None,
-    "pending_proposal": None,
 }
 
 
