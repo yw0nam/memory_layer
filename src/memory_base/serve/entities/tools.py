@@ -9,37 +9,28 @@ from mcp.server.fastmcp import Context
 from memory_base.serve.common import consent, rest_client
 
 FIELDS = ("kind", "name", "aliases", "description")
+PROMPT_HEADER = "memory-base asks for your consent to change the entity registry:"
 
 
 def _show(value: Any) -> str:
     return ", ".join(value) if isinstance(value, list) else str(value)
 
 
-def _line(item: dict[str, Any], current: dict[str, Any] | None) -> str:
+def _line(item: dict[str, Any], current: dict[str, Any] | None) -> str | None:
+    """The summary line of one item; None for an edit that changes nothing."""
     slug = item["slug"]
     if current is None:
-        aliases = _show(item.get("aliases", []))
-        description = item.get("description", "")
         return (
             f"create {slug} ({item.get('kind')}): {item.get('name')}; "
-            f"aliases: {aliases}; description: {description}"
+            f"aliases: {_show(item.get('aliases', []))}; "
+            f"description: {item.get('description', '')}"
         )
     changes = [
         f"{field}: {_show(current[field])} -> {_show(item[field])}"
         for field in FIELDS
         if field in item and item[field] != current[field]
     ]
-    return f"edit {slug}: " + ("; ".join(changes) or "no change")
-
-
-def _summary(
-    items: list[dict[str, Any]], registry: dict[str, dict[str, Any]], archive: bool
-) -> str:
-    if archive:
-        slug = items[0]["slug"]
-        current = registry.get(slug)
-        return f"archive {slug} ({current['name'] if current else 'unknown'})"
-    return "\n".join(_line(item, registry.get(item["slug"])) for item in items)
+    return f"edit {slug}: " + "; ".join(changes) if changes else None
 
 
 async def list_entities(
@@ -78,7 +69,7 @@ async def register_entity(
     writes nothing, so ask the user in the conversation, then call again with confirmed=true
     and the same input. In an unattended session (cron, no user present) never pass confirmed;
     send a message naming the entity on the messages lane instead, and the next interactive
-    session asks. The user is an entity of kind person; a project entity carries its
+    session asks. A refused request never reaches the user. The user is an entity of kind person; a project entity carries its
     repository origin among its aliases. `author` is one of the key's authors.
     """
     if archive and (len(entities) != 1 or set(entities[0]) != {"slug"}):
@@ -88,14 +79,29 @@ async def register_entity(
         "GET", "/entities", params={"include_archived": "true"}, headers=headers
     )
     registry = {row["slug"]: row for row in current["entities"]}
-    summary = _summary(entities, registry, archive)
-    consent_result = await consent.obtain(ctx, summary, confirmed)
-    if isinstance(consent_result, consent.NeedsConsent):
-        return {"status": "needs_consent", "summary": summary}
-    body = {"author": author, "consent_method": consent_result.method}
-    path, body = (
-        (f"/entities/{entities[0]['slug']}/archive", body)
-        if archive
-        else ("/entities", {"entities": entities, **body})
+    if archive:
+        slug = entities[0]["slug"]
+        name = registry[slug]["name"] if slug in registry else "unknown"
+        lines = [f"archive {slug} ({name})"]
+        path, payload = f"/entities/{slug}/archive", {}
+    else:
+        pairs = [(item, _line(item, registry.get(item["slug"]))) for item in entities]
+        entities = [item for item, line in pairs if line is not None]
+        if not entities:
+            return {"status": "unchanged"}
+        lines = [line for _, line in pairs if line is not None]
+        path, payload = "/entities", {"entities": entities}
+    body = {"author": author, **payload}
+    await rest_client.call(
+        "POST",
+        path,
+        json={**body, "consent_method": "conversation", "dry_run": True},
+        headers=headers,
     )
-    return await rest_client.call("POST", path, json=body, headers=headers)
+    summary = "\n".join(lines)
+    result = await consent.obtain(ctx, f"{PROMPT_HEADER}\n{summary}", confirmed)
+    if isinstance(result, consent.NeedsConsent):
+        return {"status": "needs_consent", "summary": summary}
+    return await rest_client.call(
+        "POST", path, json={**body, "consent_method": result.method}, headers=headers
+    )

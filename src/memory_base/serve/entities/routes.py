@@ -69,18 +69,21 @@ def _item(raw: Any) -> dict[str, Any]:
     return item
 
 
-def _consent(fields: dict[str, Any]) -> tuple[str, str]:
+def _consent(fields: dict[str, Any]) -> tuple[str, str, bool]:
     author, method = fields["author"], fields["consent_method"]
+    dry_run = fields.get("dry_run", False)
+    if not isinstance(dry_run, bool):
+        raise RequestError("dry_run must be a boolean")
     if not isinstance(author, str) or not AUTHOR_RE.fullmatch(author):
         raise RequestError("author must be an author slug")
     if method not in CONSENT_METHODS:
         raise RequestError(f"consent_method must be one of {CONSENT_METHODS}")
-    return author, method
+    return author, method, dry_run
 
 
-def parse_upsert(body: Any) -> tuple[list[dict[str, Any]], str, str]:
-    """`{entities, author, consent_method}` → (items, author, consent_method)."""
-    fields = _fields(body, {"entities", "author", "consent_method"})
+def parse_upsert(body: Any) -> tuple[list[dict[str, Any]], str, str, bool]:
+    """`{entities, author, consent_method, dry_run?}` → (items, author, method, dry_run)."""
+    fields = _fields(body, {"entities", "author", "consent_method"}, {"dry_run"})
     items = fields["entities"]
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_ITEMS:
         raise RequestError(f"entities must be a list of 1 to {MAX_ITEMS} items")
@@ -117,15 +120,17 @@ async def list_route(request: Request) -> JSONResponse:
 
 
 async def upsert_route(request: Request) -> JSONResponse:
-    """Create or edit entities as one batch; 409 names the entity that holds a colliding value."""
+    """Create or edit entities as one batch; 409 names the entity that holds a colliding value.
+
+    With `dry_run`, every check runs and nothing is written."""
     try:
-        items, author, method = parse_upsert(await _body(request))
+        items, author, method, dry_run = parse_upsert(await _body(request))
     except RequestError as exc:
         return error(str(exc))
     if (denied := _denied(request.state.key, author, method)) is not None:
         return denied
     try:
-        rows = await store.upsert(items, author, method)
+        rows = await store.upsert(items, author, method, dry_run)
     except store.Collision as exc:
         return JSONResponse(
             {"error": str(exc), "holder": exc.holder, "value": exc.value}, status_code=409
@@ -136,15 +141,16 @@ async def upsert_route(request: Request) -> JSONResponse:
 
 
 async def archive_route(request: Request) -> JSONResponse:
-    """Archive one active entity."""
+    """Archive one active entity; `dry_run` checks without writing."""
     try:
-        author, method = _consent(_fields(await _body(request), {"author", "consent_method"}))
+        fields = _fields(await _body(request), {"author", "consent_method"}, {"dry_run"})
+        author, method, dry_run = _consent(fields)
     except RequestError as exc:
         return error(str(exc))
     if (denied := _denied(request.state.key, author, method)) is not None:
         return denied
     try:
-        row = await store.archive(request.path_params["slug"], author, method)
+        row = await store.archive(request.path_params["slug"], author, method, dry_run)
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse({"entity": _public(row)})

@@ -8,17 +8,15 @@ The recorded method is what the client reported, not proof that a person answere
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import Context
 from pydantic import BaseModel
 
-HEADER = "memory-base asks for your consent to change the entity registry:"
-
 
 @dataclass(frozen=True)
 class Consent:
-    method: str  # "elicitation" | "conversation"
+    method: Literal["elicitation", "conversation"]
 
 
 @dataclass(frozen=True)
@@ -43,17 +41,17 @@ def elicitation_available(ctx: Context | None) -> bool:
     return capability is not None and (capability.form is not None or capability.url is None)
 
 
-async def obtain(ctx: Context | None, summary: str, confirmed: bool) -> Consent | NeedsConsent:
-    """The user's consent to `summary`, or a request for the agent to ask the user.
+async def obtain(ctx: Context | None, prompt: str, confirmed: bool) -> Consent | NeedsConsent:
+    """The user's consent to `prompt`, or a request for the agent to ask the user.
 
     Raises ConsentRefused when the user declines or `confirmed` is sent to a client that
     asks the user itself.
     """
     if not elicitation_available(ctx):
-        return Consent("conversation") if confirmed else NeedsConsent(summary)
+        return Consent("conversation") if confirmed else NeedsConsent(prompt)
     if confirmed:
         raise ConsentRefused("this client asks the user itself; call again without confirmed")
-    result: Any = await ctx.elicit(f"{HEADER}\n{summary}", Approve)
+    result: Any = await ctx.elicit(prompt, Approve)
     if result.action == "accept" and result.data.approve:
         return Consent("elicitation")
     raise ConsentRefused("the user did not consent")
