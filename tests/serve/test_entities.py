@@ -47,11 +47,14 @@ class FakeConnection:
         return FakeTransaction(self)
 
     async def execute(self, query, *args):
+        assert "pg_advisory_xact_lock" in query
+        self.locked = True
+        return "SELECT 1"
+
+    async def fetchrow(self, query, *args):
         q = " ".join(query.split())
-        if "pg_advisory_xact_lock" in q:
-            self.locked = True
-            return "SELECT 1"
         assert self.locked, "every read and write runs under the registry lock"
+        assert q.endswith("RETURNING *")
         if q.startswith("INSERT INTO"):
             slug, kind, name, aliases, description, author, method, now = args
             self.rows[slug] = dict(
@@ -59,21 +62,19 @@ class FakeConnection:
                 created_by=author, updated_by=author, consent_method=method, consented_at=now,
                 created_at=now, updated_at=now, archived_at=None,
             )  # fmt: skip
-        elif q.startswith("UPDATE") and "archived_at = $" in q:
+        elif "archived_at = $" in q:
             slug, now, author, method = args
             self.rows[slug].update(
                 archived_at=now, updated_at=now, updated_by=author,
                 consent_method=method, consented_at=now,
             )  # fmt: skip
-        elif q.startswith("UPDATE"):
+        else:
             slug, kind, name, aliases, description, author, method, now = args
             self.rows[slug].update(
                 kind=kind, name=name, aliases=aliases, description=description,
                 updated_by=author, consent_method=method, consented_at=now, updated_at=now,
             )  # fmt: skip
-        else:
-            raise AssertionError(f"unexpected execute: {q}")
-        return "OK"
+        return copy.deepcopy(self.rows[slug])
 
     async def fetch(self, query, *args):
         assert self.locked or "pg_advisory" not in query
@@ -118,16 +119,17 @@ def _item(slug="natsume", kind="person", name="Natsume", **fields):
     return {"slug": slug, "kind": kind, "name": name, **fields}
 
 
-def _post(*items, author="claude-code", consent_method="conversation"):
+def _post(*items, author="claude-code", consent_method="conversation", **extra):
     return client.post(
         "/entities",
-        json={"entities": list(items), "author": author, "consent_method": consent_method},
+        json={"entities": list(items), "author": author, "consent_method": consent_method} | extra,
     )
 
 
-def _archive(slug="natsume", author="claude-code", consent_method="conversation"):
+def _archive(slug="natsume", author="claude-code", consent_method="conversation", **extra):
     return client.post(
-        f"/entities/{slug}/archive", json={"author": author, "consent_method": consent_method}
+        f"/entities/{slug}/archive",
+        json={"author": author, "consent_method": consent_method} | extra,
     )
 
 
@@ -168,8 +170,9 @@ def test_create_without_kind_or_name_is_refused(fake_db, agent):
     assert "kind" in response.json()["error"]
 
 
-def test_invalid_kind_is_refused(fake_db, agent):
+def test_invalid_kind_or_consent_method_is_a_bad_request(fake_db, agent):
     assert _post(_item(kind="robot")).status_code == 400
+    assert _post(_item(), consent_method="telepathy").status_code == 400
     assert fake_db.rows == {}
 
 
@@ -191,19 +194,22 @@ def test_a_name_collides_by_nfkc_and_case(fake_db, agent):
     _collision(_post(_item(slug="yui2", name="yui")), "yui", "yui")
 
 
-def test_a_new_slug_collides_with_an_existing_name(fake_db, agent):
-    _post(_item(slug="natsume", name="Natsume"))
-    _collision(_post(_item(slug="other", name="Other", aliases=["natsume"])), "natsume", "natsume")
-
-
 def test_an_alias_collides_with_another_entitys_alias(fake_db, agent):
     _post(_item(aliases=["Nat"]))
     _collision(_post(_item(slug="other", name="Other", aliases=["nat"])), "natsume", "nat")
 
 
-def test_a_new_slug_equal_to_an_existing_alias_collides(fake_db, agent):
-    _post(_item(aliases=["nat"]))
-    _collision(_post(_item(slug="nat", name="Nat Two")), "natsume", "nat")
+@pytest.mark.parametrize(
+    ("new", "value"),
+    [
+        (_item(slug="other", name="Other", aliases=["natsume"]), "natsume"),
+        (_item(slug="nat", name="Nat Two"), "nat"),
+    ],
+    ids=["alias-equals-a-slug", "slug-equals-an-alias"],
+)
+def test_a_new_value_equal_to_an_existing_one_collides_either_way(fake_db, agent, new, value):
+    _post(_item(aliases=["Nat"]))
+    _collision(_post(new), "natsume", value)
 
 
 def test_a_repeated_slug_in_one_batch_is_refused(fake_db, agent):
@@ -270,5 +276,16 @@ def test_import_needs_an_admin_key_carrying_the_user_author(fake_db, agent, monk
     assert _post(_item(), author="user", consent_method="import").status_code == 200
 
 
-def test_an_unknown_consent_method_is_a_bad_request(fake_db, agent):
-    assert _post(_item(), consent_method="telepathy").status_code == 400
+# ---- dry run ----------------------------------------------------------------
+
+
+def test_a_dry_run_validates_and_returns_the_rows_without_writing(fake_db, agent):
+    response = _post(_item(), dry_run=True)
+    assert response.status_code == 200
+    assert response.json()["entities"][0]["slug"] == "natsume"
+    assert fake_db.rows == {}
+    _post(_item())
+    assert _post(_item(slug="other", name="natsume"), dry_run=True).status_code == 409
+    assert _archive(dry_run=True).status_code == 200
+    assert fake_db.rows["natsume"]["archived_at"] is None
+    assert _archive(slug="ghost", dry_run=True).status_code == 400
