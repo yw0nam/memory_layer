@@ -75,8 +75,8 @@ class GoogleApiKeyDetector(RegexBasedDetector):
 
 _CODE_KEYWORD = (
     r"(?:pin|passcode|password|passphrase|combination|otp"
-    r"|(?:one-time|verification|pick-?up|locker|access|door|gate|security|2fa|mfa|login"
-    r"|auth|confirmation|unlock|lock|entry)[ -]code)"
+    r"|(?:one-time|two-factor|verification|pick-?up|locker|access|door|gate|security|2fa"
+    r"|mfa|login|auth|confirmation|unlock|lock|entry)[ -]code)"
 )
 
 
