@@ -97,9 +97,10 @@ by the MCP client:
   written. The agent asks the user in the conversation and calls again with `confirmed`
   and the same payload. The server validates the payload again; a profile's base version
   must still be current. A client that advertises elicitation cannot use `confirmed`.
-- An unattended session (the Hermes integration marks its cron turns) is refused: no
-  entity is created and no fact is stored. The agent leaves a message on the messages
-  lane, and the next interactive session asks the user.
+- The server cannot tell an unattended session from an interactive one. The server
+  instructions tell an agent in an unattended session (a cron turn, no user present) never
+  to pass `confirmed`; it leaves a message on the messages lane, and the next interactive
+  session asks the user.
 - The row records `consent_method` (`elicitation`, `conversation`, or `import`) and
   `consented_at`. The method is what the client reported, not proof that a person
   answered, and the tool descriptions say so.

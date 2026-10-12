@@ -32,6 +32,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from memory_base.core.logger import setup_logging
 from memory_base.serve.documents import tools as document_tools
+from memory_base.serve.entities import tools as entity_tools
 from memory_base.serve.messages import tools as message_tools
 from memory_base.serve.notes import tools as note_tools
 from memory_base.serve.profiles import tools as profile_tools
@@ -69,6 +70,14 @@ call. Before saving, search_memory the same subject; when the new note replaces 
 supersede it rather than adding a note that contradicts it, and if other active notes
 state the same stale value, archive them with archive_notes."""
 
+_ENTITY_REGISTRY = """\
+Entities are a registry of the people, projects, and things the user has consented to.
+Before naming one, list_entities and reuse a slug or alias that exists; register_entity
+refuses a name another entity holds. Every create, edit, and archive needs the user's
+consent: a dialog on a client with elicitation, otherwise a needs_consent reply that you
+put to the user before calling again with confirmed=true. In an unattended session
+(cron, no user present) never pass confirmed; leave a message instead."""
+
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
 searchable, listed while pending and consumed by claiming. At the start of a session,
@@ -101,6 +110,7 @@ SERVER_INSTRUCTIONS = "\n\n".join(
     (
         _SERVER_INSTRUCTIONS_OPENING.rstrip("\n"),
         _WRITE_POLICY,
+        _ENTITY_REGISTRY,
         _MESSAGE_LANE,
         _SERVER_INSTRUCTIONS_CLOSING,
     )
@@ -138,6 +148,8 @@ mcp.tool()(message_tools.cancel_message)
 mcp.tool()(profile_tools.get_my_profile)
 mcp.tool()(profile_tools.update_my_profile)
 mcp.tool()(profile_tools.propose_user_profile)
+mcp.tool()(entity_tools.list_entities)
+mcp.tool()(entity_tools.register_entity)
 mcp.tool()(note_tools.list_memory_duplicates)
 mcp.tool()(note_tools.archive_notes)
 mcp.tool()(note_tools.restore_notes)

@@ -13,7 +13,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.core.secrets import find_secret
-from memory_base.serve.common.http import error, json_body
+from memory_base.serve.common.http import (
+    RequestError,
+    bounded_text,
+    error,
+    object_fields,
+    request_body,
+    stripped,
+)
 from memory_base.serve.access.keys import AUTHOR_RE
 from memory_base.serve.profiles import store
 from memory_base.serve.profiles.store import USER_AUTHOR
@@ -36,10 +43,6 @@ _POSITIVE = re.compile(r"[1-9][0-9]*")
 _DIGITS = re.compile(r"[0-9]+")
 
 
-class RequestError(ValueError):
-    """A request breaks the schema; REST maps it to 400."""
-
-
 class Refused(ValueError):
     """A text fails a content check; nothing is stored. REST maps it to 400."""
 
@@ -60,28 +63,10 @@ def _owner(value: Any) -> str:
     return value
 
 
-def _fields(body: Any, required: set[str], optional: set[str]) -> dict[str, Any]:
-    if not isinstance(body, dict):
-        raise RequestError("JSON body must be an object")
-    unknown = sorted(set(body) - required - optional)
-    if unknown:
-        raise RequestError(f"unknown field: {', '.join(unknown)}")
-    missing = sorted(required - set(body))
-    if missing:
-        raise RequestError(f"missing field: {', '.join(missing)}")
-    return body
-
-
 def _integer(value: Any, name: str, low: int, high: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
         raise RequestError(f"{name} must be an integer between {low} and {high}")
     return value
-
-
-def _string(value: Any, name: str) -> str:
-    if not isinstance(value, str):
-        raise RequestError(f"{name} must be a string")
-    return value.strip()
 
 
 def _no_secret(text: str, name: str) -> None:
@@ -91,7 +76,7 @@ def _no_secret(text: str, name: str) -> None:
 
 
 def _content(value: Any, max_chars: int) -> str:
-    content = _string(value, "content")
+    content = stripped(value, "content")
     if len(content) > max_chars:
         raise Refused(
             f"content is {len(content)} characters, over max_chars {max_chars}",
@@ -103,9 +88,7 @@ def _content(value: Any, max_chars: int) -> str:
 
 
 def _bounded_text(value: Any, name: str, low: int, high: int) -> str:
-    text = _string(value, name)
-    if not low <= len(text) <= high:
-        raise RequestError(f"{name} must hold {low} to {high} characters after stripping")
+    text = bounded_text(value, name, low, high)
     _no_secret(text, name)
     return text
 
@@ -116,14 +99,14 @@ def _max_chars(body: dict[str, Any], default: int) -> int:
 
 def parse_self(body: Any) -> tuple[str, str]:
     """`{owner, content, max_chars?}` → (owner, stripped content)."""
-    fields = _fields(body, {"owner", "content"}, {"max_chars"})
+    fields = object_fields(body, {"owner", "content"}, {"max_chars"})
     owner = _owner(fields["owner"])
     return owner, _content(fields["content"], _max_chars(fields, DEFAULT_SELF_MAX_CHARS))
 
 
 def parse_proposal(body: Any) -> tuple[str, str, str, int]:
     """`{owner, content, reason, base_version, max_chars?}` → (owner, content, reason, base)."""
-    fields = _fields(body, {"owner", "content", "reason", "base_version"}, {"max_chars"})
+    fields = object_fields(body, {"owner", "content", "reason", "base_version"}, {"max_chars"})
     owner = _owner(fields["owner"])
     base_version = _integer(fields["base_version"], "base_version", 0, MAX_BASE_VERSION)
     content = _content(fields["content"], _max_chars(fields, DEFAULT_USER_MAX_CHARS))
@@ -133,7 +116,7 @@ def parse_proposal(body: Any) -> tuple[str, str, str, int]:
 
 def parse_decision(body: Any) -> str | None:
     """`{note?}` → the stripped note, or None when omitted."""
-    fields = _fields(body, set(), {"note"})
+    fields = object_fields(body, set(), {"note"})
     if "note" not in fields:
         return None
     return _bounded_text(fields["note"], "note", 0, MAX_NOTE_CHARS)
@@ -163,13 +146,6 @@ def _limit(value: str | None) -> int:
     if not _DIGITS.fullmatch(value) or not 1 <= int(value) <= MAX_LIMIT:
         raise RequestError(f"limit must be an integer between 1 and {MAX_LIMIT}")
     return int(value)
-
-
-async def _body(request: Request) -> dict[str, Any]:
-    try:
-        return await json_body(request)
-    except Exception as exc:
-        raise RequestError(f"invalid JSON body: {exc}") from None
 
 
 # ---- routes -----------------------------------------------------------------
@@ -212,7 +188,7 @@ async def self_route(request: Request) -> JSONResponse:
     key = request.state.key
     try:
         _query(request, ())
-        owner, content = parse_self(await _body(request))
+        owner, content = parse_self(await request_body(request))
     except RequestError as exc:
         return error(str(exc))
     except Refused as exc:
@@ -227,7 +203,7 @@ async def propose_route(request: Request) -> JSONResponse:
     key = request.state.key
     try:
         _query(request, ())
-        owner, content, reason, base_version = parse_proposal(await _body(request))
+        owner, content, reason, base_version = parse_proposal(await request_body(request))
     except RequestError as exc:
         return error(str(exc))
     except Refused as exc:
@@ -283,7 +259,7 @@ async def _decision_route(request: Request, decide) -> JSONResponse:
     try:
         proposal_id = parse_proposal_id(request.path_params["proposal_id"])
         _query(request, ())
-        note = parse_decision(await _body(request))
+        note = parse_decision(await request_body(request))
     except RequestError as exc:
         return error(str(exc))
     except Refused as exc:
