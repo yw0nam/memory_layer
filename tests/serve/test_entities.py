@@ -20,10 +20,6 @@ client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
 NOW = 1_700_000_000.0
 GITHUB_TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
-COLUMNS = (
-    "slug kind name aliases description created_by updated_by consent_method "
-    "consented_at created_at updated_at archived_at"
-).split()
 
 
 class FakeTransaction:
@@ -57,8 +53,12 @@ class FakeConnection:
             return "SELECT 1"
         assert self.locked, "every read and write runs under the registry lock"
         if q.startswith("INSERT INTO"):
-            row = dict(zip(COLUMNS, args)) | {"archived_at": None}
-            self.rows[row["slug"]] = row
+            slug, kind, name, aliases, description, author, method, now = args
+            self.rows[slug] = dict(
+                slug=slug, kind=kind, name=name, aliases=aliases, description=description,
+                created_by=author, updated_by=author, consent_method=method, consented_at=now,
+                created_at=now, updated_at=now, archived_at=None,
+            )  # fmt: skip
         elif q.startswith("UPDATE") and "archived_at = $" in q:
             slug, now, author, method = args
             self.rows[slug].update(

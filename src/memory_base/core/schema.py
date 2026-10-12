@@ -225,6 +225,22 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         );
         CREATE UNIQUE INDEX IF NOT EXISTS profile_proposals__pending
           ON {schema}.profile_proposals (owner) WHERE status = 'pending';
+        CREATE TABLE IF NOT EXISTS {schema}.entities (
+          slug text PRIMARY KEY,
+          kind text NOT NULL
+            CHECK (kind IN ('person', 'agent', 'project', 'org', 'place', 'thing')),
+          name text NOT NULL,
+          aliases text[] NOT NULL DEFAULT '{{}}',
+          description text NOT NULL DEFAULT '',
+          created_by text NOT NULL,
+          updated_by text NOT NULL,
+          consent_method text NOT NULL
+            CHECK (consent_method IN ('elicitation', 'conversation', 'import')),
+          consented_at double precision NOT NULL,
+          created_at double precision NOT NULL,
+          updated_at double precision NOT NULL,
+          archived_at double precision
+        );
         CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
           id bigserial PRIMARY KEY,
           query text NOT NULL,
