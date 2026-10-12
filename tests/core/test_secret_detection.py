@@ -131,6 +131,10 @@ def test_a_digit_code_in_the_sentence_of_its_keyword_is_a_credential(text):
         "Pin the version to 2.1.76.",
         "We waited 30-second timeouts on the auth code flow.",
         "+82 10 1234 5678 is the pin office phone.",
+        "OTP validity window is 300 seconds in the verification flow.",
+        "The auth code path at line 245 of login.py handles the redirect.",
+        "Security code review for PR 1234 finished.",
+        "Entry code in the parser handles 256 byte headers.",
     ],
 )
 def test_a_number_that_is_not_a_code_is_not_a_short_code(text):
