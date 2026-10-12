@@ -17,7 +17,7 @@ Endpoint contract pinned by these tests:
   - confirm true: calls ``curation.delete_notes(ids, namespaces=<scope>) -> int``;
     response ``{"deleted": <count>}``.
   - missing/empty ``ids``, or malformed JSON -> 400.
-- ``GET /admin/duplicates?threshold=0.9&kind=&limit=50`` -> calls
+- ``GET /admin/duplicates?threshold=0.75&kind=&limit=50`` -> calls
   ``curation.find_duplicates(threshold, kind, limit, namespaces=<scope>)``;
   response ``{"pairs": <that list>}``. Non-numeric ``threshold`` -> 400.
 - ``POST /admin/archive {"confirm": bool}``
@@ -170,7 +170,7 @@ def test_admin_duplicates_defaults(monkeypatch):
     monkeypatch.setattr(curation, "find_duplicates", fake_find_duplicates)
     response = client.get("/admin/duplicates")
     assert response.status_code == 200
-    assert captured == {"threshold": 0.9, "kind": None, "limit": 50}
+    assert captured == {"threshold": 0.75, "kind": None, "limit": 50}
     assert response.json() == {"pairs": pairs}
 
 
@@ -328,6 +328,30 @@ def test_admin_archive_with_ids_confirm_stamps_the_author(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"archived": 2}
     assert captured == {"ids": ["note:a", "note:b"], "archived_by": "natsume"}
+
+
+def test_admin_archive_with_ids_names_the_ids_not_in_scope(monkeypatch):
+    calls = {"archive_rows": None}
+
+    async def fake_rows_by_ids(ids, namespaces=None, notes_only=False):
+        return [{"id": "note:a"}]
+
+    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+        calls["archive_rows"] = ids
+        return len(ids)
+
+    monkeypatch.setattr(curation, "rows_by_ids", fake_rows_by_ids)
+    monkeypatch.setattr(curation, "archive_rows", fake_archive_rows)
+    response = client.post(
+        "/admin/archive",
+        json={"ids": ["note:a", "note:x", "doc:y:0"], "author": "natsume", "confirm": True},
+    )
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "2 of 3 ids are not active notes in the caller's scope: doc:y:0, note:x",
+        "missing": ["doc:y:0", "note:x"],
+    }
+    assert calls["archive_rows"] is None
 
 
 def test_admin_archive_with_ids_requires_an_author():

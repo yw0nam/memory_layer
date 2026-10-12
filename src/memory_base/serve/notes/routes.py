@@ -160,7 +160,7 @@ async def move_route(request: Request) -> JSONResponse:
 async def duplicates_route(request: Request) -> JSONResponse:
     """List active near-duplicate agent-note pairs, scoped to the caller's namespaces."""
     try:
-        threshold = float(request.query_params.get("threshold", "0.9"))
+        threshold = float(request.query_params.get("threshold", "0.75"))
     except ValueError:
         return error("threshold must be a number")
     kind = request.query_params.get("kind") or None
@@ -200,8 +200,18 @@ async def archive_route(request: Request) -> JSONResponse:
     scope = _admin_scope(key)
     if ids is not None:
         rows = await curation.rows_by_ids(ids, namespaces=scope, notes_only=True)
-        if {row["id"] for row in rows} != set(ids):
-            return error("ids must refer only to rows in the caller's scope")
+        missing = sorted(set(ids) - {row["id"] for row in rows})
+        if missing:
+            return JSONResponse(
+                {
+                    "error": (
+                        f"{len(missing)} of {len(set(ids))} ids are not active notes in the "
+                        f"caller's scope: {', '.join(missing)}"
+                    ),
+                    "missing": missing,
+                },
+                status_code=400,
+            )
         if body.get("confirm") is True:
             archived = await curation.archive_rows(ids, now, namespaces=scope, archived_by=author)
             return JSONResponse({"archived": archived})

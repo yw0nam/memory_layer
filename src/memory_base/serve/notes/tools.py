@@ -152,8 +152,10 @@ async def list_memory_duplicates(
     Read-only. Each pair carries both notes' id, kind, author, and text plus
     their cosine score, over the namespaces the caller's API key can access.
     Read both sides before acting: merge them into one note with `save_memory` with
-    `supersedes`, or drop one with `archive_notes`. `threshold` (default 0.9), `kind`, and `limit` (default 50) narrow the
-    scan; `kind` is "personal" or "work".
+    `supersedes`, or drop one with `archive_notes`. `threshold` (default 0.75), `kind`, and
+    `limit` (default 50) narrow the scan; `kind` is "personal" or "work". Pairs at 0.80 and
+    above usually state one thing twice; pairs between 0.75 and 0.80 usually share a
+    subject and differ in fact, so read before merging.
     """
     params: list[tuple[str, str]] = []
     if threshold is not None:

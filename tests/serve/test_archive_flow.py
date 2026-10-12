@@ -434,10 +434,12 @@ def test_archive_by_ids_refuses_a_document_chunk_like_an_unknown_id():
     try:
         body = {"ids": [note_id, doc_id], "author": "claude-code"}
         unknown = client.post("/admin/archive", json={**body, "ids": [note_id, f"missing-{token}"]})
+        assert unknown.status_code == 400
+        assert unknown.json()["missing"] == [f"missing-{token}"]
         for extra in ({}, {"confirm": True}):
             response = client.post("/admin/archive", json={**body, **extra})
-            assert response.status_code == unknown.status_code == 400
-            assert response.json() == unknown.json()
+            assert response.status_code == 400
+            assert response.json()["missing"] == [doc_id]
         assert asyncio.run(_archived_at(note_id)) is None
         assert asyncio.run(_archived_at(doc_id)) is None
 
