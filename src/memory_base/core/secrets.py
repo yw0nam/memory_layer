@@ -1,4 +1,4 @@
-"""Deterministic detection of fixed-format credentials in text bound for storage."""
+"""Deterministic detection of fixed-format credentials and keyword-stated short codes."""
 
 from __future__ import annotations
 
@@ -73,6 +73,26 @@ class GoogleApiKeyDetector(RegexBasedDetector):
     denylist = (re.compile(rf"(?<![{_TOKEN}])AIza[{_TOKEN}]{{35}}(?![{_TOKEN}])"),)
 
 
+_CODE_KEYWORD = (
+    r"(?:pin|passcode|password|passphrase|combination|otp"
+    r"|(?:one-time|verification|pick-?up|locker|access|door|gate|security|2fa|mfa|login"
+    r"|auth|confirmation|unlock|lock|entry)[ -]code)"
+)
+
+
+class ShortCodeDetector(RegexBasedDetector):
+    """A 3-12 digit code stated right after its keyword, across connector words only."""
+
+    secret_type = "Short Code"
+    denylist = (
+        re.compile(
+            rf"(?i)(?<![{_TOKEN}]){_CODE_KEYWORD}(?![{_TOKEN}])"
+            r"(?:[\s:=,\"'`*()]|is|was|of|for|the|are|to|be){0,24}"
+            rf"(?<![.+{_TOKEN}])\d(?:[- ]?\d){{2,11}}(?![{_TOKEN}]|[.:/]\d)"
+        ),
+    )
+
+
 DETECTORS: tuple[RegexBasedDetector, ...] = (
     AWSAccessKeyIdDetector(),
     BasicAuthDetector(),
@@ -89,6 +109,7 @@ DETECTORS: tuple[RegexBasedDetector, ...] = (
     ModernOpenAIKeyDetector(),
     AnthropicKeyDetector(),
     GoogleApiKeyDetector(),
+    ShortCodeDetector(),
 )
 
 

@@ -67,7 +67,13 @@ Every note and document write starts with a deterministic credential scan
 (`core/secrets.py`): the fixed-format detectors of `detect-secrets` — the npm, JWT, and
 legacy OpenAI patterns anchored at token boundaries so a scan stays linear in the text
 length — plus local Anthropic, OpenAI project/service key, and Google API key patterns,
-with no entropy or keyword detection and no model call. It recognizes provider API keys
+and a short-code pattern, with no entropy detection and no model call. The short-code
+pattern matches a 3–12 digit code (digits with optional dashes or spaces) stated right
+after a keyword — `pin`, `password`, `passphrase`, `combination`, `otp`, or a
+`verification`, `pickup`, `locker`, `access`, `door`, `gate`, `security`, `2fa`, `mfa`,
+`login`, `auth`, `confirmation`, `unlock`, `lock`, or `entry` code — across only
+connector words and punctuation (`is`, `:`, `=`, `was`, `of`, `for`, `the`, quotes), so
+`status code 400` and "the pickup code expires after 48 hours" pass. It recognizes provider API keys
 (AWS access key ids, GitHub, GitLab, Slack, Stripe,
 SendGrid, npm, PyPI, OpenAI, Anthropic, Google), private-key headers, JSON Web Tokens, and
 credentials embedded in URLs (`scheme://user:pass@host`). A hit refuses the write whole —
