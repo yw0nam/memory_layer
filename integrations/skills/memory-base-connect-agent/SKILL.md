@@ -75,8 +75,8 @@ Install the client's integration once: the Claude Code hooks as documented in
    `<slug>: <slug>`.
 
 The agent reads its profile with `get_my_profile`, writes its `self` part with
-`update_my_profile`, and changes its `user` part with `update_user_profile`, with the user's consent. Either part
-may carry `Remember` and `Don't remember` sections: rules that narrow or widen what the
+`update_my_profile`, and changes its `user` part with `update_user_profile`, with the
+user's consent. Either part may carry `Remember` and `Don't remember` sections: rules that narrow or widen what the
 agent keeps with `save_memory`, never facts about the user. A companion agent's `self`
 part may say `Remember: moments we share`; a user's wish such as `Don't remember: my
 spending` goes in the `user` part, whose sections win.

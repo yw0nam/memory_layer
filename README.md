@@ -132,8 +132,8 @@ Profiles belong to agents
 ([ADR-0009](docs/adr/0009-profiles-owned-by-agents-user-part-approved-by-the-user.md)).
 Each owner (an agent's author slug) reads both parts with the MCP tool `get_my_profile`,
 has a `self` part it writes with `update_my_profile`, and a `user` part that changes only
-when the user consents to the agent's `update_user_profile` call. Clients deliver the configured owner's profile at session start: the Claude
-Code SessionStart hook (`integrations/claude_code/session_start_hook.py`, owner
+when the user consents to the agent's `update_user_profile` call. Clients deliver the
+configured owner's profile at session start: the Claude Code SessionStart hook (`integrations/claude_code/session_start_hook.py`, owner
 `MEMORY_BASE_AUTHOR`, default `claude-code`, installed with a 10-second timeout as
 documented in `integrations/claude_code/prefetch_hook.py`) and the Hermes provider's
 system prompt block (config `owner`,

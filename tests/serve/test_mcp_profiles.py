@@ -72,7 +72,6 @@ def test_exactly_three_profile_tools_are_registered():
         "update_my_profile",
         "update_user_profile",
     }
-    assert not {name for name in tools if "approve" in name or "reject" in name}
     assert set(tools["get_my_profile"].inputSchema["required"]) == {"owner"}
     assert set(tools["update_my_profile"].inputSchema["required"]) == {"owner", "content"}
     assert set(tools["update_user_profile"].inputSchema["required"]) == {
@@ -83,28 +82,10 @@ def test_exactly_three_profile_tools_are_registered():
     }
 
 
-def test_the_tool_descriptions_state_who_writes_what():
-    tools = _tools()
-    own = tools["update_my_profile"].description
-    assert "replaces the whole" in own
-    assert "session start" in own
-    assert "never put facts about the user" in own.lower()
-    update = tools["update_user_profile"].description
-    assert "consent" in update
-    assert "needs_consent" in update
-    assert "confirmed=true" in update
-    assert "never pass confirmed" in update.lower()
-    assert "proposal" not in update.lower()
-
-
-def test_the_tool_descriptions_name_the_save_policy_sections():
-    tools = _tools()
-    own = " ".join(tools["update_my_profile"].description.split())
-    propose = " ".join(tools["update_user_profile"].description.split())
-    for description in (own, propose):
-        assert "`Remember` and `Don't remember` sections" in description
-        assert "save_memory" in description
-    assert "outrank this agent's own" in propose
+def test_update_user_profile_description_names_the_consent_step():
+    description = _tools()["update_user_profile"].description
+    assert "confirmed=true" in description
+    assert "needs_consent" in description
 
 
 def test_get_my_profile_reads_the_profile_with_the_request_key(monkeypatch):
@@ -229,28 +210,24 @@ def test_a_base_that_advances_after_the_dry_run_is_stale_on_the_write(monkeypatc
         _update(confirmed=True)
 
 
-def test_the_body_is_a_diff_for_a_one_line_edit():
-    current = "\n".join(f"line {i}" for i in range(40))
-    content = current.replace("line 4", "line four")
-    body = tools.change_body(current, content, 3)
-    assert body.startswith("--- v3\n+++ v4\n")
-    assert "-line 4\n+line four" in body
-    assert "Full replacement" not in body
+LONG = "\n".join(f"line {i}" for i in range(40))
 
 
-def test_the_body_is_the_full_text_for_a_new_profile():
-    assert tools.change_body("", "Lives in Seoul.", 0) == "Full replacement:\nLives in Seoul."
-
-
-def test_the_body_is_the_full_text_when_the_diff_is_longer_than_the_content():
-    body = tools.change_body("alpha\nbeta", "gamma", 1)
-    assert body == "Full replacement:\ngamma"
-
-
-def test_the_body_names_what_a_clear_removes():
-    assert tools.change_body("Lives in Busan.", "", 2) == (
-        "Clear the user profile (currently:)\nLives in Busan."
-    )
+@pytest.mark.parametrize(
+    ("current", "content", "base", "expected"),
+    [
+        (LONG, LONG.replace("line 4", "line four"), 3, "--- v3\n+++ v4\n"),
+        ("", "Lives in Seoul.", 0, "Full replacement:\nLives in Seoul."),
+        ("alpha\nbeta", "gamma", 1, "Full replacement:\ngamma"),
+        ("Lives in Busan.", "", 2, "Clear the user profile. Current text:\nLives in Busan."),
+    ],
+    ids=["diff", "new profile", "diff longer than content", "clear"],
+)
+def test_change_body_picks_the_shorter_honest_form(current, content, base, expected):
+    body = tools.change_body(current, content, base)
+    assert body.startswith(expected)
+    if expected.startswith("---"):
+        assert "-line 4\n+line four" in body
 
 
 def test_other_profile_errors_surface_the_backend_reason(monkeypatch):

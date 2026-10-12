@@ -52,7 +52,7 @@ async def update_my_profile(owner: str, content: str, ctx: Context | None = None
 def change_body(current: str, content: str, base_version: int) -> str:
     """What the user is shown of the change: a unified diff, or the whole text when shorter."""
     if not content:
-        return f"Clear the user profile (currently:)\n{current}"
+        return f"Clear the user profile. Current text:\n{current}"
     diff = "\n".join(
         difflib.unified_diff(
             current.splitlines(),

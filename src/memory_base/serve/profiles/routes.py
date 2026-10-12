@@ -14,7 +14,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.core.secrets import find_secret
-from memory_base.serve.common.consent import CONSENT_METHODS
+from memory_base.serve.common import consent
+from memory_base.serve.common.consent import CONSENT_METHODS, USER_AUTHOR
 from memory_base.serve.common.http import (
     RequestError,
     bounded_text,
@@ -25,7 +26,6 @@ from memory_base.serve.common.http import (
 )
 from memory_base.serve.access.keys import AUTHOR_RE
 from memory_base.serve.profiles import store
-from memory_base.serve.profiles.store import USER_AUTHOR
 
 PARTS = ("self", "user")
 RESERVED_OWNERS = frozenset({USER_AUTHOR, "consolidator"})
@@ -205,7 +205,7 @@ async def user_route(request: Request) -> JSONResponse:
         return _refused(exc)
     if owner not in key.authors:
         return _owner_denied(owner)
-    if method == "import" and not (key.is_admin and USER_AUTHOR in key.authors):
+    if method == "import" and not consent.may_import(key):
         return error("consent_method import needs an admin key carrying the 'user' author", 403)
     try:
         result = await store.write_user(owner, content, reason, base_version, method, dry_run)

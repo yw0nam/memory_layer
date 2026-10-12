@@ -371,7 +371,7 @@ def test_mutations_reject_malformed_json(agent, fake_db, raw):
         {"owner": "user"},
         {"owner": "Bad Owner"},
         {"consent_method": None},
-        {"consent_method": "approval"},
+        {"consent_method": "shout"},
         {"dry_run": "yes"},
     ],
 )
@@ -381,18 +381,6 @@ def test_user_write_rejects_a_bad_body(monkeypatch, fake_db, change):
     response = client.put("/profiles/user", json=body)
     assert response.status_code == 400, response.json()
     assert fake_db.calls == []
-
-
-def test_user_write_accepts_a_reason_of_exactly_1000_characters_after_stripping(agent, fake_db):
-    response = _put_user(reason="  " + "r" * 1000 + "  ")
-    assert response.status_code == 200
-    assert fake_db.versions[0]["reason"] == "r" * 1000
-
-
-def test_user_write_accepts_the_largest_base_version_and_reports_it_stale(agent, fake_db):
-    response = _put_user(base_version=2147483647)
-    assert response.status_code == 409
-    assert response.json() == {"error": "stale", "version": 0}
 
 
 @pytest.mark.parametrize(

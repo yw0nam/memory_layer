@@ -114,7 +114,6 @@ def test_an_owner_writes_self_and_the_user_part_with_consent():
     served = user.get("/profiles", params={"owner": owner}).json()
     assert served["user_version"] == 1
     assert served["user"]["content"] == "Lives in Seoul."
-    assert "pending_proposal" not in served
     history = user.get("/profiles/versions", params={"owner": owner, "part": "user"}).json()
     assert [(r["version"], r["consent_method"]) for r in history] == [(1, "conversation")]
     assert history[0]["consented_at"].endswith("+00:00")

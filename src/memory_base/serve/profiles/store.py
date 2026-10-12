@@ -15,9 +15,6 @@ from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.serve.common.http import iso
 
-USER_AUTHOR = "user"
-
-
 _VERSIONS = f'"{PG_SCHEMA}".agent_profiles'
 
 LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('profile:' || $1, 0))"
