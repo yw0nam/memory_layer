@@ -7,12 +7,12 @@ and an MCP server.
 Only distilled content is embedded. Agent notes arrive already distilled by the writing
 agent and pass deterministic checks (format, credentials such as API keys, tokens, PINs,
 and one-time codes, near duplicates), documents pass through deterministic chunking and a
-junk gate before embedding, and code is chunked by tree-sitter. Raw transcripts and raw files are never embedded. Tabular
-documents keep their data rows as structured, never-embedded rows behind a read-only
-SQL interface, so questions about the numbers are computed rather than retrieved.
-Agent-authored messages — one-time signals and handoff snapshots — are stored as
-canonical Markdown, never embedded, listed while pending and consumed by claiming
-instead of search.
+junk gate before embedding, and code is chunked by tree-sitter. Raw transcripts and raw
+files are never embedded. Tabular documents keep their data rows as structured,
+never-embedded rows behind a read-only SQL interface, so questions about the numbers are
+computed rather than retrieved. Agent-authored messages — one-time signals and handoff
+snapshots — are stored as canonical Markdown, never embedded, listed while pending and
+consumed by claiming instead of search.
 
 ## Architecture
 
