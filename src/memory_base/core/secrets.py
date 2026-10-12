@@ -1,8 +1,9 @@
-"""Deterministic detection of fixed-format credentials in text bound for storage."""
+"""Deterministic detection of fixed-format credentials and keyword-stated short codes."""
 
 from __future__ import annotations
 
 import re
+from collections.abc import Generator
 
 from detect_secrets.plugins.aws import AWSKeyDetector
 from detect_secrets.plugins.base import RegexBasedDetector
@@ -73,6 +74,43 @@ class GoogleApiKeyDetector(RegexBasedDetector):
     denylist = (re.compile(rf"(?<![{_TOKEN}])AIza[{_TOKEN}]{{35}}(?![{_TOKEN}])"),)
 
 
+_SENTENCE = re.compile(r"[^.;\n!?]+")
+_CODE_NOISE = re.compile(
+    r"(?i)\b(?:status|exit|error|http|response|zip|postal|country|area|return|result) code\b"
+)
+_CODE_KEYWORD = re.compile(
+    rf"(?i)(?<![{_TOKEN}])(?:pin|passcode|password|passphrase|combination|otp"
+    r"|(?:one-time|two-factor|verification|pick-?up|locker|access|door|gate|security|2fa|mfa"
+    r"|login|auth|confirmation|unlock|lock|entry|parcel|bank)[ -]code)"
+    rf"(?![{_TOKEN}])"
+)
+# 3-8 digits that are not a date, year, quantity, version, path, phone, line, or PR number.
+_CODE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_.+$#%/:-])(?<!\d[- ])(?<!\bline )(?<!\bport )(?<!\bpage )(?<!\brow )"
+    r"(?<!\bpr )(?<!\bissue )(?<!\bticket )(?<!\bbuild )(?<!\brun )(?<!\bjob )"
+    r"(?!\d{4}-\d{2}-\d{2})(?!(?:19|20)\d{2}(?![- ]?\d))"
+    r"\d(?:[- ]?\d){2,7}"
+    r"(?![A-Za-z0-9_%]|[.:/-]\d|[ -]?(?:second|minute|hour|day|week|month|year|ms|km|kg|ml|cm|mm|px"
+    r"|bytes?|kb|mb|gb|tb|lines?|chars?|characters?|users?|messages?|requests?|rows?|items?)s?\b)"
+)
+
+
+class ShortCodeDetector(RegexBasedDetector):
+    """A digit code stated in the same sentence as the keyword that names it."""
+
+    secret_type = "Short Code"
+    denylist = ()
+
+    def analyze_string(self, string: str) -> Generator[str, None, None]:
+        for sentence in _SENTENCE.findall(string):
+            if (
+                not _CODE_NOISE.search(sentence)
+                and _CODE_KEYWORD.search(sentence)
+                and _CODE.search(sentence)
+            ):
+                yield self.secret_type
+
+
 DETECTORS: tuple[RegexBasedDetector, ...] = (
     AWSAccessKeyIdDetector(),
     BasicAuthDetector(),
@@ -89,6 +127,7 @@ DETECTORS: tuple[RegexBasedDetector, ...] = (
     ModernOpenAIKeyDetector(),
     AnthropicKeyDetector(),
     GoogleApiKeyDetector(),
+    ShortCodeDetector(),
 )
 
 

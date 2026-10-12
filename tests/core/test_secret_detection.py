@@ -60,6 +60,7 @@ def test_the_detector_tuple_is_exactly_the_fixed_format_set():
         "ModernOpenAIKeyDetector",
         "AnthropicKeyDetector",
         "GoogleApiKeyDetector",
+        "ShortCodeDetector",
     ]
 
 
@@ -104,6 +105,42 @@ def test_ordinary_note_content_is_not_a_credential(text):
     assert find_secret(text) is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "User's bike lock combination is 7-24-33; they keep forgetting it.",
+        "The InPost locker pickup code is 7742 and the parcel waits at the Mokotow locker.",
+        "Pharmacy verification code: 384 902, valid for the prescription pickup on 2026-10-12.",
+        'The bank two-factor code was "123456" when the user set up the app.',
+        "The verification code texted to her was 3058.",
+        "DoorDash pickup code at the restaurant (ordered around 2025-06) was 941.",
+    ],
+)
+def test_a_digit_code_in_the_sentence_of_its_keyword_is_a_credential(text):
+    assert find_secret(text) == "Short Code"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The API returned status code 400 for the empty body.",
+        "The pickup code expires after 48 hours, so collect the parcel soon.",
+        "Fixes PR #276 and issue #335.",
+        "On 2025-07-02 the user missed a bank two-factor code.",
+        "In late June 2025 the user asked for a new verification code.",
+        "Pin the version to 2.1.76.",
+        "We waited 30-second timeouts on the auth code flow.",
+        "+82 10 1234 5678 is the pin office phone.",
+        "OTP validity window is 300 seconds in the verification flow.",
+        "The auth code path at line 245 of login.py handles the redirect.",
+        "Security code review for PR 1234 finished.",
+        "Entry code in the parser handles 256 byte headers.",
+    ],
+)
+def test_a_number_that_is_not_a_code_is_not_a_short_code(text):
+    assert find_secret(text) is None
+
+
 _UUID_SHAPE = "-".join("0" * width for width in (8, 4, 4, 4, 12))
 _JWT = _jwt(json.dumps({"sub": "agent"}).encode())
 
@@ -141,6 +178,7 @@ _ANCHORS = {
     "ModernOpenAIKeyDetector": ["sk-", " sk-a"],
     "AnthropicKeyDetector": ["sk-ant-", "sk-ant-a-"],
     "GoogleApiKeyDetector": ["AIza"],
+    "ShortCodeDetector": ["pin ", "pin 1-1-1-1-", "pin 1 ", "pin. ", "pin 123 pin "],
 }
 _LINE_CHARS = 2_000_000
 
