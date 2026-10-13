@@ -158,6 +158,24 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS messages__idempotency
           ON {schema}.messages (sender_key, idempotency_key)
           WHERE idempotency_key IS NOT NULL;
+        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        CREATE TABLE IF NOT EXISTS {schema}.turns (
+          id uuid PRIMARY KEY,
+          namespace text NOT NULL,
+          origin text NOT NULL CHECK (origin IN ('claude_code', 'hermes')),
+          session_id text NOT NULL,
+          seq integer NOT NULL,
+          role text NOT NULL CHECK (role IN ('user', 'assistant')),
+          content text NOT NULL,
+          reasoning text,
+          repo text,
+          created_at timestamptz NOT NULL,
+          UNIQUE (origin, session_id, seq)
+        );
+        CREATE INDEX IF NOT EXISTS turns__namespace_created
+          ON {schema}.turns (namespace, created_at DESC, id);
+        CREATE INDEX IF NOT EXISTS turns__content_trgm
+          ON {schema}.turns USING gin (content gin_trgm_ops);
         CREATE TABLE IF NOT EXISTS {schema}.namespaces (
           name text PRIMARY KEY,
           created_at double precision NOT NULL,

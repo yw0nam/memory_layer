@@ -39,6 +39,7 @@ from memory_base.serve.profiles import tools as profile_tools
 from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.search import tools as search_tools
 from memory_base.serve.tables import tools as table_tools
+from memory_base.serve.turns import tools as turn_tools
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
@@ -95,6 +96,14 @@ again whenever it matches; a message is operational state and is consumed once. 
 makes a message the right carrier for progress and next steps, and the wrong place for
 anything meant to be read more than once."""
 
+_TURN_LANE = """\
+The turn lane is the verbatim record of the user's and the assistant's messages, kept by
+the client's hook and read on demand with list_sessions, read_session, and
+search_transcript when a decision from an earlier session is needed or a note must be
+checked against what was said. search_memory never searches it, and it is never a reason
+to skip saving a note. When you save a note distilled from this session, pass session_id
+and origin so the note names its source."""
+
 _SERVER_INSTRUCTIONS_CLOSING = """\
 Work knowledge belongs in the key's home namespace. Personal context — schedule,
 relationships, private preferences — belongs in a private namespace, never the shared
@@ -112,6 +121,7 @@ SERVER_INSTRUCTIONS = "\n\n".join(
         _WRITE_POLICY,
         _ENTITY_REGISTRY,
         _MESSAGE_LANE,
+        _TURN_LANE,
         _SERVER_INSTRUCTIONS_CLOSING,
     )
 )
@@ -150,6 +160,9 @@ mcp.tool()(profile_tools.update_my_profile)
 mcp.tool()(profile_tools.update_user_profile)
 mcp.tool()(entity_tools.list_entities)
 mcp.tool()(entity_tools.register_entity)
+mcp.tool()(turn_tools.list_sessions)
+mcp.tool()(turn_tools.read_session)
+mcp.tool()(turn_tools.search_transcript)
 mcp.tool()(note_tools.list_memory_duplicates)
 mcp.tool()(note_tools.archive_notes)
 mcp.tool()(note_tools.restore_notes)

@@ -104,6 +104,20 @@ async def save_memory(
             "pass it when the note records an event."
         ),
     ] = None,
+    session_id: Annotated[
+        str | None,
+        Field(
+            description="The client session this note was distilled from, as the session-start "
+            "context names it; stored as source_session on the note."
+        ),
+    ] = None,
+    origin: Annotated[
+        str | None,
+        Field(
+            description="The origin of that session (claude_code or hermes); pass it with "
+            "session_id."
+        ),
+    ] = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Remember the user and their work for later sessions.
@@ -135,6 +149,10 @@ async def save_memory(
         body["namespace"] = namespace
     if occurred_at is not None:
         body["occurred_at"] = occurred_at
+    if (session_id is None) != (origin is None):
+        raise ValueError("session_id and origin go together: pass both or neither")
+    if session_id is not None:
+        body["source_session"] = {"origin": origin, "session_id": session_id}
     return await rest_client.call(
         "POST",
         "/save_memory",

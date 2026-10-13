@@ -97,6 +97,10 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `PUT` | `/profiles/self` | replace the owner's `self` part (persona, working rules, conventions) — `owner` one of the key's authors, `content`, `max_chars` (200–20000, default 4000); `written` or `unchanged` with the version; empty content clears the part; 400 for an over-budget or credential-bearing text |
 | `PUT` | `/profiles/user` | replace the owner's `user` part with the user's consent — `owner` one of the key's authors, `content`, `reason` (1–1000 chars), `base_version` (the current user version, 0 when none), `consent_method` (`elicitation`, `conversation`, or `import`; `import` needs an admin key carrying the `user` author), `dry_run`, `max_chars` (200–20000, default 3000); 200 `{status: "written" \| "unchanged", version}`, or with `dry_run` `{status: "valid", version, current}`; 409 `{error: "stale", version}` when the base is not current |
 | `GET` | `/profiles/versions` | one part's versions newest first with `content`, `author`, `reason`, `consent_method`, `consented_at`, `created_at` — `owner`, `part` (`self`\|`user`), `limit` (1–200, default 20) |
+| `POST` | `/turns` | append one verbatim turn — `id` (client-chosen UUID), `origin` (`claude_code`\|`hermes`), `session_id`, `role` (`user`\|`assistant`), `content` (at most 64,000 characters), optional `reasoning`, `repo` (`repo:<host>/<path>`), `namespace`; returns `{id, seq, stored}`; a replay with the same payload returns the stored `seq` with `stored: false`, the same `id` with a different payload is 409, a credential is refused, and a session's namespace is fixed by its first turn |
+| `GET` | `/sessions` | sessions newest first — `since`, `until`, `origin`, `repo`, repeated `namespace`, `limit` (default 50, max 200); each `{origin, session_id, namespace, repo, started_at, last_at, turns, title}` |
+| `GET` | `/sessions/{origin}/{session_id}` | a session's turns in `seq` order — `offset` (a seq), `limit`, and `contains` (case-insensitive substring of at least 2 characters: the matching turns and one neighbour each side, matches marked `match: true`); cut by `limit` or 40,000 characters with `next_offset`; see [data flow](docs/data-flow.md#turn-lane) |
+| `GET` | `/turns/search` | turns whose content holds the literal substring `q` (at least 2 characters), newest first, each with a 300-character window — `since`, `until`, `origin`, `repo`, repeated `namespace`, `limit` |
 | `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, `author`, optional `idempotency_key` and `expires_at`; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
 | `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown or out-of-scope id a 404 |
@@ -112,7 +116,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/repos/jobs/{job_id}` | repo job state |
 | `POST` | `/namespaces` | register a namespace — `name` (`^[a-z0-9_-]{1,64}$`), `visibility` (`public`\|`private`, default `public`); a private namespace records the caller's key label as owner |
 | `GET` | `/namespaces` | list namespaces the caller can access (every namespace for an admin key) |
-| `DELETE` | `/namespaces/{name}` | unregister a namespace with no notes, chunks, table rows, or messages — the namespace's owner or an admin key only; the reserved `default` namespace cannot be deleted |
+| `DELETE` | `/namespaces/{name}` | unregister a namespace with no notes, chunks, table rows, messages, or turns — the namespace's owner or an admin key only; the reserved `default` namespace cannot be deleted |
 | `GET` | `/keys/{label}/authors` | a label's author allowlist — an admin key reads any label, a member key only its own |
 | `PUT` | `/keys/{label}/authors` | replace a label's allowlist — `authors` (slugs matching `^[a-z0-9][a-z0-9-]{0,39}$`); admin keys only |
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
@@ -124,6 +128,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/admin/consolidate/undo` | reverse one action — `action_id`, `author`; restores the notes it archived with their prior metadata and archives a replacement it created; 409 with nothing changed when a later change touched them or for a keep, 404 for an unknown id, the recorded result when already undone; see [data flow](docs/data-flow.md#consolidation-undo-and-actions) |
 | `GET` | `/admin/consolidate/actions` | consolidation actions newest first with the full text and lineage of every note they name — `namespace`, `run_id`, `note_id`, `limit` (1–500, default 50) |
 | `POST` | `/admin/archive` | preview cold agent notes (`notes_to_archive`), then archive them with `confirm`; `ids` selects agent notes in the caller's scope and requires an `author`, stamped on every row archived; an id that is not an active note in scope makes the whole call a 400 that lists them as `missing` |
+| `DELETE` | `/admin/sessions/{origin}/{session_id}` | hard-delete every turn of a session — admin key only; returns `{deleted}` |
 | `POST` | `/admin/messages/purge` | preview claimed, cancelled, superseded, and expired messages (`messages_to_delete`), then delete them with `confirm` (`deleted`); deletion is permanent and releases their idempotency keys, so a member key purges only the namespaces it owns |
 | `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author and the `replaced_by` and `consolidated_into` lineage |
 
@@ -174,7 +179,8 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
 `list_messages` · `claim_message` · `cancel_message` · `get_my_profile` ·
-`update_my_profile` · `update_user_profile` · `list_entities` · `register_entity`
+`update_my_profile` · `update_user_profile` · `list_entities` · `register_entity` ·
+`list_sessions` · `read_session` · `search_transcript`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,

@@ -70,6 +70,7 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
         occurred_at=None,
         author=None,
         allow_similar=False,
+        source_session=None,
     ):
         return {
             "id": "note:aaaaaaaaaaaaaaaa",
@@ -104,6 +105,7 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        source_session=None,
     ):
         captured["supersedes"] = supersedes
         return {
@@ -142,6 +144,7 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        source_session=None,
     ):
         captured["supersedes"] = supersedes
         return {
@@ -211,6 +214,7 @@ def test_save_memory_forwards_allow_similar_to_save_note(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        source_session=None,
     ):
         captured["allow_similar"] = allow_similar
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
