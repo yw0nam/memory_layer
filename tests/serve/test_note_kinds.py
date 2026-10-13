@@ -214,6 +214,7 @@ def test_save_memory_posts_the_kind_it_is_given(monkeypatch, kind):
         "author": "natsume",
         "kind": kind,
         "tags": ["infra"],
+        "entities": None,
         "supersedes": None,
         "allow_similar": False,
     }

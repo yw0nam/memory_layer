@@ -21,12 +21,14 @@ from memory_base.retrieval.search import (
     parse_time_bound,
 )
 from memory_base.serve.access import namespaces
+from memory_base.serve.common.entities import SLUG_RE, require_active
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 
 
 NOTE_MAX_CHARS = 4000
 NOTE_KINDS = ("personal", "work")
+MAX_NOTE_ENTITIES = 10
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
 LIST_NOTES_DEFAULT_LIMIT = 50
 LIST_NOTES_MAX_LIMIT = 200
@@ -72,6 +74,21 @@ class CredentialNoteError(ValueError):
         )
 
 
+def normalize_entities(entities: Any) -> list[str]:
+    """Validate the slug shape and count: strip, dedupe, keep order; None means none."""
+    if entities is None:
+        return []
+    if not isinstance(entities, list) or any(not isinstance(slug, str) for slug in entities):
+        raise ValueError("entities must be a list of slugs")
+    slugs = list(dict.fromkeys(slug.strip() for slug in entities))
+    if len(slugs) > MAX_NOTE_ENTITIES:
+        raise ValueError(f"entities must hold at most {MAX_NOTE_ENTITIES} slugs")
+    for slug in slugs:
+        if not SLUG_RE.fullmatch(slug):
+            raise ValueError(f"entity slug {slug!r} must match {SLUG_RE.pattern}")
+    return slugs
+
+
 def note_id(namespace: str, content: str) -> str:
     """`note:{namespace}:{sha256(content)[:16]}` over the stripped content."""
     return f"note:{namespace}:{hashlib.sha256(content.strip().encode()).hexdigest()[:16]}"
@@ -113,6 +130,7 @@ def build_note_row(
     author: str | None = None,
     *,
     occurred_at: float | None = None,
+    entities: list[str] | None = None,
 ) -> dict[str, Any]:
     """Validate a note and map it to memory_chunks columns (no embedding).
 
@@ -127,6 +145,8 @@ def build_note_row(
         raise ValueError(f"kind must be one of {NOTE_KINDS}")
     normalized_tags = normalize_tags([] if tags is None else tags)
     metadata: dict[str, Any] = {"tags": normalized_tags}
+    if slugs := normalize_entities(entities):
+        metadata["entities"] = slugs
     if author is not None:
         metadata["author"] = author
     row_id = note_id(namespace, content)
@@ -149,6 +169,7 @@ async def save_note(
     *,
     kind: str,
     tags: list[str],
+    entities: list[str] | None = None,
     supersedes: str | None = None,
     namespace: str = DEFAULT_NAMESPACE,
     occurred_at: str | None = None,
@@ -174,6 +195,7 @@ async def save_note(
         namespace,
         author,
         occurred_at=occurred_ts,
+        entities=entities,
     )
     secret_type = find_secret("\n".join([content, *(tags or [])]))
     if secret_type is not None:
@@ -188,6 +210,7 @@ async def save_note(
         await ensure_schema_once(conn)
         async with conn.transaction():
             await namespaces.require_registered(conn, namespace)
+            await require_active(conn, row["metadata"].get("entities", []))
             if supersedes is not None:
                 exists = await conn.fetchval(
                     f"""
@@ -290,6 +313,7 @@ async def save_note(
 async def list_notes(
     *,
     tags: list[str] | None = None,
+    entity: str | None = None,
     kind: str | None = None,
     namespaces: list[str] | None = None,
     include_archived: bool = False,
@@ -317,6 +341,7 @@ async def list_notes(
         include_archived=include_archived,
         kind=kind,
         tags=normalized_tags,
+        entity=entity,
         namespaces=namespaces,
         since=since_ts,
         until=until_ts,
@@ -343,6 +368,7 @@ async def list_notes(
             "kind": row["kind"],
             "text": row["text"][:TEXT_LIMIT],
             "tags": metadata.get("tags", []),
+            "entities": metadata.get("entities", []),
             "author": metadata.get("author"),
             "namespace": row["namespace"],
             "date": note_date(row["occurred_at"], row["ts_last_active"]),

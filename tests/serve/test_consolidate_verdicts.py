@@ -42,6 +42,7 @@ def note(note_id, text=None, **fields):
         "saved": 1_700_000_000.0,
         "occurred_at": None,
         "tags": ("deploy",),
+        "entities": (),
         "similar_ack": (),
         "supersedes": None,
         "text": TEXTS[note_id] if text is None else text,

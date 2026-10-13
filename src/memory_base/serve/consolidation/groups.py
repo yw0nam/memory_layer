@@ -14,7 +14,7 @@ from memory_base.core.config import PG_SCHEMA
 from memory_base.retrieval.search import metadata_dict
 from memory_base.serve.common.http import iso
 
-PROCEDURE_VERSION = "1"
+PROCEDURE_VERSION = "2"
 DEFAULT_THRESHOLD = 0.72
 DEFAULT_NEIGHBORS = 5
 DEFAULT_MAX_GROUP = 6
@@ -75,6 +75,7 @@ class Note:
     saved: float
     occurred_at: float | None
     tags: tuple[str, ...]
+    entities: tuple[str, ...]
     similar_ack: tuple[str, ...]
     supersedes: str | None
     text: str
@@ -118,6 +119,7 @@ def note_from_row(row: Any) -> Note:
         saved=row["ts_last_active"],
         occurred_at=row["occurred_at"],
         tags=tuple(metadata.get("tags") or ()),
+        entities=tuple(sorted(metadata.get("entities") or ())),
         similar_ack=tuple(metadata.get("similar_ack") or ()),
         supersedes=metadata.get("supersedes"),
         text=row["text"],
@@ -268,6 +270,7 @@ def group_key(namespace: str, members: Iterable[Note]) -> str:
                 note.saved,
                 note.occurred_at,
                 sorted(note.tags),
+                list(note.entities),
                 note.supersedes,
             ]
             for note in sorted(members, key=lambda note: note.id)
@@ -289,6 +292,7 @@ def _member(note: Note) -> dict[str, Any]:
         "saved": _day(note.saved),
         "occurred_at": iso(note.occurred_at),
         "tags": list(note.tags),
+        "entities": list(note.entities),
         "supersedes": note.supersedes,
         "text": note.text,
     }

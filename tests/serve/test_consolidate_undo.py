@@ -24,7 +24,7 @@ A, B, C = "note:work:a", "note:work:b", "note:work:c"
 R, S = "note:work:r", "note:work:s"
 APPLIED_AT = 1_759_000_000.5
 PRIOR = {
-    A: {"tags": ["deploy"], "author": "claude-code", "similar_ack": [B]},
+    A: {"tags": ["deploy"], "entities": ["kuro"], "author": "claude-code", "similar_ack": [B]},
     B: {"tags": ["deploy", "ops"], "author": "hermes"},
     C: {"tags": ["deploy"], "author": "claude-code", "supersedes": "note:work:old"},
 }
@@ -207,6 +207,7 @@ def test_undo_restores_prior_metadata_exactly_and_archives_the_created_replaceme
     assert sorted(locked[2][0]) == [A, B, C, R]
     restores = [c for c in conn.writes() if "archived_at = NULL" in c[1]]
     assert {c[2][0]: json.loads(c[2][1]) for c in restores} == PRIOR
+    assert json.loads(next(c for c in restores if c[2][0] == A)[2][1])["entities"] == ["kuro"]
     [archive] = [c for c in conn.writes() if "'undone_action'" in c[1]]
     assert archive[2][0] == R and "consolidator" in archive[2] and 5 in archive[2]
     [record] = [c for c in conn.writes() if "consolidation_actions" in c[1]]

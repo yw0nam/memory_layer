@@ -1,0 +1,83 @@
+"""Notes naming an entity through POST /save_memory, listed by GET /notes?entity=, on the throwaway Postgres."""
+
+from __future__ import annotations
+
+import asyncio
+import time
+import uuid
+
+import asyncpg
+import httpx
+import pytest
+
+from memory_base.core import db
+from memory_base.core.config import PG_SCHEMA, db_url
+from memory_base.serve import api
+
+pytestmark = pytest.mark.integration
+
+HEADERS = {"X-API-Key": "test-key"}
+
+
+def test_a_note_names_an_entity_and_the_entity_filter_returns_only_that_note():
+    tag = uuid.uuid4().hex[:10]
+    slug = f"it-{tag}"
+
+    def save(text, entities):
+        return {
+            "content": f"integration note {tag} {text}",
+            "author": "claude-code",
+            "kind": "work",
+            "tags": ["it"],
+            "entities": entities,
+        }
+
+    async def scenario():
+        conn = await asyncpg.connect(db_url())
+        now = time.time()
+        await conn.execute(
+            f"""INSERT INTO "{PG_SCHEMA}".entities
+                (slug, kind, name, created_by, updated_by, consent_method,
+                 consented_at, created_at, updated_at)
+                VALUES ($1, 'thing', $2, 'test', 'test', 'import', $3, $3, $3)""",
+            slug,
+            f"Entity {tag}",
+            now,
+        )
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
+            ) as client:
+                named = await client.post(
+                    "/save_memory",
+                    json=save("naming the entity", [slug]),
+                    headers=HEADERS,
+                )
+                await client.post(
+                    "/save_memory",
+                    json=save("zebra quartz lantern", []),
+                    headers=HEADERS,
+                )
+                unknown = await client.post(
+                    "/save_memory",
+                    json=save("naming a stranger", ["no-such-entity"]),
+                    headers=HEADERS,
+                )
+                listed = await client.get(f"/notes?entity={slug}", headers=HEADERS)
+            return named, unknown, listed
+        finally:
+            await db.close_pool()
+            await conn.execute(
+                f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE content_raw LIKE $1',
+                f"integration note {tag}%",
+            )
+            await conn.execute(f'DELETE FROM "{PG_SCHEMA}".entities WHERE slug = $1', slug)
+            await conn.close()
+
+    named, unknown, listed = asyncio.run(scenario())
+    assert named.status_code == 200
+    assert unknown.status_code == 400
+    assert "no-such-entity" in unknown.json()["error"]
+    rows = listed.json()
+    assert [r["id"] for r in rows] == [named.json()["id"]]
+    assert rows[0]["entities"] == [slug]

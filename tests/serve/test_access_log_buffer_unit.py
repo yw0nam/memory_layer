@@ -85,6 +85,7 @@ def _hit(chunk_id: str) -> Hit:
             "id": chunk_id,
             "kind": "note",
             "tags": [],
+            "entities": [],
             "occurred_at": None,
         },
     )

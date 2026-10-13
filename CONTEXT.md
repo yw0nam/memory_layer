@@ -15,7 +15,7 @@ The unit of storage and retrieval — one embedded, independently searchable pie
 _Avoid_: record, entry, item, document (for the unit)
 
 **Note**:
-An agent-authored memory, distilled by the agent before it arrives rather than extracted from a file.
+An agent-authored memory, distilled by the agent before it arrives rather than extracted from a file. A note names the registered entities it is about in `entities`.
 _Avoid_: memo, observation, fact
 
 **Kind**:
@@ -99,7 +99,7 @@ A set of active notes in one namespace, every pair at or above the similarity th
 _Avoid_: cluster, duplicate set
 
 **Group key**:
-A hash over a group's members and each member's prompt-visible fields (text, kind, author, save time, event date, tags, supersedes) and the procedure version; it changes whenever any of them does.
+A hash over a group's members and each member's prompt-visible fields (text, kind, author, save time, event date, tags, entities, supersedes) and the procedure version; it changes whenever any of them does.
 _Avoid_: group id, fingerprint
 
 **Verdict**:

@@ -203,6 +203,7 @@ def test_list_notes_maps_rows_to_response_shape(monkeypatch):
             "kind": "work",
             "text": "hello",
             "tags": ["infra"],
+            "entities": [],
             "author": None,
             "namespace": "default",
             "date": "2026-08-12",

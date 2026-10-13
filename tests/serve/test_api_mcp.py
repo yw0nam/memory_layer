@@ -39,6 +39,7 @@ MEMORY_META = {
     "id": "note:default:0000000000000000",
     "kind": "work",
     "tags": [],
+    "entities": [],
     "occurred_at": None,
 }
 
