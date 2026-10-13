@@ -53,8 +53,9 @@ Every consumer reaches stored chunks through the REST API, never through the dat
 directly. `memory_chunks` and `code_chunks` feed search, `doc_rows` holds a tabular
 document's data rows for the SQL read path alone ([ADR-0001](docs/adr/0001-table-rows-third-read-contract.md)),
 `messages` holds addressed, once-claimed signals that are never embedded and never
-searched ([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)). No raw
-conversation turns are stored ([ADR-0005](docs/adr/0005-no-raw-conversation-storage.md)).
+searched ([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)). `turns`
+holds the user's and the assistant's messages verbatim, one row per message, read by
+time, session, and literal substring and never ranked ([ADR-0012](docs/adr/0012-a-verbatim-turn-lane-read-on-demand-never-ranked.md)).
 `consolidation_actions` records each verdict an agent applied to a group of notes the
 server issued; the server judges no content ([ADR-0008](docs/adr/0008-consolidation-judged-by-an-agent-applied-by-the-server.md)).
 `agent_profiles` holds each agent's profile versions, a `user` version with the consent it
