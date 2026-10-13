@@ -189,3 +189,35 @@ def test_a_window_centres_on_the_first_case_insensitive_match():
     window = store._window(content, "needle")
     assert len(window) == store.WINDOW_CHARS
     assert "NEEDLE" in window
+
+
+def test_an_id_stored_under_another_session_is_409(monkeypatch):
+    import contextlib
+
+    import asyncpg
+
+    class Conn:
+        async def execute(self, *args):
+            return None
+
+        async def fetchrow(self, sql, *args):
+            if "INSERT" in sql:
+                raise asyncpg.UniqueViolationError("duplicate key")
+            return None
+
+        async def fetchval(self, sql, *args):
+            return None if "SELECT namespace" in sql else 1
+
+        def transaction(self):
+            return contextlib.AsyncExitStack()
+
+    @contextlib.asynccontextmanager
+    async def acquire():
+        yield Conn()
+
+    async def ensure(conn):
+        return None
+
+    monkeypatch.setattr(store.db, "acquire", acquire)
+    monkeypatch.setattr(store, "ensure_schema_once", ensure)
+    assert client.post("/turns", json=_turn()).status_code == 409

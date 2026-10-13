@@ -11,6 +11,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import asyncpg
+
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
@@ -92,26 +94,29 @@ async def append(row: dict[str, Any]) -> dict[str, Any]:
             if owner is not None and owner != row["namespace"]:
                 raise ValueError(f"session {row['session_id']!r} belongs to namespace {owner!r}")
             await namespace_registry.require_registered(conn, row["namespace"])
-            inserted = await conn.fetchrow(
-                f"""
-                INSERT INTO {_TURNS}
-                  (id, namespace, origin, session_id, seq, role, content, reasoning, repo,
-                   created_at)
-                VALUES ($1, $2, $3, $4,
-                  (SELECT COALESCE(MAX(seq), 0) + 1 FROM {_TURNS}
-                   WHERE origin = $3 AND session_id = $4),
-                  $5, $6, $7, $8, now())
-                RETURNING id, seq, created_at
-                """,
-                turn_id,
-                row["namespace"],
-                row["origin"],
-                row["session_id"],
-                row["role"],
-                row["content"],
-                row["reasoning"],
-                row["repo"],
-            )
+            try:
+                inserted = await conn.fetchrow(
+                    f"""
+                    INSERT INTO {_TURNS}
+                      (id, namespace, origin, session_id, seq, role, content, reasoning, repo,
+                       created_at)
+                    VALUES ($1, $2, $3, $4,
+                      (SELECT COALESCE(MAX(seq), 0) + 1 FROM {_TURNS}
+                       WHERE origin = $3 AND session_id = $4),
+                      $5, $6, $7, $8, now())
+                    RETURNING id, seq, created_at
+                    """,
+                    turn_id,
+                    row["namespace"],
+                    row["origin"],
+                    row["session_id"],
+                    row["role"],
+                    row["content"],
+                    row["reasoning"],
+                    row["repo"],
+                )
+            except asyncpg.UniqueViolationError:
+                raise Conflict("id already holds a different turn") from None
     return {"id": str(inserted["id"]), "seq": inserted["seq"], "stored": True}
 
 
