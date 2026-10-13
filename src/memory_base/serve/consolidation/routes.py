@@ -8,10 +8,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.serve.access import namespaces
+from memory_base.serve.common.authority import consolidator_denied
 from memory_base.serve.common.http import error, json_body
 from memory_base.serve.consolidation import groups, verdicts
-
-CONSOLIDATE_AUTHOR = "consolidator"
 
 
 def _scalar(request: Request, name: str, parse, default, valid, rule: str):
@@ -30,15 +29,9 @@ def _scalar(request: Request, name: str, parse, default, valid, rule: str):
     return value
 
 
-def _consolidator_denied(key) -> JSONResponse | None:
-    if key.is_admin and CONSOLIDATE_AUTHOR in key.authors:
-        return None
-    return error(f"admin key with {CONSOLIDATE_AUTHOR!r} in its authors required", 403)
-
-
 async def groups_route(request: Request) -> JSONResponse:
     """List groups of active notes that may state the same thing; changes no note."""
-    denied = _consolidator_denied(request.state.key)
+    denied = consolidator_denied(request.state.key)
     if denied is not None:
         return denied
     try:
@@ -122,7 +115,7 @@ async def groups_route(request: Request) -> JSONResponse:
 async def verdicts_route(request: Request) -> JSONResponse:
     """Validate and apply (or plan, on a dry run) verdicts on issued groups, each alone."""
     key = request.state.key
-    denied = _consolidator_denied(key)
+    denied = consolidator_denied(key)
     if denied is not None:
         return denied
     try:
@@ -142,7 +135,7 @@ async def verdicts_route(request: Request) -> JSONResponse:
 async def undo_route(request: Request) -> JSONResponse:
     """Reverse one consolidation action: 404 unknown, 409 refused with nothing changed."""
     key = request.state.key
-    denied = _consolidator_denied(key)
+    denied = consolidator_denied(key)
     if denied is not None:
         return denied
     try:
@@ -166,7 +159,7 @@ async def undo_route(request: Request) -> JSONResponse:
 
 async def actions_route(request: Request) -> JSONResponse:
     """List consolidation actions newest first with the notes they reference."""
-    denied = _consolidator_denied(request.state.key)
+    denied = consolidator_denied(request.state.key)
     if denied is not None:
         return denied
     try:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
@@ -56,18 +57,35 @@ async def notes_by_ids(ids: list[str], namespaces: list[str] | None = None) -> l
 
 
 async def delete_notes(ids: list[str], namespaces: list[str] | None = None) -> int:
-    """Delete agent notes matching the supplied identifiers, scoped to namespaces (None: all)."""
+    """Delete agent notes matching the supplied identifiers, scoped to namespaces (None: all).
+
+    Current facts citing a deleted note are archived and lose their citation.
+    """
     async with db.acquire() as conn:
-        status = await conn.execute(
-            f"""
-            DELETE FROM "{PG_SCHEMA}".memory_chunks
-            WHERE source_type = 'agent_note' AND id = ANY($1::text[])
-              AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
-            """,
-            ids,
-            namespaces,
-        )
-        return int(status.rsplit(" ", 1)[-1])
+        async with conn.transaction():
+            await conn.execute(
+                f"""
+                UPDATE "{PG_SCHEMA}".facts SET archived_at = $2, note_id = NULL
+                WHERE archived_at IS NULL AND note_id IN (
+                  SELECT id FROM "{PG_SCHEMA}".memory_chunks
+                  WHERE source_type = 'agent_note' AND id = ANY($1::text[])
+                    AND ($3::text[] IS NULL OR namespace = ANY($3::text[]))
+                )
+                """,
+                ids,
+                time.time(),
+                namespaces,
+            )
+            status = await conn.execute(
+                f"""
+                DELETE FROM "{PG_SCHEMA}".memory_chunks
+                WHERE source_type = 'agent_note' AND id = ANY($1::text[])
+                  AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
+                """,
+                ids,
+                namespaces,
+            )
+            return int(status.rsplit(" ", 1)[-1])
 
 
 async def move_notes(ids: list[str], target_namespace: str) -> dict[str, list]:

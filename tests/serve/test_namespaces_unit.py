@@ -220,6 +220,7 @@ def test_delete_non_empty_namespace_conflict(monkeypatch):
     with pytest.raises(namespaces.NamespaceNotEmptyError):
         asyncio.run(namespaces.delete_namespace("team-a"))
     assert "memory_chunks" in conn.queries[-1][0]
+    assert "facts" in conn.queries[-1][0]
 
 
 def test_delete_empty_namespace_succeeds(monkeypatch):

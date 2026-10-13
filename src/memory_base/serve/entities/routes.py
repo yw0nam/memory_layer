@@ -6,6 +6,7 @@ one of them. The `import` consent method is for an admin key carrying the `user`
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from starlette.requests import Request
@@ -14,12 +15,11 @@ from starlette.responses import JSONResponse
 from memory_base.serve.access.keys import AUTHOR_RE
 from memory_base.serve.common import consent
 from memory_base.serve.common.consent import CONSENT_METHODS
-from memory_base.serve.common.entities import SLUG_RE
+from memory_base.serve.common.entities import SLUG_RE, entity_row
 from memory_base.serve.common.http import (
     RequestError,
     bounded_text,
     error,
-    iso,
     object_fields,
     request_body,
 )
@@ -29,9 +29,8 @@ KINDS = ("person", "agent", "project", "org", "place", "thing")
 MAX_ITEMS = 50
 MAX_NAME_CHARS = 200
 MAX_ALIASES = 20
-MAX_DESCRIPTION_CHARS = 1000
-ITEM_FIELDS = {"slug", "kind", "name", "aliases", "description"}
-TIMESTAMPS = ("consented_at", "created_at", "updated_at", "archived_at")
+MAX_DESCRIPTION_CHARS = 4000
+ITEM_FIELDS = {"slug", "kind", "name", "aliases", "description", "base_updated_at"}
 
 
 def _slug(value: Any) -> str:
@@ -58,6 +57,14 @@ def _item(raw: Any) -> dict[str, Any]:
         item["description"] = bounded_text(
             fields["description"], "description", 0, MAX_DESCRIPTION_CHARS
         )
+    if "base_updated_at" in fields:
+        try:
+            base = datetime.fromisoformat(str(fields["base_updated_at"]))
+        except ValueError:
+            base = None
+        if base is None or base.tzinfo is None:
+            raise RequestError("base_updated_at must be an ISO 8601 timestamp with an offset")
+        item["base_updated_at"] = base
     return item
 
 
@@ -90,24 +97,21 @@ def _denied(key: Any, author: str, method: str) -> JSONResponse | None:
     return None
 
 
-def _public(row: dict[str, Any]) -> dict[str, Any]:
-    return {**row, **{name: iso(row[name]) for name in TIMESTAMPS}}
-
-
 async def list_route(request: Request) -> JSONResponse:
     """The registry ordered by slug; archived entities only with include_archived=true."""
     flag = request.query_params.get("include_archived", "false")
     if flag not in ("true", "false"):
         return error("include_archived must be true or false")
     return JSONResponse(
-        {"entities": [_public(row) for row in await store.list_entities(flag == "true")]}
+        {"entities": [entity_row(row) for row in await store.list_entities(flag == "true")]}
     )
 
 
 async def upsert_route(request: Request) -> JSONResponse:
-    """Create or edit entities as one batch; 409 names the entity that holds a colliding value.
+    """Create or edit entities as one batch; 409 names the entity holding a colliding value.
 
-    With `dry_run`, every check runs and nothing is written."""
+    A description edit against a stale `base_updated_at` is also a 409. With `dry_run`, every
+    check runs and nothing is written."""
     try:
         items, author, method, dry_run = parse_upsert(await request_body(request))
     except RequestError as exc:
@@ -116,13 +120,17 @@ async def upsert_route(request: Request) -> JSONResponse:
         return denied
     try:
         rows = await store.upsert(items, author, method, dry_run)
+    except store.Stale as exc:
+        return JSONResponse(
+            {"error": "stale", "slug": exc.slug, "updated_at": exc.updated_at}, status_code=409
+        )
     except store.Collision as exc:
         return JSONResponse(
             {"error": str(exc), "holder": exc.holder, "value": exc.value}, status_code=409
         )
     except ValueError as exc:
         return error(str(exc))
-    return JSONResponse({"entities": [_public(row) for row in rows]})
+    return JSONResponse({"entities": [entity_row(row) for row in rows]})
 
 
 async def archive_route(request: Request) -> JSONResponse:
@@ -141,4 +149,4 @@ async def archive_route(request: Request) -> JSONResponse:
         row = await store.archive(slug, author, method, dry_run)
     except ValueError as exc:
         return error(str(exc))
-    return JSONResponse({"entity": _public(row)})
+    return JSONResponse({"entity": entity_row(row)})

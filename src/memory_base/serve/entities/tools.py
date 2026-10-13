@@ -33,6 +33,13 @@ def _line(item: dict[str, Any], current: dict[str, Any] | None) -> str | None:
     return f"edit {slug}: " + "; ".join(changes) if changes else None
 
 
+def _based(item: dict[str, Any], current: dict[str, Any] | None) -> dict[str, Any]:
+    """An edit of a description carries the `updated_at` of the row it was written against."""
+    if current is None or "description" not in item:
+        return item
+    return {**item, "base_updated_at": current["updated_at"]}
+
+
 async def list_entities(
     include_archived: bool = False, ctx: Context | None = None
 ) -> dict[str, Any]:
@@ -69,8 +76,11 @@ async def register_entity(
     writes nothing, so ask the user in the conversation, then call again with confirmed=true
     and the same input. In an unattended session (cron, no user present) never pass confirmed;
     send a message naming the entity on the messages lane instead, and the next interactive
-    session asks. A refused request never reaches the user. The user is an entity of kind person; a project entity carries its
-    repository origin among its aliases. `author` is one of the key's authors.
+    session asks. A refused request never reaches the user. The user is an entity of kind
+    person; a project entity carries its repository origin among its aliases. For a person
+    the description says who they are; for an agent it holds the user's standing directions
+    to that agent, including its `Remember` and `Don't remember` lines, and only the agent's
+    own description governs it. `author` is one of the key's authors.
     """
     if archive and (len(entities) != 1 or set(entities[0]) != {"slug"}):
         raise ValueError("archive takes exactly one item with only a slug")
@@ -85,6 +95,7 @@ async def register_entity(
         lines = [f"archive {slug} ({name})"]
         path, payload = f"/entities/{slug}/archive", {}
     else:
+        entities = [_based(item, registry.get(item["slug"])) for item in entities]
         pairs = [(item, _line(item, registry.get(item["slug"]))) for item in entities]
         entities = [item for item, line in pairs if line is not None]
         if not entities:

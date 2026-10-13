@@ -693,6 +693,60 @@ register_entity(entities, author, confirmed?)
 A request refused by its checks never reaches the user. A write names an `author` that is one of the key's authors; `import` needs the key to be
 admin and to carry `user`.
 
+An edit that changes `description` carries `base_updated_at`, the `updated_at` of the row it
+was written against (the MCP tool takes it from the registry it read). A value that is not
+the row's current `updated_at` is refused with 409 `{error: "stale", slug, updated_at}` at
+the dry run, before consent. A description holds at most 4,000 characters.
+
+## Facts and cards
+
+`memory.facts` holds one property or relation of an entity per row: `id` (uuid), `namespace`
+(the cited note's), `entity`, `attribute` (`^[a-z0-9][a-z0-9_-]{0,39}$`), exactly one of
+`value_text` (1 to 300 characters) and `value_entity` (an entity slug), `note_id` (the
+agent note it was distilled from; null once that note is deleted), `author`, `created_at`,
+`archived_at`, and `replaced_by`. A row is current while `archived_at` is null; partial
+indexes on `entity` and `value_entity` cover the current rows. The table is never embedded
+or searched, and the read-only SQL role has no grant on it.
+
+**Write.** `POST /admin/facts {author, ops, dry_run?}` takes an admin key carrying the
+`consolidator` author; `author` is one of the key's authors. `ops` holds 1 to 100 items:
+`add {entity, attribute, value_text | value_entity, note_id, allow_multiple?}`,
+`replace {id, attribute?, value_text | value_entity, note_id}`, and `remove {id, note_id}`.
+
+| rule | refusal |
+|---|---|
+| `entity` and `value_entity` are active entities | unknown or archived slug |
+| `note_id` is an active agent note; the fact takes that note's namespace | not an active agent note |
+| `value_text` is stripped, credential-scanned, and not a list of names | over 300 characters, a credential, `value lists several names; one row per element` |
+| `add` on an (entity, attribute) with a current row | refused naming that row's id, unless `allow_multiple` |
+| `add` equal to a current row | not written; the result is `unchanged` with that row's id |
+| `replace` and `remove` need a current predecessor | unknown or closed id; `replace` keeps the predecessor's entity |
+
+`replace` inserts the new row and closes the predecessor (`archived_at`, `replaced_by`);
+`remove` only closes it. The batch runs in one transaction under one advisory lock and is all
+or nothing: a refused op aborts it with `op <index>: <reason>`. With `dry_run` every check
+runs and the transaction rolls back. The response is `{results: [{op, status, ...row}]}`
+with `status` `written`, `unchanged`, or `planned`.
+
+**Read.** `GET /entities/{slug}?include_past=&namespace=` returns `{entity, facts,
+incoming}` for any key: `facts` are rows whose `entity` is the slug, `incoming` rows whose
+`value_entity` is the slug, newest first, at most 200 each, current only unless
+`include_past` (a closed row carries `archived_at` and `replaced_by`). Rows are limited to
+the namespaces the key may read, narrowed by `namespace` (403 outside the key's set); an
+unknown slug is 404 and an archived entity is served with its `archived_at`. The MCP tool
+`read_entity` adds `notes`, the 20 newest notes naming the slug from `GET /notes?entity=`,
+to make the card.
+
+**Deletion.** `delete_notes` archives the current facts that cite a deleted note and clears
+their `note_id`; a namespace that holds facts cannot be deleted.
+
+```
+note naming an entity --> consolidation run --> POST /admin/facts --> facts
+                                                                        |
+read_entity(slug) --> GET /entities/{slug} ------------------------------+--> {entity, facts, incoming}
+                  --> GET /notes?entity=<slug> ---------------------------> {notes}
+```
+
 ## Turn lane
 
 `memory.turns` holds the verbatim record of a conversation: one row per user or assistant

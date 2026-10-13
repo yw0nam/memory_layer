@@ -18,6 +18,7 @@ from memory_base.serve.consolidation import routes as consolidation_routes
 from memory_base.serve.documents import pipeline as document_pipeline
 from memory_base.serve.documents import routes as document_routes
 from memory_base.serve.entities import routes as entity_routes
+from memory_base.serve.facts import routes as fact_routes
 from memory_base.serve.messages import routes as message_routes
 from memory_base.serve.notes import routes as note_routes
 from memory_base.serve.profiles import routes as profile_routes
@@ -71,6 +72,8 @@ app = Starlette(
         Route("/entities", entity_routes.list_route, methods=["GET"]),
         Route("/entities", entity_routes.upsert_route, methods=["POST"]),
         Route("/entities/{slug}/archive", entity_routes.archive_route, methods=["POST"]),
+        Route("/entities/{slug}", fact_routes.card_route, methods=["GET"]),
+        Route("/admin/facts", fact_routes.write_route, methods=["POST"]),
         Route("/messages", message_routes.send_route, methods=["POST"]),
         Route("/messages", message_routes.list_route, methods=["GET"]),
         Route("/messages/{message_id}/claim", message_routes.claim_route, methods=["POST"]),
