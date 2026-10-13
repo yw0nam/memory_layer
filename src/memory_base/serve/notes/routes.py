@@ -69,7 +69,7 @@ async def save_route(request: Request) -> JSONResponse:
             occurred_at=body.get("occurred_at"),
             author=author,
             allow_similar=allow_similar,
-            source_session=source_session,
+            **({} if source_session is None else {"source_session": source_session}),
         )
     except store.SimilarNotesError as exc:
         return JSONResponse({"error": str(exc), "similar": exc.similar}, status_code=409)
