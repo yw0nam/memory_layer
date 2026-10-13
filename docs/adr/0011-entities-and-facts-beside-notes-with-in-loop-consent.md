@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for the entity registry and the consent step; the facts (`facts`, `save_fact`, `list_facts`), the facts in `search_memory` and at session start, and the import of existing notes are deferred by ADR-0012
+Accepted for the entity registry and the consent step; the Facts, Reading, Existing notes, and Surface sections are replaced by ADR-0013
 
 ## Context
 

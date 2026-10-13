@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; the approval path is superseded by ADR-0011 (consent inside the agent loop)
+Superseded by ADR-0013: the profile is replaced by each agent's entity card
 
 ## Context
 
