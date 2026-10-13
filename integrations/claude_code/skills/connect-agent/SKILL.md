@@ -1,10 +1,6 @@
 ---
 name: connect-agent
 description: "Use when the user wants to connect a new agent to memory-base, change which author slugs a key may act as, or disconnect an agent. Gives each agent its own key and author slug, so each agent owns its own profile. The user runs every step that creates or holds a key."
-version: 1.0.0
-metadata:
-  hermes:
-    tags: [memory-base, setup, keys, profile]
 ---
 
 # Connect an agent to memory-base
@@ -37,17 +33,16 @@ import marker, `consolidator` is the consolidation agent.
 
 ## 2. Mint the key (user, on the server host, in the repo)
 
-The command writes the key straight into the agent's env file and never shows it:
+The user runs the command in their own terminal:
 
 ```
-(umask 177; uv run python -m memory_base.serve.access.keys new <slug> --author <slug> \
-  | tail -n 1 | sed 's/^/MEMORY_BASE_API_KEY=/' >> <env file>)
+uv run python -m memory_base.serve.access.keys new <slug> --author <slug>
 ```
 
-`new` prints the key once, on its last line. `<env file>` is the client's file from the
-table in step 3; Claude Code has no env file, so the user mints into a scratch file, pastes
-the value into the plugin's API key prompt, and deletes the file. When the client runs on another machine, copy the file there (for
-example with `scp`) without opening it.
+`new` prints the key once, on its last line. For Claude Code the user pastes it into the
+plugin's configuration prompt (enabling the plugin asks for it; later, `/config`, then the
+memory-base rows). The key goes into no file, and the user never pastes it into the chat.
+For Hermes or another client, the user stores it in that client's own secret store.
 
 Add `--admin` only when the agent must read private namespaces that its label does not
 own, such as the user's personal namespace. An admin key can also rewrite any label's
@@ -58,7 +53,7 @@ determined agent.
 
 | client | env file (step 2) | owner | MCP server |
 |---|---|---|---|
-| Claude Code | none: the plugin's API key option, held in the secure store | the plugin's Author option, changed in `/config` (default `claude-code`) | provided by the plugin |
+| Claude Code | the plugin's API key option, held in the secure store | the plugin's Author option, changed in `/config` (default `claude-code`) | provided by the plugin |
 | Hermes | `$HERMES_HOME/.env` | `memory.memory_base.owner: <slug>` in `$HERMES_HOME/config.yaml` | an `mcp_servers` entry with the header `X-API-Key` set to the same key |
 | other MCP client | the client's own secret store | the client's session-start hook, if any | the MCP url with the header `X-API-Key` |
 
