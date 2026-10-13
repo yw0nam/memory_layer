@@ -693,7 +693,8 @@ admin and to carry `user`.
 ## Turn lane
 
 `memory.turns` holds the verbatim record of a conversation: one row per user or assistant
-message, as the client delivered it. A row is never embedded, never ranked, and never
+message, as the client delivered it (the Claude Code hooks and the Hermes provider's
+`sync_turn`). A row is never embedded, never ranked, and never
 returned by `search` or `query_table`; the query role holds no grant on it.
 
 ```

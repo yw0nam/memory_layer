@@ -1,14 +1,16 @@
-"""Pure REST client for the memory-base API's ``/search`` and ``GET /profiles`` routes.
+"""Pure REST client for the memory-base API's ``/search``, ``GET /profiles`` and ``POST /turns`` routes.
 
 No Hermes imports — importable and testable standalone (stdlib + httpx only).
-Every call swallows errors and returns an empty result instead of raising, since
-it runs inside a Hermes session and must never block or crash a conversation on
-a memory-base outage.
+Search and profile calls swallow errors and return an empty result instead of
+raising, since they run inside a Hermes session and must never block or crash a
+conversation on a memory-base outage. ``post_turn`` raises ``Unreachable`` or
+``Refused`` so the provider can tell an outage from a refusal.
 """
 
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +28,19 @@ PROFILE_HEADER = "Memory: standing profile for {owner}. Apply it to every task."
 _CLIENT_CONTEXT_BLOCK = re.compile(r"<client_context>\n?.*?</client_context>\s*", re.DOTALL)
 _DESIRE_TICK_MARKERS = ("MONITOR CHANGE DETECTED", "DESIRE_STATE_DIR")
 _FENCE_TAG = re.compile(r"<\s*/?\s*memory-context", re.IGNORECASE)
+
+
+class Unreachable(Exception):
+    """The server did not answer: connection failure or timeout."""
+
+
+class Refused(Exception):
+    """The server answered with an HTTP error."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(f"{status}: {message}")
+        self.status = status
+        self.message = message
 
 
 @dataclass
@@ -59,6 +74,40 @@ class MemoryBaseClient:
             return response.json()
         except Exception:
             return None
+
+    def post_turn(
+        self,
+        origin: str,
+        session_id: str,
+        role: str,
+        content: str,
+        reasoning: str | None = None,
+        namespace: str | None = None,
+    ) -> dict[str, Any]:
+        """Append one turn to the turn lane; raises ``Unreachable`` or ``Refused``."""
+        body: dict[str, Any] = {
+            "id": str(uuid.uuid4()),
+            "origin": origin,
+            "session_id": session_id,
+            "role": role,
+            "content": content,
+        }
+        if reasoning:
+            body["reasoning"] = reasoning
+        if namespace:
+            body["namespace"] = namespace
+        try:
+            with httpx.Client(timeout=self.timeout, transport=self.transport) as client:
+                response = client.post(f"{self.url}/turns", json=body, headers=self._headers())
+        except httpx.TransportError as exc:
+            raise Unreachable(str(exc)) from exc
+        if response.is_error:
+            try:
+                message = str(response.json()["error"])
+            except Exception:
+                message = response.text
+            raise Refused(response.status_code, message)
+        return response.json()
 
     def profiles(self, owner: str) -> dict[str, Any] | None:
         """The owner's profile: both parts, and their versions.

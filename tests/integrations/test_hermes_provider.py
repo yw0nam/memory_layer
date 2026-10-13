@@ -128,7 +128,7 @@ def test_no_profile_is_fetched_without_a_configured_owner(plugin, monkeypatch):
     assert provider.system_prompt_block() == SESSION_LINE.format(session="session-1")
 
 
-def test_system_prompt_block_is_empty_without_the_server(plugin, monkeypatch):
+def test_system_prompt_block_has_only_the_session_line_without_the_server(plugin, monkeypatch):
     provider = _provider(plugin, monkeypatch, None, url="http://127.0.0.1:9")
     provider.initialize("session-1")
     assert provider.system_prompt_block() == SESSION_LINE.format(session="session-1")
