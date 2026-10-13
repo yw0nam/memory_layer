@@ -10,8 +10,7 @@
     {
       "name": "memory-base",
       "source": "./integrations/claude_code",
-      "description": "Memory Base for Claude Code: profile and handoffs at session start, relevant notes per prompt, and the verbatim turn record.",
-      "version": "0.1.0"
+      "description": "Memory Base for Claude Code: the owner's profile and handoffs at session start, relevant notes on every prompt, and the verbatim turn record kept beside them."
     }
   ]
 }
