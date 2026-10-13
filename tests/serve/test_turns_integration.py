@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 import pytest
@@ -269,4 +270,48 @@ def test_a_note_names_its_source_session(tag):
     saved, listed = asyncio.run(scenario())
     assert [note["source_session"] for note in listed if note["id"] == saved["id"]] == [
         {"origin": "hermes", "session_id": f"{tag}-src"}
+    ]
+
+
+def test_sessions_are_listed_by_window_and_a_session_straddling_since_is_included(tag):
+    client = _api()
+    days_ago = {
+        f"{tag}-old": [10],
+        f"{tag}-straddle": [8, 4],
+        f"{tag}-middle": [3],
+        f"{tag}-new": [1],
+    }
+    for session, days in days_ago.items():
+        for _ in days:
+            _post(client, session, "turn")
+
+    async def backdate():
+        conn = await asyncpg.connect(db_url())
+        try:
+            for session, days in days_ago.items():
+                ids = await conn.fetch(
+                    f'SELECT id FROM "{PG_SCHEMA}".turns WHERE session_id = $1 ORDER BY seq',
+                    session,
+                )
+                for row, day in zip(ids, days):
+                    await conn.execute(
+                        f'UPDATE "{PG_SCHEMA}".turns SET created_at = now() - make_interval(days => $2) '
+                        "WHERE id = $1",
+                        row["id"],
+                        day,
+                    )
+        finally:
+            await conn.close()
+
+    asyncio.run(backdate())
+    now = datetime.now(timezone.utc)
+    window = {
+        "since": (now - timedelta(days=6)).isoformat(),
+        "until": (now - timedelta(days=2)).isoformat(),
+        "limit": 200,
+    }
+    rows = client.get("/sessions", params=window).json()
+    assert sorted(row["session_id"] for row in rows if row["session_id"].startswith(tag)) == [
+        f"{tag}-middle",
+        f"{tag}-straddle",
     ]
