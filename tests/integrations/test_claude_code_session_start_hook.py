@@ -1,6 +1,6 @@
 """Unit tests for the Claude Code SessionStart hook — pure module, stdlib only.
 
-Exercises session_start_hook.py directly (importable via the ``pythonpath``
+Exercises session_start.py directly (importable via the ``pythonpath``
 test config entry). HTTP is faked, git runs against throwaway repositories.
 """
 
@@ -14,12 +14,12 @@ import urllib.request
 
 import pytest
 
-import session_start_hook
+import session_start
 from memory_base.serve.messages.store import normalize_scope
-from session_start_hook import HANDOFF_HEADER
-from session_start_hook import git_origin
-from session_start_hook import repo_scope
-from session_start_hook import run_hook
+from hook_common import git_origin
+from hook_common import repo_scope
+from session_start import HANDOFF_HEADER
+from session_start import run_hook
 
 HANDOFFS = [
     {
@@ -52,8 +52,14 @@ PROFILE = {
     "user": {"content": "Lives in Seoul.\nVegetarian.", "created_at": "2026-10-01T00:00:00+00:00"},
 }
 
+SESSION_LINE = (
+    "Session: claude_code sess-1 "
+    "(pass it as session_id with origin claude_code when a note is distilled from this session)"
+)
+
 PROFILE_LINES = [
     "Memory: standing profile for claude-code. Apply it to every task.",
+    SESSION_LINE,
     "## user (v3)",
     "Lives in Seoul.",
     "Vegetarian.",
@@ -219,6 +225,7 @@ def test_parts_never_written_print_version_zero_and_empty():
     assert block.splitlines() == [
         "<memory-context>",
         "Memory: standing profile for claude-code. Apply it to every task.",
+        SESSION_LINE,
         "## user (v0)",
         "(empty)",
         "## self (v0)",
@@ -230,8 +237,8 @@ def test_parts_never_written_print_version_zero_and_empty():
 def test_a_cleared_part_keeps_its_version_line():
     profile = dict(PROFILE, user_version=4, user=None)
     lines = run_hook(_payload(), RecordingGet(profile=profile), _origin(None)).splitlines()
-    assert lines[2:4] == ["## user (v4)", "(empty)"]
-    assert lines[4] == "## self (v2)"
+    assert lines[3:5] == ["## user (v4)", "(empty)"]
+    assert lines[5] == "## self (v2)"
 
 
 def test_a_failed_profile_fetch_keeps_the_handoffs_and_prints_no_version():
@@ -355,9 +362,9 @@ def repo(tmp_path):
 
 @pytest.fixture
 def hook_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("MEMORY_BASE_API_KEY", "key")
-    monkeypatch.setenv("MEMORY_BASE_URL", "http://memory.test")
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_API_KEY", "key")
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_URL", "http://memory.test")
+    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path / "data"))
 
 
 def _stdin(monkeypatch, payload):
@@ -376,7 +383,7 @@ def test_main_prints_the_profile_and_handoffs_and_never_claims(monkeypatch, caps
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     _stdin(monkeypatch, _payload(str(repo)))
 
-    assert session_start_hook.main() == 0
+    assert session_start.main() == 0
     out = capsys.readouterr().out
     assert out.index(PROFILE_LINES[0]) < out.index(HANDOFF_HEADER)
     assert "Session entry hooks" in out
@@ -395,10 +402,10 @@ def test_main_prints_the_profile_and_handoffs_and_never_claims(monkeypatch, caps
     assert all("claim" not in r.full_url for r in requests)
 
 
-def test_main_requests_the_owner_named_by_memory_base_author(
+def test_main_requests_the_configured_author(
     monkeypatch, capsys, tmp_path, hook_env
 ):
-    monkeypatch.setenv("MEMORY_BASE_AUTHOR", "natsume")
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_AUTHOR", "natsume")
     urls = []
 
     def fake_urlopen(request, timeout=None):
@@ -407,7 +414,7 @@ def test_main_requests_the_owner_named_by_memory_base_author(
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     _stdin(monkeypatch, _payload(str(tmp_path)))
-    assert session_start_hook.main() == 0
+    assert session_start.main() == 0
     assert urls == ["http://memory.test/profiles?owner=natsume"]
     assert "standing profile for natsume." in capsys.readouterr().out
 
@@ -421,7 +428,7 @@ def test_main_prints_the_profile_outside_a_repository(monkeypatch, capsys, tmp_p
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     _stdin(monkeypatch, _payload(str(tmp_path)))
-    assert session_start_hook.main() == 0
+    assert session_start.main() == 0
     assert capsys.readouterr().out.splitlines() == [
         "<memory-context>",
         *PROFILE_LINES,
@@ -436,7 +443,7 @@ def test_main_prints_nothing_for_a_malformed_profile_body(monkeypatch, capsys, t
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     _stdin(monkeypatch, _payload(str(tmp_path)))
-    assert session_start_hook.main() == 0
+    assert session_start.main() == 0
     assert capsys.readouterr().out == ""
 
 
@@ -446,35 +453,57 @@ def test_main_fails_open_on_a_server_error(monkeypatch, capsys, repo, hook_env):
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     _stdin(monkeypatch, _payload(str(repo)))
-    assert session_start_hook.main() == 0
+    assert session_start.main() == 0
     assert capsys.readouterr().out == ""
 
 
-def test_main_asks_nothing_without_an_api_key(monkeypatch, capsys, repo, tmp_path):
-    monkeypatch.delenv("MEMORY_BASE_API_KEY", raising=False)
-    monkeypatch.delenv("MEMORY_BASE_ENV", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+def test_main_asks_nothing_without_an_api_key_and_records_it(monkeypatch, capsys, repo, tmp_path):
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_API_KEY", raising=False)
+    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path / "data"))
 
     def fake_urlopen(request, timeout=None):
         raise AssertionError("no request expected")
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     _stdin(monkeypatch, _payload(str(repo)))
-    assert session_start_hook.main() == 0
+    assert session_start.main() == 0
     assert capsys.readouterr().out == ""
+    status = json.loads((tmp_path / "data" / "status.json").read_text())
+    assert status["configured"] is False
+
+
+def test_main_records_the_connection_state(monkeypatch, repo, hook_env, tmp_path):
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_NAMESPACE", "work")
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda request, timeout=None: _Response(json.dumps(PROFILE).encode())
+    )
+    _stdin(monkeypatch, _payload(str(repo)))
+    assert session_start.main() == 0
+    status = json.loads((tmp_path / "data" / "status.json").read_text())
+    assert {k: status[k] for k in ("configured", "url", "author", "namespace", "reachable")} == {
+        "configured": True,
+        "url": "http://memory.test",
+        "author": "claude-code",
+        "namespace": "work",
+        "reachable": True,
+    }
+    assert status["error"] is None
+    assert status["checked_at"]
+
+
+def test_main_records_an_unreachable_server(monkeypatch, repo, hook_env, tmp_path):
+    def fake_urlopen(request, timeout=None):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _stdin(monkeypatch, _payload(str(repo)))
+    assert session_start.main() == 0
+    status = json.loads((tmp_path / "data" / "status.json").read_text())
+    assert status["reachable"] is False
+    assert "connection refused" in status["error"]
 
 
 def test_main_fails_open_on_malformed_stdin(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
-    assert session_start_hook.main() == 0
+    assert session_start.main() == 0
     assert capsys.readouterr().out == ""
-
-
-def test_the_install_notes_give_the_session_start_hook_ten_seconds():
-    import prefetch_hook
-
-    session_start_entry = prefetch_hook.__doc__.split('"SessionStart"', 1)[1]
-    assert '"timeout": 10' in session_start_entry
-    assert "10 seconds" in session_start_hook.__doc__
-    for source in ("startup", "resume", "clear", "compact"):
-        assert source in session_start_hook.__doc__
