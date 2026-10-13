@@ -64,7 +64,7 @@ spooled: turns that fail are not saved.
 ## Data directory
 
 `${CLAUDE_PLUGIN_DATA}` (`~/.claude/plugins/data/<id>/`) holds `status.json` (configured,
-card reachable, URL, author, user entity, namespace, check time, error) and `sessions/<session_id>.json`
+card reachable, URL, author, namespace, check time, error) and `sessions/<session_id>.json`
 (the failure marker). Without `CLAUDE_PLUGIN_DATA` the hooks use a `memory_base_plugin`
 directory under the system temp directory. Each prompt appends one row to
 `MEMORY_PREFETCH_LOG` (default `~/.claude/memory_prefetch_log.jsonl`).

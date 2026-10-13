@@ -37,7 +37,7 @@ class Config:
     api_key: str
     author: str
     namespace: str | None
-    user_entity: str | None = None
+    user_entity: str | None
 
     @classmethod
     def from_env(cls) -> Config:

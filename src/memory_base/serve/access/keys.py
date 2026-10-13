@@ -10,7 +10,8 @@
 slugs are given.
 
 A label's authors are the note authors its keys may save as; the `user` author, with
-admin, marks imports of entities and is held only by the user's key. An admin key can replace any label's authors.
+admin, marks imports of entities and is held only by the user's key. An admin key can
+replace any label's authors.
 """
 
 from __future__ import annotations

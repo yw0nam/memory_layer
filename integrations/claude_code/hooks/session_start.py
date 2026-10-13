@@ -144,7 +144,6 @@ def _write_status(cfg: Config, card_reachable: bool, error: str | None) -> None:
         "configured": cfg.configured,
         "url": cfg.url,
         "author": cfg.author,
-        "user_entity": cfg.user_entity,
         "namespace": cfg.namespace,
         "card_reachable": card_reachable,
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

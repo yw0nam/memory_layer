@@ -24,7 +24,6 @@ Show one short table:
 |---|---|
 | configured | `configured` (false: the URL or the key is empty) |
 | card reachable | `card_reachable` (the author's card fetch), with `error` when false |
-| user entity | `user_entity`, or "none" when null |
 | checked at | `checked_at` |
 | author | `author` |
 | REST URL | `url` |
