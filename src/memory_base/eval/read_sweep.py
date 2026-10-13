@@ -40,7 +40,7 @@ from memory_base.retrieval import search as search_module
 
 REPO_ROOT = lme.REPO_ROOT
 PROBES_PATH = REPO_ROOT / "tests" / "fixtures" / "read_sweep_probes.jsonl"
-PREFETCH_HOOK_PATH = REPO_ROOT / "integrations" / "claude_code" / "prefetch_hook.py"
+PREFETCH_HOOK_PATH = REPO_ROOT / "integrations" / "claude_code" / "hooks" / "prompt_submit.py"
 HERMES_CLIENT_PATH = REPO_ROOT / "integrations" / "hermes" / "memory_base" / "client.py"
 CANDIDATES_BUDGET = lme.CANDIDATES_BUDGET
 CANDIDATES_RUN = lme.run_name("baseline", "candidates")
@@ -130,6 +130,9 @@ def _load_integration(name: str, path: Path):
 
 @functools.cache
 def _prefetch_hook():
+    hooks_dir = str(PREFETCH_HOOK_PATH.parent)
+    if hooks_dir not in sys.path:
+        sys.path.insert(0, hooks_dir)
     return _load_integration("memory_base_sweep_prefetch_hook", PREFETCH_HOOK_PATH)
 
 

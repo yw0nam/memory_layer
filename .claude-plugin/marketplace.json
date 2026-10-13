@@ -1,0 +1,16 @@
+{
+  "name": "memory_layer",
+  "owner": {
+    "name": "yw0nam"
+  },
+  "metadata": {
+    "description": "Memory Base plugins for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "memory-base",
+      "source": "./integrations/claude_code",
+      "description": "Memory Base for Claude Code: the owner's profile and handoffs at session start, relevant notes on every prompt, and the verbatim turn record kept beside them."
+    }
+  ]
+}

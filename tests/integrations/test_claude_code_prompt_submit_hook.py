@@ -1,6 +1,6 @@
-"""Unit tests for the Claude Code prefetch hook — pure module, stdlib only.
+"""Unit tests for the Claude Code UserPromptSubmit hook — pure module, stdlib only.
 
-Exercises prefetch_hook.py directly (importable via the ``pythonpath`` test
+Exercises prompt_submit.py directly (importable via the ``pythonpath`` test
 config entry, mirroring how tests/integrations/test_hermes_client.py imports
 the Hermes client). The HTTP fetch is injected, never real.
 """
@@ -12,12 +12,14 @@ import json
 import pytest
 
 import client as hermes_client
-import prefetch_hook
-from prefetch_hook import MEMORY_CONTEXT_HEADER
-from prefetch_hook import _resolve_api_key
-from prefetch_hook import build_context_block
-from prefetch_hook import is_trivial_prompt
-from prefetch_hook import run_hook
+import prompt_submit
+from hook_common import Config
+from prompt_submit import MEMORY_CONTEXT_HEADER
+from prompt_submit import build_context_block
+from prompt_submit import is_trivial_prompt
+from prompt_submit import run_hook
+
+CONFIG = Config("http://memory.test", "key", "claude-code", None)
 
 HITS = [
     {"date": "2026-08-22", "score": 0.97, "text": "tunnel terminates at 127.0.0.1:8770"},
@@ -184,40 +186,6 @@ def test_empty_result_logs_empty(env):
     assert rows[-1]["decision"] == "empty"
 
 
-# ---- _resolve_api_key --------------------------------------------------------
-
-
-@pytest.fixture
-def key_env(monkeypatch, tmp_path):
-    monkeypatch.delenv("MEMORY_BASE_API_KEY", raising=False)
-    monkeypatch.delenv("MEMORY_BASE_ENV", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
-    return tmp_path
-
-
-def test_key_env_var_wins(key_env, monkeypatch):
-    monkeypatch.setenv("MEMORY_BASE_API_KEY", "from-env")
-    assert _resolve_api_key() == "from-env"
-
-
-def test_key_from_explicit_env_file(key_env, monkeypatch, tmp_path):
-    env_file = tmp_path / "custom.env"
-    env_file.write_text("OTHER=x\nMEMORY_BASE_API_KEY=from-file\n")
-    monkeypatch.setenv("MEMORY_BASE_ENV", str(env_file))
-    assert _resolve_api_key() == "from-file"
-
-
-def test_key_defaults_to_config_dir_env_file(key_env):
-    default = key_env / ".config" / "memory-base" / "env"
-    default.parent.mkdir(parents=True)
-    default.write_text("MEMORY_BASE_API_KEY=from-default\n")
-    assert _resolve_api_key() == "from-default"
-
-
-def test_key_empty_when_nothing_configured(key_env):
-    assert _resolve_api_key() == ""
-
-
 def test_query_truncated_before_fetch(env):
     seen = {}
 
@@ -252,7 +220,7 @@ def test_search_request_carries_no_namespace_filter(monkeypatch):
         return _Response()
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    prefetch_hook._fetch_from_server("http://memory.test", "key")("q")
+    prompt_submit._fetch_from_server(CONFIG)("q")
     assert captured["url"] == "http://memory.test/search"
     assert "namespaces" not in captured["body"]
     assert captured["body"]["source"] == "memory"
@@ -268,7 +236,7 @@ def test_search_request_carries_the_pinned_top_k_and_min_score(monkeypatch):
         return _Response()
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    prefetch_hook._fetch_from_server("http://memory.test", "key")("q")
+    prompt_submit._fetch_from_server(CONFIG)("q")
     assert captured["body"]["top_k"] == 3
     assert captured["body"]["min_score"] == 0.4
 
@@ -284,5 +252,5 @@ def test_fetch_timeout_leaves_room_for_a_cold_start_search(monkeypatch):
         return _Response()
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    assert prefetch_hook._fetch_from_server("http://memory.test", "key")("q") == []
+    assert prompt_submit._fetch_from_server(CONFIG)("q") == []
     assert 3.0 <= captured["timeout"] < 5.0

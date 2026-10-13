@@ -1,0 +1,44 @@
+{
+  "name": "memory-base",
+  "version": "0.1.0",
+  "description": "Memory Base for Claude Code: the owner's profile and handoffs at session start, relevant notes on every prompt, and the verbatim turn record kept beside them.",
+  "author": { "name": "yw0nam" },
+  "license": "MIT",
+  "keywords": ["memory", "mcp", "hooks", "memory-base"],
+  "userConfig": {
+    "url": {
+      "type": "string",
+      "title": "REST URL",
+      "description": "Base URL of the memory-base REST API that the hooks call.",
+      "default": "http://127.0.0.1:8010",
+      "required": true
+    },
+    "mcp_url": {
+      "type": "string",
+      "title": "MCP URL",
+      "description": "URL of the memory-base MCP server (streamable HTTP) that provides the memory tools.",
+      "default": "http://localhost:8765/mcp",
+      "required": true
+    },
+    "api_key": {
+      "type": "string",
+      "title": "API key",
+      "description": "The memory-base API key for this agent, sent as X-API-Key; held in the secure store.",
+      "sensitive": true,
+      "required": true
+    },
+    "author": {
+      "type": "string",
+      "title": "Author",
+      "description": "The profile owner and note author this agent saves as; it must be in the key's author list.",
+      "default": "claude-code",
+      "required": true
+    },
+    "namespace": {
+      "type": "string",
+      "title": "Namespace",
+      "description": "Where this agent's turns land; empty means the key's home namespace.",
+      "required": false
+    }
+  }
+}

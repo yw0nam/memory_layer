@@ -139,10 +139,8 @@ Profiles belong to agents
 Each owner (an agent's author slug) reads both parts with the MCP tool `get_my_profile`,
 has a `self` part it writes with `update_my_profile`, and a `user` part that changes only
 when the user consents to the agent's `update_user_profile` call. Clients deliver the
-configured owner's profile at session start: the Claude Code SessionStart hook (`integrations/claude_code/session_start_hook.py`, owner
-`MEMORY_BASE_AUTHOR`, default `claude-code`, installed with a 10-second timeout as
-documented in `integrations/claude_code/prefetch_hook.py`) and the Hermes provider's
-system prompt block (config `owner`,
+configured owner's profile at session start: the Claude Code plugin's SessionStart hook (author option, default
+`claude-code`) and the Hermes provider's system prompt block (config `owner`,
 [integrations/hermes/README.md](integrations/hermes/README.md)). Both print the two parts
 under their version lines. `Remember` and `Don't remember` sections in either part narrow
 or widen what the agent keeps with `save_memory`; the user part's sections outrank the
@@ -221,9 +219,14 @@ uv sync
 docker compose up -d --build db          # pgvector + pg_textsearch on :5439
 docker compose up -d --build api         # REST backend on :8010
 docker compose up -d --build mcp         # MCP server, streamable HTTP on :8765
-claude mcp add --transport http memory-base http://localhost:8765/mcp \
-  --header "X-API-Key: <key>"            # mint one — see Authentication
 ```
+
+### Clients
+
+| client | integration |
+|---|---|
+| Claude Code | the plugin in [integrations/claude_code](integrations/claude_code/README.md): `/plugin marketplace add yw0nam/memory_layer`, then `/plugin install memory-base@memory_layer`; it brings the hooks, the MCP server, the turn capture, and the `init` and `connect-agent` skills |
+| Hermes | the memory provider in [integrations/hermes](integrations/hermes/README.md) |
 
 Index cached repos manually (the repo routes do this for you). The indexer runs inside the
 API container, which owns the only copy of the ledger and the repo cache:
@@ -290,8 +293,8 @@ slugs, replaces it on every active key of the label; over REST the same list is
 `GET /keys/{label}/authors` and `PUT /keys/{label}/authors` (admin only).
 
 Each agent gets its own key whose allowlist is its own author slug, so it writes only its
-own notes and profile. The `memory-base-connect-agent` skill
-([integrations/skills/memory-base-connect-agent/SKILL.md](integrations/skills/memory-base-connect-agent/SKILL.md))
+own notes and profile. The `connect-agent` skill
+([integrations/claude_code/skills/connect-agent/SKILL.md](integrations/claude_code/skills/connect-agent/SKILL.md))
 walks through connecting, changing, and disconnecting an agent.
 
 The MCP server needs the same header: over streamable HTTP it forwards the caller's own

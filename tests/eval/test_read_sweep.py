@@ -79,14 +79,14 @@ def test_the_search_path_delivers_every_hit_at_its_estimated_tokens():
 
 
 def test_the_claude_code_path_stops_at_the_hook_block_limit():
-    import prefetch_hook
+    import prompt_submit
 
     hits = ranked([0.9, 0.8, 0.7, 0.6], chars=500)
     kept, tokens = sweep.deliver("claude-code", hits)
-    block = prefetch_hook.build_context_block(
+    block = prompt_submit.build_context_block(
         [{"date": sweep.DATE_PLACEHOLDER, "text": hit["text"]} for hit in hits]
     )
-    assert len(block) <= prefetch_hook.BLOCK_LIMIT
+    assert len(block) <= prompt_submit.BLOCK_LIMIT
     assert ids(kept) == ["n0", "n1"]
     assert tokens == len(block) // 4
     assert sweep.deliver("claude-code", []) == ([], 0)
@@ -295,9 +295,9 @@ def test_the_probe_fixture_holds_forty_off_topic_and_twenty_memory_prompts():
     assert sum(p["intent"] == "off_topic" for p in probes) == 40
     assert sum(p["intent"] == "memory" for p in probes) == 20
     # The prefetch hook skips prompts under its minimum length, so every probe reaches search.
-    import prefetch_hook
+    import prompt_submit
 
-    assert not any(prefetch_hook.is_trivial_prompt(p["query"]) for p in probes)
+    assert not any(prompt_submit.is_trivial_prompt(p["query"]) for p in probes)
 
 
 def test_export_writes_the_delivered_packets_for_the_answer_stage(tmp_path):
