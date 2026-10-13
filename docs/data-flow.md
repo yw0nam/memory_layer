@@ -689,6 +689,40 @@ register_entity(entities, author, confirmed?)
 A request refused by its checks never reaches the user. A write names an `author` that is one of the key's authors; `import` needs the key to be
 admin and to carry `user`.
 
+## Turn lane
+
+`memory.turns` holds the verbatim record of a conversation: one row per user or assistant
+message, as the client delivered it. A row is never embedded, never ranked, and never
+returned by `search` or `query_table`; the query role holds no grant on it.
+
+```
+client hook ──► POST /turns {id, origin, session_id, role, content, reasoning?, repo?}
+                  │  credential scan of content and reasoning (refused → 400)
+                  │  advisory lock on (origin, session_id)
+                  │  id already stored?  same payload → {id, seq, stored: false}
+                  │                      other payload → 409
+                  │  session already in another namespace → 400
+                  │  seq = MAX(seq) + 1 for the session, created_at = server time
+                  ▼
+               turns (unique (origin, session_id, seq))
+```
+
+| read | route | what it returns |
+|---|---|---|
+| sessions | `GET /sessions` | one row per session by last turn, newest first; `title` is the first user message, whitespace collapsed, cut at 120 characters |
+| a session | `GET /sessions/{origin}/{session_id}` | turns in `seq` order from `offset`; cut at `limit` rows or 40,000 characters of content and reasoning, with `next_offset` naming the first seq left out |
+| a session, `contains` | same, with `contains` | the turns whose content holds the substring plus the turn before and after each, merged and marked `match: true` |
+| search | `GET /turns/search` | turns whose content holds the literal substring, newest first, each with a 300-character window around the first match and no reasoning |
+
+A substring is matched with `ILIKE`, with `%`, `_`, and `\` escaped and the value bound, so a
+Korean word with a particle attached still matches; a `pg_trgm` GIN index on `content`
+serves it. A query holds at least 2 characters. Every read is limited to the namespaces the
+key can read, and a namespace holding turns cannot be deleted. `DELETE
+/admin/sessions/{origin}/{session_id}` removes a session's rows.
+
+A note records the session it was distilled from as `source_session: {origin, session_id}`
+in its metadata; `list_notes` and search hits return it.
+
 ## Storage
 
 `memory.memory_chunks` — one table for every non-code source.
@@ -704,7 +738,7 @@ admin and to carry `user`.
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active` | save time; recency ranking and decay, and `since`/`until` when `occurred_at` is null |
 | `occurred_at` | when the remembered event happened; a hit's `date` and the `since`/`until` bound |
-| `metadata` | jsonb: `tags`, `author`, `archived_by`, `supersedes`, `replaced_by`, `similar_ack`, `consolidated_into`, `merged_from`, `merged_dates`, `consolidation_action`, `undone_action`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
+| `metadata` | jsonb: `tags`, `author`, `archived_by`, `supersedes`, `source_session`, `replaced_by`, `similar_ack`, `consolidated_into`, `merged_from`, `merged_dates`, `consolidation_action`, `undone_action`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 
 `memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,
@@ -724,6 +758,12 @@ timestamptz lifecycle fields `created_at`, `claimed_at`, `cancelled_at`,
 column, no search index; a partial index serves the pending listing, and a unique partial index on
 (`sender_key`, `idempotency_key`) backs idempotent sends. The lifecycle timestamps stay
 internal — responses carry the report status only.
+
+`memory.turns` — the verbatim turn lane: `id` (client-chosen uuid), `namespace`, `origin`
+(`claude_code` | `hermes`), `session_id`, `seq` (per session, server-assigned), `role`
+(`user` | `assistant`), `content`, `reasoning`, `repo`, `created_at` (server time).
+Unique on (`origin`, `session_id`, `seq`); an index on (`namespace`, `created_at`, `id`) and
+a `pg_trgm` GIN index on `content`. No embedding column; the query role has no grant.
 
 `memory.consolidation_actions` — one row per accepted consolidation verdict: `id`,
 `idempotency_key` (unique), `payload_hash`, `run_id`, `namespace`, `action`
