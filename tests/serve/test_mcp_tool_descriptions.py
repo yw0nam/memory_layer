@@ -43,3 +43,13 @@ def test_list_notes_mentions_author(descriptions):
 
 def test_remove_document_states_it_deletes_the_table_rows(descriptions):
     assert "doc_rows" in descriptions["remove_document"]
+
+
+def test_turn_tools_state_the_lane_and_each_origins_coverage(descriptions):
+    assert "never a substitute for notes" in descriptions["list_sessions"]
+    for phrase in ("no thinking", "reasoning", "next_offset", "match"):
+        assert phrase in descriptions["read_session"], phrase
+    for name in ("list_sessions", "read_session", "search_transcript"):
+        assert len(descriptions[name]) < 1500, name
+    assert "particle" in descriptions["search_transcript"]
+    assert "source_session" in descriptions["read_session"]

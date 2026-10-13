@@ -170,6 +170,7 @@ def test_save_memory_forwards_occurred_at_to_save_note(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        source_session=None,
     ):
         captured["occurred_at"] = occurred_at
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
@@ -201,6 +202,7 @@ def test_save_memory_omitted_occurred_at_forwards_none(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        source_session=None,
     ):
         captured["occurred_at"] = occurred_at
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
@@ -238,6 +240,7 @@ def test_save_memory_malformed_occurred_at_400(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        source_session=None,
     ):
         raise ValueError(f"invalid ISO 8601 timestamp: {occurred_at!r}")
 
@@ -266,6 +269,7 @@ def test_save_memory_future_occurred_at_400(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        source_session=None,
     ):
         raise ValueError("occurred_at must not be in the future")
 
@@ -296,6 +300,7 @@ def test_save_memory_personal_kind_delegates_to_save_note(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        source_session=None,
     ):
         captured["kind"] = kind
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}

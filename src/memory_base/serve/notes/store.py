@@ -154,6 +154,7 @@ async def save_note(
     occurred_at: str | None = None,
     author: str | None = None,
     allow_similar: bool = False,
+    source_session: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory.
 
@@ -227,6 +228,8 @@ async def save_note(
                 row["metadata"]["similar_ack"] = acknowledged
             if supersedes is not None:
                 row["metadata"]["supersedes"] = supersedes
+            if source_session is not None:
+                row["metadata"]["source_session"] = source_session
             status = await conn.execute(
                 INSERT_NOTE_SQL, *insert_note_args(row, embedding, namespace)
             )
@@ -346,7 +349,7 @@ async def list_notes(
         }
         if row["archived_at"] is not None:
             note["archived"] = True
-        for field in LINEAGE_FIELDS:
+        for field in ("source_session", *LINEAGE_FIELDS):
             if metadata.get(field) is not None:
                 note[field] = metadata[field]
         out.append(note)

@@ -31,7 +31,7 @@ class NamespaceNotFoundError(NamespaceError):
 
 
 class NamespaceNotEmptyError(NamespaceError):
-    """The namespace still has notes, chunks, table rows, or messages."""
+    """The namespace still has notes, chunks, table rows, messages, or turns."""
 
 
 def validate_namespace_name(name: Any) -> str:
@@ -147,6 +147,8 @@ async def delete_namespace(name: str) -> None:
                   SELECT 1 FROM "{PG_SCHEMA}".doc_rows WHERE namespace = $1
                 ) OR EXISTS(
                   SELECT 1 FROM "{PG_SCHEMA}".messages WHERE namespace = $1
+                ) OR EXISTS(
+                  SELECT 1 FROM "{PG_SCHEMA}".turns WHERE namespace = $1
                 )
                 """,
                 name,

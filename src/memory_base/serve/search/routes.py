@@ -59,6 +59,8 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         out["author"] = hit.meta["author"]
     if hit.meta.get("supersedes") is not None:
         out["supersedes"] = hit.meta["supersedes"]
+    if hit.meta.get("source_session") is not None:
+        out["source_session"] = hit.meta["source_session"]
     if "columns" in hit.meta:
         out["columns"] = hit.meta["columns"]
     return out

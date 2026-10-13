@@ -19,7 +19,7 @@
 - [ ] Runtime evidence attached above, or N/A justified
 
 ## Checklist (core principles)
-- [ ] Selective storage — no write path stores raw, undistilled content
+- [ ] Selective storage — notes stay distilled; verbatim text lives only in `doc_rows` and the `turns` lane
 - [ ] Source-specific logic stays out of the source-agnostic core (ingest pipeline, retrieval, serving)
 - [ ] No hardcoded endpoints/models — configuration lives in `.env`
 - [ ] New/changed behavior ships a test in this PR (or `skip-tests` label justified)

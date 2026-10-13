@@ -52,3 +52,11 @@ def test_instructions_draw_the_message_vs_note_line():
     assert "one-time" in SERVER_INSTRUCTIONS
     assert "the right carrier for progress and next steps" in " ".join(SERVER_INSTRUCTIONS.split())
     assert "never embedded" in SERVER_INSTRUCTIONS
+
+
+def test_instructions_describe_the_turn_lane():
+    flat = " ".join(SERVER_INSTRUCTIONS.split())
+    for name in ("list_sessions", "read_session", "search_transcript"):
+        assert name in flat
+    assert "never a reason to skip saving a note" in flat
+    assert "pass session_id and origin" in flat

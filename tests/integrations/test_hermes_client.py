@@ -8,11 +8,16 @@ tests/serve/test_mcp_proxy.py.
 
 from __future__ import annotations
 
-import httpx
+import json
+import uuid
 
+import httpx
+import pytest
 
 from client import MEMORY_CONTEXT_HEADER
 from client import MemoryBaseClient
+from client import Refused
+from client import Unreachable
 from client import clean_prefetch_query
 from client import resolve_api_key
 
@@ -436,3 +441,60 @@ def test_build_profile_block_is_empty_on_an_error_or_a_malformed_profile():
         assert client.build_profile_block("natsume") == ""
     down = _client(lambda request: httpx.Response(503, json={"error": "down"}))
     assert down.build_profile_block("natsume") == ""
+
+
+# ---- post_turn ----------------------------------------------------------------
+
+
+def test_post_turn_sends_the_turn_and_returns_the_stored_row():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["key"] = request.headers["x-api-key"]
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": seen["body"]["id"], "seq": 1, "stored": True})
+
+    stored = _client(handler).post_turn("hermes", "s1", "assistant", "hi", "why", "personal")
+    assert seen["url"] == "http://memory-base.local/turns"
+    assert seen["key"] == "secret-key"
+    body = seen["body"]
+    assert uuid.UUID(body.pop("id"))
+    assert body == {
+        "origin": "hermes",
+        "session_id": "s1",
+        "role": "assistant",
+        "content": "hi",
+        "reasoning": "why",
+        "namespace": "personal",
+    }
+    assert stored["seq"] == 1
+
+
+def test_post_turn_omits_reasoning_and_namespace_when_absent():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    _client(handler).post_turn("hermes", "s1", "user", "hi")
+    assert "reasoning" not in seen and "namespace" not in seen
+
+
+def test_post_turn_raises_unreachable_on_a_connection_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    with pytest.raises(Unreachable):
+        _client(handler).post_turn("hermes", "s1", "user", "hi")
+
+
+def test_post_turn_raises_refused_with_the_status_and_the_servers_message():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "content looks like a credential"})
+
+    with pytest.raises(Refused) as caught:
+        _client(handler).post_turn("hermes", "s1", "user", "hi")
+    assert caught.value.status == 400
+    assert caught.value.message == "content looks like a credential"
