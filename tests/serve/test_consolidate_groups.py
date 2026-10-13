@@ -39,6 +39,7 @@ def note(note_id, text="x" * 10, **fields):
         "saved": 1_700_000_000.0,
         "occurred_at": None,
         "tags": ("rules",),
+        "entities": (),
         "similar_ack": (),
         "supersedes": None,
         "text": text,
@@ -312,6 +313,7 @@ def test_group_key_is_sha256_of_canonical_json():
                 0.0,
                 None,
                 ["y", "z"],
+                [],
                 None,
             ]
         ],
