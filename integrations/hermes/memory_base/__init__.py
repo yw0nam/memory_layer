@@ -33,7 +33,7 @@ _DEFAULT_MIN_SCORE = 0.25
 _ORIGIN = "hermes"
 _MAX_REASONING_CHARS = 64_000
 _RETRY_AFTER_SECONDS = 60
-_WARNING_CHARS = 120
+_MESSAGE_CHARS = 120
 _SESSION_LINE = (
     "Session: hermes {session_id} (pass it as session_id with origin hermes "
     "when a note is distilled from this session)"
@@ -141,8 +141,8 @@ class MemoryBaseProvider(MemoryProvider):
         else:
             logging.getLogger("memory_base").warning(message)
 
-    def _post(self, session_id: str, role: str, content: str, reasoning: str | None) -> bool:
-        """Post one turn; False when the server is unreachable."""
+    def _reachable(self, session_id: str, role: str, content: str, reasoning: str | None) -> bool:
+        """Post one turn; whether the server answered, even with a refusal."""
         try:
             self._client.post_turn(
                 _ORIGIN,
@@ -162,9 +162,8 @@ class MemoryBaseProvider(MemoryProvider):
             if exc.status not in self._refused:
                 self._refused.add(exc.status)
                 self._notify(
-                    f"memory-base refused a turn ({exc.status}: {exc.message[:_WARNING_CHARS]})"
+                    f"memory-base refused a turn ({exc.status}: {exc.message[:_MESSAGE_CHARS]})"
                 )
-            return True
         if self._unreachable:
             self._unreachable = False
             self._notify("memory-base is reachable again; turns are being saved")
@@ -182,9 +181,9 @@ class MemoryBaseProvider(MemoryProvider):
             return
         session = session_id or self._session_id
         try:
-            if self._post(session, "user", user_content, None):
+            if self._reachable(session, "user", user_content, None):
                 reasoning = _turn_reasoning(messages)
-                self._post(session, "assistant", assistant_content, reasoning)
+                self._reachable(session, "assistant", assistant_content, reasoning)
         except Exception:
             return
 

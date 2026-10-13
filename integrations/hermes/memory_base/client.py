@@ -1,4 +1,5 @@
-"""Pure REST client for the memory-base API's ``/search``, ``GET /profiles`` and ``POST /turns`` routes.
+"""Pure REST client for the memory-base API's ``/search``, ``GET /profiles`` and
+``POST /turns`` routes.
 
 No Hermes imports — importable and testable standalone (stdlib + httpx only).
 Search and profile calls swallow errors and return an empty result instead of

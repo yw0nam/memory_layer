@@ -259,6 +259,23 @@ def test_a_refusal_warns_once_per_status_and_never_raises(plugin, monkeypatch):
     assert warnings == ["memory-base refused a turn (401: nope " + "x" * 115 + ")"]
 
 
+def test_a_refusal_after_an_outage_means_the_server_is_back(plugin, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(plugin.time, "monotonic", lambda: now[0])
+    server = Server()
+    provider, warnings = _capturing(plugin, monkeypatch, server)
+    server.down = True
+    provider.sync_turn("q", "a", session_id="s1", messages=[])
+    server.down = False
+    server.status = 401
+    now[0] += 61
+    provider.sync_turn("q", "a", session_id="s1", messages=[])
+    assert warnings[1:] == [
+        "memory-base refused a turn (401: nope " + "x" * 115 + ")",
+        "memory-base is reachable again; turns are being saved",
+    ]
+
+
 def test_the_warnings_go_to_the_logger_without_a_callback(plugin, monkeypatch, caplog):
     server = Server()
     provider, _ = _capturing(plugin, monkeypatch, server)
