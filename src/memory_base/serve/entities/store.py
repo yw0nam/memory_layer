@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import time
 import unicodedata
+from datetime import datetime, timezone
 from typing import Any
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
+from memory_base.serve.common.http import iso
 
 _ENTITIES = f'"{PG_SCHEMA}".entities'
 
@@ -50,6 +52,15 @@ class Collision(ValueError):
         self.value = value
 
 
+class Stale(ValueError):
+    """An edit was written against an `updated_at` the row no longer has."""
+
+    def __init__(self, slug: str, updated_at: float) -> None:
+        super().__init__(f"{slug!r} changed since it was read; read it again")
+        self.slug = slug
+        self.updated_at = iso(updated_at)
+
+
 def _now() -> float:
     return time.time()
 
@@ -65,13 +76,22 @@ def _claims(row: dict[str, Any]) -> set[str]:
 
 def _merge(current: dict[str, Any] | None, item: dict[str, Any]) -> dict[str, Any]:
     slug = item["slug"]
+    base = item.get("base_updated_at")
+    item = {name: value for name, value in item.items() if name != "base_updated_at"}
     if current is None:
+        if base is not None:
+            raise ValueError(f"creating {slug!r} takes no base_updated_at")
         missing = [field for field in ("kind", "name") if field not in item]
         if missing:
             raise ValueError(f"creating {slug!r} needs {' and '.join(missing)}")
         return {"aliases": [], "description": "", **item}
     if current["archived_at"] is not None:
         raise ValueError(f"{slug!r} is archived; restore is not supported")
+    changes_description = "description" in item and item["description"] != current["description"]
+    if base is None and changes_description:
+        raise ValueError(f"editing the description of {slug!r} needs base_updated_at")
+    if base is not None and base != datetime.fromtimestamp(current["updated_at"], tz=timezone.utc):
+        raise Stale(slug, current["updated_at"])
     return {**current, **item}
 
 

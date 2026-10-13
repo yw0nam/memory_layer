@@ -16,7 +16,7 @@ _Avoid_: record, entry, item, document (for the unit)
 
 **Note**:
 An agent-authored memory, distilled by the agent before it arrives rather than extracted from a file. A note names the registered entities it is about in `entities`.
-_Avoid_: memo, observation, fact
+_Avoid_: memo, observation
 
 **Kind**:
 The label a note carries: `personal` (the user: their life, their day, and moments with the agent) or `work` (knowledge of the work), chosen by the agent when it calls `save_memory`; it narrows search and listing and never decides whether the note is stored. A document chunk's kind is `doc`.
@@ -129,6 +129,14 @@ _Avoid_: slot, section
 **Entity**:
 A registered person, agent, project, organisation, place, or thing, keyed by a slug the user consented to. Aliases resolve other spellings of its name; the server infers no equivalence between names and merges nothing.
 _Avoid_: node, subject, topic
+
+**Fact**:
+One property or relation of an entity, keyed by entity and attribute and distilled from a note by the consolidation run. A `value_entity` instead of a `value_text` makes it a relation. A fact is current while its `archived_at` is null; a replace or remove closes it and a deleted note archives it.
+_Avoid_: triple, attribute row
+
+**Card**:
+An entity's registry row, the current facts it holds and the facts that point at it, and the notes naming it.
+_Avoid_: profile, summary
 
 **Consent**:
 The user's answer, inside the conversation, to a change of the entity registry or of a profile's `user` part; recorded as the method the client reported: `elicitation`, `conversation`, or `import`.

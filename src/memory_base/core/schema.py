@@ -262,6 +262,24 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           updated_at double precision NOT NULL,
           archived_at double precision
         );
+        CREATE TABLE IF NOT EXISTS {schema}.facts (
+          id uuid PRIMARY KEY,
+          namespace text NOT NULL,
+          entity text NOT NULL REFERENCES {schema}.entities (slug),
+          attribute text NOT NULL,
+          value_text text,
+          value_entity text REFERENCES {schema}.entities (slug),
+          note_id text REFERENCES {schema}.memory_chunks (id) ON DELETE SET NULL,
+          author text NOT NULL,
+          created_at double precision NOT NULL,
+          archived_at double precision,
+          replaced_by uuid REFERENCES {schema}.facts (id),
+          CHECK ((value_text IS NULL) <> (value_entity IS NULL))
+        );
+        CREATE INDEX IF NOT EXISTS facts__entity ON {schema}.facts (entity)
+          WHERE archived_at IS NULL;
+        CREATE INDEX IF NOT EXISTS facts__value_entity ON {schema}.facts (value_entity)
+          WHERE archived_at IS NULL;
         CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
           id bigserial PRIMARY KEY,
           query text NOT NULL,

@@ -85,7 +85,9 @@ class FakeConnection:
         q = " ".join(query.split())
         if ".entities WHERE slug = ANY" in q:
             return [
-                {"slug": s} for s in args[0] if s in self.entities and not self.entities[s]["archived_at"]
+                {"slug": s}
+                for s in args[0]
+                if s in self.entities and not self.entities[s]["archived_at"]
             ]
         if "LIMIT" in q:
             column = "value_entity" if "value_entity = $1" in q else "entity"
@@ -174,7 +176,11 @@ def _write_one(op):
 def test_add_replace_remove_leave_a_history_the_card_shows_with_include_past(fake_db, consolidator):
     added = _write_one(_add())
     assert added["status"] == "written"
-    assert (added["entity"], added["attribute"], added["namespace"]) == ("natsume", "city", "team-a")
+    assert (added["entity"], added["attribute"], added["namespace"]) == (
+        "natsume",
+        "city",
+        "team-a",
+    )
 
     replaced = _write_one(
         {"op": "replace", "id": added["id"], "value_text": "Seoul", "note_id": "note:b"}
@@ -234,9 +240,19 @@ def test_allow_multiple_adds_a_second_row_under_one_key(fake_db, consolidator):
         (_add(value_text=None, value_entity="old"), "old"),
     ],
     ids=[
-        "unknown-entity", "archived-entity", "bad-attribute", "missing-note", "archived-note",
-        "unknown-note", "301-chars", "credential", "list-value", "and-value", "both-values",
-        "no-value", "archived-value-entity",
+        "unknown-entity",
+        "archived-entity",
+        "bad-attribute",
+        "missing-note",
+        "archived-note",
+        "unknown-note",
+        "301-chars",
+        "credential",
+        "list-value",
+        "and-value",
+        "both-values",
+        "no-value",
+        "archived-value-entity",
     ],
 )
 def test_a_refused_add_names_its_reason_and_writes_nothing(fake_db, consolidator, op, message):

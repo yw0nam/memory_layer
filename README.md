@@ -93,6 +93,8 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/entities` | the entity registry ordered by slug — `include_archived` (`true`\|`false`, default `false`); see [data flow](docs/data-flow.md#entity-registry) |
 | `POST` | `/entities` | create or edit 1–50 entities in one batch — `entities` (`slug`, and `kind`, `name`, `aliases`, `description` on a create), `author` (one of the key's authors), `dry_run` (run every check, write nothing), `consent_method` (`elicitation`\|`conversation`\|`import`; `import` needs an admin key carrying `user`); 409 `{error, holder, value}` when a slug, name, or alias is held by another entity |
 | `POST` | `/entities/{slug}/archive` | archive an active entity — `author`, `consent_method`, `dry_run` as for `POST /entities`; its name stays reserved |
+| `GET` | `/entities/{slug}` | an entity's card — `{entity, facts, incoming}`; `include_past` (`true`\|`false`, default `false`) adds closed facts, `namespace` (repeatable) narrows to namespaces the key may read; 404 for an unknown slug; see [data flow](docs/data-flow.md#facts-and-cards) |
+| `POST` | `/admin/facts` | apply 1–100 fact ops (`add`, `replace`, `remove`) all or nothing — `author`, `ops`, `dry_run`; needs an admin key carrying `consolidator`; 400 names the refused op |
 | `GET` | `/profiles` | one owner's profile — `owner` (an agent's author slug) required; `{owner, self_version, self, user_version, user}` from one snapshot, a part `{content, created_at}` or null when absent or emptied, its version kept; a key whose authors hold the owner or `user` only; see [data flow](docs/data-flow.md#profiles) |
 | `PUT` | `/profiles/self` | replace the owner's `self` part (persona, working rules, conventions) — `owner` one of the key's authors, `content`, `max_chars` (200–20000, default 4000); `written` or `unchanged` with the version; empty content clears the part; 400 for an over-budget or credential-bearing text |
 | `PUT` | `/profiles/user` | replace the owner's `user` part with the user's consent — `owner` one of the key's authors, `content`, `reason` (1–1000 chars), `base_version` (the current user version, 0 when none), `consent_method` (`elicitation`, `conversation`, or `import`; `import` needs an admin key carrying the `user` author), `dry_run`, `max_chars` (200–20000, default 3000); 200 `{status: "written" \| "unchanged", version}`, or with `dry_run` `{status: "valid", version, current}`; 409 `{error: "stale", version}` when the base is not current |
@@ -178,6 +180,7 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
 `list_messages` · `claim_message` · `cancel_message` · `get_my_profile` ·
 `update_my_profile` · `update_user_profile` · `list_entities` · `register_entity` ·
+`read_entity` ·
 `list_sessions` · `read_session` · `search_transcript`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and

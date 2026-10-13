@@ -179,7 +179,9 @@ def test_read_entity_composes_the_card_and_the_notes_naming_the_entity(monkeypat
         calls.append((request.url.path, sorted(request.url.params.multi_items())))
         if request.url.path == "/notes":
             return httpx.Response(200, json=[{"id": "note:a"}])
-        return httpx.Response(200, json={"entity": {"slug": "natsume"}, "facts": [], "incoming": []})
+        return httpx.Response(
+            200, json={"entity": {"slug": "natsume"}, "facts": [], "incoming": []}
+        )
 
     monkeypatch.setattr(
         rest_client,
