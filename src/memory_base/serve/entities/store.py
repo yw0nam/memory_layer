@@ -15,6 +15,7 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
+from memory_base.serve.common.dry_run import DryRun
 from memory_base.serve.common.http import iso
 
 _ENTITIES = f'"{PG_SCHEMA}".entities'
@@ -88,9 +89,11 @@ def _merge(current: dict[str, Any] | None, item: dict[str, Any]) -> dict[str, An
     if current["archived_at"] is not None:
         raise ValueError(f"{slug!r} is archived; restore is not supported")
     changes_description = "description" in item and item["description"] != current["description"]
-    if base is None and changes_description:
+    if changes_description and base is None:
         raise ValueError(f"editing the description of {slug!r} needs base_updated_at")
-    if base is not None and base != datetime.fromtimestamp(current["updated_at"], tz=timezone.utc):
+    if changes_description and base != datetime.fromtimestamp(
+        current["updated_at"], tz=timezone.utc
+    ):
         raise Stale(slug, current["updated_at"])
     return {**current, **item}
 
@@ -110,13 +113,6 @@ def _refuse_collisions(registry: dict[str, dict[str, Any]], rows: list[dict[str,
                 shared = _claims(row) & _claims(other)
                 if shared:
                     raise Collision(other["slug"], sorted(shared)[0])
-
-
-class _DryRun(Exception):
-    """Raised inside the transaction to roll it back after a validation-only run."""
-
-    def __init__(self, result: Any) -> None:
-        self.result = result
 
 
 async def _locked_registry(conn: Any) -> dict[str, dict[str, Any]]:
@@ -163,8 +159,8 @@ async def upsert(
                     )  # fmt: skip
                     written.append(dict(await conn.fetchrow(statement, *arguments)))
                 if dry_run:
-                    raise _DryRun(written)
-    except _DryRun as stop:
+                    raise DryRun(written)
+    except DryRun as stop:
         return stop.result
     return written
 
@@ -188,7 +184,7 @@ async def archive(
                     await conn.fetchrow(ARCHIVE_SQL, slug, _now(), author, consent_method)
                 )
                 if dry_run:
-                    raise _DryRun(archived)
-    except _DryRun as stop:
+                    raise DryRun(archived)
+    except DryRun as stop:
         return stop.result
     return archived

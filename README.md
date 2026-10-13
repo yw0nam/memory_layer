@@ -180,8 +180,7 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
 `list_messages` · `claim_message` · `cancel_message` · `get_my_profile` ·
 `update_my_profile` · `update_user_profile` · `list_entities` · `register_entity` ·
-`read_entity` ·
-`list_sessions` · `read_session` · `search_transcript`
+`read_entity` · `list_sessions` · `read_session` · `search_transcript`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,

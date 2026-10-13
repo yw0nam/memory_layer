@@ -15,7 +15,7 @@ from starlette.responses import JSONResponse
 from memory_base.serve.access.keys import AUTHOR_RE
 from memory_base.serve.common import consent
 from memory_base.serve.common.consent import CONSENT_METHODS
-from memory_base.serve.common.entities import SLUG_RE, public
+from memory_base.serve.common.entities import SLUG_RE, entity_row
 from memory_base.serve.common.http import (
     RequestError,
     bounded_text,
@@ -103,14 +103,15 @@ async def list_route(request: Request) -> JSONResponse:
     if flag not in ("true", "false"):
         return error("include_archived must be true or false")
     return JSONResponse(
-        {"entities": [public(row) for row in await store.list_entities(flag == "true")]}
+        {"entities": [entity_row(row) for row in await store.list_entities(flag == "true")]}
     )
 
 
 async def upsert_route(request: Request) -> JSONResponse:
-    """Create or edit entities as one batch; 409 names the entity that holds a colliding value, or a stale `base_updated_at`.
+    """Create or edit entities as one batch; 409 names the entity holding a colliding value.
 
-    With `dry_run`, every check runs and nothing is written."""
+    A description edit against a stale `base_updated_at` is also a 409. With `dry_run`, every
+    check runs and nothing is written."""
     try:
         items, author, method, dry_run = parse_upsert(await request_body(request))
     except RequestError as exc:
@@ -129,7 +130,7 @@ async def upsert_route(request: Request) -> JSONResponse:
         )
     except ValueError as exc:
         return error(str(exc))
-    return JSONResponse({"entities": [public(row) for row in rows]})
+    return JSONResponse({"entities": [entity_row(row) for row in rows]})
 
 
 async def archive_route(request: Request) -> JSONResponse:
@@ -148,4 +149,4 @@ async def archive_route(request: Request) -> JSONResponse:
         row = await store.archive(slug, author, method, dry_run)
     except ValueError as exc:
         return error(str(exc))
-    return JSONResponse({"entity": public(row)})
+    return JSONResponse({"entity": entity_row(row)})

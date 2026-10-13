@@ -14,6 +14,7 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.serve.common import entities
+from memory_base.serve.common.dry_run import DryRun
 from memory_base.serve.common.http import iso
 
 _FACTS = f'"{PG_SCHEMA}".facts'
@@ -45,18 +46,11 @@ LIMIT {MAX_CARD_FACTS}
 """
 
 
-class _DryRun(Exception):
-    """Raised inside the transaction to roll it back after a validation-only run."""
-
-    def __init__(self, result: Any) -> None:
-        self.result = result
-
-
 def _now() -> float:
     return time.time()
 
 
-def public(row: dict[str, Any]) -> dict[str, Any]:
+def fact_row(row: dict[str, Any]) -> dict[str, Any]:
     """A fact row as JSON: ids as strings, timestamps as ISO 8601."""
     return {
         **row,
@@ -100,34 +94,47 @@ async def _insert(
     )
 
 
-async def _apply_one(conn: Any, op: dict[str, Any], author: str) -> tuple[str, dict[str, Any]]:
+async def _add(conn: Any, op: dict[str, Any], author: str) -> tuple[str, dict[str, Any]]:
     namespace = await _note_namespace(conn, op["note_id"])
-    if op["op"] == "add":
-        entity, attribute = op["entity"], op["attribute"]
-    else:
-        old = await _current_fact(conn, op["id"])
-        entity, attribute = old["entity"], op.get("attribute", old["attribute"])
-    if op["op"] != "remove":
-        value_entity = op.get("value_entity")
-        await entities.require_active(conn, [entity, *([value_entity] if value_entity else [])])
-    if op["op"] == "remove":
-        return "written", dict(await conn.fetchrow(CLOSE_SQL, op["id"], _now(), None))
-    if op["op"] == "add":
-        current = [dict(row) for row in await conn.fetch(CURRENT_SQL, entity, attribute)]
-        for row in current:
-            if (row["value_text"], row["value_entity"]) == (
-                op.get("value_text"), op.get("value_entity"),
-            ):  # fmt: skip
-                return "unchanged", row
-        if current and not op.get("allow_multiple"):
-            raise ValueError(
-                f"{entity!r} already has a current {attribute!r} fact, {current[0]['id']}; "
-                "replace it or pass allow_multiple"
-            )
+    entity, attribute = op["entity"], op["attribute"]
+    await _require_active(conn, entity, op)
+    current = [dict(row) for row in await conn.fetch(CURRENT_SQL, entity, attribute)]
+    for row in current:
+        if (row["value_text"], row["value_entity"]) == (
+            op.get("value_text"),
+            op.get("value_entity"),
+        ):
+            return "unchanged", row
+    if current and not op["allow_multiple"]:
+        raise ValueError(
+            f"{entity!r} already has a current {attribute!r} fact, {current[0]['id']}; "
+            "replace it or pass allow_multiple"
+        )
+    return "written", await _insert(conn, namespace, entity, attribute, op, author)
+
+
+async def _replace(conn: Any, op: dict[str, Any], author: str) -> tuple[str, dict[str, Any]]:
+    namespace = await _note_namespace(conn, op["note_id"])
+    old = await _current_fact(conn, op["id"])
+    entity, attribute = old["entity"], op.get("attribute", old["attribute"])
+    await _require_active(conn, entity, op)
     new = await _insert(conn, namespace, entity, attribute, op, author)
-    if op["op"] == "replace":
-        await conn.fetchrow(CLOSE_SQL, op["id"], new["created_at"], new["id"])
+    await conn.fetchrow(CLOSE_SQL, op["id"], new["created_at"], new["id"])
     return "written", new
+
+
+async def _remove(conn: Any, op: dict[str, Any], author: str) -> tuple[str, dict[str, Any]]:
+    await _note_namespace(conn, op["note_id"])
+    await _current_fact(conn, op["id"])
+    return "written", dict(await conn.fetchrow(CLOSE_SQL, op["id"], _now(), None))
+
+
+APPLY = {"add": _add, "replace": _replace, "remove": _remove}
+
+
+async def _require_active(conn: Any, entity: str, op: dict[str, Any]) -> None:
+    value_entity = op.get("value_entity")
+    await entities.require_active(conn, [entity, *([value_entity] if value_entity else [])])
 
 
 async def apply(
@@ -146,15 +153,15 @@ async def apply(
                 results = []
                 for index, op in enumerate(ops):
                     try:
-                        status, row = await _apply_one(conn, op, author)
+                        status, row = await APPLY[op["op"]](conn, op, author)
                     except ValueError as exc:
                         raise ValueError(f"op {index}: {exc}") from None
                     if status == "written" and dry_run:
                         status = "planned"
-                    results.append({"op": op["op"], "status": status, **public(row)})
+                    results.append({"op": op["op"], "status": status, **fact_row(row)})
                 if dry_run:
-                    raise _DryRun(results)
-    except _DryRun as stop:
+                    raise DryRun(results)
+    except DryRun as stop:
         return stop.result
     return results
 
@@ -174,7 +181,7 @@ async def card(
             return None
         sides = [
             [
-                public(dict(row))
+                fact_row(dict(row))
                 for row in await conn.fetch(
                     CARD_SQL.format(column=column), slug, include_past, namespaces
                 )

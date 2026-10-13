@@ -16,7 +16,8 @@ from starlette.responses import JSONResponse
 from memory_base.core.secrets import find_secret
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.serve.access.keys import AUTHOR_RE
-from memory_base.serve.common.entities import SLUG_RE, public
+from memory_base.serve.common.authority import consolidator_denied
+from memory_base.serve.common.entities import SLUG_RE, entity_row
 from memory_base.serve.common.http import (
     RequestError,
     bounded_text,
@@ -26,12 +27,11 @@ from memory_base.serve.common.http import (
 )
 from memory_base.serve.facts import store
 
-CONSOLIDATE_AUTHOR = "consolidator"
 MAX_OPS = 100
 MAX_VALUE_CHARS = 300
 ATTRIBUTE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 LIST_VALUE_RE = re.compile(r"^[^,]+(,\s*[^,]+)+(\s+and\s+[^,]+)?$")
-NAMES_JOINED_RE = re.compile(r"[A-Z]\S*\s+and\s+[A-Z]")
+NAMES_JOINED_RE = re.compile(r"^[A-Z][\w.-]*(?: [A-Z][\w.-]*)? and [A-Z][\w.-]*(?: [A-Z][\w.-]*)?$")
 VALUES = {"value_text", "value_entity"}
 SHAPES = {
     "add": ({"entity", "attribute", "note_id"}, VALUES | {"allow_multiple"}),
@@ -56,7 +56,7 @@ def _value_text(value: Any) -> str:
     text = bounded_text(value, "value_text", 1, MAX_VALUE_CHARS)
     if find_secret(text) is not None:
         raise RequestError(f"value_text contains a credential ({find_secret(text)})")
-    if LIST_VALUE_RE.fullmatch(text) or NAMES_JOINED_RE.search(text):
+    if LIST_VALUE_RE.fullmatch(text) or NAMES_JOINED_RE.fullmatch(text):
         raise RequestError("value lists several names; one row per element")
     return text
 
@@ -118,8 +118,8 @@ def parse_batch(body: Any) -> tuple[list[dict[str, Any]], str, bool]:
 async def write_route(request: Request) -> JSONResponse:
     """Apply a batch of fact ops all or nothing; `dry_run` validates and returns the plan."""
     key = request.state.key
-    if not (key.is_admin and CONSOLIDATE_AUTHOR in key.authors):
-        return error(f"admin key with {CONSOLIDATE_AUTHOR!r} in its authors required", 403)
+    if (denied := consolidator_denied(key)) is not None:
+        return denied
     try:
         ops, author, dry_run = parse_batch(await request_body(request))
     except RequestError as exc:
@@ -153,4 +153,4 @@ async def card_route(request: Request) -> JSONResponse:
     if card is None:
         return error("unknown entity", 404)
     entity, facts, incoming = card
-    return JSONResponse({"entity": public(entity), "facts": facts, "incoming": incoming})
+    return JSONResponse({"entity": entity_row(entity), "facts": facts, "incoming": incoming})

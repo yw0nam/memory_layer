@@ -12,7 +12,7 @@ SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 TIMESTAMPS = ("consented_at", "created_at", "updated_at", "archived_at")
 
 
-def public(row: dict[str, Any]) -> dict[str, Any]:
+def entity_row(row: dict[str, Any]) -> dict[str, Any]:
     """A registry row with its epoch timestamps as ISO 8601 strings."""
     return {**row, **{name: iso(row[name]) for name in TIMESTAMPS}}
 
