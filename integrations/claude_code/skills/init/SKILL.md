@@ -31,15 +31,24 @@ Show one short table:
 
 ## 3. Find leftover hand-installed entries
 
-Read `~/.claude/settings.json` and `~/.claude.json`. The plugin provides the hooks and the
-MCP server, so a hand-installed copy runs twice. Tell the user exactly which entries to
-delete, and why:
+The plugin provides the hooks and the MCP server, so a hand-installed copy runs twice.
+Never open `~/.claude/settings.json` or `~/.claude.json`, with Read or any other tool: a
+hand-installed MCP entry carries the key in its headers. Run these Bash commands, which
+print counts and names only:
 
-- a `hooks` entry (UserPromptSubmit or SessionStart) whose command runs a `memory_base_*.py`
-  script from `~/.claude/hooks/`
-- a `mcpServers["memory-base"]` entry that is not the plugin's
+```
+grep -c "memory_base_" ~/.claude/settings.json
+python3 -c "import json,os;d=json.load(open(os.path.expanduser('~/.claude.json')));print(list(d.get('mcpServers',{})))"
+```
 
-Do not edit either file. If none is present, say so.
+- A count above 0 means `~/.claude/settings.json` holds a hand-installed hook entry
+  (UserPromptSubmit or SessionStart running a `memory_base_*.py` script from
+  `~/.claude/hooks/`). Tell the user to delete those entries.
+- A list containing `memory-base` means `~/.claude.json` holds a hand-installed MCP
+  entry. Tell the user to delete it (`claude mcp remove memory-base`).
+
+Say why: the plugin provides both, and duplicates run twice. If both outputs are clean,
+say so. Do not edit either file.
 
 ## 4. How to change values
 
