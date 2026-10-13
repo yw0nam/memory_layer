@@ -1,37 +1,20 @@
-"""Claude Code SessionStart hook: deliver this agent's profile and this repo's handoffs.
+"""Claude Code SessionStart hook: deliver this agent's profile and this repo's pending handoffs.
 
-Reads the hook payload on stdin and prints one <memory-context> fence holding,
-in order, the configured author's profile (`GET /profiles?owner=<author>`) and
-the pending handoffs addressed to this repository. The profile block names the
-owner, then the session id line, then prints `## user (v<n>)` and
-`## self (v<n>)`, each with its content or `(empty)`, so the session always
-knows the user version an update must be written against. A failed or
-malformed profile fetch prints no profile block and no version.
-The handoff scope `repo:<host>/<path>` comes from the `origin` remote of the
-payload's `cwd`; a cwd outside a git repository, without an `origin` remote, or
-whose origin is not a remote host gets the profile alone. At most ten handoffs
-print, newest first; the hook never claims one: the session claims a handoff
-only when asked to continue it. The profile and the handoffs are fetched
-independently, so a failure of either keeps the other. Every failure mode is
-fail-open: no output, exit 0. Stdlib only.
-
-The hook runs at every SessionStart source (startup, resume, clear, compact),
-so the profile returns after a compaction. Each run records the connection
-state to `status.json` in the plugin data directory. Config comes from the
-plugin options (`CLAUDE_PLUGIN_OPTION_*`).
+Prints one <memory-context> fence and records the connection state to `status.json` in
+the plugin data directory. The hook never claims a handoff. Config comes from the plugin
+options (`CLAUDE_PLUGIN_OPTION_*`). Every failure mode is fail-open: exit 0. Stdlib only.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import sys
 from datetime import datetime
 from datetime import timezone
 
-from hook_common import DEFAULT_AUTHOR
 from hook_common import Config
 from hook_common import data_dir
+from hook_common import defuse
 from hook_common import emit
 from hook_common import get
 from hook_common import git_origin
@@ -46,12 +29,6 @@ SESSION_LINE = (
     "Session: claude_code {session_id} "
     "(pass it as session_id with origin claude_code when a note is distilled from this session)"
 )
-
-_FENCE_TAG = re.compile(r"<\s*/?\s*memory-context", re.IGNORECASE)
-
-
-def _defuse(text: str) -> str:
-    return _FENCE_TAG.sub("[memory-context]", text)
 
 
 def _part(profile: dict, name: str) -> tuple[int, str]:
@@ -76,14 +53,14 @@ def format_profile(owner: str, session_id: str, profile: dict) -> str:
     for name in ("user", "self"):
         version, content = _part(profile, name)
         lines += [f"## {name} (v{version})", content or "(empty)"]
-    return _defuse("\n".join(lines))
+    return defuse("\n".join(lines))
 
 
 def format_handoffs(rows: list[dict]) -> str:
     """The handoff header and one line per handoff; empty for none."""
     lines = []
     for row in rows[:HANDOFF_LIMIT]:
-        subject = _defuse(" ".join(str(row["subject"]).split()))
+        subject = defuse(" ".join(str(row["subject"]).split()))
         created = str(row.get("created_at", ""))[:10]
         lines.append(f"- {created}  {subject}  (status: {row.get('status', '?')}, id: {row['id']})")
     return "\n".join([HANDOFF_HEADER, *lines]) if lines else ""
@@ -113,7 +90,7 @@ def _handoffs(payload: dict, get, remote_of) -> str:
         return ""
 
 
-def run_hook(payload: dict, get, remote_of=git_origin, owner: str = DEFAULT_AUTHOR) -> str:
+def run_hook(payload: dict, get, remote_of=git_origin, *, owner: str) -> str:
     """Fetch the owner's profile and this repo's pending handoffs via `get`; one fence, or empty."""
     session_id = payload.get("session_id") or "unknown"
     parts = [
@@ -152,12 +129,16 @@ def main() -> int:
             try:
                 return get(cfg, path, params)
             except Exception as exc:
-                failure.append(str(exc))
+                if path == "/profiles":
+                    failure.append(str(exc))
                 raise
 
         block = run_hook(payload, fetch, owner=cfg.author)
-        _write_status(cfg, not failure, failure[0] if failure else None)
         emit("SessionStart", block, None)
+        try:
+            _write_status(cfg, not failure, failure[0] if failure else None)
+        except Exception:
+            pass
     except Exception:
         pass
     return 0

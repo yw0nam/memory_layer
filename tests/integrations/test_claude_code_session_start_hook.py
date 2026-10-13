@@ -19,7 +19,7 @@ from memory_base.serve.messages.store import normalize_scope
 from hook_common import git_origin
 from hook_common import repo_scope
 from session_start import HANDOFF_HEADER
-from session_start import run_hook
+from session_start import run_hook as _run_hook
 
 HANDOFFS = [
     {
@@ -35,6 +35,10 @@ HANDOFFS = [
         "created_at": "2026-09-20T17:40:00+00:00",
     },
 ]
+
+
+def run_hook(payload, get, remote_of=git_origin, owner="claude-code"):
+    return _run_hook(payload, get, remote_of, owner=owner)
 
 
 def _payload(cwd="/repo"):
@@ -364,6 +368,7 @@ def repo(tmp_path):
 def hook_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_API_KEY", "key")
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_URL", "http://memory.test")
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_AUTHOR", "claude-code")
     monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path / "data"))
 
 
@@ -507,3 +512,17 @@ def test_main_fails_open_on_malformed_stdin(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
     assert session_start.main() == 0
     assert capsys.readouterr().out == ""
+
+
+def test_a_failed_handoff_fetch_does_not_make_the_server_unreachable(
+    monkeypatch, repo, hook_env, tmp_path
+):
+    def fake_urlopen(request, timeout=None):
+        if urllib.parse.urlsplit(request.full_url).path == "/messages":
+            raise OSError("boom")
+        return _Response(json.dumps(PROFILE).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _stdin(monkeypatch, _payload(str(repo)))
+    assert session_start.main() == 0
+    assert json.loads((tmp_path / "data" / "status.json").read_text())["reachable"] is True
