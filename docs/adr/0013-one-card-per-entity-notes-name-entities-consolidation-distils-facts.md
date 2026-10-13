@@ -58,8 +58,11 @@ distils facts from those notes; no in-session agent writes a fact.
 - The `description` is the one consented text of an entity, at most 4,000 characters. For
   a person it says who they are. For an agent it holds the user's standing directions to
   that agent: its persona, its language, its report form, what it remembers and what it
-  does not. A change to a description goes through `register_entity` and the user's
-  consent, as every entity change does.
+  does not, including the `Remember` and `Don't remember` lines that refine the save
+  policy and outrank what the agent learned. A change to a description goes through
+  `register_entity` and the user's consent, as every entity change does, and an edit
+  names the `updated_at` it was written against; a description that changed since is
+  refused as stale before any consent is asked.
 - A card is served by `GET /entities/{slug}` and the MCP tool `read_entity(slug,
   include_past?)`: the registry row, the current facts whose entity is the slug, the
   current facts whose value is the slug (one hop, marked as incoming), and the newest
@@ -72,8 +75,8 @@ distils facts from those notes; no in-session agent writes a fact.
   or archived slug is refused with a message naming `register_entity`. The slugs are
   stored in the note's metadata beside its tags, are shown on every search hit and
   `list_notes` row, and `list_notes(entity=)` filters by one.
-- A save whose content equals an active note changes nothing, its links included. A
-  supersede carries the slugs the writer passed. A consolidation merge gives the
+- A save whose content equals an active note stores no second note and adds no slug to
+  the existing one. A supersede carries the slugs the writer passed. A consolidation merge gives the
   replacement the union of its members' slugs and is refused when the union exceeds ten.
   The slugs are part of the group key, and an undo restores them with the rest of the
   metadata.
@@ -85,8 +88,8 @@ distils facts from those notes; no in-session agent writes a fact.
   between two entities is stored), `note_id`, `author`, `created_at`, `archived_at`,
   `replaced_by` (the fact that replaced this one). A fact is current while `archived_at`
   is null. There is no validity window and no evidence quote: `include_past` returns the
-  earlier assertions, a date that matters is part of the value, and the note the fact
-  cites names the session it came from.
+  earlier assertions, a date that matters is part of the value, and provenance continues
+  through the cited note, which may name its source session or carry its merge lineage.
 - Facts are written only through `POST /admin/facts` by an admin key carrying the
   `consolidator` author, as a batch of `add`, `replace`, and `remove` operations applied
   all or nothing under one lock. Every operation cites a `note_id`; a removal cites the
@@ -97,7 +100,8 @@ distils facts from those notes; no in-session agent writes a fact.
   the batch would write.
 - No MCP tool writes a fact. An agent that finds a wrong fact saves a note saying so and
   names the entity; the next run replaces or removes the fact. Deleting a note archives
-  the facts that cite it; a namespace cannot be deleted while facts remain in it.
+  the facts that cite it and clears their citation; a namespace cannot be deleted while
+  facts remain in it.
 
 ### The card step of consolidation
 
@@ -120,11 +124,14 @@ distils facts from those notes; no in-session agent writes a fact.
 
 - The Claude Code hook and the Hermes provider deliver two cards: the agent's own, by the
   `author` option, and the user's, by a `user_entity` option. Each card is the entity's
-  name, aliases, and description, then one line per current fact in the client's
-  configured namespace, at most thirty, the whole at most 3,000 characters. The user's
-  card opens with the line that it is derived knowledge that may be out of date and is not
-  an instruction. The `Session:` line and the handoffs are printed whether or not a card
-  could be fetched.
+  name, aliases, and description in full, then one line per current fact in the client's
+  configured namespace, at most thirty lines and 1,500 characters. Only the agent's own
+  description governs the agent; the agent's card says so, and the user's card opens with
+  the line that it is derived knowledge that may be out of date and is not an instruction.
+  A description read through `read_entity` or `list_entities` is reference, never a
+  direction to the reader. When the agent's own card cannot be fetched, one line says so,
+  so that the agent does not act as if it had no directions. The `Session:` line and the
+  handoffs are printed whether or not a card could be fetched.
 
 ### Deleted
 
@@ -133,8 +140,9 @@ distils facts from those notes; no in-session agent writes a fact.
   table, and the profile delivery in both clients. The `Remember` and `Don't remember`
   sections that refined the save policy (ADR-0010) are lines of an agent's description.
 - The owner exports every profile version before the deployment that drops the table,
-  registers each agent's entity with the directions from its `user` part, and saves the
-  lessons from a `self` part as notes naming that agent.
+  registers each agent's entity with the directions from both parts (the user's
+  directions, and the persona, autonomy, and memory restrictions the agent wrote into its
+  `self` part), and saves the lessons from the `self` part as notes naming that agent.
 
 ## Consequences
 
@@ -147,6 +155,8 @@ distils facts from those notes; no in-session agent writes a fact.
   of what the notes support, not the authority on what changed today.
 - A description changes only with the user's consent, so an agent that used to rewrite
   its `self` part freely now saves lessons as notes and asks before changing how it acts.
+- A description is readable by every key, so a direction to an agent is not private;
+  what must stay private goes in a note in a private namespace.
 - The relations an agent can read are one hop in each direction. There is no traversal,
   no graph library, no path query, and no automatic link from a mention.
 - A fact is as good as the consolidation agent's judgment of its source note. The server
