@@ -627,13 +627,14 @@ answered ([consent](#entity-registry)).
 latest versions in fresh statements, so a base that advanced since a dry run is refused as
 stale at the write.
 
-**Delivery.** The Claude Code SessionStart hook runs at every session start, resume,
-clear, and compaction. It calls `GET /profiles?owner=<MEMORY_BASE_AUTHOR>` (default
+**Delivery.** The Claude Code plugin's SessionStart hook runs at every session start, resume,
+clear, and compaction. It calls `GET /profiles?owner=<author option>` (default
 `claude-code`), lists the repository's pending handoffs, and prints one
 `<memory-context>` fence:
 
 ```
 Memory: standing profile for <owner>. Apply it to every task.
+Session: claude_code <session_id> (pass it as session_id with origin claude_code when ...)
 ## user (v<user_version>)
 <content, or (empty)>
 ## self (v<self_version>)
@@ -696,7 +697,7 @@ message, as the client delivered it. A row is never embedded, never ranked, and 
 returned by `search` or `query_table`; the query role holds no grant on it.
 
 ```
-client hook ──► POST /turns {id, origin, session_id, role, content, reasoning?, repo?}
+plugin hook ──► POST /turns {id, origin, session_id, role, content, reasoning?, repo?}
                   │  credential scan of content and reasoning (refused → 400)
                   │  advisory lock on (origin, session_id)
                   │  id already stored?  same payload → {id, seq, stored: false}
@@ -719,6 +720,10 @@ Korean word with a particle attached still matches; a `pg_trgm` GIN index on `co
 serves it. A query holds at least 2 characters. Every read is limited to the namespaces the
 key can read, and a namespace holding turns cannot be deleted. `DELETE
 /admin/sessions/{origin}/{session_id}` removes a session's rows.
+
+The Claude Code plugin's UserPromptSubmit and Stop hooks post the prompt (`user`) and the final
+answer (`assistant`) of each turn with `origin: claude_code`; slash and `!` prompts are not
+posted ([integrations/claude_code/README.md](../integrations/claude_code/README.md)).
 
 A note records the session it was distilled from as `source_session: {origin, session_id}`
 in its metadata; `list_notes` and search hits return it.
