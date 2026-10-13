@@ -299,7 +299,7 @@ def test_the_profile_prints_and_no_handoff_is_asked_when_the_scope_cannot_be_der
 
 def test_the_profile_prints_without_a_cwd():
     get = RecordingGet(HANDOFFS, PROFILE)
-    block = run_hook({"session_id": "s"}, get, _origin("git@github.com:o/r.git"))
+    block = run_hook({"session_id": "sess-1"}, get, _origin("git@github.com:o/r.git"))
     assert block.splitlines() == ["<memory-context>", *PROFILE_LINES, "</memory-context>"]
     assert get.paths() == ["/profiles"]
 
@@ -402,9 +402,7 @@ def test_main_prints_the_profile_and_handoffs_and_never_claims(monkeypatch, caps
     assert all("claim" not in r.full_url for r in requests)
 
 
-def test_main_requests_the_configured_author(
-    monkeypatch, capsys, tmp_path, hook_env
-):
+def test_main_requests_the_configured_author(monkeypatch, capsys, tmp_path, hook_env):
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_AUTHOR", "natsume")
     urls = []
 
@@ -475,7 +473,9 @@ def test_main_asks_nothing_without_an_api_key_and_records_it(monkeypatch, capsys
 def test_main_records_the_connection_state(monkeypatch, repo, hook_env, tmp_path):
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_NAMESPACE", "work")
     monkeypatch.setattr(
-        urllib.request, "urlopen", lambda request, timeout=None: _Response(json.dumps(PROFILE).encode())
+        urllib.request,
+        "urlopen",
+        lambda request, timeout=None: _Response(json.dumps(PROFILE).encode()),
     )
     _stdin(monkeypatch, _payload(str(repo)))
     assert session_start.main() == 0
