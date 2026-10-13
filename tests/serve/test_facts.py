@@ -262,6 +262,10 @@ def test_a_refused_add_names_its_reason_and_writes_nothing(fake_db, consolidator
     assert fake_db.facts == []
 
 
+def test_a_name_in_a_longer_phrase_is_not_a_list_of_names(fake_db, consolidator):
+    assert _write_one(_add(value_text="Research and Development team"))["status"] == "written"
+
+
 def test_an_add_on_a_held_key_names_the_current_row(fake_db, consolidator):
     first = _write_one(_add())
     response = _post(_add(value_text="Seoul"))
