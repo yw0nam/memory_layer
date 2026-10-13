@@ -57,8 +57,8 @@ per message, in a lane of its own. The lane is read on demand and is never ranke
   when Hermes syncs it, and only for a primary session: never for a cron or subagent run.
 - A capture never blocks the agent. The hook has a short deadline, exits without error
   whatever happens, and after a failure skips the attempt for a minute. The user sees one
-  line when the server becomes unreachable and one when it is back, and nothing enters the
-  model's context. Nothing is spooled locally; a message that could not be sent is lost.
+  line when the server becomes unreachable, one when it is back, and one per kind of refusal
+  (a rejected key, an oversize message); nothing enters the model's context. Nothing is spooled locally; a message that could not be sent is lost.
 - Turns land in the namespace the plugin or provider is configured with, by default the
   key's home namespace. Personal conversation belongs in a private namespace.
 

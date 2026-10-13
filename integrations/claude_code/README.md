@@ -48,7 +48,8 @@ and run synchronously.
 left out when there is none. Content is sent whole; the server refuses a turn over 64,000
 characters, a credential, or a bad key.
 
-The user sees at most one line per condition, per session:
+The user sees these lines: the unreachable and recovery lines once per outage, a refusal
+line once per status per session. None enters the model's context.
 
 | condition | line |
 |---|---|
