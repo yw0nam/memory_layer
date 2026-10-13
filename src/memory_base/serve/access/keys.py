@@ -9,9 +9,8 @@
 `authors` prints a label's authors, or replaces them on every active key of the label when
 slugs are given.
 
-A label's authors are the note authors its keys may save as and the profile owners
-they act for; the `user` author, with admin, marks imports of entities and user profiles
-and is held only by the user's key. An admin key can replace any label's authors.
+A label's authors are the note authors its keys may save as; the `user` author, with
+admin, marks imports of entities and is held only by the user's key. An admin key can replace any label's authors.
 """
 
 from __future__ import annotations

@@ -114,18 +114,6 @@ _Avoid_: job, operation, change set
 Note metadata that links a note to the notes that replaced or absorbed it: `supersedes` and `replaced_by` from a supersede save, `consolidated_into` on a note a consolidation archived, and `merged_from` and `merged_dates` on a merge's replacement.
 _Avoid_: history, provenance, links
 
-**Profile**:
-Standing text an agent receives at every session start, outside search: the two versioned parts of one owner. Every version is kept; the latest version of each part is served when its content is non-empty.
-_Avoid_: summary, persona, memory block
-
-**Owner**:
-The agent a profile belongs to, named by its author slug (`claude-code`, `codex`); `user` and `consolidator` are never owners. A key acts for an owner only when the owner is one of its authors. Distinct from a namespace owner, which is a key label.
-_Avoid_: profile namespace, slot
-
-**Part**:
-One of an owner's two profile documents: `self`, the agent's persona, working rules, and conventions, which the owner replaces at will; and `user`, the user as this agent needs to know them, which changes only with the user's consent, recorded on the version. Each owner's `user` part is its own document.
-_Avoid_: slot, section
-
 **Entity**:
 A registered person, agent, project, organisation, place, or thing, keyed by a slug the user consented to. Aliases resolve other spellings of its name; the server infers no equivalence between names and merges nothing.
 _Avoid_: node, subject, topic
@@ -139,7 +127,7 @@ An entity's registry row, the current facts it holds and the facts that point at
 _Avoid_: profile, summary
 
 **Consent**:
-The user's answer, inside the conversation, to a change of the entity registry or of a profile's `user` part; recorded as the method the client reported: `elicitation`, `conversation`, or `import`.
+The user's answer, inside the conversation, to a change of the entity registry; recorded as the method the client reported: `elicitation`, `conversation`, or `import`.
 _Avoid_: approval, permission, authorization
 
 **Distilled**:

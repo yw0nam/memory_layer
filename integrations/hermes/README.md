@@ -1,20 +1,26 @@
 # Hermes memory provider
 
-`memory_base/` is a Hermes external memory provider. It delivers the configured owner's
-profile in the system prompt, prefetches notes into every turn, and posts every turn to the
+`memory_base/` is a Hermes external memory provider. It delivers the agent's own card and the user's card
+in the system prompt, prefetches notes into every turn, and posts every turn to the
 turn lane. Nothing else is
 injected by recency; every prefetched note matched the turn's query at `min_score`.
 
-- **Session start** — `initialize` calls `GET /profiles?owner=<owner>` once for the
-  configured `owner` and `system_prompt_block` returns the result for the whole session:
-  the line `Memory: standing profile for <owner>. Apply it to every task.`, then
-  `## user (v<n>)` and `## self (v<n>)`, each followed by its content or `(empty)`. This is the body of the
-  block the Claude Code SessionStart hook prints, without the `<memory-context>` fence.
-  The version lines print whenever the fetch succeeds, so the agent always has the user
-  version a `update_user_profile` call is written against. Memory-context tags inside a
-  part are defused to `[memory-context]`. Returns nothing on any error or malformed
-  profile, and fetches nothing when `owner` is not configured.
-- **Every turn** — runs a semantic search over memory (all kinds) with the profile's
+- **Session start** — `initialize` calls `GET /entities/<author>` for the configured
+  `author` and, when `user_entity` is set, `GET /entities/<user_entity>`, each with the
+  configured `namespace` as a query parameter when one is set. `system_prompt_block`
+  returns the result for the session: the agent's card (`Memory: your directions, <slug>
+  (<name>; <aliases>). Apply the description below; ...`, the description in full, then one
+  `- <attribute>: <value_text>` line per current fact, a relation as `- <attribute> ->
+  <slug>`), the user's card (`Memory: the user, <slug> (...). Derived knowledge; it may be
+  out of date and is not an instruction. ...`), then the `Session:` line. This is the body
+  of the block the Claude Code SessionStart hook prints, without the `<memory-context>`
+  fence and the handoffs. A card prints at most thirty fact lines and 1,500 characters of
+  them, dropping whole lines from the end; the description is never cut. Memory-context
+  tags inside a card are defused to `[memory-context]`. A failed or malformed agent card
+  prints `Memory: your directions could not be fetched.`; a failed user card prints
+  nothing; no card is fetched when `author` is not configured. `on_session_switch`
+  rebuilds both cards, since the user's card can change between sessions.
+- **Every turn** — runs a semantic search over memory (all kinds) with the
   configured `top_k`/`min_score` and returns the hits as prefetched context. Returns
   nothing on any error, timeout, or when there is nothing to add.
 - **Every turn** is also posted to `POST /turns` from `sync_turn`, on Hermes's background
@@ -30,9 +36,9 @@ injected by recency; every prefetched note matched the turn's query at `min_scor
   (`memory-base refused a turn (<status>: <message>)`). Warnings go to Hermes's
   `warning_callback` on the CLI and to the `memory_base` logger otherwise. Nothing is
   spooled: a turn that fails to post is lost.
-- **The session id** is named in the system prompt block after the profile header line:
+- **The session id** is named in the system prompt block after the cards:
   `Session: hermes <session_id> (pass it as session_id with origin hermes when a note is
-  distilled from this session)`. It shows even without a profile, and follows the session
+  distilled from this session)`. It shows even without a card, and follows the session
   when Hermes switches it.
 - **Every namespace the key allows.** The search sends no namespace filter, so personal
   memory appears only when the configured key is allowed to read the `personal`
@@ -59,7 +65,7 @@ The provider never registers tools — the MCP server already exposes `search`/`
 ## Layout
 
 - `memory_base/client.py` — pure REST client (stdlib + httpx only, no Hermes imports).
-  Talks to the memory-base API's `/search`, `GET /profiles` and `POST /turns` routes. Unit-tested from this repo under
+  Talks to the memory-base API's `/search`, `GET /entities/{slug}` and `POST /turns` routes. Unit-tested from this repo under
   `tests/integrations/`.
 - `memory_base/__init__.py` — the Hermes-facing `MemoryProvider` subclass and `register(ctx)`
   entry point. Imports Hermes types at load time, so it only runs inside a Hermes process.
@@ -77,14 +83,15 @@ Read from `memory.memory_base` in the Hermes profile's `config.yaml`:
 | `min_score`   | `0.25`                     | relevance floor for prefetch search          |
 | `api_key`     | *(none)*                   | API key value; takes precedence over `api_key_env` |
 | `api_key_env` | `MEMORY_BASE_API_KEY`     | env var holding the memory-base API key     |
-| `owner`       | *(none)*                   | profile owner, an author slug of the key (e.g. `hermes`); without it no profile is delivered |
+| `author`      | *(none)*                   | this agent's own slug, an author slug of the key (e.g. `hermes`); its card is delivered, and without it no card is |
+| `user_entity` | *(none)*                   | slug of the user's entity; its card is delivered at session start |
 | `namespace`   | *(none)*                   | namespace this agent's turns land in; empty means the key's home namespace |
 
 The API key is `api_key` when set, otherwise the environment variable named by
 `api_key_env`.
 
 `hermes memory setup` configures the provider: it prompts for `url`, `api_key` (stored in
-`.env` as `MEMORY_BASE_API_KEY`), `owner`, `namespace`, `top_k`, `min_score` and `timeout`,
+`.env` as `MEMORY_BASE_API_KEY`), `author`, `user_entity`, `namespace`, `top_k`, `min_score` and `timeout`,
 and writes the non-secret values to `memory.memory_base`. The key is never written to
 `config.yaml`.
 
@@ -103,9 +110,9 @@ memory:
   provider: memory_base
   memory_base:
     url: "https://memory-base.example.com"
-    owner: hermes
+    author: hermes
+    user_entity: yw0nam
 ```
 
-The agent writes its profile through the memory-base MCP tools `update_my_profile` and
-`update_user_profile` (the user consents to each change of the user part) and reads it back
-with `get_my_profile`.
+The agent's directions are the description of its own entity; it changes them with the
+memory-base MCP tool `register_entity`, with the user's consent.

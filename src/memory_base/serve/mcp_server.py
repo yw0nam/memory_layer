@@ -32,7 +32,6 @@ from memory_base.serve.entities import tools as entity_tools
 from memory_base.serve.facts import tools as fact_tools
 from memory_base.serve.messages import tools as message_tools
 from memory_base.serve.notes import tools as note_tools
-from memory_base.serve.profiles import tools as profile_tools
 from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.search import tools as search_tools
 from memory_base.serve.tables import tools as table_tools
@@ -154,9 +153,6 @@ mcp.tool()(message_tools.send_message)
 mcp.tool()(message_tools.list_messages)
 mcp.tool()(message_tools.claim_message)
 mcp.tool()(message_tools.cancel_message)
-mcp.tool()(profile_tools.get_my_profile)
-mcp.tool()(profile_tools.update_my_profile)
-mcp.tool()(profile_tools.update_user_profile)
 mcp.tool()(entity_tools.list_entities)
 mcp.tool()(entity_tools.register_entity)
 mcp.tool()(fact_tools.read_entity)

@@ -25,7 +25,7 @@ async def list_notes(
     """List stored notes deterministically — no search query, no relevance ranking.
 
     Use this for exact reads a similarity search cannot promise to be complete:
-    every note carrying a tag (e.g. loading profile or preference notes at
+    every note carrying a tag (e.g. loading preference notes at
     session start), or every note saved in a time window ("what was saved last
     week"). Works without the embedding backend. Returns up to `limit` notes
     (default 50, max 200) newest-first, each with id, kind, text (truncated to
@@ -139,8 +139,8 @@ async def save_memory(
     issue, commit, or file already says, generic advice, or filler. The server refuses API
     keys, tokens, and a digit code (PIN, password, lock combination, one-time, pickup, or
     verification code) stated in the same sentence as its name; keep every other code,
-    password, or combination out yourself. The session-start profile may narrow or widen
-    these rules; the more specific rule wins, and the user's part over the agent's own.
+    password, or combination out yourself. The `Remember` and `Don't remember` lines of your
+    description outrank this default.
 
     Write `content` in English, standalone, subject first, with absolute dates ("on
     2026-09-30"). Before saving, search_memory the same subject; if the new note replaces

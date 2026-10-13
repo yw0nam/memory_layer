@@ -37,6 +37,7 @@ class Config:
     api_key: str
     author: str
     namespace: str | None
+    user_entity: str | None = None
 
     @classmethod
     def from_env(cls) -> Config:
@@ -46,6 +47,7 @@ class Config:
             api_key=env.get("CLAUDE_PLUGIN_OPTION_API_KEY", ""),
             author=env.get("CLAUDE_PLUGIN_OPTION_AUTHOR", ""),
             namespace=env.get("CLAUDE_PLUGIN_OPTION_NAMESPACE") or None,
+            user_entity=env.get("CLAUDE_PLUGIN_OPTION_USER_ENTITY") or None,
         )
 
     @property

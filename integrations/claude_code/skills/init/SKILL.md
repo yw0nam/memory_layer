@@ -23,7 +23,8 @@ Show one short table:
 | field | value |
 |---|---|
 | configured | `configured` (false: the URL or the key is empty) |
-| reachable | `reachable`, with `error` when false |
+| card reachable | `card_reachable` (the author's card fetch), with `error` when false |
+| user entity | `user_entity`, or "none" when null |
 | checked at | `checked_at` |
 | author | `author` |
 | REST URL | `url` |
@@ -52,5 +53,5 @@ say so. Do not edit either file.
 
 ## 4. How to change values
 
-The plugin's rows in `/config` change the URLs, the author, and the namespace; the key is
+The plugin's rows in `/config` change the URLs, the author, the user entity, and the namespace; the key is
 held in the secure store, never in a file. Changes apply to the next session.
