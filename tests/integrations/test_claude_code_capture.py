@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -124,7 +125,9 @@ def test_a_refusal_message_is_trimmed(server):
 
 
 @pytest.fixture
-def hook_env(monkeypatch):
+def hook_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setenv("MEMORY_PREFETCH_LOG", str(tmp_path / "prefetch.jsonl"))
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_URL", "http://memory.test")
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_API_KEY", "key")
     monkeypatch.setattr(prompt_submit, "_fetch_from_server", lambda cfg: lambda query: [])
