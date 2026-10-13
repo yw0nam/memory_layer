@@ -20,7 +20,7 @@ from hook_common import Unreachable
 from hook_common import post_turn
 
 PLUGIN = Path(__file__).parents[2] / "integrations" / "claude_code"
-CFG = Config("http://memory.test", "key", "claude-code", None)
+CFG = Config("http://memory.test", "key", "claude-code", None, None)
 UNREACHABLE = "memory-base unreachable; turns are not being saved"
 RECOVERED = "memory-base is reachable again; turns are being saved"
 
@@ -72,7 +72,7 @@ def test_a_turn_posts_its_role_origin_session_uuid_and_repo_scope(server):
 
 
 def test_the_namespace_is_sent_only_when_configured(server):
-    post_turn(Config("u", "k", "claude-code", "work"), "s1", "user", "x", "/w")
+    post_turn(Config("u", "k", "claude-code", "work", None), "s1", "user", "x", "/w")
     assert server.bodies[0]["namespace"] == "work"
 
 
