@@ -22,15 +22,13 @@ consumed by claiming instead of search.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  21 tools: search / search_code / search_memory /
+   ┌─────────────┐  19 tools: search / search_code / search_memory /
    │ mcp_server  │            save_memory / list_notes /
    └──────┬──────┘            ingest_document / remove_document
           │                   query_table / ingest_repo / remove_repo / list_repos
           │ HTTP              list_memory_duplicates / archive_notes /
           │                   restore_notes / delete_notes / send_message /
-          │                   list_messages / claim_message / cancel_message /
-          │                   get_my_profile / update_my_profile /
-          │                   update_user_profile
+          │                   list_messages / claim_message / cancel_message
           │                   (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
@@ -58,8 +56,6 @@ holds the user's and the assistant's messages verbatim, one row per message, rea
 time, session, and literal substring and never ranked ([ADR-0012](docs/adr/0012-a-verbatim-turn-lane-read-on-demand-never-ranked.md)).
 `consolidation_actions` records each verdict an agent applied to a group of notes the
 server issued; the server judges no content ([ADR-0008](docs/adr/0008-consolidation-judged-by-an-agent-applied-by-the-server.md)).
-`agent_profiles` holds each agent's profile versions, a `user` version with the consent it
-was written under; it is never embedded or searched.
 `entities` holds the registry of people, projects, and things that facts are about, each
 change made with the user's consent; it is never embedded or searched.
 
@@ -95,10 +91,6 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/entities/{slug}/archive` | archive an active entity — `author`, `consent_method`, `dry_run` as for `POST /entities`; its name stays reserved |
 | `GET` | `/entities/{slug}` | an entity's card — `{entity, facts, incoming}`; `include_past` (`true`\|`false`, default `false`) adds closed facts, `namespace` (repeatable) narrows to namespaces the key may read; 404 for an unknown slug; see [data flow](docs/data-flow.md#facts-and-cards) |
 | `POST` | `/admin/facts` | apply 1–100 fact ops (`add`, `replace`, `remove`) all or nothing — `author`, `ops`, `dry_run`; needs an admin key carrying `consolidator`; 400 names the refused op |
-| `GET` | `/profiles` | one owner's profile — `owner` (an agent's author slug) required; `{owner, self_version, self, user_version, user}` from one snapshot, a part `{content, created_at}` or null when absent or emptied, its version kept; a key whose authors hold the owner or `user` only; see [data flow](docs/data-flow.md#profiles) |
-| `PUT` | `/profiles/self` | replace the owner's `self` part (persona, working rules, conventions) — `owner` one of the key's authors, `content`, `max_chars` (200–20000, default 4000); `written` or `unchanged` with the version; empty content clears the part; 400 for an over-budget or credential-bearing text |
-| `PUT` | `/profiles/user` | replace the owner's `user` part with the user's consent — `owner` one of the key's authors, `content`, `reason` (1–1000 chars), `base_version` (the current user version, 0 when none), `consent_method` (`elicitation`, `conversation`, or `import`; `import` needs an admin key carrying the `user` author), `dry_run`, `max_chars` (200–20000, default 3000); 200 `{status: "written" \| "unchanged", version}`, or with `dry_run` `{status: "valid", version, current}`; 409 `{error: "stale", version}` when the base is not current |
-| `GET` | `/profiles/versions` | one part's versions newest first with `content`, `author`, `reason`, `consent_method`, `consented_at`, `created_at` — `owner`, `part` (`self`\|`user`), `limit` (1–200, default 20) |
 | `POST` | `/turns` | append one verbatim turn — `id` (client-chosen UUID), `origin` (`claude_code`\|`hermes`), `session_id`, `role` (`user`\|`assistant`), `content` (at most 64,000 characters), optional `reasoning`, `repo` (`repo:<host>/<path>`), `namespace`; returns `{id, seq, stored}`; a replay with the same payload returns the stored `seq` with `stored: false`, the same `id` with a different payload is 409, a credential is refused, and a session's namespace is fixed by its first turn |
 | `GET` | `/sessions` | sessions newest first — `since`, `until`, `origin`, `repo`, repeated `namespace`, `limit` (default 50, max 200); each `{origin, session_id, namespace, repo, started_at, last_at, turns, title}` |
 | `GET` | `/sessions/{origin}/{session_id}` | a session's turns in `seq` order — `offset` (a seq), `limit`, and `contains` (case-insensitive substring of at least 2 characters: the matching turns and one neighbour each side, matches marked `match: true`); cut by `limit` or 40,000 characters with `next_offset`; see [data flow](docs/data-flow.md#turn-lane) |
@@ -136,17 +128,13 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 
 An agent runs the consolidation routes on a schedule by following [docs/consolidation-procedure.md](docs/consolidation-procedure.md).
 
-Profiles belong to agents
-([ADR-0009](docs/adr/0009-profiles-owned-by-agents-user-part-approved-by-the-user.md)).
-Each owner (an agent's author slug) reads both parts with the MCP tool `get_my_profile`,
-has a `self` part it writes with `update_my_profile`, and a `user` part that changes only
-when the user consents to the agent's `update_user_profile` call. Clients deliver the
-configured owner's profile at session start: the Claude Code plugin's SessionStart hook (author option, default
-`claude-code`) and the Hermes provider's system prompt block (config `owner`,
-[integrations/hermes/README.md](integrations/hermes/README.md)). Both print the two parts
-under their version lines. `Remember` and `Don't remember` sections in either part narrow
-or widen what the agent keeps with `save_memory`; the user part's sections outrank the
-agent's own
+An agent's directions are the description of its own entity, changed with
+`register_entity` and the user's consent. Clients deliver the agent's card and the
+user's card at session start: the Claude Code plugin's SessionStart hook (options
+`author` and `user_entity`) and the Hermes provider's system prompt block (config
+`author` and `user_entity`, [integrations/hermes/README.md](integrations/hermes/README.md)).
+`Remember` and `Don't remember` lines in the description narrow or widen what the agent
+keeps with `save_memory`
 ([ADR-0010](docs/adr/0010-save-policy-a-minimal-default-that-profiles-refine.md)).
 
 Filters are bound to the source they belong to: `kind`, `tags`, `author`, and
@@ -178,9 +166,8 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
 `archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
-`list_messages` · `claim_message` · `cancel_message` · `get_my_profile` ·
-`update_my_profile` · `update_user_profile` · `list_entities` · `register_entity` ·
-`read_entity` · `list_sessions` · `read_session` · `search_transcript`
+`list_messages` · `claim_message` · `cancel_message` · `list_entities` ·
+`register_entity` · `read_entity` · `list_sessions` · `read_session` · `search_transcript`
 
 Each tool takes the REST options its source supports: `include_archived` on `search` and
 `search_memory`; `kind`, `tags`, and `since`/`until` only where `source="memory"` holds,
@@ -204,15 +191,6 @@ a handoff snapshot; `cancel_message` withdraws a sender's own pending message. A
 general message is operational and expires after `MESSAGE_TTL_DAYS`; a handoff stays
 pending until it is claimed, superseded, or cancelled unless its sender gives an
 `expires_at`; a note is durable knowledge.
-
-The profile tools read and write an agent's own profile: `get_my_profile` returns both
-parts with their versions, `update_my_profile` replaces its whole
-`self` part, and `update_user_profile` replaces its `user` part with the user's consent
-against the user version delivered at session start or read with `get_my_profile`: a dialog
-inside the call on a client with elicitation, otherwise a `needs_consent` reply the agent
-puts to the user before calling again with `confirmed=true`. A stale base fails with the
-current version before any consent and asks the agent to refresh its profile context and
-reconsider the replacement.
 
 ## Running
 
@@ -295,7 +273,7 @@ slugs, replaces it on every active key of the label; over REST the same list is
 `GET /keys/{label}/authors` and `PUT /keys/{label}/authors` (admin only).
 
 Each agent gets its own key whose allowlist is its own author slug, so it writes only its
-own notes and profile. The `connect-agent` skill
+own notes. The `connect-agent` skill
 ([integrations/claude_code/skills/connect-agent/SKILL.md](integrations/claude_code/skills/connect-agent/SKILL.md))
 walks through connecting, changing, and disconnecting an agent.
 

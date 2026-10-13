@@ -1,21 +1,22 @@
 ---
 name: connect-agent
-description: "Use when the user wants to connect a new agent to memory-base, change which author slugs a key may act as, or disconnect an agent. Gives each agent its own key and author slug, so each agent owns its own profile. The user runs every step that creates or holds a key."
+description: "Use when the user wants to connect a new agent to memory-base, change which author slugs a key may act as, or disconnect an agent. Gives each agent its own key and author slug, so each agent has its own entity card. The user runs every step that creates or holds a key."
 ---
 
 # Connect an agent to memory-base
 
 Each agent has one author slug and one key. The slug names the agent's notes and its
-profile (`self` and `user` parts). The key's authors list holds that slug, so the agent
-can write only its own notes and its own profile.
+entity, whose description holds the user's directions to it. The key's authors list holds
+that slug, so the agent can write only its own notes.
 
 ```
  user: keys new <slug> --author <slug>  ──►  key (authors = {<slug>})  ──►  agent's env file
                                                                                │
- agent's client config: url + key + owner = <slug>  ◄──────────────────────────┘
-                                                                               │
- session start ──► GET /profiles?owner=<slug> ──► "Memory: standing profile for <slug>"
- save_memory / update_my_profile / update_user_profile ──► author or owner = <slug>
+ agent's client config: url + key + author = <slug>  ◄─────────────────────────┘
+   (+ user_entity = <the user's slug>)                                         │
+ session start ──► GET /entities/<slug> ──► "Memory: your directions, <slug> (...)"
+               ──► GET /entities/<user_entity> ──► "Memory: the user, <slug> (...)"
+ save_memory ──► author = <slug>;  register_entity ──► changes the description, with consent
 ```
 
 ## Rules
@@ -51,10 +52,10 @@ determined agent.
 
 ## 3. Configure the client
 
-| client | env file (step 2) | owner | MCP server |
+| client | env file (step 2) | author and user entity | MCP server |
 |---|---|---|---|
-| Claude Code | the plugin's API key option, held in the secure store | the plugin's Author option, changed in `/config` (default `claude-code`) | provided by the plugin |
-| Hermes | `$HERMES_HOME/.env` | `memory.memory_base.owner: <slug>` in `$HERMES_HOME/config.yaml` | an `mcp_servers` entry with the header `X-API-Key` set to the same key |
+| Claude Code | the plugin's API key option, held in the secure store | the plugin's Author option (default `claude-code`) and User entity option, changed in `/config` | provided by the plugin |
+| Hermes | `$HERMES_HOME/.env` | `memory.memory_base.author: <slug>` and `memory.memory_base.user_entity: <slug>` in `$HERMES_HOME/config.yaml` | an `mcp_servers` entry with the header `X-API-Key` set to the same key |
 | other MCP client | the client's own secret store | the client's session-start hook, if any | the MCP url with the header `X-API-Key` |
 
 Install the client's integration once: the Claude Code plugin as documented in
@@ -64,17 +65,19 @@ Install the client's integration once: the Claude Code plugin as documented in
 ## 4. Check the connection
 
 1. The user restarts the client.
-2. The session-start context prints `Memory: standing profile for <slug>.`, then
-   `## user (v0)` and `## self (v0)`, each `(empty)` for a new agent.
+2. The session-start context prints `Memory: your directions, <slug> (...)` with the
+   description of the agent's entity, and, when a user entity is set, `Memory: the user,
+   <user_entity> (...)`. A new agent has no entity yet: the context prints `Memory: your
+   directions could not be fetched.` until one is registered.
 3. The user runs `uv run python -m memory_base.serve.access.keys authors <slug>`. It prints
    `<slug>: <slug>`.
 
-The agent reads its profile with `get_my_profile`, writes its `self` part with
-`update_my_profile`, and changes its `user` part with `update_user_profile`, with the
-user's consent. Either part may carry `Remember` and `Don't remember` sections: rules that narrow or widen what the
-agent keeps with `save_memory`, never facts about the user. A companion agent's `self`
-part may say `Remember: moments we share`; a user's wish such as `Don't remember: my
-spending` goes in the `user` part, whose sections win.
+An agent's directions live in the description of its own entity. The agent changes them
+with `register_entity`, with the user's consent. The description may carry `Remember` and
+`Don't remember` lines: rules that narrow or widen what the agent keeps with
+`save_memory`, never facts about the user. A companion agent's description may say
+`Remember: moments we share`; a user's wish such as `Don't remember: my spending` goes
+there too.
 
 ## Change or remove an agent
 
@@ -82,4 +85,4 @@ spending` goes in the `user` part, whose sections win.
 - Replace a label's authors: `keys authors <label> <slug> [<slug>...]`. The command
   replaces the whole list on every active key of the label.
 - Disconnect an agent: `keys list` shows each key's hash prefix. `keys revoke <prefix>`
-  revokes the key. The agent's notes and profile stay stored.
+  revokes the key. The agent's notes and entity stay stored.

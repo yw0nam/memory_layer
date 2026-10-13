@@ -1,7 +1,7 @@
 # memory-base plugin for Claude Code
 
-A Claude Code plugin that connects a session to memory-base: the owner's profile and the
-repo's handoffs at session start, relevant notes on every prompt, and the verbatim turn
+A Claude Code plugin that connects a session to memory-base: the agent's and the user's
+cards and the repo's handoffs at session start, relevant notes on every prompt, and the verbatim turn
 record kept beside them (the turn lane).
 
 ## Install
@@ -18,7 +18,8 @@ Enabling the plugin asks for its options. Change them later in `/config`.
 | REST URL | the REST API the hooks call | `http://127.0.0.1:8010` |
 | MCP URL | the MCP server (streamable HTTP) | `http://localhost:8765/mcp` |
 | API key | this agent's key, sent as `X-API-Key`; held in the secure store | none |
-| Author | the profile owner and note author; one of the key's authors | `claude-code` |
+| Author | the agent's own slug and note author; one of the key's authors; its card is delivered at session start | `claude-code` |
+| User entity | slug of the user's entity; its card is delivered at session start | none |
 | Namespace | where this agent's turns land; empty means the key's home namespace | none |
 
 The `connect-agent` skill walks through minting a key for an agent.
@@ -27,7 +28,7 @@ The `connect-agent` skill walks through minting a key for an agent.
 
 | part | file | when | does |
 |---|---|---|---|
-| SessionStart hook | `hooks/session_start.py` | start, resume, clear, compaction | prints one `<memory-context>` fence: the author's profile, a `Session: claude_code <id>` line, the repo's pending handoffs; records the connection in `status.json` |
+| SessionStart hook | `hooks/session_start.py` | start, resume, clear, compaction | prints one `<memory-context>` fence: the author's card, the user's card when `User entity` is set, a `Session: claude_code <id>` line, the repo's pending handoffs; records the connection in `status.json` |
 | UserPromptSubmit hook | `hooks/prompt_submit.py` | every prompt | appends the prompt to the turn lane (not `/` or `!` prompts); searches notes and prints fresh, relevant hits |
 | Stop hook | `hooks/stop.py` | end of each turn | appends the final answer to the turn lane |
 | MCP server | `.mcp.json` | session | the memory tools, with the key from the plugin option |
@@ -63,7 +64,7 @@ spooled: turns that fail are not saved.
 ## Data directory
 
 `${CLAUDE_PLUGIN_DATA}` (`~/.claude/plugins/data/<id>/`) holds `status.json` (configured,
-reachable, URL, author, namespace, check time, error) and `sessions/<session_id>.json`
+card reachable, URL, author, namespace, check time, error) and `sessions/<session_id>.json`
 (the failure marker). Without `CLAUDE_PLUGIN_DATA` the hooks use a `memory_base_plugin`
 directory under the system temp directory. Each prompt appends one row to
 `MEMORY_PREFETCH_LOG` (default `~/.claude/memory_prefetch_log.jsonl`).

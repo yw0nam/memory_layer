@@ -21,7 +21,6 @@ from memory_base.serve.entities import routes as entity_routes
 from memory_base.serve.facts import routes as fact_routes
 from memory_base.serve.messages import routes as message_routes
 from memory_base.serve.notes import routes as note_routes
-from memory_base.serve.profiles import routes as profile_routes
 from memory_base.serve.repos import cache as repo_cache
 from memory_base.serve.repos import routes as repo_routes
 from memory_base.serve.search import access_log
@@ -65,10 +64,6 @@ app = Starlette(
         Route("/search", search_routes.search_route, methods=["POST"]),
         Route("/save_memory", note_routes.save_route, methods=["POST"]),
         Route("/notes", note_routes.list_route, methods=["GET"]),
-        Route("/profiles", profile_routes.profile_route, methods=["GET"]),
-        Route("/profiles/self", profile_routes.self_route, methods=["PUT"]),
-        Route("/profiles/versions", profile_routes.versions_route, methods=["GET"]),
-        Route("/profiles/user", profile_routes.user_route, methods=["PUT"]),
         Route("/entities", entity_routes.list_route, methods=["GET"]),
         Route("/entities", entity_routes.upsert_route, methods=["POST"]),
         Route("/entities/{slug}/archive", entity_routes.archive_route, methods=["POST"]),
