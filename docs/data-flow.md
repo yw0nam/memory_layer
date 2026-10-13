@@ -208,7 +208,7 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
 ```
 
 Memory hits (notes, document chunks, CSV cards) carry the row's `id`, `kind`, and
-`tags`, and `entities` (empty when the note names none), plus `supersedes` for a note that replaced one; `GET /notes` rows carry the same `entities`, and `?entity=<slug>` narrows to notes whose `metadata.entities` holds the slug, beside the `kind`, `tags`, and `namespace` filters; `date` is
+`tags`, and `entities` (empty when the note names none), plus `supersedes` for a note that replaced one. `GET /notes` rows carry the same `entities`. `?entity=<slug>` narrows to notes whose `metadata.entities` holds the slug, beside the `kind`, `tags`, and `namespace` filters. `date` is
 the note's `occurred_at` when recorded, else `ts_last_active`. `since`/`until` bound the
 same event time, `COALESCE(occurred_at, ts_last_active)`, so an episode is found by the
 day it happened; recency voting and decay read `ts_last_active` alone. Memory hits carry their stored text whole; each is

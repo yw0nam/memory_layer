@@ -6,7 +6,6 @@ one of them. The `import` consent method is for an admin key carrying the `user`
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from starlette.requests import Request
@@ -15,6 +14,7 @@ from starlette.responses import JSONResponse
 from memory_base.serve.access.keys import AUTHOR_RE
 from memory_base.serve.common import consent
 from memory_base.serve.common.consent import CONSENT_METHODS
+from memory_base.serve.common.entities import SLUG_RE
 from memory_base.serve.common.http import (
     RequestError,
     bounded_text,
@@ -26,7 +26,6 @@ from memory_base.serve.common.http import (
 from memory_base.serve.entities import store
 
 KINDS = ("person", "agent", "project", "org", "place", "thing")
-SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 MAX_ITEMS = 50
 MAX_NAME_CHARS = 200
 MAX_ALIASES = 20

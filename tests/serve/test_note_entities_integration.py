@@ -1,4 +1,4 @@
-"""GET /notes?entity= against the throwaway Postgres: only the note naming the entity returns."""
+"""Notes naming an entity through POST /save_memory, listed by GET /notes?entity=, on the throwaway Postgres."""
 
 from __future__ import annotations
 
@@ -8,20 +8,29 @@ import uuid
 
 import asyncpg
 import httpx
-import numpy as np
 import pytest
 
 from memory_base.core import db
-from memory_base.core.config import EMB_DIM, PG_SCHEMA, db_url, vector_literal
+from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api
-from memory_base.serve.notes.store import INSERT_NOTE_SQL, build_note_row, insert_note_args
 
 pytestmark = pytest.mark.integration
 
+HEADERS = {"X-API-Key": "test-key"}
 
-def test_list_notes_entity_filter_returns_only_the_naming_note():
+
+def test_a_note_names_an_entity_and_the_entity_filter_returns_only_that_note():
     tag = uuid.uuid4().hex[:10]
     slug = f"it-{tag}"
+
+    def save(text, entities):
+        return {
+            "content": f"integration note {tag} {text}",
+            "author": "claude-code",
+            "kind": "work",
+            "tags": ["it"],
+            "entities": entities,
+        }
 
     async def scenario():
         conn = await asyncpg.connect(db_url())
@@ -36,33 +45,39 @@ def test_list_notes_entity_filter_returns_only_the_naming_note():
             now,
         )
         try:
-            embedding = vector_literal(np.zeros(EMB_DIM, dtype=np.float16))
-            ids = []
-            for text, entities in (
-                (f"integration note {tag} one", [slug]),
-                (f"integration note {tag} two", []),
-            ):
-                row = build_note_row(text, "work", ["it"], now, entities=entities)
-                await conn.execute(INSERT_NOTE_SQL, *insert_note_args(row, embedding, "default"))
-                ids.append(row["id"])
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
             ) as client:
-                response = await client.get(
-                    f"/notes?entity={slug}", headers={"X-API-Key": "test-key"}
+                named = await client.post(
+                    "/save_memory",
+                    json=save("naming the entity", [slug]),
+                    headers=HEADERS,
                 )
-            return ids[0], response
+                await client.post(
+                    "/save_memory",
+                    json=save("zebra quartz lantern", []),
+                    headers=HEADERS,
+                )
+                unknown = await client.post(
+                    "/save_memory",
+                    json=save("naming a stranger", ["no-such-entity"]),
+                    headers=HEADERS,
+                )
+                listed = await client.get(f"/notes?entity={slug}", headers=HEADERS)
+            return named, unknown, listed
         finally:
             await db.close_pool()
             await conn.execute(
-                f"""DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE content_raw LIKE $1""",
+                f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE content_raw LIKE $1',
                 f"integration note {tag}%",
             )
             await conn.execute(f'DELETE FROM "{PG_SCHEMA}".entities WHERE slug = $1', slug)
             await conn.close()
 
-    named_id, response = asyncio.run(scenario())
-    assert response.status_code == 200
-    rows = response.json()
-    assert [r["id"] for r in rows] == [named_id]
+    named, unknown, listed = asyncio.run(scenario())
+    assert named.status_code == 200
+    assert unknown.status_code == 400
+    assert "no-such-entity" in unknown.json()["error"]
+    rows = listed.json()
+    assert [r["id"] for r in rows] == [named.json()["id"]]
     assert rows[0]["entities"] == [slug]

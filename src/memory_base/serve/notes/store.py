@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -22,6 +21,7 @@ from memory_base.retrieval.search import (
     parse_time_bound,
 )
 from memory_base.serve.access import namespaces
+from memory_base.serve.common.entities import SLUG_RE, require_active
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 
@@ -29,7 +29,6 @@ from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 NOTE_MAX_CHARS = 4000
 NOTE_KINDS = ("personal", "work")
 MAX_NOTE_ENTITIES = 10
-ENTITY_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
 LIST_NOTES_DEFAULT_LIMIT = 50
 LIST_NOTES_MAX_LIMIT = 200
@@ -85,28 +84,9 @@ def normalize_entities(entities: Any) -> list[str]:
     if len(slugs) > MAX_NOTE_ENTITIES:
         raise ValueError(f"entities must hold at most {MAX_NOTE_ENTITIES} slugs")
     for slug in slugs:
-        if not ENTITY_SLUG.match(slug):
-            raise ValueError(f"entity slug {slug!r} must match {ENTITY_SLUG.pattern}")
+        if not SLUG_RE.fullmatch(slug):
+            raise ValueError(f"entity slug {slug!r} must match {SLUG_RE.pattern}")
     return slugs
-
-
-async def require_active_entities(conn: Any, slugs: list[str]) -> None:
-    """Refuse the first slug that is not an active entity."""
-    if not slugs:
-        return
-    active = {
-        row["slug"]
-        for row in await conn.fetch(
-            f'SELECT slug FROM "{PG_SCHEMA}".entities WHERE slug = ANY($1) AND archived_at IS NULL',
-            slugs,
-        )
-    }
-    for slug in slugs:
-        if slug not in active:
-            raise ValueError(
-                f"unknown or archived entity {slug!r}; register it with register_entity "
-                "or reuse a slug from list_entities"
-            )
 
 
 def note_id(namespace: str, content: str) -> str:
@@ -230,7 +210,7 @@ async def save_note(
         await ensure_schema_once(conn)
         async with conn.transaction():
             await namespaces.require_registered(conn, namespace)
-            await require_active_entities(conn, row["metadata"].get("entities", []))
+            await require_active(conn, row["metadata"].get("entities", []))
             if supersedes is not None:
                 exists = await conn.fetchval(
                     f"""

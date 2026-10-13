@@ -12,6 +12,7 @@ import json
 import math
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -532,6 +533,11 @@ def _current_groups(verdict: Verdict, batch: Batch, state: State) -> list[dict[s
     ]
 
 
+def merged_entities(members: Iterable[Note]) -> list[str]:
+    """The sorted union of the members' entity slugs."""
+    return sorted({slug for n in members for slug in n.entities})
+
+
 def replacement_row(
     verdict: Verdict, batch: Batch, notes: dict[str, Note], now: float
 ) -> dict[str, Any]:
@@ -546,7 +552,7 @@ def replacement_row(
         verdict.namespace,
         batch.author,
         occurred_at=max(occurred) if occurred else None,
-        entities=sorted({slug for n in members for slug in n.entities}),
+        entities=merged_entities(members),
     )
 
 
@@ -574,12 +580,12 @@ def _plan_merge(
     if len({notes[i].kind for i in members}) != 1:
         return _result(verdict, "rejected", "members differ in kind; merge needs one kind")
     text = verdict.merged_text or ""
-    named = {slug for i in members for slug in notes[i].entities}
-    if len(named) > MAX_NOTE_ENTITIES:
+    entities = merged_entities(notes[i] for i in members)
+    if len(entities) > MAX_NOTE_ENTITIES:
         return _result(
             verdict,
             "rejected",
-            f"merged note would name {len(named)} entities; at most {MAX_NOTE_ENTITIES}",
+            f"merged note would name {len(entities)} entities; at most {MAX_NOTE_ENTITIES}",
         )
     try:
         row = replacement_row(verdict, batch, notes, 0.0)
