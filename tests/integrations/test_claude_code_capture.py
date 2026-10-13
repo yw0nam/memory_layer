@@ -130,6 +130,7 @@ def hook_env(monkeypatch, tmp_path):
     monkeypatch.setenv("MEMORY_PREFETCH_LOG", str(tmp_path / "prefetch.jsonl"))
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_URL", "http://memory.test")
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_API_KEY", "key")
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_AUTHOR", "claude-code")
     monkeypatch.setattr(prompt_submit, "_fetch_from_server", lambda cfg: lambda query: [])
 
 

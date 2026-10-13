@@ -24,9 +24,9 @@ TURN_TIMEOUT = 2.0
 GIT_TIMEOUT_SECONDS = 1.0
 RETRY_SECONDS = 60
 ORIGIN = "claude_code"
-DEFAULT_AUTHOR = "claude-code"
 MESSAGE_LIMIT = 120
 
+_FENCE_TAG = re.compile(r"<\s*/?\s*memory-context", re.IGNORECASE)
 _SCP_ORIGIN = re.compile(r"(?:[^:@/]+@)?(?P<host>[^:/]+):(?P<path>.+)")
 _ORIGIN_HOST = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
@@ -44,13 +44,13 @@ class Config:
         return cls(
             url=env.get("CLAUDE_PLUGIN_OPTION_URL", ""),
             api_key=env.get("CLAUDE_PLUGIN_OPTION_API_KEY", ""),
-            author=env.get("CLAUDE_PLUGIN_OPTION_AUTHOR") or DEFAULT_AUTHOR,
+            author=env.get("CLAUDE_PLUGIN_OPTION_AUTHOR", ""),
             namespace=env.get("CLAUDE_PLUGIN_OPTION_NAMESPACE") or None,
         )
 
     @property
     def configured(self) -> bool:
-        return bool(self.url and self.api_key)
+        return bool(self.url and self.api_key and self.author)
 
 
 class Unreachable(Exception):
@@ -64,6 +64,11 @@ class Refused(Exception):
         super().__init__(f"{status}: {message}")
         self.status = status
         self.message = message
+
+
+def defuse(text: str) -> str:
+    """Defuse memory-context tags inside retrieved text so it cannot close the fence."""
+    return _FENCE_TAG.sub("[memory-context]", text)
 
 
 def _now() -> float:
