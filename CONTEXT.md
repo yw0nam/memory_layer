@@ -1,8 +1,10 @@
 # Memory Base
 
-A retrieval layer that stores only distilled content. Agents write memories through a
-validating tool; documents and code repositories are ingested through source adapters.
-Every consumer reads back through one REST API.
+A retrieval layer whose memory is distilled content, kept beside a verbatim record of
+the conversations it came from. Agents write memories through a validating tool;
+documents and code repositories are ingested through source adapters; the client's hook
+posts each message of a conversation as it happens. Every consumer reads back through
+one REST API.
 
 ## Language
 
@@ -51,6 +53,14 @@ a report status (`in_progress`, `blocked`, or `completed`); a new snapshot of th
 subject supersedes the pending one. Has no expiry unless its sender gives one: it stays
 pending until claimed, superseded, or cancelled.
 _Avoid_: session summary, progress note, status report
+
+**Turn**:
+One message of a conversation, the user's or the assistant's, stored verbatim in `turns` as the client delivered it, with the assistant's reasoning when the client exposes it. Read by time, session, and literal substring; never embedded, never returned by search, never prefetched.
+_Avoid_: transcript line, utterance, log entry
+
+**Session**:
+The conversation a client ran, named by the client's own session id under its origin (`claude_code` or `hermes`); the unit `list_sessions` lists and `read_session` reads in order. A note may name the session it came from as `source_session`.
+_Avoid_: conversation (reserved for the lane as a whole), thread, chat
 
 **Claim**:
 The at-most-once delivery of a pending message: exactly one claimer wins, and the
@@ -117,7 +127,7 @@ One of an owner's two profile documents: `self`, the agent's persona, working ru
 _Avoid_: slot, section
 
 **Entity**:
-A registered person, agent, project, organisation, place, or thing that facts are about, keyed by a slug the user consented to. Aliases resolve other spellings of its name; the server infers no equivalence between names and merges nothing.
+A registered person, agent, project, organisation, place, or thing, keyed by a slug the user consented to. Aliases resolve other spellings of its name; the server infers no equivalence between names and merges nothing.
 _Avoid_: node, subject, topic
 
 **Consent**:
