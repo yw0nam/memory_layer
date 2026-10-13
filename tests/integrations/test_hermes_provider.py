@@ -12,8 +12,9 @@ import sys
 import types
 from pathlib import Path
 
-import httpx
+import json
 
+import httpx
 import pytest
 
 PLUGIN_DIR = Path(__file__).resolve().parents[2] / "integrations" / "hermes" / "memory_base"
@@ -28,6 +29,16 @@ def plugin(monkeypatch):
         pass
 
     memory_provider.MemoryProvider = MemoryProvider
+    hermes_cli = types.ModuleType("hermes_cli")
+    hermes_config = types.ModuleType("hermes_cli.config")
+    saved = []
+    hermes_config.stored = {"memory": {"provider": "memory_base"}}
+    hermes_config.load_config = lambda: hermes_config.stored
+    hermes_config.save_config = saved.append
+    hermes_config.saved = saved
+    hermes_cli.config = hermes_config
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", hermes_config)
     agent.memory_provider = memory_provider
     monkeypatch.setitem(sys.modules, "agent", agent)
     monkeypatch.setitem(sys.modules, "agent.memory_provider", memory_provider)
@@ -39,6 +50,7 @@ def plugin(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, "hermes_memory_base", module)
     spec.loader.exec_module(module)
+    module.hermes_config = hermes_config
     return module
 
 
@@ -49,14 +61,10 @@ def test_the_default_client_is_built_with_the_benchmarked_prefetch_floor(plugin,
     assert client.top_k == 5
 
 
-def test_the_provider_does_not_capture_sessions(plugin, monkeypatch):
-    monkeypatch.setattr(plugin, "_load_plugin_config", lambda: {})
-    provider = plugin.MemoryBaseProvider()
-    assert not hasattr(provider, "on_session_end")
-    assert not hasattr(provider, "on_session_switch")
-    assert not hasattr(plugin.client.MemoryBaseClient, "store_conversation")
-    assert not hasattr(plugin.client, "conversation_turns")
-
+SESSION_LINE = (
+    "Session: hermes {session} (pass it as session_id with origin hermes "
+    "when a note is distilled from this session)"
+)
 
 PROFILE = {
     "owner": "natsume",
@@ -99,6 +107,7 @@ def test_system_prompt_block_delivers_the_owners_profile_fetched_once_per_initia
     block = provider.system_prompt_block()
     assert block.splitlines() == [
         "Memory: standing profile for natsume. Apply it to every task.",
+        SESSION_LINE.format(session="session-1"),
         "## user (v0)",
         "(empty)",
         "## self (v1)",
@@ -116,14 +125,173 @@ def test_no_profile_is_fetched_without_a_configured_owner(plugin, monkeypatch):
 
     provider = _provider(plugin, monkeypatch, httpx.MockTransport(handler), owner=None)
     provider.initialize("session-1")
-    assert provider.system_prompt_block() == ""
+    assert provider.system_prompt_block() == SESSION_LINE.format(session="session-1")
 
 
 def test_system_prompt_block_is_empty_without_the_server(plugin, monkeypatch):
     provider = _provider(plugin, monkeypatch, None, url="http://127.0.0.1:9")
     provider.initialize("session-1")
-    assert provider.system_prompt_block() == ""
+    assert provider.system_prompt_block() == SESSION_LINE.format(session="session-1")
 
 
-def test_the_plugin_version_is_2_3_0():
-    assert "version: 2.3.0" in (PLUGIN_DIR / "plugin.yaml").read_text()
+def test_the_plugin_version_is_3_0_0():
+    assert "version: 3.0.0" in (PLUGIN_DIR / "plugin.yaml").read_text()
+
+
+class Server:
+    """Records POST /turns bodies; answers with a configurable status."""
+
+    def __init__(self):
+        self.bodies = []
+        self.status = 200
+        self.down = False
+        self.transport = httpx.MockTransport(self.handle)
+
+    def handle(self, request):
+        if request.url.path == "/profiles":
+            return httpx.Response(200, json=PROFILE)
+        if self.down:
+            raise httpx.ConnectError("down")
+        if self.status != 200:
+            return httpx.Response(self.status, json={"error": "nope " + "x" * 200})
+        self.bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"seq": len(self.bodies)})
+
+
+def _capturing(plugin, monkeypatch, server, namespace="personal", **initialize):
+    config = {"url": "http://memory-base.local", "api_key": "k", "namespace": namespace}
+    monkeypatch.setattr(plugin, "_load_plugin_config", lambda: config)
+    provider = plugin.MemoryBaseProvider()
+    build = provider._build_client
+
+    def build_with_transport():
+        built = build()
+        built.transport = server.transport
+        return built
+
+    monkeypatch.setattr(provider, "_build_client", build_with_transport)
+    warnings = []
+    provider.initialize("s1", warning_callback=warnings.append, **initialize)
+    return provider, warnings
+
+
+def test_a_primary_turn_posts_user_then_assistant_with_this_turns_reasoning(plugin, monkeypatch):
+    server = Server()
+    provider, _ = _capturing(plugin, monkeypatch, server)
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "reasoning_content": "old thoughts"},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "reasoning_content": "step one", "tool_calls": []},
+        {"role": "tool", "content": "out"},
+        {"role": "assistant", "reasoning": "step two"},
+        {"role": "assistant", "content": "plain"},
+    ]
+    provider.sync_turn("second", "answer", session_id="s1", messages=messages)
+    user, assistant = server.bodies
+    assert [(b["role"], b["content"]) for b in server.bodies] == [
+        ("user", "second"),
+        ("assistant", "answer"),
+    ]
+    assert {b["session_id"] for b in server.bodies} == {"s1"}
+    assert {b["origin"] for b in server.bodies} == {"hermes"}
+    assert {b["namespace"] for b in server.bodies} == {"personal"}
+    assert user["id"] != assistant["id"]
+    assert "reasoning" not in user
+    assert assistant["reasoning"] == "step one\n\nstep two"
+
+
+def test_reasoning_is_cut_at_64000_characters_and_absent_when_there_is_none(plugin, monkeypatch):
+    server = Server()
+    provider, _ = _capturing(plugin, monkeypatch, server)
+    long = [{"role": "assistant", "reasoning_content": "r" * 70_000}]
+    provider.sync_turn("q", "a", session_id="s1", messages=long)
+    provider.sync_turn("q", "a", session_id="s1", messages=[{"role": "assistant", "content": "a"}])
+    assert len(server.bodies[1]["reasoning"]) == 64_000
+    assert "reasoning" not in server.bodies[3]
+
+
+@pytest.mark.parametrize("context", ["cron", "subagent"])
+def test_a_non_primary_context_posts_nothing(plugin, monkeypatch, context):
+    server = Server()
+    provider, _ = _capturing(plugin, monkeypatch, server, agent_context=context)
+    provider.sync_turn("q", "a", session_id="s1", messages=[])
+    assert server.bodies == []
+
+
+def test_a_session_switch_rebinds_the_session_of_later_posts(plugin, monkeypatch):
+    server = Server()
+    provider, _ = _capturing(plugin, monkeypatch, server)
+    provider.on_session_switch("s2", parent_session_id="s1", reset=True)
+    provider.sync_turn("q", "a", session_id="", messages=[])
+    assert {b["session_id"] for b in server.bodies} == {"s2"}
+    assert SESSION_LINE.format(session="s2") in provider.system_prompt_block()
+
+
+def test_an_outage_warns_once_skips_for_a_minute_and_warns_on_recovery(plugin, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(plugin.time, "monotonic", lambda: now[0])
+    server = Server()
+    provider, warnings = _capturing(plugin, monkeypatch, server)
+    server.down = True
+    provider.sync_turn("q", "a", session_id="s1", messages=[])
+    provider.sync_turn("q", "a", session_id="s1", messages=[])
+    assert warnings == ["memory-base unreachable; turns are not being saved"]
+    server.down = False
+    now[0] += 30
+    provider.sync_turn("q", "a", session_id="s1", messages=[])
+    assert server.bodies == []
+    now[0] += 31
+    provider.sync_turn("q", "a", session_id="s1", messages=[])
+    assert len(server.bodies) == 2
+    assert warnings[1:] == ["memory-base is reachable again; turns are being saved"]
+
+
+def test_a_refusal_warns_once_per_status_and_never_raises(plugin, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(plugin.time, "monotonic", lambda: now[0])
+    server = Server()
+    provider, warnings = _capturing(plugin, monkeypatch, server)
+    server.status = 401
+    provider.sync_turn("q", "a", session_id="s1", messages=[])
+    now[0] += 61
+    provider.sync_turn("q", "a", session_id="s1", messages=[])
+    assert warnings == ["memory-base refused a turn (401: nope " + "x" * 115 + ")"]
+
+
+def test_the_warnings_go_to_the_logger_without_a_callback(plugin, monkeypatch, caplog):
+    server = Server()
+    provider, _ = _capturing(plugin, monkeypatch, server)
+    provider._warn = None
+    server.down = True
+    provider.sync_turn("q", "a", session_id="s1", messages=[])
+    assert "turns are not being saved" in caplog.text
+
+
+def test_the_config_schema_names_the_setup_fields(plugin):
+    schema = plugin.MemoryBaseProvider().get_config_schema()
+    assert [f["key"] for f in schema] == [
+        "url",
+        "api_key",
+        "owner",
+        "namespace",
+        "top_k",
+        "min_score",
+        "timeout",
+    ]
+    key = schema[1]
+    assert key["secret"] is True and key["env_var"] == "MEMORY_BASE_API_KEY"
+
+
+def test_save_config_writes_the_non_secret_values_and_never_the_key(plugin):
+    plugin.MemoryBaseProvider().save_config(
+        {"url": "http://x", "owner": "natsume", "api_key": "leak", "top_k": "7"}, "/home"
+    )
+    assert plugin.hermes_config.saved == [
+        {
+            "memory": {
+                "provider": "memory_base",
+                "memory_base": {"url": "http://x", "owner": "natsume", "top_k": "7"},
+            }
+        }
+    ]
