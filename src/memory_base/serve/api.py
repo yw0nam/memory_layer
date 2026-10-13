@@ -26,6 +26,7 @@ from memory_base.serve.repos import routes as repo_routes
 from memory_base.serve.search import access_log
 from memory_base.serve.search import routes as search_routes
 from memory_base.serve.tables import routes as table_routes
+from memory_base.serve.turns import routes as turn_routes
 
 setup_logging()
 logging.getLogger("uvicorn.access").addFilter(health.HealthAccessFilter())
@@ -74,6 +75,10 @@ app = Starlette(
         Route("/messages", message_routes.list_route, methods=["GET"]),
         Route("/messages/{message_id}/claim", message_routes.claim_route, methods=["POST"]),
         Route("/messages/{message_id}", message_routes.cancel_route, methods=["DELETE"]),
+        Route("/turns", turn_routes.append_route, methods=["POST"]),
+        Route("/turns/search", turn_routes.search_route, methods=["GET"]),
+        Route("/sessions", turn_routes.sessions_route, methods=["GET"]),
+        Route("/sessions/{origin}/{session_id:path}", turn_routes.session_route, methods=["GET"]),
         Route("/tables/query", table_routes.query_route, methods=["POST"]),
         Route("/ingest/document", document_routes.ingest_route, methods=["POST"]),
         Route("/ingest/jobs", document_routes.jobs_route, methods=["GET"]),
@@ -98,6 +103,11 @@ app = Starlette(
         Route("/admin/consolidate/actions", consolidation_routes.actions_route, methods=["GET"]),
         Route("/admin/archive", note_routes.archive_route, methods=["POST"]),
         Route("/admin/messages/purge", message_routes.purge_route, methods=["POST"]),
+        Route(
+            "/admin/sessions/{origin}/{session_id:path}",
+            turn_routes.delete_session_route,
+            methods=["DELETE"],
+        ),
         Route("/admin/restore", note_routes.restore_route, methods=["POST"]),
     ],
 )

@@ -384,6 +384,7 @@ async def _search_memory(
             "tags": metadata.get("tags", []),
             "author": metadata.get("author"),
             "supersedes": metadata.get("supersedes"),
+            "source_session": metadata.get("source_session"),
             "namespace": r["namespace"],
             "session_id": r["session_id"],
             "archived": r["archived_at"] is not None,

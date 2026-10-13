@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse
 
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.serve.common.http import error, json_body
+from memory_base.serve.common.origins import ORIGINS
 from memory_base.serve.notes import curation, store
 
 
@@ -45,6 +46,16 @@ async def save_route(request: Request) -> JSONResponse:
         return error("author is required")
     if author not in key.authors:
         return error(f"author {author!r} is not permitted for this key", 403)
+    source_session = body.get("source_session")
+    if source_session is not None:
+        if (
+            not isinstance(source_session, dict)
+            or set(source_session) != {"origin", "session_id"}
+            or source_session["origin"] not in ORIGINS
+            or not isinstance(source_session["session_id"], str)
+            or not source_session["session_id"].strip()
+        ):
+            return error(f"source_session must hold origin (one of {ORIGINS}) and session_id")
     allow_similar = body.get("allow_similar", False)
     if not isinstance(allow_similar, bool):
         return error("allow_similar must be a boolean")
@@ -58,6 +69,7 @@ async def save_route(request: Request) -> JSONResponse:
             occurred_at=body.get("occurred_at"),
             author=author,
             allow_similar=allow_similar,
+            source_session=source_session,
         )
     except store.SimilarNotesError as exc:
         return JSONResponse({"error": str(exc), "similar": exc.similar}, status_code=409)
