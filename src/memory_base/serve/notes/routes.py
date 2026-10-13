@@ -26,6 +26,22 @@ def _admin_scope(key) -> list[str] | None:
     return None if key.is_admin else sorted(key.allowed)
 
 
+def _source_session(body: dict[str, Any]) -> dict[str, str] | None:
+    """The request's source_session, validated; None when absent."""
+    source = body.get("source_session")
+    if source is None:
+        return None
+    if (
+        not isinstance(source, dict)
+        or set(source) != {"origin", "session_id"}
+        or source["origin"] not in ORIGINS
+        or not isinstance(source["session_id"], str)
+        or not source["session_id"].strip()
+    ):
+        raise ValueError(f"source_session must hold origin (one of {ORIGINS}) and session_id")
+    return source
+
+
 async def save_route(request: Request) -> JSONResponse:
     """Validate and store an agent-authored memory request; omitted namespace lands in key.home."""
     key = request.state.key
@@ -46,16 +62,10 @@ async def save_route(request: Request) -> JSONResponse:
         return error("author is required")
     if author not in key.authors:
         return error(f"author {author!r} is not permitted for this key", 403)
-    source_session = body.get("source_session")
-    if source_session is not None:
-        if (
-            not isinstance(source_session, dict)
-            or set(source_session) != {"origin", "session_id"}
-            or source_session["origin"] not in ORIGINS
-            or not isinstance(source_session["session_id"], str)
-            or not source_session["session_id"].strip()
-        ):
-            return error(f"source_session must hold origin (one of {ORIGINS}) and session_id")
+    try:
+        source_session = _source_session(body)
+    except ValueError as exc:
+        return error(str(exc))
     allow_similar = body.get("allow_similar", False)
     if not isinstance(allow_similar, bool):
         return error("allow_similar must be a boolean")
@@ -69,7 +79,7 @@ async def save_route(request: Request) -> JSONResponse:
             occurred_at=body.get("occurred_at"),
             author=author,
             allow_similar=allow_similar,
-            **({} if source_session is None else {"source_session": source_session}),
+            source_session=source_session,
         )
     except store.SimilarNotesError as exc:
         return JSONResponse({"error": str(exc), "similar": exc.similar}, status_code=409)
