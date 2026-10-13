@@ -54,6 +54,10 @@ cron; `flock` keeps one run at a time):
 0 4 * * *  . <env-file> && flock -n <lock-file> <agent-command> "Follow <path>/consolidation-procedure.md. mode=dry-run. namespaces=<ns>,<ns>. run_id=consolidate-$(date +\%F)"
 ```
 
+The start instruction of the owner's cron prompt must allow the routes the agent calls: the
+consolidation routes, `GET /entities`, `GET /entities/{slug}`, `GET /notes`, `POST /search`,
+and `POST /admin/facts`. The prompt is the owner's and lives outside the repository.
+
 `<agent-command>`, `<env-file>` (it exports `REST_URL` and `MEMORY_API_KEY`), `<lock-file>`,
 and `<path>` belong to the operator's platform; the repository ships no scheduler configuration.
 
@@ -80,6 +84,8 @@ change is applied.
      report ◄── held groups ◄─────────────────┘                            │
         ▲                                                                  │
         └────── handle statuses ◄── POST verdicts ◄────────────────────────┘
+                     │
+                     └──► cards (every active entity) ──► report
 ```
 
 ### 1. Fetch groups
@@ -289,8 +295,9 @@ The response is `{"results": [...]}`; a result has `group_key`, `status`, `reaso
 | `rejected` | a check failed; `reason` says which (reused idempotency key with another payload, `action cap reached`, a retire or merge rule, a token-check `drops …` or `adds …`, a credential, a replacement that exists archived) | log the reason; a merge rejected by the token check or a merge rule takes the one correction of step 3 and is sent again under the same idempotency key (the server records no rejected verdict); every other rejection is logged only |
 | `failed` | an embedder or database error rolled this verdict back | retry once with the same idempotency key and the same payload; if it fails again, log it |
 
-The agent calls only the consolidation routes (groups, verdicts, actions, undo). It never
-calls `/admin/restore`, archive, delete, move, keys, or save routes, even when a server reason
+The agent calls only the consolidation routes (groups, verdicts, actions, undo) and, for
+step 7, `GET /entities`, `GET /entities/{slug}`, `GET /notes`, `POST /search`, and
+`POST /admin/facts`. It never calls `/admin/restore`, archive, delete, move, keys, or save routes, even when a server reason
 suggests it (for example "restore it instead"); it logs the reason for the owner.
 
 A rejection `action cap reached` applies to every later retire and merge of that
@@ -314,7 +321,82 @@ each group left for the owner's decision: group_key, namespace, each member's id
 each applied action: action_id, namespace, action, group (member ids), reason
 each rejected verdict: group_key and reason
 each failed verdict after its retry: group_key and reason
+cards, per entity (slug): the planned or written rows (op, attribute, value, note id)
+  held claims with the reason
+  correction backlog: each current fact a newer note contradicts, with the fact's age in days
+cards, overall: subjects named by several notes that have no entity
 ```
+
+### 7. Cards
+
+Run this step every run, after step 5, whether or not any group was issued, in `dry-run`
+and in `apply` alike. The whole set is judged every run; there is no cursor and no "since
+last run".
+
+**Inputs, per entity.**
+
+| request | use |
+|---|---|
+| `GET /entities` | the active entities; each has `slug`, `kind`, `name`, `aliases`, `description` |
+| `GET /entities/{slug}` | the card: `{entity, facts, incoming}`; `facts` are the current rows of the entity, `incoming` the current rows whose `value_entity` is the slug |
+| `GET /notes?entity=<slug>&limit=200` | every active note naming the entity (the card's own note list is capped lower) |
+| `POST /search` `{"query": "<name or alias>", "source": "memory", "top_k": 10}` | candidates; once for the name and once per alias |
+
+A search hit is a candidate for the agent's judgment, never a link. The agent links nothing
+and edits no note.
+
+**Judge.** For each candidate note decide whether it states a current property or
+relation of the entity. Check the attribution (who said it), the actual subject (a note
+that mentions the entity is not about it), the date (a later note wins), negation, and
+scope. One judgment per fact, by the same context that judged the groups.
+
+Hold, list in the report, and never write:
+
+- a trait generalized over several episodes;
+- a negated claim;
+- a claim whose subject is unclear;
+- a claim an agent makes about the user that is really about the agent (it is a fact of
+  the agent's entity);
+- anything a search hit alone supports.
+
+**Send.** One `POST /admin/facts` per entity, with `dry_run: true` in `dry-run` mode:
+
+```
+{"author": "consolidator", "dry_run": true,
+ "ops": [{"op": "add", "entity": "<slug>", "attribute": "works_at", "value_entity": "<slug>", "note_id": "<id>"},
+         {"op": "replace", "id": "<fact id>", "value_text": "<text>", "note_id": "<id>"},
+         {"op": "remove", "id": "<fact id>", "note_id": "<id>"}]}
+```
+
+| op | when | fields |
+|---|---|---|
+| `add` | the card lacks the property or relation | `entity`, `attribute`, `value_text` or `value_entity`, `note_id`, optional `allow_multiple` |
+| `replace` | a later note supersedes a current fact of the same attribute | `id` of the current fact, `value_text` or `value_entity`, `note_id`, optional `attribute` |
+| `remove` | a later note contradicts a current fact; that note is the `note_id` | `id`, `note_id` |
+
+- Every op cites the note it rests on in `note_id`.
+- An `attribute` is a short slug (`^[a-z0-9][a-z0-9_-]{0,39}$`); reuse those already on the
+  card (`works_at`, `likes`, `role`, `repo`).
+- A relation is `value_entity`, a registered active slug. A value naming a subject with no
+  entity is `value_text` (1 to 300 characters).
+- `allow_multiple` only for an attribute that holds several values by nature (members,
+  aliases of a thing), one row per element; never a conjunction value.
+- A batch holds 1 to 100 ops.
+
+**Statuses.** The response is `{"results": [{"op", "status", ...fact row}]}`.
+
+| status | meaning | the agent |
+|---|---|---|
+| `written` | the row is stored; a replace closed its predecessor | log the row |
+| `planned` | dry run, nothing written | log the row in the report |
+| `unchanged` | an `add` equal to a current row; the result is that row | nothing; expected on every rescan, not a change |
+| 400 | a refusal aborts the whole batch: `{"error": "op <index>: <reason>"}` | fix the one op the index names and send the batch again once; a second refusal is logged |
+
+**Report.** Per entity, list the planned or written rows (op, attribute, value, note id),
+the held claims with the reason, and the correction backlog (a current fact that a newer note
+contradicts, with the fact's age in days). List once, for the owner, the subjects that
+several notes name and that have no entity; the owner registers them and the agent never
+does.
 
 ## Undo and history
 
@@ -371,5 +453,10 @@ reverses an action.
   search. Its cost grows with the square of the active notes in the namespace, and it
   runs once for the groups call and again for each verdict that is not `duplicate` or
   `cached` (twice for an applied verdict). Send only judged groups, and use a long timeout.
+- The agent's judgment is the only check of meaning on a fact. The server checks shape,
+  keys, and citations only: an active entity, an active agent note, a credential-free
+  `value_text` that is not a list of names.
+- A fact lags behind its note by at least one run, and for as long as the run stays in
+  `dry-run`.
 - `procedure_version` (in the groups response) is part of every group key; when the server
   changes it, every judged group is offered again, except groups of undone actions.
