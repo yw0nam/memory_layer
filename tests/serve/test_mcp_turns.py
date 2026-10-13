@@ -70,3 +70,21 @@ def test_save_memory_needs_both_session_id_and_origin(captured):
             note_tools.save_memory("c", "natsume", tags=["t"], kind="work", origin="hermes")
         )
     assert captured == {}
+
+
+def test_the_save_route_refuses_an_unknown_origin_in_the_source_session(monkeypatch):
+    from starlette.testclient import TestClient
+
+    from memory_base.serve import api
+
+    response = TestClient(api.app, headers={"X-API-Key": "test-key"}).post(
+        "/save_memory",
+        json={
+            "content": "c",
+            "author": "natsume",
+            "kind": "work",
+            "tags": ["t"],
+            "source_session": {"origin": "cursor", "session_id": "s"},
+        },
+    )
+    assert response.status_code == 400
