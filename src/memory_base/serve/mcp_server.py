@@ -9,13 +9,9 @@ the incoming MCP request's own X-API-Key header and forwarded verbatim; over
 stdio (no HTTP request to read from) it comes from the MEMORY_API_KEY
 environment variable.
 
-Register with Claude Code:
-    stdio (local):
-        claude mcp add memory-base --env MEMORY_API_KEY=<key> -- \\
-          uv --directory <absolute-path> run python -m memory_base.serve.mcp_server
-    streamable HTTP (Docker):
-        claude mcp add --transport http memory-base http://localhost:8765/mcp \\
-          --header "X-API-Key: <key>"
+Claude Code reaches the server through the memory-base plugin's `.mcp.json` (streamable
+HTTP, X-API-Key from the plugin's configuration); stdio stays for local runs with
+MEMORY_API_KEY.
 
 Run directly:
     uv run python -m memory_base.serve.mcp_server
