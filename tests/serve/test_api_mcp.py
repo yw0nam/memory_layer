@@ -174,6 +174,7 @@ def test_mcp_server_registers_expected_tools():
         "update_user_profile",
         "list_entities",
         "register_entity",
+        "read_entity",
         "list_sessions",
         "read_session",
         "search_transcript",

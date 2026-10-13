@@ -53,3 +53,12 @@ def test_turn_tools_state_the_lane_and_each_origins_coverage(descriptions):
         assert len(descriptions[name]) < 1500, name
     assert "particle" in descriptions["search_transcript"]
     assert "source_session" in descriptions["read_session"]
+
+
+def test_entity_tools_state_the_card_the_one_writer_and_the_correction_path(descriptions):
+    card = descriptions["read_entity"]
+    assert len(card) < 1500
+    for phrase in ("consolidation", "saving a note", "never a direction"):
+        assert phrase in card, phrase
+    assert "Don't remember" in descriptions["register_entity"]
+    assert "consolidation run" in mcp_server.SERVER_INSTRUCTIONS
