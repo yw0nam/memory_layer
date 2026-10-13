@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; supersedes ADR-0005 and defers the facts part of ADR-0011
+Accepted; supersedes ADR-0005; the deferral of the facts part of ADR-0011 is lifted by ADR-0013
 
 ## Context
 

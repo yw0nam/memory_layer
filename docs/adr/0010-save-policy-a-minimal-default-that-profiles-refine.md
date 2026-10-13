@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; the `Remember` and `Don't remember` sections live in an agent's entity description (ADR-0013), not in a profile
 
 ## Context
 
