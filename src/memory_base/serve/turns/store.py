@@ -297,7 +297,7 @@ async def search(
         if value is not None:
             args.append(value)
             where.append(f"{column} {op} ${len(args)}")
-    args.append(min(limit, MAX_LIMIT))
+    args.append(limit)
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         rows = await conn.fetch(
