@@ -27,6 +27,7 @@ from memory_base.serve.consolidation.groups import Note, Pair, build_groups, gro
 from memory_base.serve.notes.store import (
     INSERT_NOTE_SQL,
     LINEAGE_FIELDS,
+    MAX_NOTE_ENTITIES,
     build_note_row,
     insert_note_args,
     note_id,
@@ -534,7 +535,7 @@ def _current_groups(verdict: Verdict, batch: Batch, state: State) -> list[dict[s
 def replacement_row(
     verdict: Verdict, batch: Batch, notes: dict[str, Note], now: float
 ) -> dict[str, Any]:
-    """The merged note: the members' kind, their tags' union, and their latest event date."""
+    """The merged note: the members' kind, tags' and entities' unions, and latest event date."""
     members = [notes[i] for i in sorted(verdict.member_ids)]
     occurred = [n.occurred_at for n in members if n.occurred_at is not None]
     return build_note_row(
@@ -545,6 +546,7 @@ def replacement_row(
         verdict.namespace,
         batch.author,
         occurred_at=max(occurred) if occurred else None,
+        entities=sorted({slug for n in members for slug in n.entities}),
     )
 
 
@@ -572,6 +574,13 @@ def _plan_merge(
     if len({notes[i].kind for i in members}) != 1:
         return _result(verdict, "rejected", "members differ in kind; merge needs one kind")
     text = verdict.merged_text or ""
+    named = {slug for i in members for slug in notes[i].entities}
+    if len(named) > MAX_NOTE_ENTITIES:
+        return _result(
+            verdict,
+            "rejected",
+            f"merged note would name {len(named)} entities; at most {MAX_NOTE_ENTITIES}",
+        )
     try:
         row = replacement_row(verdict, batch, notes, 0.0)
     except ValueError as exc:

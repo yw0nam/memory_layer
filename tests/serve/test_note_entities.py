@@ -109,13 +109,13 @@ def test_a_save_without_entities_stores_none(use):
     assert "entities" not in _inserted_metadata(conn)
 
 
-@pytest.mark.parametrize("active", [("shiro",), ()])
-def test_an_unknown_or_archived_slug_is_refused_and_nothing_is_written(use, active):
+@pytest.mark.parametrize("active,missing", [(("shiro",), "kuro"), ((), "shiro")])
+def test_an_unknown_or_archived_slug_is_refused_and_nothing_is_written(use, active, missing):
     conn = use(SaveConn(active=active))
     with pytest.raises(ValueError) as refused:
         _save(entities=["shiro", "kuro"])
     assert str(refused.value) == (
-        "unknown or archived entity 'kuro'; register it with register_entity "
+        f"unknown or archived entity '{missing}'; register it with register_entity "
         "or reuse a slug from list_entities"
     )
     assert not [s for s in conn.statements if "INSERT INTO" in s[0]]

@@ -33,6 +33,7 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
             "id": hit.meta["id"],
             "kind": hit.meta["kind"],
             "tags": hit.meta["tags"],
+            "entities": hit.meta["entities"],
             "ref": hit.ref,
             "date": note_date(hit.meta["occurred_at"], hit.ts),
             "score": hit.score,

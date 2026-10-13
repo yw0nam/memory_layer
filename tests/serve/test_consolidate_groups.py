@@ -302,7 +302,7 @@ def test_group_key_is_sha256_of_canonical_json():
 
     members = [note("A", "t", saved=0.0, tags=("z", "y"), author=None)]
     payload = {
-        "v": "1",
+        "v": "2",
         "namespace": "ns",
         "members": [
             [
@@ -474,7 +474,7 @@ def test_route_resolves_defaults_and_every_registered_namespace(consolidator, fa
         "max_group_chars": 12000,
         "limit": 200,
     }
-    assert body["procedure_version"] == "1"
+    assert body["procedure_version"] == "2"
     assert list(body["namespaces"]) == ["default", "work"]
     assert body["namespaces"]["work"] == {
         "active_notes": 0,
@@ -540,6 +540,7 @@ def test_route_response_shape_and_member_ordering(consolidator, fake_db):
         "saved": "2023-11-14",
         "occurred_at": None,
         "tags": ["rules"],
+        "entities": [],
         "supersedes": "note:default:z",
         "text": "rule two",
     }
@@ -694,7 +695,7 @@ def test_route_skips_the_member_set_of_an_undone_action_across_procedure_version
     monkeypatch, consolidator, fake_db
 ):
     _three_pairs(fake_db)
-    monkeypatch.setattr(groups, "PROCEDURE_VERSION", "2")
+    monkeypatch.setattr(groups, "PROCEDURE_VERSION", "3")
     fake_db.action_rows = [
         {"group_key": "an-old-key", "member_ids": ["note:default:d", "note:default:c"],
          "undone": True},

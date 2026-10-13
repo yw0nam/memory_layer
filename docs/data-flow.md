@@ -92,7 +92,10 @@ server applies only deterministic checks: validation, the credential scan, the
 near-duplicate refusal, and supersede. A note landing next to active notes above
 `NOTE_SIMILAR_THRESHOLD` cosine is refused with HTTP 409 listing them, unless `supersedes`
 names one of them or `allow_similar` is set; an accepted override records the neighbours'
-ids in `metadata.similar_ack`. The response carries `similar[]` either way. A prior-note
+ids in `metadata.similar_ack`. The response carries `similar[]` either way. Its optional
+`entities` (at most ten slugs, stripped and deduplicated) are checked inside the save
+transaction against active rows of the `entities` table, and an unknown or archived slug
+refuses the save with HTTP 400; they are stored as `metadata.entities`. A prior-note
 id in the payload archives that row; the replacement records the archived note's id as
 `metadata.supersedes`, which `GET /notes` rows and memory hits carry as `supersedes`, and
 the archived note records the replacement's id as `metadata.replaced_by`.
@@ -205,7 +208,7 @@ successfully ingested) is admin-only to remove. `GET /repos` reports each repo's
 ```
 
 Memory hits (notes, document chunks, CSV cards) carry the row's `id`, `kind`, and
-`tags`, plus `supersedes` for a note that replaced one; `date` is
+`tags`, and `entities` (empty when the note names none), plus `supersedes` for a note that replaced one; `GET /notes` rows carry the same `entities`, and `?entity=<slug>` narrows to notes whose `metadata.entities` holds the slug, beside the `kind`, `tags`, and `namespace` filters; `date` is
 the note's `occurred_at` when recorded, else `ts_last_active`. `since`/`until` bound the
 same event time, `COALESCE(occurred_at, ts_last_active)`, so an episode is found by the
 day it happened; recency voting and decay read `ts_last_active` alone. Memory hits carry their stored text whole; each is
@@ -409,7 +412,7 @@ id; deferred notes by id.
 that were ignored. `truncated` is true when more groups existed than `limit`. A group's `key` is
 the sha256 of canonical JSON (sorted keys, no whitespace) of the procedure version, the
 namespace, and, per member sorted by id, its id, the sha256 of its text, kind, author,
-save time, `occurred_at`, sorted tags, and `supersedes`. It changes when membership or
+save time, `occurred_at`, sorted tags, sorted `entities`, and `supersedes`. It changes when membership or
 any of those fields changes. `PROCEDURE_VERSION` covers the grouping procedure and the
 verdict validator policy, and changes whenever either does.
 
@@ -480,7 +483,7 @@ dry run and the apply of one verdict share an idempotency key.
 
 An applied verdict writes, in one transaction: a new replacement through the note insert
 (`ON CONFLICT (id) DO NOTHING`; a conflict rolls the verdict back as `stale`) with the
-members' kind, the sorted union of their tags, the latest member `occurred_at`, the
+members' kind, the sorted union of their tags, the sorted union of their `entities` (a union above ten refuses the verdict as `rejected`), the latest member `occurred_at`, the
 request's `author`, the apply time as its save time, and `merged_from`, `merged_dates`
 (`{id: {"saved", "occurred_at"}}`), and `consolidation_action` in its metadata; each
 archived member gets `archived_at` = the apply time, `archived_by`, and
@@ -744,7 +747,7 @@ in its metadata; `list_notes` and search hits return it.
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active` | save time; recency ranking and decay, and `since`/`until` when `occurred_at` is null |
 | `occurred_at` | when the remembered event happened; a hit's `date` and the `since`/`until` bound |
-| `metadata` | jsonb: `tags`, `author`, `archived_by`, `supersedes`, `source_session`, `replaced_by`, `similar_ack`, `consolidated_into`, `merged_from`, `merged_dates`, `consolidation_action`, `undone_action`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
+| `metadata` | jsonb: `tags`, `entities`, `author`, `archived_by`, `supersedes`, `source_session`, `replaced_by`, `similar_ack`, `consolidated_into`, `merged_from`, `merged_dates`, `consolidation_action`, `undone_action`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 
 `memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,
