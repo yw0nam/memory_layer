@@ -76,6 +76,7 @@ async def _provision_tables_query_role(conn: asyncpg.Connection) -> None:
         ALTER TABLE memory.doc_rows ENABLE ROW LEVEL SECURITY;
         ALTER TABLE memory.doc_rows FORCE ROW LEVEL SECURITY;
         DROP POLICY IF EXISTS doc_rows_namespace ON memory.doc_rows;
+        -- An unset app.namespace sees every row.
         CREATE POLICY doc_rows_namespace ON memory.doc_rows
           FOR SELECT TO {TABLES_QUERY_ROLE}
           USING (namespace = COALESCE(NULLIF(current_setting('app.namespace', true), ''), namespace));

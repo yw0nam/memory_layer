@@ -74,9 +74,9 @@ def use(monkeypatch):
     return _use
 
 
-def _link(add=(), remove=(), ids=(A, B), confirm=False, scope=None):
+def _link(add=(), remove=(), ids=(A, B), confirm=False):
     return asyncio.run(
-        curation.link_entities(list(ids), list(add), list(remove), "natsume", confirm, scope)
+        curation.link_entities(list(ids), list(add), list(remove), "natsume", confirm)
     )
 
 

@@ -17,7 +17,7 @@ import re
 import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import urlsplit
 
 import asyncpg
@@ -541,11 +541,11 @@ async def list_messages(
     return [public_row(row) for row in rows]
 
 
-async def _not_actionable(conn, message_id: uuid.UUID, verb: str) -> Exception:
-    """404 for an unknown id, 409 for a message that is no longer pending."""
+async def _refuse(conn, message_id: uuid.UUID, verb: str) -> NoReturn:
+    """Raise 404 for an unknown id, 409 for a message that is no longer pending."""
     if await conn.fetchval(f'SELECT 1 FROM "{PG_SCHEMA}".messages WHERE id = $1', message_id):
-        return MessageConflict(f"message {message_id} is not pending")
-    return MessageNotFound(f"no {verb} message {message_id}")
+        raise MessageConflict(f"message {message_id} is not pending")
+    raise MessageNotFound(f"no {verb} message {message_id}")
 
 
 async def claim_message(message_id: uuid.UUID, *, connection=None) -> dict[str, Any]:
@@ -564,7 +564,7 @@ async def claim_message(message_id: uuid.UUID, *, connection=None) -> dict[str, 
             message_id,
         )
         if updated is None:
-            raise await _not_actionable(conn, message_id, "claimable")
+            await _refuse(conn, message_id, "claimable")
         return public_row(updated)
 
     if connection is not None:
@@ -590,7 +590,7 @@ async def cancel_message(message_id: uuid.UUID, *, connection=None) -> dict[str,
             message_id,
         )
         if updated is None:
-            raise await _not_actionable(conn, message_id, "cancellable")
+            await _refuse(conn, message_id, "cancellable")
         return public_row(updated)
 
     if connection is not None:

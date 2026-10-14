@@ -80,7 +80,7 @@ async def register_entity(
     person; a project entity carries its repository origin among its aliases. For a person
     the description says who they are; for an agent it holds the user's standing directions
     to that agent, including its `Remember` and `Don't remember` lines, and only the agent's
-    own description governs it. `author` is one of the key's authors.
+    own description governs it. `author` is your declared author slug.
     """
     if archive and (len(entities) != 1 or set(entities[0]) != {"slug"}):
         raise ValueError("archive takes exactly one item with only a slug")

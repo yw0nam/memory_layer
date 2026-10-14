@@ -130,7 +130,7 @@ def test_content_errors_win_over_a_missing_kind():
 def test_duplicates_route_rejects_an_unknown_kind(monkeypatch):
     calls = []
 
-    async def fake_find_duplicates(threshold, kind, limit, namespaces=None):
+    async def fake_find_duplicates(threshold, kind, limit):
         calls.append(kind)
         return []
 
