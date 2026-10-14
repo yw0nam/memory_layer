@@ -859,7 +859,7 @@ def undo_refusal(
     """Why an action cannot be undone as recorded, or None.
 
     Every archived note must still carry this action's archive; a created replacement must
-    be active with no active successor and no later action built on it.
+    be active with no active successor, no later action built on it, and entities unchanged.
     """
     survivors = list(action["survivor_ids"])
     for archived_id in action["archived_ids"]:
@@ -881,6 +881,8 @@ def undo_refusal(
             return f"replacement {replacement} is superseded by active note {active_successor}"
         if later_action:
             return f"a later action lists replacement {replacement} as a member"
+        if (_metadata(row["metadata"]).get("entities_set_at") or 0) > action["applied_at"]:
+            return f"replacement {replacement} had its entities changed after the action"
     return None
 
 

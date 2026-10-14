@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 
@@ -11,7 +12,7 @@ import httpx
 import pytest
 
 from memory_base.core import db
-from memory_base.core.config import PG_SCHEMA, db_url
+from memory_base.core.config import EMB_DIM, PG_SCHEMA, db_url
 from memory_base.serve import api
 
 pytestmark = pytest.mark.integration
@@ -99,24 +100,24 @@ def test_link_entities_previews_then_writes_only_changed_notes():
                 entity,
                 now,
             )
+        ids = [f"note:default:it{tag}{n}" for n in range(2)]
+        for note_id, entities in zip(ids, ([slug], [])):
+            await conn.execute(
+                f"""INSERT INTO "{PG_SCHEMA}".memory_chunks
+                    (id, source_type, source_ref, chunk_kind, session_id, content_raw,
+                     embedding, ts_last_active, metadata)
+                    VALUES ($1, 'agent_note', $1, 'work', $1, $2, $3::halfvec, $4,
+                            $5::jsonb)""",
+                note_id,
+                f"integration note {tag} {note_id}",
+                "[" + ",".join(["0"] * EMB_DIM) + "]",
+                now,
+                json.dumps({"author": "hermes", "entities": entities} if entities else {}),
+            )
         try:
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
             ) as client:
-                ids = []
-                for text, entities in (("kept as is", [slug]), ("needs a link", [])):
-                    saved = await client.post(
-                        "/save_memory",
-                        json={
-                            "content": f"integration note {tag} {text}",
-                            "author": "claude-code",
-                            "kind": "work",
-                            "tags": ["it"],
-                            "entities": entities,
-                        },
-                        headers=HEADERS,
-                    )
-                    ids.append(saved.json()["id"])
                 body = {"ids": ids, "author": "claude-code", "add": [slug], "remove": [other]}
 
                 async def listed():

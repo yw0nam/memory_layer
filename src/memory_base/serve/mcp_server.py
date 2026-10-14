@@ -75,7 +75,8 @@ consent: a dialog on a client with elicitation, otherwise a needs_consent reply 
 put to the user before calling again with confirmed=true. In an unattended session
 (cron, no user present) never pass confirmed; leave a message instead. read_entity returns
 an entity's card. Facts are written only by the consolidation run, from notes that name
-an entity; to correct one, save a note naming the entity."""
+an entity; to correct one, save a note naming the entity. A note that already exists gets
+its entities from link_entities, not from a second save."""
 
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
@@ -161,6 +162,7 @@ mcp.tool()(turn_tools.read_session)
 mcp.tool()(turn_tools.search_transcript)
 mcp.tool()(note_tools.list_memory_duplicates)
 mcp.tool()(note_tools.archive_notes)
+mcp.tool()(note_tools.link_entities)
 mcp.tool()(note_tools.restore_notes)
 mcp.tool()(note_tools.delete_notes)
 mcp.tool()(table_tools.query_table)

@@ -86,6 +86,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `namespaces`, `since`/`until`, `include_archived`; without `budget_tokens` the reranked results are capped at 10 before `top_k` applies |
 | `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the optional `entities` (at most ten active entity slugs; 400 on a malformed slug, an unknown or archived one, or more than ten), the required `kind` (`personal` or `work`, a label for search and listing), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); no chat model judges the note; refused with 409 when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set, and before embedding when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `entity` (a slug), `kind` (`personal` or `work`), `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
+| `POST` | `/notes/entities` | add or remove entity slugs on 1–200 existing active notes in the caller's namespaces — `ids`, `author` (one of the key's authors), `add` (active entity slugs), `remove` (slugs, any state), `confirm`; each note's set becomes (current ∪ `add`) − `remove`, at most ten; 400 naming the ids when any is not an active note in scope or would exceed ten; without `confirm` returns `{notes: [{id, before, after, changed}]}` and writes nothing; a changed note records `entities_set_by` and `entities_set_at` |
 | `GET` | `/entities` | the entity registry ordered by slug — `include_archived` (`true`\|`false`, default `false`); see [data flow](docs/data-flow.md#entity-registry) |
 | `POST` | `/entities` | create or edit 1–50 entities in one batch — `entities` (`slug`, and `kind`, `name`, `aliases`, `description` on a create), `author` (one of the key's authors), `dry_run` (run every check, write nothing), `consent_method` (`elicitation`\|`conversation`\|`import`; `import` needs an admin key carrying `user`); 409 `{error, holder, value}` when a slug, name, or alias is held by another entity |
 | `POST` | `/entities/{slug}/archive` | archive an active entity — `author`, `consent_method`, `dry_run` as for `POST /entities`; its name stays reserved |
@@ -165,7 +166,7 @@ over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 `search` · `search_code` · `search_memory` · `save_memory` · `list_notes` ·
 `ingest_document` (text formats and CSV) · `remove_document` · `query_table` ·
 `ingest_repo` · `remove_repo` · `list_repos` · `list_memory_duplicates` ·
-`archive_notes` · `restore_notes` · `delete_notes` · `send_message` ·
+`archive_notes` · `link_entities` · `restore_notes` · `delete_notes` · `send_message` ·
 `list_messages` · `claim_message` · `cancel_message` · `list_entities` ·
 `register_entity` · `read_entity` · `list_sessions` · `read_session` · `search_transcript`
 
@@ -182,7 +183,9 @@ Curation runs over the same tools: `list_memory_duplicates` reads near-duplicate
 with both sides' authors, and `archive_notes` (`ids` and `author` required),
 `restore_notes`, and `delete_notes` preview by default and act only with `confirm`.
 Archiving is restorable and records its author; deleting is permanent and records
-nothing.
+nothing. `link_entities` (`ids`, `author`, `add`, `remove`) adds or removes entity slugs on
+existing notes without changing their content, id, or dates; it previews by default and
+writes only with `confirm`.
 
 The message lane is addressed, not searched: `list_messages` reads pending messages at
 the start of a session and `claim_message` takes exclusive delivery of each one acted

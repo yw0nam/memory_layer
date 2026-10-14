@@ -375,7 +375,7 @@ async def list_notes(
         }
         if row["archived_at"] is not None:
             note["archived"] = True
-        for field in ("source_session", *LINEAGE_FIELDS):
+        for field in ("source_session", *LINEAGE_FIELDS, "entities_set_by", "entities_set_at"):
             if metadata.get(field) is not None:
                 note[field] = metadata[field]
         out.append(note)

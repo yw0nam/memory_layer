@@ -80,6 +80,12 @@ distils facts from those notes; no in-session agent writes a fact.
   replacement the union of its members' slugs and is refused when the union exceeds ten.
   The slugs are part of the group key, and an undo restores them with the rest of the
   metadata.
+- `link_entities` adds or removes slugs on existing active notes, for any writer whose key
+  covers the note's namespace. It takes one `add`/`remove` delta for every id, refuses a
+  result over ten slugs or an inactive `add` slug, and previews unless `confirm` is set.
+  A changed note records `entities_set_by` and `entities_set_at`; content, id, embedding,
+  author, and dates stay. A consolidation undo is refused when the replacement it created
+  had its entities changed after the action.
 
 ### Facts
 

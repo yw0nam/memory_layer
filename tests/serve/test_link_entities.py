@@ -17,7 +17,7 @@ from memory_base.serve import api
 from memory_base.serve.access import auth
 from memory_base.serve.common import rest_client
 from memory_base.serve.consolidation import verdicts
-from memory_base.serve.notes import curation, routes, store
+from memory_base.serve.notes import curation, store
 from memory_base.serve.notes import tools as note_tools
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
@@ -91,7 +91,12 @@ def _by_id(result):
 def test_the_delta_keeps_current_order_then_appends_adds_and_drops_removes(use):
     use(LinkConn({A: {"entities": ["kuro", "shiro"]}, B: {}}))
     notes = _by_id(_link(add=["nova", "kuro"], remove=["shiro"]))
-    assert notes[A] == {"id": A, "before": ["kuro", "shiro"], "after": ["kuro", "nova"], "changed": True}
+    assert notes[A] == {
+        "id": A,
+        "before": ["kuro", "shiro"],
+        "after": ["kuro", "nova"],
+        "changed": True,
+    }
     assert notes[B] == {"id": B, "before": [], "after": ["nova", "kuro"], "changed": True}
 
 

@@ -64,6 +64,7 @@ app = Starlette(
         Route("/search", search_routes.search_route, methods=["POST"]),
         Route("/save_memory", note_routes.save_route, methods=["POST"]),
         Route("/notes", note_routes.list_route, methods=["GET"]),
+        Route("/notes/entities", note_routes.link_entities_route, methods=["POST"]),
         Route("/entities", entity_routes.list_route, methods=["GET"]),
         Route("/entities", entity_routes.upsert_route, methods=["POST"]),
         Route("/entities/{slug}/archive", entity_routes.archive_route, methods=["POST"]),

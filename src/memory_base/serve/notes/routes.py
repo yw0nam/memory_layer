@@ -9,7 +9,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.retrieval.search import normalize_namespaces
-from memory_base.serve.common.http import error, json_body
+from memory_base.serve.common.entities import SLUG_RE
+from memory_base.serve.common.http import RequestError, error, json_body, object_fields
 from memory_base.serve.common.origins import ORIGINS
 from memory_base.serve.notes import curation, store
 
@@ -264,3 +265,56 @@ async def restore_route(request: Request) -> JSONResponse:
         return JSONResponse({"restored": restored})
     rows = await curation.rows_by_ids(ids, namespaces=scope)
     return JSONResponse({"rows": rows})
+
+
+MAX_LINK_IDS = 200
+
+
+def _slugs(body: dict[str, Any], name: str) -> list[str]:
+    value = body.get(name, [])
+    if not isinstance(value, list) or any(not isinstance(slug, str) for slug in value):
+        raise RequestError(f"{name} must be a list of slugs")
+    slugs = list(dict.fromkeys(slug.strip() for slug in value))
+    for slug in slugs:
+        if not SLUG_RE.fullmatch(slug):
+            raise RequestError(f"entity slug {slug!r} must match {SLUG_RE.pattern}")
+    return slugs
+
+
+async def link_entities_route(request: Request) -> JSONResponse:
+    """Preview or apply one add/remove delta of entity slugs to existing notes in scope."""
+    key = request.state.key
+    try:
+        body = object_fields(
+            await json_body(request), {"ids", "author"}, {"add", "remove", "confirm"}
+        )
+        ids = body["ids"]
+        if (
+            not isinstance(ids, list)
+            or not 1 <= len(ids) <= MAX_LINK_IDS
+            or any(not isinstance(i, str) or not i.strip() for i in ids)
+            or len(set(ids)) != len(ids)
+        ):
+            raise RequestError(f"ids must hold 1 to {MAX_LINK_IDS} unique note ids")
+        author = body["author"]
+        if not isinstance(author, str) or not author.strip():
+            raise RequestError("author must be a non-empty string")
+        confirm = body.get("confirm", False)
+        if not isinstance(confirm, bool):
+            raise RequestError("confirm must be a boolean")
+        add, remove = _slugs(body, "add"), _slugs(body, "remove")
+        if not add and not remove:
+            raise RequestError("add or remove must name at least one slug")
+        if both := sorted(set(add) & set(remove)):
+            raise RequestError(f"slugs in both add and remove: {', '.join(both)}")
+    except (RequestError, ValueError) as exc:
+        return error(str(exc))
+    if author not in key.authors:
+        return error(f"author {author!r} is not permitted for this key", 403)
+    try:
+        result = await curation.link_entities(ids, add, remove, author, confirm, _admin_scope(key))
+    except curation.LinkRefused as exc:
+        return JSONResponse({"error": str(exc), "ids": exc.ids}, status_code=400)
+    except ValueError as exc:
+        return error(str(exc))
+    return JSONResponse(result)
