@@ -667,7 +667,7 @@ def test_apply_embeds_first_then_locks_and_replans_inside_one_transaction(flow):
     assert log[embed_at] == ("embed", MERGED)
     assert log[second_begin] == ("begin", {})
     after = log[second_begin:]
-    lock_sql = next(e for e in after if e[0] == "execute")
+    lock_sql = next(e for e in after if e[0] == "execute" and e[2])
     assert lock_sql[2] == (NS,)
     order = [e[0] for e in after]
     assert order.index("lock") < order.index("load") < order.index("apply")

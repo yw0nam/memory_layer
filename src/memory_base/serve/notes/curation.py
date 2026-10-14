@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import time
 
@@ -11,7 +10,11 @@ from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.retrieval.search import metadata_dict
 from memory_base.serve.access import namespaces
-from memory_base.serve.common.entities import require_active
+from memory_base.serve.common.entities import (
+    lock_slugs,
+    require_registered,
+    set_note_entities,
+)
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.notes.store import ARCHIVE_LINEAGE_FIELDS, MAX_NOTE_ENTITIES
 
@@ -61,7 +64,9 @@ async def delete_notes(ids: list[str]) -> int:
     Current facts citing a deleted note are archived and lose their citation.
     """
     async with db.acquire() as conn:
+        await ensure_schema_once(conn)
         async with conn.transaction():
+            await lock_slugs(conn)
             await conn.execute(
                 f"""
                 UPDATE "{PG_SCHEMA}".facts SET archived_at = $2, note_id = NULL
@@ -92,6 +97,7 @@ async def move_notes(ids: list[str], target_namespace: str) -> dict[str, list]:
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
+            await lock_slugs(conn)
             await namespaces.require_registered(conn, target_namespace)
             existing = await conn.fetch(
                 f"""
@@ -241,7 +247,8 @@ async def archive_rows(
         else ""
     )
     extra = [archived_by] if archived_by is not None else []
-    async with db.acquire() as conn:
+    async with db.acquire() as conn, conn.transaction():
+        await lock_slugs(conn)
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
@@ -262,7 +269,8 @@ async def restore_rows(ids: list[str]) -> int:
     replaced or absorbed the row.
     """
     cleared = "".join(f" - '{field}'" for field in ARCHIVE_LINEAGE_FIELDS)
-    async with db.acquire() as conn:
+    async with db.acquire() as conn, conn.transaction():
+        await lock_slugs(conn)
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
@@ -319,6 +327,7 @@ async def link_entities(
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
+            await lock_slugs(conn)
             rows = await conn.fetch(
                 f"""
                 SELECT id, metadata FROM "{PG_SCHEMA}".memory_chunks
@@ -332,7 +341,7 @@ async def link_entities(
             found = {row["id"]: metadata_dict(row["metadata"]) for row in rows}
             if missing := [i for i in ids if i not in found]:
                 raise LinkRefused("not active notes", missing)
-            await require_active(conn, add, lock=True)
+            await require_registered(conn, add)
             results = []
             for note_id in sorted(found):
                 before = found[note_id].get("entities", [])
@@ -352,14 +361,7 @@ async def link_entities(
                 for result in results:
                     if not result["changed"]:
                         continue
-                    metadata = {k: v for k, v in found[result["id"]].items() if k != "entities"}
-                    if result["after"]:
-                        metadata["entities"] = result["after"]
-                    metadata["entities_set_by"] = author
-                    metadata["entities_set_at"] = now
-                    await conn.execute(
-                        f'UPDATE "{PG_SCHEMA}".memory_chunks SET metadata = $2::jsonb WHERE id = $1',
-                        result["id"],
-                        json.dumps(metadata, ensure_ascii=False),
+                    await set_note_entities(
+                        conn, result["id"], found[result["id"]], result["after"], author, now
                     )
             return {"notes": results}

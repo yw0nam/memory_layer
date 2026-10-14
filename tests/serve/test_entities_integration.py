@@ -45,7 +45,7 @@ def test_a_created_entity_is_listed_and_its_name_is_then_held():
 
     async def scenario():
         [row] = await store.upsert([_item(tag, "a", f"Kuro {tag}")], "claude-code", "conversation")
-        listed = [e["slug"] for e in await store.list_entities(False)]
+        listed = [e["slug"] for e in await store.list_entities()]
         with pytest.raises(store.Collision) as held:
             await store.upsert([_item(tag, "b", f"KURO {tag}")], "claude-code", "conversation")
         return row, listed, held.value

@@ -13,6 +13,7 @@ from typing import Any
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.retrieval.search import Hit
+from memory_base.serve.common.entities import lock_slugs
 
 LOGGER = logging.getLogger(__name__)
 RETRIEVAL_LOG_RETENTION_DAYS = int(os.getenv("RETRIEVAL_LOG_RETENTION_DAYS", "180"))
@@ -72,15 +73,17 @@ async def flush(now: float | None = None) -> None:
                     logs,
                 )
             if hits:
-                await conn.execute(
-                    f'UPDATE "{PG_SCHEMA}".memory_chunks AS m '
-                    "SET hit_count = m.hit_count + v.hits, last_hit_at = v.ts "
-                    "FROM unnest($1::text[], $2::bigint[], $3::double precision[]) "
-                    "AS v(id, hits, ts) WHERE m.id = v.id",
-                    list(hits),
-                    [count for count, _ in hits.values()],
-                    [ts for _, ts in hits.values()],
-                )
+                async with conn.transaction():
+                    await lock_slugs(conn)
+                    await conn.execute(
+                        f'UPDATE "{PG_SCHEMA}".memory_chunks AS m '
+                        "SET hit_count = m.hit_count + v.hits, last_hit_at = v.ts "
+                        "FROM unnest($1::text[], $2::bigint[], $3::double precision[]) "
+                        "AS v(id, hits, ts) WHERE m.id = v.id",
+                        list(hits),
+                        [count for count, _ in hits.values()],
+                        [ts for _, ts in hits.values()],
+                    )
             if retention_due:
                 await conn.execute(
                     f'DELETE FROM "{PG_SCHEMA}".retrieval_log '

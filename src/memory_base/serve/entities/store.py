@@ -1,7 +1,8 @@
-"""The entity registry: SQL and the uniqueness rules, under one lock.
+"""The entity registry: SQL and the uniqueness rules, under the registry lock.
 
 An entity's slug, normalized name, and normalized aliases are each held by at most one
-entity, archived ones included. The server infers no equivalence between names.
+entity. The server infers no equivalence between names. Deleting an entity unlinks its notes
+and deletes its facts, so its names are free again and nothing reattaches to a new entity.
 """
 
 from __future__ import annotations
@@ -15,12 +16,15 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
+from memory_base.retrieval.search import metadata_dict
+from memory_base.serve.common import entities
 from memory_base.serve.common.dry_run import DryRun
 from memory_base.serve.common.http import iso
 
 _ENTITIES = f'"{PG_SCHEMA}".entities'
+_FACTS = f'"{PG_SCHEMA}".facts'
+COUNT_KEYS = ("notes", "facts", "incoming")
 
-LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('entities', 0))"
 LIST_SQL = f"SELECT * FROM {_ENTITIES} ORDER BY slug"
 INSERT_SQL = f"""
 INSERT INTO {_ENTITIES}
@@ -36,12 +40,18 @@ SET kind = $2, name = $3, aliases = $4, description = $5, updated_by = $6,
 WHERE slug = $1
 RETURNING *
 """
-ARCHIVE_SQL = f"""
-UPDATE {_ENTITIES}
-SET archived_at = $2, updated_at = $2, updated_by = $3, consent_method = $4, consented_at = $2
-WHERE slug = $1
-RETURNING *
+LINKED_NOTES_SQL = f"""
+SELECT id, metadata FROM "{PG_SCHEMA}".memory_chunks
+WHERE source_type = 'agent_note' AND metadata->'entities' ? $1
+ORDER BY id
+FOR UPDATE
 """
+FACTS_SQL = f"""
+SELECT id, entity = $1 AS own FROM {_FACTS} WHERE entity = $1 OR value_entity = $1
+"""
+CLEAR_REPLACED_SQL = f"UPDATE {_FACTS} SET replaced_by = NULL WHERE replaced_by = ANY($1)"
+DELETE_FACTS_SQL = f"DELETE FROM {_FACTS} WHERE id = ANY($1)"
+DELETE_SQL = f"DELETE FROM {_ENTITIES} WHERE slug = $1"
 
 
 class Collision(ValueError):
@@ -51,6 +61,14 @@ class Collision(ValueError):
         super().__init__(f"{value!r} is already held by entity {holder!r}; reuse it")
         self.holder = holder
         self.value = value
+
+
+class PlanChanged(ValueError):
+    """The delete plan under the lock differs from the one the caller expected."""
+
+    def __init__(self, plan: dict[str, Any]) -> None:
+        super().__init__("the delete plan changed since the preview; preview it again")
+        self.plan = plan
 
 
 class Stale(ValueError):
@@ -86,8 +104,6 @@ def _merge(current: dict[str, Any] | None, item: dict[str, Any]) -> dict[str, An
         if missing:
             raise ValueError(f"creating {slug!r} needs {' and '.join(missing)}")
         return {"aliases": [], "description": "", **item}
-    if current["archived_at"] is not None:
-        raise ValueError(f"{slug!r} is archived; restore is not supported")
     changes_description = "description" in item and item["description"] != current["description"]
     if changes_description and base is None:
         raise ValueError(f"editing the description of {slug!r} needs base_updated_at")
@@ -116,17 +132,16 @@ def _refuse_collisions(registry: dict[str, dict[str, Any]], rows: list[dict[str,
 
 
 async def _locked_registry(conn: Any) -> dict[str, dict[str, Any]]:
-    """Take the registry lock, then read every row, archived included."""
-    await conn.execute(LOCK_SQL)
+    """Take the registry lock, then read every row."""
+    await entities.lock_registry(conn)
     return {row["slug"]: dict(row) for row in await conn.fetch(LIST_SQL)}
 
 
-async def list_entities(include_archived: bool) -> list[dict[str, Any]]:
-    """Every entity ordered by slug; archived ones only when asked."""
+async def list_entities() -> list[dict[str, Any]]:
+    """Every entity ordered by slug."""
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
-        rows = [dict(row) for row in await conn.fetch(LIST_SQL)]
-    return [row for row in rows if include_archived or row["archived_at"] is None]
+        return [dict(row) for row in await conn.fetch(LIST_SQL)]
 
 
 async def upsert(
@@ -165,26 +180,41 @@ async def upsert(
     return written
 
 
-async def archive(
-    slug: str, author: str, consent_method: str, dry_run: bool = False
+async def delete(
+    slug: str, author: str, dry_run: bool = False, expect: dict[str, int] | None = None
 ) -> dict[str, Any]:
-    """Archive an active entity; a dry run validates and rolls back.
+    """Delete an entity: unlink it from every agent note, delete its facts, drop its row.
 
-    Raises ValueError for an unknown or archived slug.
+    The plan is `{note_ids, notes, facts, incoming}`: the notes holding the slug and their
+    count, the entity's own facts, and other entities' facts pointing at it. A dry run returns it and writes nothing.
+    `expect` is the `{notes, facts, incoming}` counts of the preview; a plan that differs
+    under the lock raises PlanChanged. Raises ValueError for an unknown slug.
     """
-    try:
-        async with db.acquire() as conn:
-            await ensure_schema_once(conn)
-            async with conn.transaction(isolation="read_committed"):
-                registry = await _locked_registry(conn)
-                row = registry.get(slug)
-                if row is None or row["archived_at"] is not None:
-                    raise ValueError(f"no active entity {slug!r}")
-                archived = dict(
-                    await conn.fetchrow(ARCHIVE_SQL, slug, _now(), author, consent_method)
-                )
-                if dry_run:
-                    raise DryRun(archived)
-    except DryRun as stop:
-        return stop.result
-    return archived
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        async with conn.transaction(isolation="read_committed"):
+            await entities.lock_registry(conn)
+            if await entities.get(conn, slug) is None:
+                raise ValueError(f"no entity {slug!r}")
+            notes = await conn.fetch(LINKED_NOTES_SQL, slug)
+            facts = await conn.fetch(FACTS_SQL, slug)
+            plan = {
+                "note_ids": [row["id"] for row in notes],
+                "notes": len(notes),
+                "facts": sum(row["own"] for row in facts),
+                "incoming": sum(not row["own"] for row in facts),
+            }
+            if dry_run:
+                return plan
+            if expect is not None and expect != {key: plan[key] for key in COUNT_KEYS}:
+                raise PlanChanged(plan)
+            now = _now()
+            for row in notes:
+                before = metadata_dict(row["metadata"])
+                after = [s for s in before["entities"] if s != slug]
+                await entities.set_note_entities(conn, row["id"], before, after, author, now)
+            fact_ids = [row["id"] for row in facts]
+            await conn.execute(CLEAR_REPLACED_SQL, fact_ids)
+            await conn.execute(DELETE_FACTS_SQL, fact_ids)
+            await conn.execute(DELETE_SQL, slug)
+    return plan

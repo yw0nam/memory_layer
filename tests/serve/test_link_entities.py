@@ -116,7 +116,7 @@ def test_a_preview_writes_nothing_and_a_confirm_stamps_only_the_changed_notes(us
 def test_a_removed_slug_needs_no_active_entity_but_an_added_one_does(use):
     use(LinkConn({A: {"entities": ["gone"]}}))
     assert _link(remove=["gone"], ids=[A])["notes"][0]["after"] == []
-    with pytest.raises(ValueError, match="unknown or archived entity 'gone'"):
+    with pytest.raises(ValueError, match="unknown entity 'gone'"):
         _link(add=["gone"], ids=[A])
 
 

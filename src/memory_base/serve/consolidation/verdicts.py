@@ -22,6 +22,7 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
+from memory_base.serve.common import entities as registry
 from memory_base.serve.common.http import RequestError, author_slug, iso
 from memory_base.serve.consolidation import groups
 from memory_base.serve.consolidation.groups import Note, Pair, build_groups, group_entry, group_key
@@ -807,6 +808,7 @@ async def process_verdict(verdict: Verdict, batch: Batch) -> dict[str, Any]:
     async with db.acquire() as conn:
         try:
             async with conn.transaction():
+                await registry.lock_slugs(conn)
                 await conn.execute(NAMESPACE_LOCK_SQL, verdict.namespace)
                 rows = await lock_rows(conn, sorted(lock_ids))
                 await _exact_search(conn)
@@ -855,7 +857,8 @@ def undo_refusal(
     """Why an action cannot be undone as recorded, or None.
 
     Every archived note must still carry this action's archive; a created replacement must
-    be active with no active successor, no later action built on it, and entities unchanged.
+    be active with no active successor, no later action built on it, and entities unchanged;
+    no archived note may have had its entities changed since.
     """
     survivors = list(action["survivor_ids"])
     for archived_id in action["archived_ids"]:
@@ -866,6 +869,8 @@ def undo_refusal(
             return f"note {archived_id} was restored or archived again after the action"
         if _metadata(row["metadata"]).get("consolidated_into") != survivors:
             return f"note {archived_id} no longer records consolidated_into {survivors}"
+        if (_metadata(row["metadata"]).get("entities_set_at") or 0) > action["applied_at"]:
+            return f"note {archived_id} had its entities changed after the action"
     if action["replacement_created"]:
         replacement = action["replacement_id"]
         row = rows.get(replacement)
@@ -890,6 +895,7 @@ async def undo(action_id: int, author: str) -> dict[str, Any]:
         if namespace is None:
             raise UndoNotFound(f"no consolidation action {action_id}")
         async with conn.transaction():
+            await registry.lock_slugs(conn)
             await conn.execute(NAMESPACE_LOCK_SQL, namespace)
             action = await conn.fetchrow(ACTION_FOR_UPDATE_SQL, action_id)
             if action["undone_at"] is not None:
@@ -908,6 +914,11 @@ async def undo(action_id: int, author: str) -> dict[str, Any]:
                 raise UndoRefused(refusal)
             now = time.time()
             prior = _metadata(action["prior"])
+            restored = sorted({s for m in prior.values() for s in _metadata(m).get("entities", [])})
+            try:
+                await registry.require_registered(conn, restored)
+            except ValueError as exc:
+                raise UndoRefused(f"a restored note names a deleted entity: {exc}") from None
             for archived_id in action["archived_ids"]:
                 await conn.execute(
                     RESTORE_PRIOR_SQL,

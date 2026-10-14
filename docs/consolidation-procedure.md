@@ -86,7 +86,7 @@ change is applied.
         ▲                                                                  │
         └────── handle statuses ◄── POST verdicts ◄────────────────────────┘
                      │
-                     └──► cards (every active entity) ──► report
+                     └──► cards (every entity) ──► report
 ```
 
 ### 1. Fetch groups
@@ -338,7 +338,7 @@ last run".
 
 | request | use |
 |---|---|
-| `GET /entities` | the active entities; each has `slug`, `kind`, `name`, `aliases`, `description` |
+| `GET /entities` | the entities; each has `slug`, `kind`, `name`, `aliases`, `description` |
 | `GET /entities/{slug}` | the card: `{entity, facts, incoming}`; `facts` are the current rows of the entity, `incoming` the current rows whose `value_entity` is the slug |
 | `GET /notes?entity=<slug>&limit=200` | every active note naming the entity (the card's own note list is capped lower) |
 | `POST /search` `{"query": "<name or alias>", "source": "memory", "top_k": 10}` | candidates; once for the name and once per alias |
@@ -378,7 +378,7 @@ Hold, list in the report, and never write:
 - Every op cites the note it rests on in `note_id`.
 - An `attribute` is a short slug (`^[a-z0-9][a-z0-9_-]{0,39}$`); reuse those already on the
   card (`works_at`, `likes`, `role`, `repo`).
-- A relation is `value_entity`, a registered active slug. A value naming a subject with no
+- A relation is `value_entity`, a registered slug. A value naming a subject with no
   entity is `value_text`: one short value, 1 to 300 characters, with no comma. The server
   reads a comma as several values in one row and refuses the batch; write a second fact or
   a shorter value instead of a clause list.
@@ -457,7 +457,7 @@ reverses an action.
   runs once for the groups call and again for each verdict that is not `duplicate` or
   `cached` (twice for an applied verdict). Send only judged groups, and use a long timeout.
 - The agent's judgment is the only check of meaning on a fact. The server checks shape,
-  keys, and citations only: an active entity, an active agent note, a credential-free
+  keys, and citations only: an entity, an active agent note, a credential-free
   `value_text` that is not a list of names.
 - A fact lags behind its note by at least one run, and for as long as the run stays in
   `dry-run`.

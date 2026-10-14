@@ -168,6 +168,8 @@ class UndoConn:
 
     async def fetch(self, query, *args):
         self._record("fetch", query, args)
+        if ".entities" in query:
+            return [{"slug": slug} for slug in args[0]]
         assert "FOR UPDATE" in query and "ORDER BY id" in query
         return [self.found[i] for i in sorted(args[0]) if i in self.found]
 
@@ -200,9 +202,9 @@ def test_undo_restores_prior_metadata_exactly_and_archives_the_created_replaceme
     assert result["archived_ids"] == [R]
     assert result["undone_by"] == "consolidator"
     assert result["undone_at"].endswith("+00:00")
-    lock = next(c for c in conn.calls if c[0] == "execute")
+    lock = next(c for c in conn.calls if c[0] == "execute" and c[2])
     assert "pg_advisory_xact_lock" in lock[1] and lock[2] == (NS,)
-    [locked] = [c for c in conn.calls if c[0] == "fetch"]
+    [locked] = [c for c in conn.calls if c[0] == "fetch" and "FOR UPDATE" in c[1]]
     assert sorted(locked[2][0]) == [A, B, C, R]
     restores = [c for c in conn.writes() if "archived_at = NULL" in c[1]]
     assert {c[2][0]: json.loads(c[2][1]) for c in restores} == PRIOR
@@ -224,7 +226,7 @@ def test_undo_of_a_retire_restores_only_what_it_archived(monkeypatch):
     result = _undo(monkeypatch, conn)
     assert result["restored_ids"] == [A]
     assert result["archived_ids"] == []
-    [locked] = [c for c in conn.calls if c[0] == "fetch"]
+    [locked] = [c for c in conn.calls if c[0] == "fetch" and "FOR UPDATE" in c[1]]
     assert locked[2][0] == [A]
     assert [c[2][0] for c in conn.writes() if "memory_chunks" in c[1]] == [A]
     assert not [c for c in conn.calls if "RECURSIVE" in c[1] or "ANY(member_ids)" in c[1]]

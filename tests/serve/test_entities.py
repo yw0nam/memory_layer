@@ -59,13 +59,7 @@ class FakeConnection:
             self.rows[slug] = dict(
                 slug=slug, kind=kind, name=name, aliases=aliases, description=description,
                 created_by=author, updated_by=author, consent_method=method, consented_at=now,
-                created_at=now, updated_at=now, archived_at=None,
-            )  # fmt: skip
-        elif "archived_at = $" in q:
-            slug, now, author, method = args
-            self.rows[slug].update(
-                archived_at=now, updated_at=now, updated_by=author,
-                consent_method=method, consented_at=now,
+                created_at=now, updated_at=now,
             )  # fmt: skip
         else:
             slug, kind, name, aliases, description, author, method, now = args
@@ -108,11 +102,8 @@ def _post(*items, author="claude-code", consent_method="conversation", **extra):
     )
 
 
-def _archive(slug="natsume", author="claude-code", consent_method="conversation", **extra):
-    return client.post(
-        f"/entities/{slug}/archive",
-        json={"author": author, "consent_method": consent_method} | extra,
-    )
+def _delete(slug="natsume", author="claude-code", **extra):
+    return client.post(f"/entities/{slug}/delete", json={"author": author} | extra)
 
 
 # ---- create and edit --------------------------------------------------------
@@ -127,7 +118,6 @@ def test_create_stores_the_row_with_consent(fake_db):
     assert row["created_by"] == row["updated_by"] == "claude-code"
     assert row["consent_method"] == "elicitation"
     assert row["consented_at"] == row["created_at"] == "2023-11-14T22:13:20+00:00"
-    assert row["archived_at"] is None
 
 
 def test_edit_keeps_omitted_fields_and_replaces_aliases(fake_db):
@@ -136,14 +126,6 @@ def test_edit_keeps_omitted_fields_and_replaces_aliases(fake_db):
     [row] = response.json()["entities"]
     assert (row["kind"], row["name"], row["description"]) == ("person", "Natsume K", "A friend")
     assert row["aliases"] == ["Natsu"]
-
-
-def test_edit_of_an_archived_entity_is_refused(fake_db):
-    _post(_item())
-    _archive()
-    response = _post({"slug": "natsume", "name": "Other"})
-    assert response.status_code == 400
-    assert "archived; restore is not supported" in response.json()["error"]
 
 
 def test_create_without_kind_or_name_is_refused(fake_db):
@@ -201,12 +183,6 @@ def test_a_repeated_slug_in_one_batch_is_refused(fake_db):
     assert fake_db.rows == {}
 
 
-def test_an_archived_entitys_name_stays_reserved(fake_db):
-    _post(_item())
-    _archive()
-    _collision(_post(_item(slug="new", name="natsume")), "natsume", "natsume")
-
-
 def test_a_colliding_second_item_writes_nothing(fake_db):
     response = _post(_item(slug="a", name="A"), _item(slug="b", name="a"))
     assert response.status_code == 409
@@ -220,26 +196,14 @@ def test_a_credential_in_the_description_is_refused(fake_db):
     assert fake_db.rows == {}
 
 
-# ---- archive and list -------------------------------------------------------
+# ---- delete -----------------------------------------------------------------
 
 
-def test_archive_sets_the_fields_and_refuses_twice(fake_db):
-    _post(_item())
-    response = _archive(consent_method="elicitation")
-    assert response.status_code == 200
-    row = response.json()["entity"]
-    assert row["archived_at"] == "2023-11-14T22:13:20+00:00"
-    assert row["consent_method"] == "elicitation"
-    assert _archive().status_code == 400
-    assert _archive(slug="ghost").status_code == 400
-
-
-def test_list_excludes_archived_unless_asked(fake_db):
-    _post(_item(), _item(slug="yui", name="Yui"))
-    _archive()
-    slugs = lambda r: [e["slug"] for e in r.json()["entities"]]  # noqa: E731
-    assert slugs(client.get("/entities")) == ["yui"]
-    assert slugs(client.get("/entities?include_archived=true")) == ["natsume", "yui"]
+def test_delete_rejects_a_malformed_request_before_touching_the_store(fake_db):
+    assert _delete(slug="Bad Slug").status_code == 400
+    assert _delete(expect={"notes": 1}).status_code == 400
+    assert _delete(expect={"notes": "1", "facts": 0, "incoming": 0}).status_code == 400
+    assert _delete(consent_method="conversation").status_code == 400
 
 
 # ---- author and consent ------------------------------------------------------
@@ -247,7 +211,7 @@ def test_list_excludes_archived_unless_asked(fake_db):
 
 def test_a_non_slug_author_is_refused_and_any_slug_is_accepted(fake_db):
     assert _post(_item(), author="Not A Slug").status_code == 400
-    assert _archive(author="Not A Slug").status_code == 400
+    assert _delete(author="Not A Slug").status_code == 400
     assert _post(_item(), author="someone-else").status_code == 200
 
 
@@ -265,6 +229,3 @@ def test_a_dry_run_validates_and_returns_the_rows_without_writing(fake_db):
     assert fake_db.rows == {}
     _post(_item())
     assert _post(_item(slug="other", name="natsume"), dry_run=True).status_code == 409
-    assert _archive(dry_run=True).status_code == 200
-    assert fake_db.rows["natsume"]["archived_at"] is None
-    assert _archive(slug="ghost", dry_run=True).status_code == 400

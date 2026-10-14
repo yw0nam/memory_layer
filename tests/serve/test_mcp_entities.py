@@ -21,9 +21,11 @@ from memory_base.serve.common import rest_client
 REGISTRY = [
     {
         "slug": "natsume", "kind": "person", "name": "Natsume", "aliases": ["Nat"],
-        "description": "A friend", "archived_at": None, "updated_at": "2023-11-14T22:13:20+00:00",
+        "description": "A friend", "updated_at": "2023-11-14T22:13:20+00:00",
     }
 ]  # fmt: skip
+PLAN = {"note_ids": ["note:a", "note:b"], "notes": 2, "facts": 3, "incoming": 1}
+EXPECT = {"notes": 2, "facts": 3, "incoming": 1}
 NEW = {"slug": "yui", "kind": "person", "name": "Yui", "aliases": ["ゆい"]}
 
 
@@ -42,6 +44,8 @@ def backend(monkeypatch):
                 return httpx.Response(409, json={"error": state.refusal})
         else:
             state.posts.append((request.url.path, body))
+        if request.url.path.endswith("/delete"):
+            return httpx.Response(200, json=PLAN)
         return httpx.Response(200, json={"entities": [], "entity": {}})
 
     monkeypatch.setattr(
@@ -132,19 +136,47 @@ def test_the_summary_of_an_edit_shows_old_and_new(backend):
     assert "aliases: Nat -> Nat, Natchan" in summary
 
 
-def test_archive_takes_one_slug_and_posts_to_the_archive_route(backend):
-    result, _ = _call(
-        {"entities": [{"slug": "natsume"}], "author": "claude-code", "archive": True}, _accept()
+def test_an_accepted_delete_dialog_shows_the_plan_and_posts_it_back_as_expect(backend):
+    result, messages = _call(
+        {"entities": [{"slug": "natsume"}], "author": "claude-code", "delete": True}, _accept()
     )
     assert not result.isError
     assert backend.posts == [
-        ("/entities/natsume/archive", {"author": "claude-code", "consent_method": "elicitation"})
+        (
+            "/entities/natsume/delete",
+            {"author": "claude-code", "expect": EXPECT},
+        )
+    ]
+    assert "delete natsume (Natsume)" in messages[0]
+    assert "note:a" in messages[0] and "3 facts" in messages[0] and "1 fact" in messages[0]
+
+
+def test_a_delete_without_elicitation_needs_consent_then_confirms_with_expect(backend):
+    arguments = {"entities": [{"slug": "natsume"}], "author": "claude-code", "delete": True}
+    result, _ = _call(arguments)
+    payload = json.loads(_text(result))
+    assert payload["status"] == "needs_consent"
+    assert "note:b" in payload["summary"]
+    assert payload["expect"] == EXPECT
+    assert backend.posts == []
+    bare, _ = _call({**arguments, "confirmed": True})
+    assert bare.isError and backend.posts == []
+    _call({**arguments, "confirmed": True, "expect": EXPECT})
+    assert backend.posts == [
+        (
+            "/entities/natsume/delete",
+            {"author": "claude-code", "expect": EXPECT},
+        )
     ]
 
 
-def test_archive_with_two_items_is_refused(backend):
-    items = [{"slug": "natsume"}, {"slug": "yui"}]
-    result, _ = _call({"entities": items, "author": "claude-code", "archive": True}, _accept())
+@pytest.mark.parametrize(
+    "entities",
+    [[{"slug": "natsume"}, {"slug": "yui"}], [{"slug": "natsume", "name": "N"}]],
+    ids=["two-items", "edit-fields"],
+)
+def test_delete_takes_exactly_one_slug(backend, entities):
+    result, _ = _call({"entities": entities, "author": "claude-code", "delete": True}, _accept())
     assert result.isError
     assert backend.posts == []
 

@@ -444,14 +444,26 @@ def test_admin_archive_without_ids_or_author_stamps_nothing(monkeypatch):
 # ---- admin SQL: archived_by is written, cleared, and reported ---------------
 
 
+class _NoTransaction:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class RecordingConnection:
     def __init__(self, rows=None, status="UPDATE 1"):
         self.rows = rows or []
         self.status = status
         self.queries: list[tuple] = []
 
+    def transaction(self):
+        return _NoTransaction()
+
     async def execute(self, query, *args):
-        self.queries.append((query, args))
+        if "pg_advisory" not in query:
+            self.queries.append((query, args))
         return self.status
 
     async def fetch(self, query, *args):

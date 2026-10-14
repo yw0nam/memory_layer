@@ -97,7 +97,7 @@ async def _insert(
 async def _add(conn: Any, op: dict[str, Any], author: str) -> tuple[str, dict[str, Any]]:
     namespace = await _note_namespace(conn, op["note_id"])
     entity, attribute = op["entity"], op["attribute"]
-    await _require_active(conn, entity, op)
+    await _require_registered(conn, entity, op)
     current = [dict(row) for row in await conn.fetch(CURRENT_SQL, entity, attribute)]
     for row in current:
         if (row["value_text"], row["value_entity"]) == (
@@ -117,7 +117,7 @@ async def _replace(conn: Any, op: dict[str, Any], author: str) -> tuple[str, dic
     namespace = await _note_namespace(conn, op["note_id"])
     old = await _current_fact(conn, op["id"])
     entity, attribute = old["entity"], op.get("attribute", old["attribute"])
-    await _require_active(conn, entity, op)
+    await _require_registered(conn, entity, op)
     new = await _insert(conn, namespace, entity, attribute, op, author)
     await conn.fetchrow(CLOSE_SQL, op["id"], new["created_at"], new["id"])
     return "written", new
@@ -132,9 +132,9 @@ async def _remove(conn: Any, op: dict[str, Any], author: str) -> tuple[str, dict
 APPLY = {"add": _add, "replace": _replace, "remove": _remove}
 
 
-async def _require_active(conn: Any, entity: str, op: dict[str, Any]) -> None:
+async def _require_registered(conn: Any, entity: str, op: dict[str, Any]) -> None:
     value_entity = op.get("value_entity")
-    await entities.require_active(conn, [entity, *([value_entity] if value_entity else [])])
+    await entities.require_registered(conn, [entity, *([value_entity] if value_entity else [])])
 
 
 async def apply(
@@ -149,6 +149,7 @@ async def apply(
         async with db.acquire() as conn:
             await ensure_schema_once(conn)
             async with conn.transaction(isolation="read_committed"):
+                await entities.lock_slugs(conn)
                 await conn.execute(LOCK_SQL)
                 results = []
                 for index, op in enumerate(ops):
