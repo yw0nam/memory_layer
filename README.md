@@ -22,7 +22,7 @@ consumed by claiming instead of search.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  19 tools: search / search_code / search_memory /
+   ┌─────────────┐  26 tools: search / search_code / search_memory /
    │ mcp_server  │            save_memory / list_notes /
    └──────┬──────┘            ingest_document / remove_document
           │                   query_table / ingest_repo / remove_repo / list_repos

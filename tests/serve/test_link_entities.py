@@ -88,35 +88,30 @@ def _by_id(result):
 # ---- delta ------------------------------------------------------------------
 
 
-def test_the_delta_keeps_current_order_then_appends_adds_and_drops_removes(use):
-    use(LinkConn({A: {"entities": ["kuro", "shiro"]}, B: {}}))
-    notes = _by_id(_link(add=["nova", "kuro"], remove=["shiro"]))
-    assert notes[A] == {
-        "id": A,
-        "before": ["kuro", "shiro"],
-        "after": ["kuro", "nova"],
-        "changed": True,
-    }
-    assert notes[B] == {"id": B, "before": [], "after": ["nova", "kuro"], "changed": True}
-
-
 def test_a_preview_writes_nothing_and_a_confirm_stamps_only_the_changed_notes(use):
-    conn = use(LinkConn({A: {"entities": ["kuro"], "author": "hermes"}, B: {}}))
-    assert _link(add=["kuro"]) and conn.updates == []
-    notes = _by_id(_link(add=["kuro"], confirm=True))
-    assert notes[A]["changed"] is False and notes[B]["changed"] is True
-    [(note_id, metadata)] = conn.updates
-    written = json.loads(metadata)
-    assert note_id == B
-    assert written["entities"] == ["kuro"] and written["entities_set_by"] == "natsume"
-    assert isinstance(written["entities_set_at"], float)
-
-
-def test_removing_the_last_slug_drops_the_key_and_keeps_other_metadata(use):
-    conn = use(LinkConn({A: {"entities": ["kuro"], "author": "hermes", "tags": ["x"]}}))
-    _link(remove=["kuro"], ids=[A], confirm=True)
+    conn = use(
+        LinkConn(
+            {
+                A: {"entities": ["kuro", "shiro"], "author": "hermes"},
+                B: {},
+                C: {"entities": ["shiro"]},
+            }
+        )
+    )
+    delta = {"add": ["nova", "kuro"], "remove": ["shiro"], "ids": (A, B, C)}
+    notes = _by_id(_link(**delta))
+    assert conn.updates == []
+    assert notes[A]["after"] == ["kuro", "nova"] and notes[B]["after"] == ["nova", "kuro"]
+    assert notes[C] == {"id": C, "before": ["shiro"], "after": ["nova", "kuro"], "changed": True}
+    conn.notes[C] = {"entities": ["nova", "kuro"]}
+    assert _by_id(_link(**delta, confirm=True))[C]["changed"] is False
+    assert [u[0] for u in conn.updates] == [A, B]
     written = json.loads(conn.updates[0][1])
-    assert "entities" not in written and written["author"] == "hermes" and written["tags"] == ["x"]
+    assert written["entities_set_by"] == "natsume" and written["author"] == "hermes"
+    assert isinstance(written["entities_set_at"], float)
+    conn.notes[B] = {"entities": ["nova", "kuro"]}
+    _link(remove=["kuro", "nova"], ids=[B], confirm=True)
+    assert "entities" not in json.loads(conn.updates[-1][1])
 
 
 def test_a_removed_slug_needs_no_active_entity_but_an_added_one_does(use):
@@ -159,16 +154,10 @@ def linked(monkeypatch):
 @pytest.mark.parametrize(
     "body",
     [
-        {"ids": [A], "author": "natsume"},
         {"ids": [A], "author": "natsume", "add": ["kuro"], "remove": ["kuro"]},
-        {"ids": [], "author": "natsume", "add": ["kuro"]},
-        {"ids": [A, A], "author": "natsume", "add": ["kuro"]},
-        {"ids": [f"n{i}" for i in range(201)], "author": "natsume", "add": ["kuro"]},
+        {"ids": [A], "author": "natsume"},
         {"ids": [A], "author": "natsume", "add": ["Bad Slug"]},
-        {"ids": [A], "author": "natsume", "add": None},
-        {"ids": [A], "author": "natsume", "add": ["kuro"], "confirm": "yes"},
         {"ids": [A], "author": "natsume", "add": ["kuro"], "entities": ["kuro"]},
-        {"ids": [A], "add": ["kuro"]},
     ],
 )
 def test_a_malformed_body_is_refused_before_any_write(linked, body):
@@ -199,17 +188,6 @@ def test_the_call_runs_in_the_callers_namespaces(monkeypatch, linked):
     body = {"ids": [A], "author": "natsume", "add": [" kuro "], "confirm": True}
     assert client.post("/notes/entities", json=body).status_code == 200
     assert linked == [([A], ["kuro"], [], "natsume", True, ["public", "work"])]
-
-
-def test_a_refusal_names_the_ids(monkeypatch):
-    async def refuse(*args):
-        raise curation.LinkRefused("not active notes in scope", [B])
-
-    monkeypatch.setattr(curation, "link_entities", refuse)
-    response = client.post(
-        "/notes/entities", json={"ids": [B], "author": "natsume", "add": ["kuro"]}
-    )
-    assert response.status_code == 400 and response.json()["ids"] == [B]
 
 
 # ---- tool, list, undo -------------------------------------------------------

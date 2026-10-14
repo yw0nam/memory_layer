@@ -359,13 +359,7 @@ async def link_entities(
             found = {row["id"]: metadata_dict(row["metadata"]) for row in rows}
             if missing := [i for i in ids if i not in found]:
                 raise LinkRefused("not active notes in the caller's scope", missing)
-            if add:
-                await conn.fetch(
-                    f'SELECT slug FROM "{PG_SCHEMA}".entities WHERE slug = ANY($1) '
-                    "ORDER BY slug FOR SHARE",
-                    add,
-                )
-                await require_active(conn, add)
+            await require_active(conn, add, lock=True)
             results = []
             for note_id in sorted(found):
                 before = found[note_id].get("entities", [])
