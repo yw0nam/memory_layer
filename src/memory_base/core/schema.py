@@ -78,7 +78,7 @@ async def _provision_tables_query_role(conn: asyncpg.Connection) -> None:
         DROP POLICY IF EXISTS doc_rows_namespace ON memory.doc_rows;
         CREATE POLICY doc_rows_namespace ON memory.doc_rows
           FOR SELECT TO {TABLES_QUERY_ROLE}
-          USING (namespace = current_setting('app.namespace', true));
+          USING (namespace = COALESCE(NULLIF(current_setting('app.namespace', true), ''), namespace));
         REVOKE EXECUTE ON FUNCTION pg_catalog.set_config(text,text,boolean) FROM PUBLIC;
         REVOKE EXECUTE ON FUNCTION pg_catalog.set_config(text,text,boolean)
           FROM {TABLES_QUERY_ROLE};
@@ -178,20 +178,15 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           ON {schema}.turns USING gin (content gin_trgm_ops);
         CREATE TABLE IF NOT EXISTS {schema}.namespaces (
           name text PRIMARY KEY,
-          created_at double precision NOT NULL,
-          visibility text NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
-          owner text
+          created_at double precision NOT NULL
         );
         INSERT INTO {schema}.namespaces (name, created_at) VALUES ('default', 0)
           ON CONFLICT (name) DO NOTHING;
         CREATE TABLE IF NOT EXISTS {schema}.api_keys (
           key_hash text PRIMARY KEY,
           label text NOT NULL,
-          home text NOT NULL DEFAULT 'default',
-          is_admin boolean NOT NULL DEFAULT false,
           created_at timestamptz NOT NULL DEFAULT now(),
-          revoked_at timestamptz,
-          authors text[] NOT NULL DEFAULT '{{}}'
+          revoked_at timestamptz
         );
         CREATE TABLE IF NOT EXISTS {schema}.consolidation_actions (
           id bigserial PRIMARY KEY,
@@ -269,7 +264,6 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           status text NOT NULL DEFAULT 'queued'
             CHECK (status IN ('queued', 'running', 'succeeded', 'no_op', 'failed')),
           key_id text NOT NULL,
-          key_label text NOT NULL,
           created_at timestamptz NOT NULL DEFAULT now(),
           updated_at timestamptz NOT NULL DEFAULT now(),
           error text,

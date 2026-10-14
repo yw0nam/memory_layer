@@ -1,4 +1,4 @@
-"""REST routes for the message lane: request validation, authority, and status codes."""
+"""REST routes for the message lane: request validation and status codes."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.retrieval.search import normalize_namespaces
-from memory_base.serve.common.http import error, json_body
+from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
+from memory_base.serve.common.http import RequestError, author_slug, error, json_body
 from memory_base.serve.messages import store
 
 MESSAGE_BODY_FIELDS = frozenset(
@@ -38,16 +39,13 @@ async def send_route(request: Request) -> JSONResponse:
     unknown = sorted(set(body) - MESSAGE_BODY_FIELDS)
     if unknown:
         return error(f"unknown field(s): {', '.join(unknown)}")
-    namespace = body.get("namespace", key.home)
+    namespace = body.get("namespace", DEFAULT_NAMESPACE)
     if not isinstance(namespace, str) or not namespace.strip():
         return error("namespace must be a non-empty string")
-    if not key.permits(namespace):
-        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
-    author = body.get("author")
-    if not isinstance(author, str) or not author.strip():
-        return error("author is required")
-    if author not in key.authors:
-        return error(f"author {author!r} is not permitted for this key", 403)
+    try:
+        author = author_slug(body.get("author"))
+    except RequestError as exc:
+        return error(str(exc))
     try:
         row, replayed = await store.send_message(
             key,
@@ -72,17 +70,11 @@ async def send_route(request: Request) -> JSONResponse:
 
 async def list_route(request: Request) -> JSONResponse:
     """List pending messages by filters alone — no query, no embedding call."""
-    key = request.state.key
     params = request.query_params
     try:
         requested_namespaces = normalize_namespaces(params.getlist("namespace") or None)
     except ValueError as exc:
         return error(str(exc))
-    if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
-        return error("requested namespaces are outside the caller's allowed set", 403)
-    scope = requested_namespaces
-    if scope is None and not key.is_admin:
-        scope = sorted(key.allowed)
     raw_limit = params.get("limit")
     try:
         limit = store.LIST_MESSAGES_DEFAULT_LIMIT if raw_limit is None else int(raw_limit)
@@ -93,7 +85,7 @@ async def list_route(request: Request) -> JSONResponse:
     purpose = params.get("purpose") or None
     try:
         rows = await store.list_messages(
-            namespaces=scope,
+            namespaces=requested_namespaces,
             purpose=purpose,
             scope=params.get("scope") or None,
             subject=params.get("subject") or None,
@@ -118,7 +110,7 @@ async def claim_route(request: Request) -> JSONResponse:
     if message_id is None:
         return error("message id must be a UUID")
     try:
-        row = await store.claim_message(message_id, request.state.key)
+        row = await store.claim_message(message_id)
     except store.MessageConflict as exc:
         return error(str(exc), 409)
     except store.MessageNotFound as exc:
@@ -127,12 +119,12 @@ async def claim_route(request: Request) -> JSONResponse:
 
 
 async def cancel_route(request: Request) -> JSONResponse:
-    """Cancel a pending message; the sender, or an admin for any accessible one."""
+    """Cancel a pending message."""
     message_id = _message_id(request)
     if message_id is None:
         return error("message id must be a UUID")
     try:
-        row = await store.cancel_message(message_id, request.state.key)
+        row = await store.cancel_message(message_id)
     except store.MessageConflict as exc:
         return error(str(exc), 409)
     except store.MessageNotFound as exc:
@@ -143,15 +135,11 @@ async def cancel_route(request: Request) -> JSONResponse:
 async def purge_route(request: Request) -> JSONResponse:
     """Preview, or delete with confirm, the claimed, cancelled, superseded, and expired messages.
 
-    Deletion is permanent and releases idempotency keys, so a member key purges only the
-    namespaces it owns — enough to unregister one, not enough to drain a shared namespace.
-    """
-    key = request.state.key
+    Deletion is permanent and releases idempotency keys."""
     try:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
-    owner = None if key.is_admin else key.label
     if body.get("confirm") is True:
-        return JSONResponse({"deleted": await store.delete_terminal_messages(owner)})
-    return JSONResponse({"messages_to_delete": await store.terminal_messages(owner)})
+        return JSONResponse({"deleted": await store.delete_terminal_messages()})
+    return JSONResponse({"messages_to_delete": await store.terminal_messages()})

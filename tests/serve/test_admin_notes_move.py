@@ -1,8 +1,7 @@
 """Contract tests for POST /admin/notes/move (red-first).
 
 Route-layer tests mirror tests/serve/test_admin_api.py (monkeypatch
-``curation.move_notes`` directly) and tests/serve/test_namespaces_api.py's
-``_non_admin_client`` helper for the admin-only gate. Unit tests for
+``curation.move_notes`` directly). Unit tests for
 ``curation.move_notes`` itself mirror the FakeConnection pattern in
 tests/serve/test_rest_notes.py: no DB/network involved.
 """
@@ -16,22 +15,10 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api
-from memory_base.serve.access import auth, namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.notes import curation
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
-
-
-def _non_admin_client(monkeypatch, label="member", allowed=frozenset({"default"})):
-    identity = auth.KeyIdentity(
-        key_id=f"{label}-hash", label=label, home="default", is_admin=False, allowed=allowed
-    )
-
-    async def fake_authenticate_request(plaintext_key):
-        return identity if plaintext_key == "member-key" else None
-
-    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
-    return TestClient(api.app, headers={"X-API-Key": "member-key"})
 
 
 # ---- route: delegates and validates ----------------------------------------
@@ -105,19 +92,6 @@ def test_move_notes_malformed_json_400():
         headers={"content-type": "application/json"},
     )
     assert response.status_code == 400
-    assert "error" in response.json()
-
-
-def test_move_notes_non_admin_403(monkeypatch):
-    async def fail_if_called(ids, target_namespace):
-        raise AssertionError("curation.move_notes must not be called for a non-admin caller")
-
-    monkeypatch.setattr(curation, "move_notes", fail_if_called)
-    member_client = _non_admin_client(monkeypatch)
-    response = member_client.post(
-        "/admin/notes/move", json={"ids": ["note:aaaaaaaaaaaaaaaa"], "namespace": "team-a"}
-    )
-    assert response.status_code == 403
     assert "error" in response.json()
 
 

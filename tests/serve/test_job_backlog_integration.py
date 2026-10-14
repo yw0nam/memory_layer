@@ -45,9 +45,9 @@ async def insert_document(
     job_id = f"it-{marker}-{uuid.uuid4().hex}"
     await connection.execute(
         f'''INSERT INTO "{PG_SCHEMA}".jobs
-        (job_id, kind, status, key_id, key_label, created_at, updated_at,
+        (job_id, kind, status, key_id, created_at, updated_at,
          namespace, document_id, mode, filename, spool_path, stage)
-        VALUES ($1, 'document', $2, $3, 'label', to_timestamp($4), to_timestamp($4),
+        VALUES ($1, 'document', $2, $3, to_timestamp($4), to_timestamp($4),
                 $5, $6, 'force', 'doc.md', $7, 'queued')''',
         job_id,
         status,
@@ -150,9 +150,9 @@ def test_repo_claim_stays_serial_even_with_two_independent_claimers():
                 for created in (1, 2):
                     await first.execute(
                         f'''INSERT INTO "{PG_SCHEMA}".jobs
-                        (job_id, kind, status, key_id, key_label, created_at, updated_at,
+                        (job_id, kind, status, key_id, created_at, updated_at,
                          name, action)
-                        VALUES ($1, 'repo', 'queued', $2, 'label', to_timestamp($3),
+                        VALUES ($1, 'repo', 'queued', $2, to_timestamp($3),
                                 to_timestamp($3), $4, 'remove')''',
                         f"it-{marker}-{created}",
                         prefix,
@@ -192,7 +192,6 @@ def test_concurrent_document_admission_stops_exactly_at_the_cap(tmp_path, monkey
                         connection=connection,
                         job_id=f"it-{marker}-admit-{index}",
                         key_id=key_id,
-                        key_label="same-label",
                         namespace="default",
                         document_id=f"doc-{index}",
                         origin=None,
@@ -214,7 +213,6 @@ def test_concurrent_document_admission_stops_exactly_at_the_cap(tmp_path, monkey
                         connection=first,
                         job_id=f"it-{marker}-extra",
                         key_id=key_id,
-                        key_label="same-label",
                         namespace="default",
                         document_id="extra",
                         origin=None,
@@ -239,9 +237,9 @@ def test_repo_cap_counts_one_running_plus_nine_queued(monkeypatch):
                 for index in range(10):
                     await connection.execute(
                         f'''INSERT INTO "{PG_SCHEMA}".jobs
-                        (job_id, kind, status, key_id, key_label, created_at, updated_at,
+                        (job_id, kind, status, key_id, created_at, updated_at,
                          name, action)
-                        VALUES ($1, 'repo', $2, $3, 'label', now(), now(), $4, 'remove')''',
+                        VALUES ($1, 'repo', $2, $3, now(), now(), $4, 'remove')''',
                         f"it-{marker}-{index}",
                         "running" if index == 0 else "queued",
                         key_id,
@@ -252,7 +250,6 @@ def test_repo_cap_counts_one_running_plus_nine_queued(monkeypatch):
                         connection=connection,
                         job_id=f"it-{marker}-extra",
                         key_id=key_id,
-                        key_label="label",
                         name="extra",
                         action="remove",
                         url=None,
@@ -281,7 +278,6 @@ def test_global_document_cap_has_a_distinct_error(monkeypatch, tmp_path):
                         connection=connection,
                         job_id=f"it-{marker}-global",
                         key_id=f"{prefix}-c",
-                        key_label="label",
                         namespace="default",
                         document_id="global",
                         origin=None,
@@ -306,9 +302,9 @@ def test_concurrent_repo_admission_at_the_boundary_admits_only_one(monkeypatch):
                 for index in range(9):
                     await first.execute(
                         f'''INSERT INTO "{PG_SCHEMA}".jobs
-                        (job_id, kind, status, key_id, key_label, created_at, updated_at,
+                        (job_id, kind, status, key_id, created_at, updated_at,
                          name, action)
-                        VALUES ($1, 'repo', 'queued', $2, 'label', now(), now(), $3, 'remove')''',
+                        VALUES ($1, 'repo', 'queued', $2, now(), now(), $3, 'remove')''',
                         f"it-{marker}-{index}",
                         key_id,
                         f"repo-{index}",
@@ -319,7 +315,6 @@ def test_concurrent_repo_admission_at_the_boundary_admits_only_one(monkeypatch):
                         connection=connection,
                         job_id=f"it-{marker}-{suffix}",
                         key_id=key_id,
-                        key_label="label",
                         name=f"repo-{suffix}",
                         action="remove",
                         url=None,
@@ -342,13 +337,7 @@ def test_concurrent_repo_admission_at_the_boundary_admits_only_one(monkeypatch):
 def test_fifty_sequential_uploads_are_durably_accepted_and_reach_terminal(monkeypatch, tmp_path):
     async def scenario():
         key_id = f"it-fifty-{uuid.uuid4().hex}"
-        identity = auth.KeyIdentity(
-            key_id=key_id,
-            label="duplicate-label",
-            home="default",
-            is_admin=False,
-            allowed=frozenset({"default"}),
-        )
+        identity = auth.KeyIdentity(key_id=key_id, label="duplicate-label")
 
         async def authenticate(plaintext_key):
             return identity
@@ -448,8 +437,8 @@ def test_document_recovery_requeues_valid_spool_fails_missing_spool_and_skips_re
                 repo = f"it-{marker}-repo"
                 await connection.execute(
                     f'''INSERT INTO "{PG_SCHEMA}".jobs
-                    (job_id, kind, status, key_id, key_label, created_at, updated_at, name, action)
-                    VALUES ($1, 'repo', 'running', $2, 'label', now(), now(), $1, 'remove')''',
+                    (job_id, kind, status, key_id, created_at, updated_at, name, action)
+                    VALUES ($1, 'repo', 'running', $2, now(), now(), $1, 'remove')''',
                     repo,
                     key_id,
                 )

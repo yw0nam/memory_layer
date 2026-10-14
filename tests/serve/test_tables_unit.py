@@ -14,7 +14,6 @@ import httpx
 import pytest
 
 from memory_base.serve import api
-from memory_base.serve.access import auth
 from memory_base.serve.tables import routes as table_routes
 from memory_base.serve.tables import store as table_store
 
@@ -162,49 +161,26 @@ def test_query_route_accepts_select_and_with_prefixes(monkeypatch, sql):
     monkeypatch.setattr(table_store, "execute_table_query", execute)
     response = _post({"sql": sql})
     assert response.status_code == 200
-    assert captured == {"sql": sql.strip(), "namespace": "default"}
+    assert captured == {"sql": sql.strip(), "namespace": None}
 
 
-def test_query_route_defaults_namespace_to_key_home(monkeypatch):
-    identity = auth.KeyIdentity(
-        key_id="member-hash",
-        label="member",
-        home="team-a",
-        is_admin=False,
-        allowed=frozenset({"team-a"}),
-    )
-
-    async def authenticate(plaintext):
-        return identity if plaintext == "member-key" else None
-
+def test_query_route_passes_an_explicit_namespace(monkeypatch):
     captured = {}
 
     async def execute(sql, namespace):
         captured["namespace"] = namespace
         return {"columns": [], "rows": [], "row_count": 0, "truncated": False}
 
-    monkeypatch.setattr(auth, "authenticate_request", authenticate)
     monkeypatch.setattr(table_store, "execute_table_query", execute)
-    response = _post({"sql": "SELECT 1"}, api_key="member-key")
-    assert response.status_code == 200
+    assert _post({"sql": "SELECT 1", "namespace": "team-a"}).status_code == 200
     assert captured["namespace"] == "team-a"
 
 
-def test_query_route_rejects_namespace_outside_key_scope(monkeypatch):
-    identity = auth.KeyIdentity(
-        key_id="member-hash",
-        label="member",
-        home="default",
-        is_admin=False,
-        allowed=frozenset({"default"}),
-    )
-
-    async def authenticate(plaintext):
-        return identity if plaintext == "member-key" else None
-
-    monkeypatch.setattr(auth, "authenticate_request", authenticate)
-    response = _post({"sql": "SELECT 1", "namespace": "team-a"}, api_key="member-key")
-    assert response.status_code == 403
+def test_execute_table_query_without_a_namespace_sets_none(monkeypatch):
+    connection = FakeConnection(["value"], [[1]])
+    _patch_connection(monkeypatch, connection)
+    asyncio.run(table_store.execute_table_query("SELECT 1"))
+    assert connection.events == [("begin", True), ("prepare", "SELECT 1"), ("end", None)]
 
 
 def test_query_route_revalidates_namespace_slug(monkeypatch):

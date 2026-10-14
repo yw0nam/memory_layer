@@ -16,7 +16,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api
-from memory_base.serve.access import auth, namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.consolidation import verdicts
 from memory_base.serve.consolidation.groups import Note, Pair, group_key
 from memory_base.serve.notes import curation, store
@@ -961,26 +961,10 @@ def test_apply_plan_records_a_keep_without_touching_notes(no_owning_helpers):
 # ---- route ------------------------------------------------------------------
 
 
-def _use_identity(monkeypatch, is_admin=True, authors=("consolidator",)):
-    identity = auth.KeyIdentity(
-        key_id="consolidator-key-hash",
-        label="consolidator",
-        home="default",
-        is_admin=is_admin,
-        allowed=frozenset({"default"}),
-        authors=frozenset(authors),
-    )
-
-    async def fake_authenticate_request(plaintext_key):
-        return identity if plaintext_key == "test-key" else None
-
-    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
-
-
 @pytest.fixture()
 def route(monkeypatch):
     async def fake_list_namespaces():
-        return [{"name": name, "visibility": "public", "owner": None} for name in ("default", NS)]
+        return [{"name": name} for name in ("default", NS)]
 
     calls = []
 
@@ -993,26 +977,6 @@ def route(monkeypatch):
     return calls
 
 
-def test_route_refuses_a_non_admin_key(monkeypatch, route):
-    _use_identity(monkeypatch, is_admin=False)
-    response = client.post("/admin/consolidate/verdicts", json=body())
-    assert response.status_code == 403
-    assert route == []
-
-
-def test_route_refuses_an_admin_key_without_the_consolidator_author(route):
-    response = client.post("/admin/consolidate/verdicts", json=body())
-    assert response.status_code == 403
-    assert "consolidator" in response.json()["error"]
-
-
-def test_route_refuses_an_author_outside_the_keys_authors(monkeypatch, route):
-    _use_identity(monkeypatch)
-    response = client.post("/admin/consolidate/verdicts", json=body(author="natsume"))
-    assert response.status_code == 403
-    assert route == []
-
-
 @pytest.mark.parametrize(
     "raw",
     [
@@ -1021,7 +985,6 @@ def test_route_refuses_an_author_outside_the_keys_authors(monkeypatch, route):
     ],
 )
 def test_route_rejects_a_bad_body_whole(monkeypatch, route, raw):
-    _use_identity(monkeypatch)
     response = client.post("/admin/consolidate/verdicts", json=raw)
     assert response.status_code == 400
     assert "error" in response.json()
@@ -1029,13 +992,11 @@ def test_route_rejects_a_bad_body_whole(monkeypatch, route, raw):
 
 
 def test_route_rejects_a_non_object_body(monkeypatch, route):
-    _use_identity(monkeypatch)
     response = client.post("/admin/consolidate/verdicts", json=[body()])
     assert response.status_code == 400
 
 
 def test_route_returns_one_result_per_verdict(monkeypatch, route):
-    _use_identity(monkeypatch)
     raw = body(item(), item(idempotency_key="k-2"))
     response = client.post("/admin/consolidate/verdicts", json=raw)
     assert response.status_code == 200

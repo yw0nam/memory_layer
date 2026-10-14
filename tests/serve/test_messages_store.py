@@ -20,14 +20,7 @@ from memory_base.serve.messages import store
 
 NOW = datetime.now(timezone.utc)
 
-KEY = auth.KeyIdentity(
-    key_id="sender-key-hash",
-    label="sender",
-    home="default",
-    is_admin=False,
-    allowed=frozenset({"default"}),
-    authors=frozenset({"claude-code"}),
-)
+KEY = auth.KeyIdentity(key_id="sender-key-hash", label="sender")
 
 
 class _Tx:
@@ -174,11 +167,10 @@ def test_listing_filters_on_the_canonical_scope_and_subject_key(use):
     assert args[:3] == ("handoff", "repo:github.com/o/r", "deploy plan")
 
 
-def test_admin_purge_covers_every_namespace_but_only_terminal_rows(use):
+def test_purge_covers_every_namespace_but_only_terminal_rows(use):
     conn = use(RecordingConn())
-    asyncio.run(store.delete_terminal_messages(None))
+    asyncio.run(store.delete_terminal_messages())
     ((sql, args, _),) = conn.statements
-    assert "owner" not in sql
     assert args == ()
     for terminal in (
         "claimed_at IS NOT NULL",

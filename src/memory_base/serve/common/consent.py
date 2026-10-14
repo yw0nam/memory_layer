@@ -14,7 +14,6 @@ from mcp.server.fastmcp import Context
 from pydantic import BaseModel
 
 CONSENT_METHODS = ("elicitation", "conversation", "import")
-USER_AUTHOR = "user"
 
 
 @dataclass(frozen=True)
@@ -25,11 +24,6 @@ class Consent:
 @dataclass(frozen=True)
 class NeedsConsent:
     summary: str
-
-
-def may_import(key: Any) -> bool:
-    """An import is recorded only by an admin key that also carries the `user` author."""
-    return key.is_admin and USER_AUTHOR in key.authors
 
 
 class ConsentRefused(ValueError):

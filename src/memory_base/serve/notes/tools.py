@@ -40,8 +40,8 @@ async def list_notes(
     "work". `since`/`until` are ISO 8601 dates or datetimes (a bare date
     covers that whole day; naive values are read as UTC). `include_archived`
     adds superseded notes, marked "archived": true. `author` narrows to notes
-    saved by one agent. `namespace` narrows to one namespace the caller's API
-    key can access; omitted, it covers every namespace the key can access.
+    saved by one agent. `namespace` narrows to one namespace; omitted, it covers
+    every namespace.
     """
     params: list[tuple[str, str]] = [("tags", tag) for tag in tags or []]
     if entity is not None:
@@ -70,9 +70,7 @@ async def list_notes(
 
 async def save_memory(
     content: str,
-    author: Annotated[
-        str, Field(description="The saving agent; must be in the key's author allowlist.")
-    ],
+    author: Annotated[str, Field(description="The saving agent's author slug.")],
     tags: Annotated[
         list[str],
         Field(
@@ -104,9 +102,7 @@ async def save_memory(
             "different fact."
         ),
     ] = False,
-    namespace: Annotated[
-        str | None, Field(description="Defaults to the key's home namespace.")
-    ] = None,
+    namespace: Annotated[str | None, Field(description="Defaults to `default`.")] = None,
     occurred_at: Annotated[
         str | None,
         Field(
@@ -186,7 +182,7 @@ async def list_memory_duplicates(
     """List active note pairs whose meaning nearly coincides.
 
     Read-only. Each pair carries both notes' id, kind, author, and text plus
-    their cosine score, over the namespaces the caller's API key can access.
+    their cosine score, over every namespace.
     Read both sides before acting: merge them into one note with `save_memory` with
     `supersedes`, or drop one with `archive_notes`. `threshold` (default 0.75), `kind`, and
     `limit` (default 50) narrow the scan; `kind` is "personal" or "work". Pairs at 0.80 and
@@ -218,7 +214,7 @@ async def archive_notes(
 
     Without `confirm` this previews the rows instead of changing them. Archived
     notes leave search results and prefetch but stay restorable with
-    `restore_notes`; `author` must be in the calling key's author allowlist.
+    `restore_notes`; `author` is your author slug.
     """
     body: dict[str, Any] = {"ids": ids, "author": author}
     if confirm:
@@ -285,11 +281,11 @@ async def link_entities(
     """Add or remove entity slugs on existing notes, recording `author` as the editor.
 
     Each note's slugs become (its current slugs + `add`) - `remove`, the same change for
-    every id (1 to 200 active notes in the caller's namespaces, at most 10 slugs each).
+    every id (1 to 200 active notes, at most 10 slugs each).
     `add` slugs must be active entities (list_entities); `remove` slugs only unlink the
     note and never archive the entity or its facts. Content, id, and dates do not change.
     Without `confirm` this returns each note's before and after and writes nothing; any
-    refused id refuses the whole call. `author` must be in the key's author allowlist.
+    refused id refuses the whole call. `author` is your author slug.
     """
     body: dict[str, Any] = {"ids": ids, "author": author}
     if add:

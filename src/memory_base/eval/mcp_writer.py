@@ -58,6 +58,7 @@ INSTRUCTION = (
     "tools; otherwise do nothing."
 )
 AUTHOR_LINE = f"Your author name for the memory tools is {AUTHOR}."
+NAMESPACE_LINE = "Pass namespace {namespace} to every memory tool call that takes one."
 SERVER_NAME = "memory-base"
 TOOL_PREFIX = f"mcp__{SERVER_NAME}__"
 SAVE_TOOLS = ("save_memory",)
@@ -71,10 +72,11 @@ NOTES_FILE = "writer-notes.jsonl"
 QUESTIONS_FILE = "writer-questions.jsonl"
 
 
-def writer_prompt(date: str, turns: Sequence[dict[str, Any]]) -> str:
-    """The published instruction, the author line, the session date, and the transcript."""
+def writer_prompt(date: str, turns: Sequence[dict[str, Any]], namespace: str) -> str:
+    """The published instruction, the author and namespace lines, the session date, and the transcript."""
     transcript = "\n\n".join(f"{t['role'].capitalize()}: {t['content']}" for t in turns)
-    return f"{INSTRUCTION}\n{AUTHOR_LINE}\n\nSession date: {iso_datetime(date)}\n\n{transcript}"
+    lines = f"{AUTHOR_LINE}\n{NAMESPACE_LINE.format(namespace=namespace)}"
+    return f"{INSTRUCTION}\n{lines}\n\nSession date: {iso_datetime(date)}\n\n{transcript}"
 
 
 def _result_text(content: Any) -> str:
@@ -339,8 +341,7 @@ async def _prepare_question(question_id: str) -> tuple[str, str]:
     namespace = NAMESPACE_PREFIX + question_id
     await namespaces.create_namespace(namespace)
     label = f"{AUTHOR}-{question_id}"
-    api_key = await keys.new_key(label, home=namespace)
-    await keys.set_authors(label, [AUTHOR])
+    api_key = await keys.new_key(label)
     return namespace, api_key
 
 
@@ -359,7 +360,7 @@ async def write_question(
     evidence = set(question.get("answer_session_ids", []))
     for session_id, date in session_units(question):
         before = await _rows(namespace)
-        record = await writer.run(writer_prompt(date, turns[(session_id, date)]), config)
+        record = await writer.run(writer_prompt(date, turns[(session_id, date)], namespace), config)
         after = await _rows(namespace)
         created, archived = diff_rows(before, after)
         record_provenance(provenance, session_id, record["saves"], created=created)

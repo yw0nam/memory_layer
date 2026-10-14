@@ -64,7 +64,6 @@ class AcceptingBacklog:
             filename=kwargs["filename"],
             spool_path=kwargs["spool_path"],
             key_id=kwargs["key_id"],
-            key_label=kwargs["key_label"],
             tags=kwargs["tags"],
             created_at=now,
             updated_at=now,
@@ -191,7 +190,6 @@ def test_job_response_has_exact_status_schema():
         filename="doc.md",
         spool_path="/spool/id.md",
         key_id="hash",
-        key_label="label",
         created_at=now,
         updated_at=now,
     )
@@ -509,9 +507,6 @@ def test_same_hash_csv_without_loaded_marker_reruns_and_writes_table_rows(monkey
     async def csv_rows(*args):
         return ([{"id": "card", "metadata": {}}], [{"row_index": 0, "data": {"name": "one"}}])
 
-    async def owner(*args, **kwargs):
-        return True, "alice"
-
     async def embed(rows):
         rows[0]["embedding"] = "[0]"
 
@@ -520,7 +515,6 @@ def test_same_hash_csv_without_loaded_marker_reruns_and_writes_table_rows(monkey
 
     monkeypatch.setattr(document_store, "existing_document_state", existing)
     monkeypatch.setattr(document_pipeline, "_csv_rows", csv_rows)
-    monkeypatch.setattr(document_store, "existing_document_owner", owner)
     monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
     monkeypatch.setattr(document_store, "replace_document_rows", write)
 
@@ -559,9 +553,6 @@ def test_csv_pipeline_writes_every_parsed_row_and_card_metadata(monkeypatch, tmp
     async def summarize(*args, **kwargs):
         return {"summary": "A grouped value table.", "tags": ["grouped data"]}
 
-    async def owner(*args, **kwargs):
-        return False, None
-
     async def embed(rows):
         for row in rows:
             row["embedding"] = "[0]"
@@ -572,7 +563,6 @@ def test_csv_pipeline_writes_every_parsed_row_and_card_metadata(monkeypatch, tmp
         captured["table_rows"] = list(table_rows)
 
     monkeypatch.setattr(document_pipeline, "summarize_and_tag", summarize)
-    monkeypatch.setattr(document_store, "existing_document_owner", owner)
     monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
     monkeypatch.setattr(document_store, "replace_document_rows", write)
 

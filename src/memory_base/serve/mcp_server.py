@@ -104,9 +104,8 @@ to skip saving a note. When you save a note distilled from this session, pass se
 and origin so the note names its source."""
 
 _SERVER_INSTRUCTIONS_CLOSING = """\
-Work knowledge belongs in the key's home namespace. Personal context — schedule,
-relationships, private preferences — belongs in a private namespace, never the shared
-one. A note's first tag names its subject, usually the repository or domain it belongs
+A namespace is a label for filtering, and a write without one lands in `default`; a read
+without a namespace covers every namespace, and no namespace is private. A note's first tag names its subject, usually the repository or domain it belongs
 to, so that a later search can narrow to it.
 
 Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly

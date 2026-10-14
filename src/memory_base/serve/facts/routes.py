@@ -1,7 +1,7 @@
 """REST routes for facts: the consolidation write batch and the entity card read.
 
-A write needs an admin key carrying the `consolidator` author and names one of the key's
-authors. The card is readable by any key, within the namespaces it may read.
+A write names the author it is attributed to; the card is read across every namespace
+unless filtered.
 """
 
 from __future__ import annotations
@@ -15,11 +15,10 @@ from starlette.responses import JSONResponse
 
 from memory_base.core.secrets import find_secret
 from memory_base.retrieval.search import normalize_namespaces
-from memory_base.serve.access.keys import AUTHOR_RE
-from memory_base.serve.common.authority import consolidator_denied
 from memory_base.serve.common.entities import SLUG_RE, entity_row
 from memory_base.serve.common.http import (
     RequestError,
+    author_slug,
     bounded_text,
     error,
     object_fields,
@@ -100,8 +99,7 @@ def parse_batch(body: Any) -> tuple[list[dict[str, Any]], str, bool]:
     """`{author, ops, dry_run?}` → (ops, author, dry_run)."""
     fields = object_fields(body, {"author", "ops"}, {"dry_run"})
     author, ops, dry_run = fields["author"], fields["ops"], fields.get("dry_run", False)
-    if not isinstance(author, str) or not AUTHOR_RE.fullmatch(author):
-        raise RequestError("author must be an author slug")
+    author_slug(author)
     if not isinstance(dry_run, bool):
         raise RequestError("dry_run must be a boolean")
     if not isinstance(ops, list) or not 1 <= len(ops) <= MAX_OPS:
@@ -117,15 +115,10 @@ def parse_batch(body: Any) -> tuple[list[dict[str, Any]], str, bool]:
 
 async def write_route(request: Request) -> JSONResponse:
     """Apply a batch of fact ops all or nothing; `dry_run` validates and returns the plan."""
-    key = request.state.key
-    if (denied := consolidator_denied(key)) is not None:
-        return denied
     try:
         ops, author, dry_run = parse_batch(await request_body(request))
     except RequestError as exc:
         return error(str(exc))
-    if author not in key.authors:
-        return error(f"author {author!r} is not one of this key's authors", 403)
     try:
         results = await store.apply(ops, author, dry_run)
     except ValueError as exc:
@@ -135,7 +128,6 @@ async def write_route(request: Request) -> JSONResponse:
 
 async def card_route(request: Request) -> JSONResponse:
     """An entity's registry row with the facts it holds and the facts that point at it."""
-    key = request.state.key
     params = request.query_params
     flag = params.get("include_past", "false")
     if flag not in ("true", "false"):
@@ -144,12 +136,7 @@ async def card_route(request: Request) -> JSONResponse:
         requested = normalize_namespaces(params.getlist("namespace") or None)
     except ValueError as exc:
         return error(str(exc))
-    if requested is not None and not key.permits_all(set(requested)):
-        return error("requested namespaces are outside the caller's allowed set", 403)
-    scope = requested
-    if scope is None and not key.is_admin:
-        scope = sorted(key.allowed)
-    card = await store.card(request.path_params["slug"], flag == "true", scope)
+    card = await store.card(request.path_params["slug"], flag == "true", requested)
     if card is None:
         return error("unknown entity", 404)
     entity, facts, incoming = card

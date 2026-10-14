@@ -14,7 +14,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api
-from memory_base.serve.access import auth
 from memory_base.serve.common import rest_client
 from memory_base.serve.consolidation import verdicts
 from memory_base.serve.notes import curation, store
@@ -143,8 +142,8 @@ def test_a_result_over_ten_slugs_refuses_naming_the_ids(use):
 def linked(monkeypatch):
     calls = []
 
-    async def fake(ids, add, remove, author, confirm, namespaces):
-        calls.append((ids, add, remove, author, confirm, namespaces))
+    async def fake(ids, add, remove, author, confirm):
+        calls.append((ids, add, remove, author, confirm))
         return {"notes": []}
 
     monkeypatch.setattr(curation, "link_entities", fake)
@@ -165,29 +164,16 @@ def test_a_malformed_body_is_refused_before_any_write(linked, body):
     assert linked == []
 
 
-def test_an_author_outside_the_keys_authors_is_refused(linked):
-    body = {"ids": [A], "author": "stranger", "add": ["kuro"]}
-    assert client.post("/notes/entities", json=body).status_code == 403
+def test_the_author_must_be_a_slug(linked):
+    body = {"ids": [A], "author": "Not A Slug", "add": ["kuro"]}
+    assert client.post("/notes/entities", json=body).status_code == 400
     assert linked == []
 
 
-def test_the_call_runs_in_the_callers_namespaces(monkeypatch, linked):
-    identity = auth.KeyIdentity(
-        key_id="k",
-        label="work",
-        home="work",
-        is_admin=False,
-        allowed=frozenset({"work", "public"}),
-        authors=frozenset({"natsume"}),
-    )
-
-    async def authenticate(plaintext_key):
-        return identity
-
-    monkeypatch.setattr(auth, "authenticate_request", authenticate)
+def test_a_confirmed_call_forwards_the_normalized_delta(linked):
     body = {"ids": [A], "author": "natsume", "add": [" kuro "], "confirm": True}
     assert client.post("/notes/entities", json=body).status_code == 200
-    assert linked == [([A], ["kuro"], [], "natsume", True, ["public", "work"])]
+    assert linked == [([A], ["kuro"], [], "natsume", True)]
 
 
 # ---- tool, list, undo -------------------------------------------------------

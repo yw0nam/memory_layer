@@ -13,7 +13,6 @@ import pytest
 from memory_base.core import db
 from memory_base.core.config import EMB_DIM, PG_SCHEMA, db_url
 from memory_base.serve import api
-from memory_base.serve.access import auth
 
 pytestmark = pytest.mark.integration
 
@@ -23,15 +22,6 @@ HEADERS = {"X-API-Key": "test-key"}
 def test_facts_are_written_read_from_both_sides_replaced_and_archived_with_their_note(
     monkeypatch,
 ):
-    identity = auth.KeyIdentity(
-        key_id="k", label="agents", home="default", is_admin=True,
-        allowed=frozenset(), authors=frozenset({"consolidator"}),
-    )  # fmt: skip
-
-    async def authenticate(plaintext_key):
-        return identity
-
-    monkeypatch.setattr(auth, "authenticate_request", authenticate)
     tag = uuid.uuid4().hex[:10]
     person, project, note = f"it-{tag}-p", f"it-{tag}-j", f"note:default:it-{tag}"
 

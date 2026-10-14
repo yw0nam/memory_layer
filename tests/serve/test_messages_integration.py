@@ -30,14 +30,7 @@ pytestmark = pytest.mark.integration
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
 
-IDENTITY = auth.KeyIdentity(
-    key_id="test-key-hash",
-    label="test",
-    home="default",
-    is_admin=True,
-    allowed=frozenset(),
-    authors=frozenset({"claude-code", "natsume"}),
-)
+IDENTITY = auth.KeyIdentity(key_id="test-key-hash", label="test")
 
 
 @asynccontextmanager
@@ -63,24 +56,16 @@ async def _cleanup(marker: str, namespace: str | None = None) -> None:
         await conn.close()
 
 
-def _member_client(monkeypatch, label, allowed):
-    identity = auth.KeyIdentity(
-        key_id=f"{label}-hash",
-        label=label,
-        home="default",
-        is_admin=False,
-        allowed=frozenset(allowed),
-        authors=frozenset({"claude-code"}),
-    )
+def _second_client(monkeypatch, label):
+    identity = auth.KeyIdentity(key_id=f"{label}-hash", label=label)
 
     async def fake_authenticate_request(plaintext_key):
-        # The admin test-key keeps working alongside the member key.
         if plaintext_key == "test-key":
             return IDENTITY
-        return identity if plaintext_key == "member-key" else None
+        return identity if plaintext_key == "second-key" else None
 
     monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
-    return TestClient(api.app, headers={"X-API-Key": "member-key"})
+    return TestClient(api.app, headers={"X-API-Key": "second-key"})
 
 
 def _send(subject, status="info", result="r", **overrides):
@@ -244,8 +229,8 @@ def test_concurrent_double_claim_exactly_one_wins():
 
         async def _run():
             async with connections(2) as (first, second):
-                first_claim = store.claim_message(message_id, IDENTITY, connection=first)
-                second_claim = store.claim_message(message_id, IDENTITY, connection=second)
+                first_claim = store.claim_message(message_id, connection=first)
+                second_claim = store.claim_message(message_id, connection=second)
                 return await asyncio.gather(first_claim, second_claim, return_exceptions=True)
 
         results = asyncio.run(_run())
@@ -378,8 +363,8 @@ def test_claim_and_cancel_race_admit_exactly_one_winner():
 
         async def _run():
             async with connections(2) as (first, second):
-                claim = store.claim_message(message_id, IDENTITY, connection=first)
-                cancel = store.cancel_message(message_id, IDENTITY, connection=second)
+                claim = store.claim_message(message_id, connection=first)
+                cancel = store.cancel_message(message_id, connection=second)
                 return await asyncio.gather(claim, cancel, return_exceptions=True)
 
         claim, cancel = asyncio.run(_run())
@@ -522,16 +507,16 @@ def test_subject_normalization_groups_snapshots_by_subject_key():
         asyncio.run(_cleanup(marker))
 
 
-def test_any_namespace_authorized_sender_can_publish_next_snapshot(monkeypatch):
+def test_a_second_sender_can_publish_next_snapshot(monkeypatch):
     namespace = f"msg-it-{uuid.uuid4().hex[:8]}"
     subject = f"zzmsg_{uuid.uuid4().hex[:8]} handover"
     try:
         assert client.post("/namespaces", json={"name": namespace}).status_code == 201
-        admin_snapshot = _send_handoff(subject, namespace=namespace)
-        assert admin_snapshot.status_code == 201
+        first_snapshot = _send_handoff(subject, namespace=namespace)
+        assert first_snapshot.status_code == 201
 
-        member = _member_client(monkeypatch, "msgmember", {namespace, "default"})
-        member_snapshot = member.post(
+        second = _second_client(monkeypatch, "msgsecond")
+        second_snapshot = second.post(
             "/messages",
             json={
                 "subject": subject,
@@ -543,13 +528,13 @@ def test_any_namespace_authorized_sender_can_publish_next_snapshot(monkeypatch):
                 "namespace": namespace,
             },
         )
-        assert member_snapshot.status_code == 201
+        assert second_snapshot.status_code == 201
 
         listed = client.get(
             "/messages",
             params={"namespace": namespace, "purpose": "handoff", "subject": subject},
         ).json()
-        assert [row["id"] for row in listed] == [member_snapshot.json()["id"]]
+        assert [row["id"] for row in listed] == [second_snapshot.json()["id"]]
     finally:
         asyncio.run(_cleanup(subject, namespace=namespace))
 
@@ -690,8 +675,8 @@ def test_namespace_deletion_waits_for_messages(monkeypatch):
     subject = f"zzmsg_{uuid.uuid4().hex[:8]} blocking"
     try:
         assert client.post("/namespaces", json={"name": namespace}).status_code == 201
-        member = _member_client(monkeypatch, "msgmember", {namespace, "default"})
-        sent = member.post(
+        second = _second_client(monkeypatch, "msgsecond")
+        sent = second.post(
             "/messages",
             json={
                 "subject": subject,
@@ -760,9 +745,7 @@ def test_a_claim_waiting_on_a_row_lock_past_expiry_is_refused():
                         "SET expires_at = clock_timestamp() + interval '1 second' WHERE id = $1",
                         message_id,
                     )
-                    claim = asyncio.create_task(
-                        store.claim_message(message_id, IDENTITY, connection=claimer)
-                    )
+                    claim = asyncio.create_task(store.claim_message(message_id, connection=claimer))
                     await asyncio.sleep(1.5)
                 return await asyncio.gather(claim, return_exceptions=True)
 
@@ -770,55 +753,6 @@ def test_a_claim_waiting_on_a_row_lock_past_expiry_is_refused():
         assert isinstance(outcome, store.MessageConflict)
     finally:
         asyncio.run(_cleanup(marker))
-
-
-def test_a_member_owner_can_purge_and_unregister_its_own_namespace(monkeypatch):
-    """The owner of a private namespace must not be wedged by its own terminal rows."""
-    namespace = f"msg-it-{uuid.uuid4().hex[:8]}"
-    subject = f"zzmsg_{uuid.uuid4().hex[:8]} owned"
-    try:
-        member = _member_client(monkeypatch, "msgowner", {namespace, "default"})
-        created = member.post("/namespaces", json={"name": namespace, "visibility": "private"})
-        assert created.status_code == 201
-        sent = member.post(
-            "/messages",
-            json={
-                "subject": subject,
-                "status": "info",
-                "result": "r",
-                "author": "claude-code",
-                "namespace": namespace,
-            },
-        )
-        assert sent.status_code == 201
-        assert member.delete(f"/messages/{sent.json()['id']}").status_code == 200
-        assert member.delete(f"/namespaces/{namespace}").status_code == 409
-
-        purged = member.post("/admin/messages/purge", json={"confirm": True})
-        assert purged.json()["deleted"] == 1
-        assert member.delete(f"/namespaces/{namespace}").status_code == 200
-    finally:
-        asyncio.run(_cleanup(subject, namespace=namespace))
-
-
-def test_a_member_purge_leaves_messages_it_does_not_own(monkeypatch):
-    """A member sees and purges only the namespaces it owns, not every namespace it reads."""
-    subject = f"zzmsg_{uuid.uuid4().hex[:8]} shared"
-    try:
-        sent = _send(subject)
-        assert sent.status_code == 201
-        assert client.delete(f"/messages/{sent.json()['id']}").status_code == 200
-
-        member = _member_client(monkeypatch, "msgoutsider", {"default"})
-        preview = member.post("/admin/messages/purge", json={})
-        assert preview.json()["messages_to_delete"] == []
-        purged = member.post("/admin/messages/purge", json={"confirm": True})
-        assert purged.json()["deleted"] == 0
-
-        remaining = client.post("/admin/messages/purge", json={}).json()["messages_to_delete"]
-        assert any(row["subject"] == subject for row in remaining)
-    finally:
-        asyncio.run(_cleanup(subject))
 
 
 # ---- terminal-message purge ----------------------------------------------------------------

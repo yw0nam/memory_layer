@@ -192,7 +192,7 @@ def test_save_memory_parameters_carry_their_notes_in_the_schema():
         assert properties[name].get("description"), name
     assert "never decides whether the note is stored" in properties["kind"]["description"]
     assert "first tag names the subject" in properties["tags"]["description"]
-    assert "author allowlist" in properties["author"]["description"]
+    assert "author slug" in properties["author"]["description"]
 
 
 @pytest.mark.parametrize("kind", ["personal", "work"])

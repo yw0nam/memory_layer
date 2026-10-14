@@ -1,8 +1,8 @@
-"""API-key authentication and the per-key namespace visibility model.
+"""API-key authentication.
 
 Every REST request (except /health*) must carry a valid ``X-API-Key`` header;
 ApiKeyAuthMiddleware looks it up (by sha256 hash) and attaches a KeyIdentity
-to ``request.state.key`` for route handlers to enforce namespace access.
+to ``request.state.key``. A key grants nothing beyond passing this gate.
 Fail-closed: no key, an unknown key, or a revoked key all get 401.
 """
 
@@ -35,33 +35,10 @@ def generate_key() -> str:
 
 @dataclass(frozen=True)
 class KeyIdentity:
-    """A request's authenticated caller: an admin sees every namespace.
-
-    `authors` is the note authors this key may save as; an empty allowlist
-    means the key cannot save notes at all. A key carrying the `user` author,
-    with admin, also marks imports of entities.
-    """
+    """A request's authenticated caller: the key's hash and the label of its client."""
 
     key_id: str
     label: str
-    home: str
-    is_admin: bool
-    allowed: frozenset[str]
-    authors: frozenset[str] = frozenset()
-
-    def permits(self, namespace: str) -> bool:
-        return self.is_admin or namespace in self.allowed
-
-    def permits_all(self, namespaces: set[str]) -> bool:
-        return self.is_admin or namespaces <= self.allowed
-
-
-async def _owned_or_public_namespaces(conn, label: str) -> frozenset[str]:
-    rows = await conn.fetch(
-        f"SELECT name FROM \"{PG_SCHEMA}\".namespaces WHERE visibility = 'public' OR owner = $1",
-        label,
-    )
-    return frozenset(row["name"] for row in rows)
 
 
 async def authenticate_request(plaintext_key: str) -> KeyIdentity | None:
@@ -69,26 +46,11 @@ async def authenticate_request(plaintext_key: str) -> KeyIdentity | None:
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         key_id = hash_key(plaintext_key)
-        row = await conn.fetchrow(
-            f'SELECT label, home, is_admin, authors FROM "{PG_SCHEMA}".api_keys '
-            "WHERE key_hash = $1 AND revoked_at IS NULL",
+        label = await conn.fetchval(
+            f'SELECT label FROM "{PG_SCHEMA}".api_keys WHERE key_hash = $1 AND revoked_at IS NULL',
             key_id,
         )
-        if row is None:
-            return None
-        allowed = (
-            frozenset()
-            if row["is_admin"]
-            else await _owned_or_public_namespaces(conn, row["label"])
-        )
-        return KeyIdentity(
-            key_id=key_id,
-            label=row["label"],
-            home=row["home"],
-            is_admin=row["is_admin"],
-            allowed=allowed,
-            authors=frozenset(row["authors"] or ()),
-        )
+        return None if label is None else KeyIdentity(key_id=key_id, label=label)
 
 
 def _unauthorized(message: str) -> JSONResponse:

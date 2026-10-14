@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -9,6 +10,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 TEXT_LIMIT = 2000
+AUTHOR_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
 async def json_body(request: Request) -> dict[str, Any]:
@@ -46,6 +48,13 @@ def object_fields(
     if missing:
         raise RequestError(f"missing field: {', '.join(missing)}")
     return body
+
+
+def author_slug(value: Any) -> str:
+    """The author a client declares; attribution only, so a slug is all that is checked."""
+    if not isinstance(value, str) or not AUTHOR_RE.fullmatch(value):
+        raise RequestError("author must be an author slug")
+    return value
 
 
 def stripped(value: Any, name: str) -> str:

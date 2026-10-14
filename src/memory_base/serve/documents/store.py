@@ -36,26 +36,22 @@ async def existing_document_state(
         return row["content_hash"], row["table_rows_loaded"]
 
 
-async def existing_document_owner(
-    document_id: str, namespace: str = "default", schema: str | None = None
-) -> tuple[bool, str | None]:
-    """Whether a document has stored chunks in this namespace, and its recorded creator."""
-    schema = PG_SCHEMA if schema is None else schema
+async def document_exists(document_id: str, namespace: str = "default") -> bool:
+    """Whether a document has stored chunks in this namespace."""
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
-        row = await conn.fetchrow(
-            f"""
-            SELECT metadata->>'created_by' AS created_by
-            FROM "{schema}".memory_chunks
-            WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
-            LIMIT 1
-            """,
-            document_id,
-            namespace,
+        return bool(
+            await conn.fetchval(
+                f"""
+                SELECT EXISTS(
+                  SELECT 1 FROM "{PG_SCHEMA}".memory_chunks
+                  WHERE source_type = 'document' AND source_ref = $1 AND namespace = $2
+                )
+                """,
+                document_id,
+                namespace,
+            )
         )
-        if row is None:
-            return False, None
-        return True, row["created_by"]
 
 
 async def delete_document_rows(document_id: str, namespace: str = "default") -> int:

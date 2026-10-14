@@ -1,4 +1,4 @@
-"""REST routes for the verbatim turn lane: request validation, authority, and status codes."""
+"""REST routes for the verbatim turn lane: request validation and status codes."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.retrieval.search import normalize_namespaces, normalize_time_range
+from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 from memory_base.serve.common.http import (
     RequestError,
     bounded_text,
@@ -39,7 +40,7 @@ def _repo(value: Any) -> str | None:
     return repo
 
 
-def parse_turn(body: Any, home: str) -> dict[str, Any]:
+def parse_turn(body: Any) -> dict[str, Any]:
     """The request body as a validated turn row for the store."""
     fields = object_fields(
         body,
@@ -50,7 +51,7 @@ def parse_turn(body: Any, home: str) -> dict[str, Any]:
         turn_id = str(uuid.UUID(str(fields["id"])))
     except ValueError:
         raise RequestError("id must be a UUID") from None
-    namespace = fields.get("namespace", home)
+    namespace = fields.get("namespace", DEFAULT_NAMESPACE)
     if not isinstance(namespace, str) or not namespace.strip():
         raise RequestError("namespace must be a non-empty string")
     reasoning = fields.get("reasoning")
@@ -70,27 +71,12 @@ def parse_turn(body: Any, home: str) -> dict[str, Any]:
 
 async def append_route(request: Request) -> JSONResponse:
     """Append one turn to its session; a replay of the same payload returns the stored seq."""
-    key = request.state.key
     try:
-        row = parse_turn(await request_body(request), key.home)
-        if not key.permits(row["namespace"]):
-            return error(f"namespace {row['namespace']!r} is outside the caller's allowed set", 403)
-        return JSONResponse(await store.append(row))
+        return JSONResponse(await store.append(parse_turn(await request_body(request))))
     except store.Conflict as exc:
         return error(str(exc), 409)
     except ValueError as exc:
         return error(str(exc))
-
-
-def _readable(request: Request) -> list[str] | None:
-    """The namespaces the call may read; None means every one (an admin key)."""
-    key = request.state.key
-    requested = normalize_namespaces(request.query_params.getlist("namespace") or None)
-    if requested is not None:
-        if not key.permits_all(set(requested)):
-            raise PermissionError("requested namespaces are outside the caller's allowed set")
-        return requested
-    return None if key.is_admin else sorted(key.allowed)
 
 
 def _int(request: Request, name: str, default: int, low: int, high: int) -> int:
@@ -111,7 +97,7 @@ def _filters(request: Request) -> dict[str, Any]:
     if origin is not None:
         _choice(origin, "origin", ORIGINS)
     return {
-        "namespaces": _readable(request),
+        "namespaces": normalize_namespaces(params.getlist("namespace") or None),
         "since": since,
         "until": until,
         "origin": origin,
@@ -124,8 +110,6 @@ async def sessions_route(request: Request) -> JSONResponse:
     """List sessions newest first by their last turn."""
     try:
         return JSONResponse(await store.list_sessions(**_filters(request)))
-    except PermissionError as exc:
-        return error(str(exc), 403)
     except ValueError as exc:
         return error(str(exc))
 
@@ -137,7 +121,7 @@ async def session_route(request: Request) -> JSONResponse:
         origin = _choice(request.path_params["origin"], "origin", ORIGINS)
         return JSONResponse(
             await store.read_session(
-                _readable(request),
+                normalize_namespaces(params.getlist("namespace") or None),
                 origin,
                 request.path_params["session_id"],
                 params.get("contains") or None,
@@ -145,8 +129,6 @@ async def session_route(request: Request) -> JSONResponse:
                 _int(request, "limit", store.DEFAULT_LIMIT, 1, store.MAX_LIMIT),
             )
         )
-    except PermissionError as exc:
-        return error(str(exc), 403)
     except store.NotFound as exc:
         return error(str(exc), 404)
     except ValueError as exc:
@@ -158,16 +140,12 @@ async def search_route(request: Request) -> JSONResponse:
     try:
         filters = _filters(request)
         return JSONResponse(await store.search(q=request.query_params.get("q", ""), **filters))
-    except PermissionError as exc:
-        return error(str(exc), 403)
     except ValueError as exc:
         return error(str(exc))
 
 
 async def delete_session_route(request: Request) -> JSONResponse:
-    """Hard-delete a session's turns; admin only."""
-    if not request.state.key.is_admin:
-        return error("deleting a session needs an admin key", 403)
+    """Hard-delete a session's turns."""
     try:
         origin = _choice(request.path_params["origin"], "origin", ORIGINS)
     except RequestError as exc:

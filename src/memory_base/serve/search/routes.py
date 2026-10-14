@@ -68,8 +68,7 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
 
 
 async def search_route(request: Request) -> JSONResponse:
-    """Validate and execute a hybrid search request, scoped to the caller's allowed namespaces."""
-    key = request.state.key
+    """Validate and execute a hybrid search request; `namespaces` narrows it, omitted covers all."""
     try:
         body = await json_body(request)
     except Exception as exc:
@@ -119,8 +118,6 @@ async def search_route(request: Request) -> JSONResponse:
         return error("author must be a non-empty string")
     try:
         requested_namespaces = normalize_namespaces(body.get("namespaces"))
-        if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
-            return error("requested namespaces are outside the caller's allowed set", 403)
         options: dict[str, Any] = {
             "source": source,
             "include_archived": include_archived,
@@ -143,8 +140,6 @@ async def search_route(request: Request) -> JSONResponse:
             options["budget_tokens"] = budget_tokens
         if requested_namespaces is not None:
             options["namespaces"] = requested_namespaces
-        elif not key.is_admin:
-            options["namespaces"] = sorted(key.allowed)
         log_filters = {k: v for k, v in options.items() if k != "source"} | {"top_k": top_k}
         hits = await search(query, **options)
         if budget_tokens is None:

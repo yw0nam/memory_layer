@@ -73,7 +73,6 @@ class IngestJob(JobBase):
     filename: str = ""
     spool_path: str = ""
     key_id: str = ""
-    key_label: str = ""
     tags: list[str] = field(default_factory=list)
     stage: str = "queued"
     chunks_total: int = 0
@@ -84,7 +83,7 @@ class IngestJob(JobBase):
     content_hash: str | None = None
 
     RESPONSE_EXCLUDE: ClassVar[frozenset[str]] = frozenset(
-        {"namespace", "origin", "mode", "filename", "spool_path", "key_id", "key_label", "tags"}
+        {"namespace", "origin", "mode", "filename", "spool_path", "key_id", "tags"}
     )
 
     def touch(self, *, status: str | None = None, stage: str | None = None) -> None:
@@ -106,9 +105,8 @@ class RepoJob(JobBase):
     url: str | None = None
     branch: str | None = None
     key_id: str = ""
-    key_label: str = ""
 
-    RESPONSE_EXCLUDE: ClassVar[frozenset[str]] = frozenset({"url", "branch", "key_id", "key_label"})
+    RESPONSE_EXCLUDE: ClassVar[frozenset[str]] = frozenset({"url", "branch", "key_id"})
 
     @property
     def kind(self) -> str:
@@ -146,7 +144,6 @@ async def admit_document(
     *,
     job_id: str,
     key_id: str,
-    key_label: str,
     namespace: str,
     document_id: str,
     origin: str | None,
@@ -183,13 +180,12 @@ async def admit_document(
                 )
             row = await conn.fetchrow(
                 f'''INSERT INTO "{PG_SCHEMA}".jobs
-                (job_id, kind, status, key_id, key_label, namespace, document_id,
+                (job_id, kind, status, key_id, namespace, document_id,
                  origin, mode, filename, spool_path, stage, tags)
-                VALUES ($1, 'document', 'queued', $2, $3, $4, $5, $6, $7, $8, $9, 'queued', $10)
+                VALUES ($1, 'document', 'queued', $2, $3, $4, $5, $6, $7, $8, 'queued', $9)
                 RETURNING *''',
                 job_id,
                 key_id,
-                key_label,
                 namespace,
                 document_id,
                 origin,
@@ -205,7 +201,6 @@ async def admit_repo(
     *,
     job_id: str,
     key_id: str,
-    key_label: str,
     name: str,
     action: str,
     url: str | None,
@@ -226,12 +221,11 @@ async def admit_repo(
                 raise BacklogFullError("repo job queue is full")
             row = await conn.fetchrow(
                 f'''INSERT INTO "{PG_SCHEMA}".jobs
-                (job_id, kind, status, key_id, key_label, name, action, url, branch)
-                VALUES ($1, 'repo', 'queued', $2, $3, $4, $5, $6, $7)
+                (job_id, kind, status, key_id, name, action, url, branch)
+                VALUES ($1, 'repo', 'queued', $2, $3, $4, $5, $6)
                 RETURNING *''',
                 job_id,
                 key_id,
-                key_label,
                 name,
                 action,
                 url,
@@ -384,19 +378,15 @@ async def get_job(job_id: str, *, kind: str):
     return _row_to_job(row) if row else None
 
 
-async def list_document_jobs(
-    *, namespaces: list[str] | None, origin: str | None, status: str | None
-) -> list[Any]:
+async def list_document_jobs(*, origin: str | None, status: str | None) -> list[Any]:
     async with _connection() as conn:
         rows = await conn.fetch(
             f'''SELECT * FROM "{PG_SCHEMA}".jobs
             WHERE kind = 'document'
-              AND ($1::text[] IS NULL OR namespace = ANY($1::text[]))
-              AND ($2::text IS NULL OR origin = $2)
-              AND ($3::text IS NULL OR status = $3)
+              AND ($1::text IS NULL OR origin = $1)
+              AND ($2::text IS NULL OR status = $2)
             ORDER BY created_at DESC, job_id DESC
             LIMIT 200''',
-            namespaces,
             origin,
             status,
         )

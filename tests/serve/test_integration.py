@@ -45,9 +45,7 @@ def indexed_code(tmp_path_factory):
     git_env.update(GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
     for args in (["init", "-q", "-b", "main"], ["add", "."], ["commit", "-q", "-m", "seed"]):
         subprocess.run(["git", "-C", str(origin), *args], check=True, env=git_env)
-    asyncio.run(
-        repo_cache._run_ingest_job(str(origin), repo_cache.CACHE_ROOT / "seed", None, "test")
-    )
+    asyncio.run(repo_cache._run_ingest_job(str(origin), repo_cache.CACHE_ROOT / "seed", None))
 
 
 async def _delete_note(note_id: str) -> None:

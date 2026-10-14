@@ -14,7 +14,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api
-from memory_base.serve.access import auth
 from memory_base.serve.facts import store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
@@ -132,23 +131,6 @@ def fake_db(monkeypatch):
     return conn
 
 
-def _use_identity(monkeypatch, authors, is_admin=True, allowed=()):
-    identity = auth.KeyIdentity(
-        key_id="k", label="agents", home="default", is_admin=is_admin,
-        allowed=frozenset(allowed), authors=frozenset(authors),
-    )  # fmt: skip
-
-    async def fake_authenticate_request(plaintext_key):
-        return identity if plaintext_key == "test-key" else None
-
-    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
-
-
-@pytest.fixture()
-def consolidator(monkeypatch):
-    _use_identity(monkeypatch, ("consolidator",))
-
-
 def _add(**fields):
     return {
         "op": "add", "entity": "natsume", "attribute": "city", "value_text": "Busan",
@@ -173,7 +155,7 @@ def _write_one(op):
 # ---- write: add, replace, remove --------------------------------------------
 
 
-def test_add_replace_remove_leave_a_history_the_card_shows_with_include_past(fake_db, consolidator):
+def test_add_replace_remove_leave_a_history_the_card_shows_with_include_past(fake_db):
     added = _write_one(_add())
     assert added["status"] == "written"
     assert (added["entity"], added["attribute"], added["namespace"]) == (
@@ -197,14 +179,14 @@ def test_add_replace_remove_leave_a_history_the_card_shows_with_include_past(fak
     assert past[replaced["id"]]["archived_at"] is not None
 
 
-def test_an_add_equal_to_a_current_row_is_unchanged_and_writes_nothing(fake_db, consolidator):
+def test_an_add_equal_to_a_current_row_is_unchanged_and_writes_nothing(fake_db):
     first = _write_one(_add())
     again = _write_one(_add(note_id="note:b"))
     assert (again["status"], again["id"]) == ("unchanged", first["id"])
     assert len(fake_db.facts) == 1
 
 
-def test_a_relation_fact_is_read_from_both_sides(fake_db, consolidator):
+def test_a_relation_fact_is_read_from_both_sides(fake_db):
     fact = _write_one(_add(attribute="friend", value_text=None, value_entity="yui"))
     assert [f["id"] for f in _card("natsume").json()["facts"]] == [fact["id"]]
     card = _card("yui").json()
@@ -213,7 +195,7 @@ def test_a_relation_fact_is_read_from_both_sides(fake_db, consolidator):
     assert card["entity"]["slug"] == "yui"
 
 
-def test_allow_multiple_adds_a_second_row_under_one_key(fake_db, consolidator):
+def test_allow_multiple_adds_a_second_row_under_one_key(fake_db):
     _write_one(_add())
     _write_one(_add(value_text="Seoul", allow_multiple=True))
     assert len(_card().json()["facts"]) == 2
@@ -255,25 +237,25 @@ def test_allow_multiple_adds_a_second_row_under_one_key(fake_db, consolidator):
         "archived-value-entity",
     ],
 )
-def test_a_refused_add_names_its_reason_and_writes_nothing(fake_db, consolidator, op, message):
+def test_a_refused_add_names_its_reason_and_writes_nothing(fake_db, op, message):
     response = _post(op)
     assert response.status_code == 400
     assert message in response.json()["error"]
     assert fake_db.facts == []
 
 
-def test_a_name_in_a_longer_phrase_is_not_a_list_of_names(fake_db, consolidator):
+def test_a_name_in_a_longer_phrase_is_not_a_list_of_names(fake_db):
     assert _write_one(_add(value_text="Research and Development team"))["status"] == "written"
 
 
-def test_an_add_on_a_held_key_names_the_current_row(fake_db, consolidator):
+def test_an_add_on_a_held_key_names_the_current_row(fake_db):
     first = _write_one(_add())
     response = _post(_add(value_text="Seoul"))
     assert response.status_code == 400
     assert first["id"] in response.json()["error"]
 
 
-def test_replace_and_remove_need_a_current_fact(fake_db, consolidator):
+def test_replace_and_remove_need_a_current_fact(fake_db):
     first = _write_one(_add())
     _write_one({"op": "remove", "id": first["id"], "note_id": "note:a"})
     for op in (
@@ -286,14 +268,14 @@ def test_replace_and_remove_need_a_current_fact(fake_db, consolidator):
         assert "current" in response.json()["error"]
 
 
-def test_a_refused_op_aborts_the_batch_and_names_its_index(fake_db, consolidator):
+def test_a_refused_op_aborts_the_batch_and_names_its_index(fake_db):
     response = _post(_add(), _add(entity="ghost"))
     assert response.status_code == 400
     assert response.json()["error"].startswith("op 1:")
     assert fake_db.facts == []
 
 
-def test_a_dry_run_returns_the_planned_rows_and_writes_nothing(fake_db, consolidator):
+def test_a_dry_run_returns_the_planned_rows_and_writes_nothing(fake_db):
     response = _post(_add(), dry_run=True)
     assert response.status_code == 200
     [result] = response.json()["results"]
@@ -301,23 +283,19 @@ def test_a_dry_run_returns_the_planned_rows_and_writes_nothing(fake_db, consolid
     assert fake_db.facts == []
 
 
-# ---- authority --------------------------------------------------------------
+# ---- author -----------------------------------------------------------------
 
 
-def test_only_an_admin_key_carrying_consolidator_may_write(fake_db, monkeypatch):
-    for authors, is_admin in ((("claude-code",), True), (("consolidator",), False)):
-        _use_identity(monkeypatch, authors, is_admin=is_admin)
-        assert _post(_add(), author=authors[0]).status_code == 403
-    _use_identity(monkeypatch, ("consolidator",))
-    assert _post(_add(), author="claude-code").status_code == 403
-    assert fake_db.facts == []
+def test_any_author_slug_may_write_and_a_non_slug_is_refused(fake_db):
+    assert _post(_add(), author="claude-code").status_code == 200
+    assert _post(_add(attribute="job", value_text="Chef"), author="Not A Slug").status_code == 400
+    assert [fact["author"] for fact in fake_db.facts] == ["claude-code"]
 
 
 # ---- the card ---------------------------------------------------------------
 
 
-def test_the_card_is_scoped_to_the_keys_namespaces_and_narrowed_by_namespace(fake_db, monkeypatch):
-    _use_identity(monkeypatch, ("consolidator",))
+def test_the_card_covers_every_namespace_and_is_narrowed_by_namespace(fake_db):
     _write_one(_add())
     _write_one(_add(attribute="job", value_text="Chef", note_id="note:b"))
     ids = lambda r: sorted(f["attribute"] for f in r.json()["facts"])  # noqa: E731
@@ -325,12 +303,8 @@ def test_the_card_is_scoped_to_the_keys_namespaces_and_narrowed_by_namespace(fak
     assert ids(_card()) == ["city", "job"]
     assert ids(_card(query="?namespace=team-b")) == ["job"]
 
-    _use_identity(monkeypatch, ("claude-code",), is_admin=False, allowed={"team-a"})
-    assert ids(_card()) == ["city"]
-    assert _card(query="?namespace=team-b").status_code == 403
 
-
-def test_an_unknown_slug_is_404_and_an_archived_entity_is_served(fake_db, consolidator):
+def test_an_unknown_slug_is_404_and_an_archived_entity_is_served(fake_db):
     assert _card("ghost").status_code == 404
     assert _card("old").json()["entity"]["archived_at"] is not None
 
@@ -364,7 +338,6 @@ def _edit(monkeypatch, fake_db, item, **extra):
 
     monkeypatch.setattr(entity_store.db, "acquire", acquire)
     monkeypatch.setattr(entity_store, "ensure_schema_once", noop)
-    _use_identity(monkeypatch, ("claude-code",))
     return client.post(
         "/entities",
         json={"entities": [item], "author": "claude-code", "consent_method": "conversation"}

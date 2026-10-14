@@ -2,11 +2,9 @@
 
 Every REST test in this package sends ``X-API-Key: test-key``; this fixture
 stubs ``memory_base.serve.access.auth.authenticate_request`` to resolve that key to
-an admin identity (sees every namespace) so pre-existing tests that exercise
-arbitrary namespace names keep working without a real namespace registry or
-DB. Tests exercising the real auth/namespace-visibility behavior mark
-themselves ``@pytest.mark.real_auth`` to opt out and drive the actual code
-path (see tests/serve/test_auth_unit.py, test_namespaces_scope_unit.py).
+an identity so the tests run without a DB. Tests exercising the real auth code
+path mark themselves ``@pytest.mark.real_auth`` to opt out (see
+tests/serve/test_auth_unit.py).
 """
 
 from __future__ import annotations
@@ -15,7 +13,6 @@ import pytest
 
 from memory_base.serve.access import auth
 from memory_base.serve.documents import pipeline as document_pipeline
-from memory_base.serve.documents import store as document_store
 
 TEST_API_KEY = "test-key"
 
@@ -24,14 +21,7 @@ TEST_API_KEY = "test-key"
 def _stub_api_key_auth(request, monkeypatch):
     if "real_auth" in request.keywords:
         return
-    identity = auth.KeyIdentity(
-        key_id="test-key-hash",
-        label="test",
-        home="default",
-        is_admin=True,
-        allowed=frozenset(),
-        authors=frozenset({"claude-code", "natsume"}),
-    )
+    identity = auth.KeyIdentity(key_id="test-key-hash", label="test")
 
     async def fake_authenticate_request(plaintext_key):
         return identity if plaintext_key == TEST_API_KEY else None
@@ -43,18 +33,3 @@ def _stub_api_key_auth(request, monkeypatch):
 def _isolated_ingest_spool(monkeypatch, tmp_path):
     spool = tmp_path / "ingest-spool"
     monkeypatch.setattr(document_pipeline, "INGEST_SPOOL", spool)
-
-
-@pytest.fixture(autouse=True)
-def _stub_existing_document_owner(request, monkeypatch):
-    """Unit tests never reach a real DB for the ownership gate; integration tests do.
-
-    Tests that care about ownership override this per-test with their own fake.
-    """
-    if request.node.get_closest_marker("integration") is not None:
-        return
-
-    async def fake_existing_document_owner(document_id, namespace="default", schema=None):
-        return False, None
-
-    monkeypatch.setattr(document_store, "existing_document_owner", fake_existing_document_owner)

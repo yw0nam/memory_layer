@@ -23,34 +23,15 @@ from memory_base.serve.turns import store
 
 pytestmark = pytest.mark.integration
 
-ADMIN = auth.KeyIdentity(
-    key_id="admin-hash",
-    label="admin",
-    home="default",
-    is_admin=True,
-    allowed=frozenset(),
-    authors=frozenset({"claude-code"}),
-)
-
-
-def _member(allowed):
-    return auth.KeyIdentity(
-        key_id="member-hash",
-        label="member",
-        home="default",
-        is_admin=False,
-        allowed=frozenset(allowed),
-        authors=frozenset({"claude-code"}),
-    )
+KEY = auth.KeyIdentity(key_id="test-hash", label="test")
 
 
 @pytest.fixture
 def tag(monkeypatch):
     tag = uuid.uuid4().hex[:10]
-    identities = {"admin-key": ADMIN, "member-key": _member({"default"})}
 
     async def fake_authenticate_request(plaintext_key):
-        return identities.get(plaintext_key)
+        return KEY if plaintext_key == "test-key" else None
 
     monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
     yield tag
@@ -71,7 +52,7 @@ def tag(monkeypatch):
     asyncio.run(cleanup())
 
 
-def _api(key="admin-key"):
+def _api(key="test-key"):
     return TestClient(api.app, headers={"X-API-Key": key})
 
 
@@ -231,16 +212,19 @@ def test_sessions_are_listed_newest_first_with_the_first_user_message_as_title(t
     ]
 
 
-def test_a_key_cannot_read_the_session_of_a_namespace_it_is_not_allowed(tag):
+def test_a_read_without_a_namespace_covers_every_namespace_and_a_filter_narrows_it(tag):
     asyncio.run(namespaces.create_namespace(f"ns-{tag}"))
-    session = f"{tag}-private"
-    assert _post(_api(), session, f"secret plan {tag}", namespace=f"ns-{tag}").status_code == 200
-    member = _api("member-key")
-    assert member.get(f"/sessions/claude_code/{session}").status_code == 404
-    assert member.get("/turns/search", params={"q": tag}).json() == []
-    assert tag not in str(member.get("/sessions", params={"limit": 200}).json())
-    assert member.get("/sessions", params={"namespace": f"ns-{tag}"}).status_code == 403
-    assert _post(member, session, "x", namespace=f"ns-{tag}").status_code == 403
+    client = _api()
+    assert _post(client, f"{tag}-a", f"plan {tag}").status_code == 200
+    assert _post(client, f"{tag}-b", f"plan {tag}", namespace=f"ns-{tag}").status_code == 200
+    ids = lambda response: {row["session_id"] for row in response.json()}  # noqa: E731
+    assert ids(client.get("/sessions", params={"limit": 200})) >= {f"{tag}-a", f"{tag}-b"}
+    narrowed = client.get("/sessions", params={"namespace": f"ns-{tag}", "limit": 200})
+    assert ids(narrowed) == {f"{tag}-b"}
+    assert {row["session_id"] for row in client.get("/turns/search", params={"q": tag}).json()} == {
+        f"{tag}-a",
+        f"{tag}-b",
+    }
 
 
 def test_a_namespace_holding_turns_cannot_be_deleted_and_a_session_delete_empties_it(tag):
@@ -249,7 +233,6 @@ def test_a_namespace_holding_turns_cannot_be_deleted_and_a_session_delete_emptie
     _post(_api(), session, "kept", namespace=f"ns-{tag}")
     with pytest.raises(namespaces.NamespaceNotEmptyError):
         asyncio.run(namespaces.delete_namespace(f"ns-{tag}"))
-    assert _api("member-key").delete(f"/admin/sessions/claude_code/{session}").status_code == 403
     assert _api().delete(f"/admin/sessions/claude_code/{session}").json() == {"deleted": 1}
     asyncio.run(namespaces.delete_namespace(f"ns-{tag}"))
 

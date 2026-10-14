@@ -20,6 +20,7 @@ from memory_base.adapters.document import (
 from memory_base.core.secrets import find_secret
 from memory_base.retrieval.search import normalize_tags
 from memory_base.serve.access import namespaces
+from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 from memory_base.serve.common import job_store
 from memory_base.serve.common.http import error
 from memory_base.serve.documents import pipeline, store
@@ -49,7 +50,7 @@ async def _copy_upload(upload: UploadFile, suffix: str) -> Path:
 
 
 async def ingest_route(request: Request) -> JSONResponse:
-    """Validate and enqueue a multipart document upload; omitted namespace lands in key.home."""
+    """Validate and enqueue a multipart document upload; omitted namespace lands in `default`."""
     key = request.state.key
     try:
         form = await request.form()
@@ -104,23 +105,15 @@ async def ingest_route(request: Request) -> JSONResponse:
 
     namespace_value = form.get("namespace")
     if namespace_value is None or namespace_value == "":
-        namespace = key.home
+        namespace = DEFAULT_NAMESPACE
     elif isinstance(namespace_value, str):
         namespace = namespace_value
     else:
         await upload.close()
         return error("namespace must be a string", 400)
-    if not key.permits(namespace):
-        await upload.close()
-        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
     if not await namespaces.namespace_exists(namespace):
         await upload.close()
         return error(f"unregistered namespace: {namespace}", 400)
-
-    exists, existing_created_by = await store.existing_document_owner(document_id, namespace)
-    if exists and not key.is_admin and existing_created_by != key.label:
-        await upload.close()
-        return error("only the document owner or an admin can overwrite this document", 403)
 
     try:
         upload_path = await _copy_upload(upload, extension)
@@ -133,7 +126,6 @@ async def ingest_route(request: Request) -> JSONResponse:
         job = await job_store.admit_document(
             job_id=uuid.uuid4().hex,
             key_id=key.key_id,
-            key_label=key.label,
             namespace=namespace,
             document_id=document_id,
             origin=origin_value,
@@ -167,29 +159,21 @@ async def job_route(request: Request) -> JSONResponse:
 
 
 async def remove_route(request: Request) -> JSONResponse:
-    """Delete a document's chunks in one namespace; restricted to its creator or an admin.
+    """Delete a document's chunks in one namespace.
 
-    `namespace` is a query parameter defaulting to the caller's home namespace.
+    `namespace` is a query parameter defaulting to `default`.
     """
-    key = request.state.key
     document_id = request.path_params["document_id"]
-    namespace = request.query_params.get("namespace") or key.home
-    if not key.permits(namespace):
-        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
-    exists, created_by = await store.existing_document_owner(document_id, namespace)
-    if not exists:
+    namespace = request.query_params.get("namespace") or DEFAULT_NAMESPACE
+    if not await store.document_exists(document_id, namespace):
         return error("document not found", 404)
-    if not key.is_admin and created_by != key.label:
-        return error("only the document owner or an admin can delete this document", 403)
     deleted = await store.delete_document_rows(document_id, namespace)
     return JSONResponse({"document_id": document_id, "namespace": namespace, "deleted": deleted})
 
 
 async def jobs_route(request: Request) -> JSONResponse:
-    """List document jobs newest first within the caller's namespace scope."""
-    key = request.state.key
+    """List document jobs newest first."""
     jobs = await job_store.list_document_jobs(
-        namespaces=None if key.is_admin else sorted(key.allowed),
         origin=request.query_params.get("origin"),
         status=request.query_params.get("status"),
     )

@@ -50,7 +50,6 @@ class AcceptingBacklog:
             url=kwargs["url"],
             branch=kwargs["branch"],
             key_id=kwargs["key_id"],
-            key_label=kwargs["key_label"],
             created_at=now,
             updated_at=now,
         )

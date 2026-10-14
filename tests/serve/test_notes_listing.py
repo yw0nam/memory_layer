@@ -15,7 +15,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api
-from memory_base.serve.access import auth
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.notes import store
 
@@ -103,47 +102,19 @@ def test_list_notes_value_error_maps_to_400(monkeypatch):
     assert "earlier" in response.json()["error"]
 
 
-# ---- route: namespace scoping -----------------------------------------------
-
-HOME = "alice-notes"
-ALLOWED = {"default", HOME}
+# ---- route: namespace filter -------------------------------------------------
 
 
-def _non_admin_client(monkeypatch):
-    identity = auth.KeyIdentity(
-        key_id="alice-hash",
-        label="alice",
-        home=HOME,
-        is_admin=False,
-        allowed=frozenset(ALLOWED),
-    )
-
-    async def fake_authenticate_request(plaintext_key):
-        return identity if plaintext_key == "member-key" else None
-
-    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
-    return TestClient(api.app, headers={"X-API-Key": "member-key"})
-
-
-def test_list_notes_omitted_namespace_uses_full_allowed_set(monkeypatch):
+def test_list_notes_without_a_namespace_filter_covers_every_namespace(monkeypatch):
     captured = _capture_list_notes(monkeypatch)
-    response = _non_admin_client(monkeypatch).get("/notes")
-    assert response.status_code == 200
-    assert captured["namespaces"] == sorted(ALLOWED)
+    assert client.get("/notes").status_code == 200
+    assert captured["namespaces"] is None
 
 
-def test_list_notes_explicit_namespace_narrows_the_scope(monkeypatch):
+def test_list_notes_explicit_namespace_narrows_the_filter(monkeypatch):
     captured = _capture_list_notes(monkeypatch)
-    response = _non_admin_client(monkeypatch).get(f"/notes?namespace={HOME}")
-    assert response.status_code == 200
-    assert captured["namespaces"] == [HOME]
-
-
-def test_list_notes_rejects_namespace_outside_allowed_set(monkeypatch):
-    _capture_list_notes(monkeypatch)
-    response = _non_admin_client(monkeypatch).get("/notes?namespace=team-b")
-    assert response.status_code == 403
-    assert "error" in response.json()
+    assert client.get("/notes?namespace=alice-notes").status_code == 200
+    assert captured["namespaces"] == ["alice-notes"]
 
 
 # ---- store.list_notes: SQL shape and row mapping ----------------------------

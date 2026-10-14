@@ -1,4 +1,4 @@
-"""Unit tests for memory_base.serve.access.auth: hashing, allowed-set computation,
+"""Unit tests for memory_base.serve.access.auth: hashing, key lookup,
 and ApiKeyAuthMiddleware's 401/health-exempt/identity-attach behavior.
 
 No real DB: memory_base.core.db.acquire is monkeypatched to a fake connection,
@@ -36,44 +36,17 @@ def test_generate_key_is_random_and_url_safe():
     assert len(a) > 20
 
 
-# ---- KeyIdentity.permits / permits_all ---------------------------------------
-
-
-def test_admin_permits_any_namespace():
-    identity = auth.KeyIdentity(
-        key_id="hash", label="alice", home="default", is_admin=True, allowed=frozenset()
-    )
-    assert identity.permits("anything")
-    assert identity.permits_all({"a", "b", "c"})
-
-
-def test_non_admin_permits_only_allowed_set():
-    identity = auth.KeyIdentity(
-        key_id="hash",
-        label="alice",
-        home="default",
-        is_admin=False,
-        allowed=frozenset({"default", "team-a"}),
-    )
-    assert identity.permits("team-a")
-    assert not identity.permits("team-b")
-    assert identity.permits_all({"default", "team-a"})
-    assert not identity.permits_all({"default", "team-b"})
-
-
 # ---- authenticate_request ----------------------------------------------------
 
 
 class FakeConnection:
-    def __init__(self, fetchrow_results=None, fetch_results=None):
-        self._fetchrow = list(fetchrow_results or [])
-        self._fetch = list(fetch_results or [])
+    def __init__(self, label):
+        self._label = label
+        self.queries: list[str] = []
 
-    async def fetchrow(self, query, *args):
-        return self._fetchrow.pop(0)
-
-    async def fetch(self, query, *args):
-        return self._fetch.pop(0)
+    async def fetchval(self, query, *args):
+        self.queries.append(query)
+        return self._label
 
 
 def _patch_acquire(monkeypatch, conn):
@@ -89,77 +62,17 @@ def _patch_acquire(monkeypatch, conn):
     monkeypatch.setattr(auth, "ensure_schema_once", _noop_ensure_schema_once)
 
 
-def test_authenticate_request_unknown_key_returns_none(monkeypatch):
-    conn = FakeConnection(fetchrow_results=[None])
+def test_authenticate_request_unknown_or_revoked_key_returns_none(monkeypatch):
+    conn = FakeConnection(None)
     _patch_acquire(monkeypatch, conn)
     assert asyncio.run(auth.authenticate_request("nope")) is None
+    assert "revoked_at IS NULL" in conn.queries[0]
 
 
-def test_authenticate_request_admin_skips_namespace_query(monkeypatch):
-    conn = FakeConnection(
-        fetchrow_results=[{"label": "alice", "home": "default", "is_admin": True, "authors": []}]
-    )
-    _patch_acquire(monkeypatch, conn)
+def test_authenticate_request_returns_the_hash_and_label(monkeypatch):
+    _patch_acquire(monkeypatch, FakeConnection("alice"))
     identity = asyncio.run(auth.authenticate_request("plaintext"))
-    assert identity.label == "alice"
-    assert identity.key_id == auth.hash_key("plaintext")
-    assert identity.is_admin is True
-    assert conn._fetch == []  # never queried namespaces for an admin
-
-
-def test_authenticate_request_non_admin_computes_allowed_set(monkeypatch):
-    conn = FakeConnection(
-        fetchrow_results=[{"label": "alice", "home": "default", "is_admin": False, "authors": []}],
-        fetch_results=[[{"name": "default"}, {"name": "team-a"}]],
-    )
-    _patch_acquire(monkeypatch, conn)
-    identity = asyncio.run(auth.authenticate_request("plaintext"))
-    assert identity.is_admin is False
-    assert identity.allowed == frozenset({"default", "team-a"})
-
-
-def test_authenticate_request_fills_authors_from_the_row(monkeypatch):
-    conn = FakeConnection(
-        fetchrow_results=[
-            {
-                "label": "alice",
-                "home": "default",
-                "is_admin": True,
-                "authors": ["claude-code", "natsume"],
-            }
-        ]
-    )
-    _patch_acquire(monkeypatch, conn)
-    identity = asyncio.run(auth.authenticate_request("plaintext"))
-    assert identity.authors == frozenset({"claude-code", "natsume"})
-
-
-def test_authenticate_request_empty_allowlist_is_an_empty_frozenset(monkeypatch):
-    conn = FakeConnection(
-        fetchrow_results=[{"label": "alice", "home": "default", "is_admin": False, "authors": []}],
-        fetch_results=[[{"name": "default"}]],
-    )
-    _patch_acquire(monkeypatch, conn)
-    identity = asyncio.run(auth.authenticate_request("plaintext"))
-    assert identity.authors == frozenset()
-
-
-def test_authenticate_request_selects_authors_column(monkeypatch):
-    class RecordingConnection(FakeConnection):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.queries: list[str] = []
-
-        async def fetchrow(self, query, *args):
-            self.queries.append(query)
-            return await super().fetchrow(query, *args)
-
-    conn = RecordingConnection(
-        fetchrow_results=[{"label": "alice", "home": "default", "is_admin": True, "authors": []}]
-    )
-    _patch_acquire(monkeypatch, conn)
-    asyncio.run(auth.authenticate_request("plaintext"))
-    assert "authors" in conn.queries[0]
+    assert identity == auth.KeyIdentity(key_id=auth.hash_key("plaintext"), label="alice")
 
 
 # ---- ApiKeyAuthMiddleware -----------------------------------------------------
@@ -167,7 +80,7 @@ def test_authenticate_request_selects_authors_column(monkeypatch):
 
 async def _whoami(request):
     key = request.state.key
-    return JSONResponse({"label": key.label, "is_admin": key.is_admin})
+    return JSONResponse({"label": key.label})
 
 
 def _app():
@@ -191,9 +104,7 @@ def _client(monkeypatch, identity):
 
 
 def test_missing_api_key_401(monkeypatch):
-    identity = auth.KeyIdentity(
-        key_id="hash", label="alice", home="default", is_admin=True, allowed=frozenset()
-    )
+    identity = auth.KeyIdentity(key_id="hash", label="alice")
 
     async def run():
         async with _client(monkeypatch, identity) as client:
@@ -205,9 +116,7 @@ def test_missing_api_key_401(monkeypatch):
 
 
 def test_unknown_api_key_401(monkeypatch):
-    identity = auth.KeyIdentity(
-        key_id="hash", label="alice", home="default", is_admin=True, allowed=frozenset()
-    )
+    identity = auth.KeyIdentity(key_id="hash", label="alice")
 
     async def run():
         async with _client(monkeypatch, identity) as client:
@@ -250,13 +159,7 @@ def test_health_is_exempt_from_authentication(monkeypatch):
 
 
 def test_valid_key_attaches_identity_to_request_state(monkeypatch):
-    identity = auth.KeyIdentity(
-        key_id="hash",
-        label="alice",
-        home="default",
-        is_admin=False,
-        allowed=frozenset({"default"}),
-    )
+    identity = auth.KeyIdentity(key_id="hash", label="alice")
 
     async def run():
         async with _client(monkeypatch, identity) as client:
@@ -264,4 +167,4 @@ def test_valid_key_attaches_identity_to_request_state(monkeypatch):
 
     response = asyncio.run(run())
     assert response.status_code == 200
-    assert response.json() == {"label": "alice", "is_admin": False}
+    assert response.json() == {"label": "alice"}

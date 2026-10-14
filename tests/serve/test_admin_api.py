@@ -8,7 +8,7 @@ time, so every curation function is monkeypatched here directly on the
 Endpoint contract pinned by these tests:
 
 - ``GET /admin/notes?older_than_days=N`` (default 90) -> calls
-  ``curation.list_old_notes(N, namespaces=<caller's scope>)``, response body is
+  ``curation.list_old_notes(N)``, response body is
   that list verbatim. Non-integer ``older_than_days`` -> 400.
 - ``POST /admin/notes/delete {"ids": [...], "confirm": bool}``
   - confirm missing/false (dry-run): calls
@@ -18,14 +18,14 @@ Endpoint contract pinned by these tests:
     response ``{"deleted": <count>}``.
   - missing/empty ``ids``, or malformed JSON -> 400.
 - ``GET /admin/duplicates?threshold=0.75&kind=&limit=50`` -> calls
-  ``curation.find_duplicates(threshold, kind, limit, namespaces=<scope>)``;
+  ``curation.find_duplicates(threshold, kind, limit)``;
   response ``{"pairs": <that list>}``. Non-numeric ``threshold`` -> 400.
 - ``POST /admin/archive {"confirm": bool}``
   - confirm missing/false (dry-run): calls
-    ``curation.archive_candidates(now, namespaces=<scope>)``; response
+    ``curation.archive_candidates(now)``; response
     ``{"notes_to_archive": <that list>}``; ``curation.archive_rows`` is NOT called.
   - confirm true: archives the note candidates; response ``{"archived": <count>}``.
-  - with ``ids``: only rows in the caller's scope are touched.
+  - with ``ids``: only the named rows are touched.
 - ``POST /admin/restore {"ids": [...], "confirm": bool}``
   - confirm missing/false (dry-run): calls
     ``curation.rows_by_ids(ids, namespaces=<scope>)``; response
@@ -348,7 +348,7 @@ def test_admin_archive_with_ids_names_the_ids_not_in_scope(monkeypatch):
     )
     assert response.status_code == 400
     assert response.json() == {
-        "error": "2 of 3 ids are not active notes in the caller's scope: doc:y:0, note:x",
+        "error": "2 of 3 ids are not active notes: doc:y:0, note:x",
         "missing": ["doc:y:0", "note:x"],
     }
     assert calls["archive_rows"] is None
@@ -360,23 +360,17 @@ def test_admin_archive_with_ids_requires_an_author():
     assert response.json()["error"] == "author is required"
 
 
-def test_admin_archive_author_outside_the_allowlist_403():
-    response = client.post("/admin/archive", json={"ids": ["note:a"], "author": "mallory"})
-    assert response.status_code == 403
-    assert response.json()["error"] == "author 'mallory' is not permitted for this key"
-
-
 @pytest.mark.parametrize("author", [123, "   "])
 def test_admin_archive_malformed_author_400(author):
     response = client.post("/admin/archive", json={"author": author})
     assert response.status_code == 400
-    assert response.json()["error"] == "author must be a non-empty string"
+    assert response.json()["error"] == "author must be an author slug"
 
 
 def test_admin_archive_malformed_author_with_ids_400():
     response = client.post("/admin/archive", json={"ids": ["note:a"], "author": ""})
     assert response.status_code == 400
-    assert response.json()["error"] == "author must be a non-empty string"
+    assert response.json()["error"] == "author must be an author slug"
 
 
 def test_admin_archive_malformed_ids_400():

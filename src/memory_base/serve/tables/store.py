@@ -1,4 +1,4 @@
-"""Read-only SQL execution over namespace-scoped tabular document rows."""
+"""Read-only SQL execution over tabular document rows, optionally scoped to one namespace."""
 
 from __future__ import annotations
 
@@ -39,11 +39,12 @@ def _normalize_value(value: Any) -> Any:
     return str(value)
 
 
-async def execute_table_query(sql: str, namespace: str) -> dict[str, Any]:
-    """Execute one prepared SELECT under the restricted role and namespace RLS."""
+async def execute_table_query(sql: str, namespace: str | None = None) -> dict[str, Any]:
+    """Execute one prepared SELECT under the restricted role; `namespace` narrows the rows."""
     async with db.acquire_table_query() as conn:
         async with conn.transaction(readonly=True):
-            await conn.execute(f"SET LOCAL app.namespace = {_sql_literal(namespace)}")
+            if namespace is not None:
+                await conn.execute(f"SET LOCAL app.namespace = {_sql_literal(namespace)}")
             statement = await conn.prepare(sql)
             columns = [attribute.name for attribute in statement.get_attributes()]
             cursor = await statement.cursor()

@@ -88,7 +88,7 @@ def test_tags_land_in_metadata():
     assert row["metadata"] == {"tags": ["infra", "db"]}
 
 
-# ---- REST: author is required and allowlisted ------------------------------
+# ---- REST: author is required and a slug ------------------------------
 
 
 async def _fake_save_note(
@@ -112,24 +112,15 @@ async def _fake_save_note(
     }
 
 
-@pytest.mark.parametrize("author", [None, "   "])
-def test_save_memory_missing_author_400(monkeypatch, author):
+@pytest.mark.parametrize("author", [None, "   ", "Not A Slug"])
+def test_save_memory_missing_or_malformed_author_400(monkeypatch, author):
     monkeypatch.setattr(store, "save_note", _fake_save_note)
     body = {"content": "distilled note text", "kind": "work"}
     if author is not None:
         body["author"] = author
     response = client.post("/save_memory", json=body)
     assert response.status_code == 400
-    assert response.json()["error"] == "author is required"
-
-
-def test_save_memory_author_outside_the_allowlist_403(monkeypatch):
-    monkeypatch.setattr(store, "save_note", _fake_save_note)
-    response = client.post(
-        "/save_memory", json={"author": "mallory", "content": "distilled note text", "kind": "work"}
-    )
-    assert response.status_code == 403
-    assert response.json()["error"] == "author 'mallory' is not permitted for this key"
+    assert response.json()["error"] == "author must be an author slug"
 
 
 def test_save_memory_forwards_the_author_to_save_note(monkeypatch):
