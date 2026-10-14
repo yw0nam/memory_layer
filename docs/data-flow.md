@@ -526,6 +526,7 @@ inside an identifier (`v2.0` → `v3.1`) pass it.
 | keep action | 409, nothing to undo |
 | an archived note is gone, has another `archived_at`, or another `consolidated_into` | 409 with the reason; nothing changes |
 | a created replacement is gone or archived, an active note is reachable from it through `metadata.supersedes` links (through archived notes in between), or a retire or merge action not undone lists it as a member | 409 with the reason; nothing changes |
+| an archived note's `entities_set_at` is later than the action's `applied_at`, or a note's metadata from before the action names a slug that is no longer registered | 409 with the reason; nothing changes |
 | otherwise | 200: each archived note is active again with its metadata from before the action; a created replacement is archived with `archived_by` and `undone_action`; the action records `undone_at`, `undone_by`, and the result |
 
 A reused replacement and a retire's survivors are never checked or changed. An archive and
@@ -605,9 +606,11 @@ the preview's `{notes, facts, incoming}` counts (the `needs_consent` reply carri
 differs is refused with 409 `{error, plan}`, and a new preview is needed. An unknown slug is
 400.
 
-**Lock.** Every write that adds or removes entity slugs on notes or facts (note save with
-`entities`, `link_entities`, fact writes, a consolidation apply, and an undo) takes the
-registry lock shared before any row lock and checks its slugs afterwards, so a save racing
+**Lock.** Every write that adds or removes entity slugs on notes or facts, and every write
+that changes note rows beside facts (note save with `entities`, `link_entities`, fact writes, a consolidation
+apply and undo, and note archive, restore, move, and delete), takes the registry lock shared
+before any other lock or row and checks its slugs afterwards; the order is registry lock, then
+namespace and facts locks, then rows, so a save racing
 a delete leaves no slug naming a deleted entity. A consolidation undo whose restored notes
 name a slug that is no longer registered is refused.
 

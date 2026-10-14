@@ -64,7 +64,9 @@ async def delete_notes(ids: list[str]) -> int:
     Current facts citing a deleted note are archived and lose their citation.
     """
     async with db.acquire() as conn:
+        await ensure_schema_once(conn)
         async with conn.transaction():
+            await lock_slugs(conn)
             await conn.execute(
                 f"""
                 UPDATE "{PG_SCHEMA}".facts SET archived_at = $2, note_id = NULL
@@ -95,6 +97,7 @@ async def move_notes(ids: list[str], target_namespace: str) -> dict[str, list]:
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
+            await lock_slugs(conn)
             await namespaces.require_registered(conn, target_namespace)
             existing = await conn.fetch(
                 f"""
@@ -244,7 +247,8 @@ async def archive_rows(
         else ""
     )
     extra = [archived_by] if archived_by is not None else []
-    async with db.acquire() as conn:
+    async with db.acquire() as conn, conn.transaction():
+        await lock_slugs(conn)
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
@@ -265,7 +269,8 @@ async def restore_rows(ids: list[str]) -> int:
     replaced or absorbed the row.
     """
     cleared = "".join(f" - '{field}'" for field in ARCHIVE_LINEAGE_FIELDS)
-    async with db.acquire() as conn:
+    async with db.acquire() as conn, conn.transaction():
+        await lock_slugs(conn)
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks

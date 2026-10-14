@@ -193,7 +193,7 @@ async def delete(
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction(isolation="read_committed"):
-            await _locked_registry(conn)
+            await entities.lock_registry(conn)
             if await entities.get(conn, slug) is None:
                 raise ValueError(f"no entity {slug!r}")
             notes = await conn.fetch(LINKED_NOTES_SQL, slug)
