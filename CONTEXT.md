@@ -110,7 +110,7 @@ Note metadata that links a note to the notes that replaced or absorbed it: `supe
 _Avoid_: history, provenance, links
 
 **Entity**:
-A registered person, agent, project, organisation, place, or thing, keyed by a slug the user consented to. Aliases resolve other spellings of its name; the server infers no equivalence between names and merges nothing.
+A registered person, agent, project, organisation, place, or thing, keyed by a slug the user consented to. Aliases resolve other spellings of its name; the server infers no equivalence between names and merges nothing. Deleting an entity, with the user's consent, unlinks its slug from every note, deletes the facts it holds and the facts that point at it, and frees its slug, name, and aliases; registering the name again reattaches nothing.
 _Avoid_: node, subject, topic
 
 **Fact**:

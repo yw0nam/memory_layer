@@ -282,8 +282,8 @@ async def link_entities(
 
     Each note's slugs become (its current slugs + `add`) - `remove`, the same change for
     every id (1 to 200 active notes, at most 10 slugs each).
-    `add` slugs must be active entities (list_entities); `remove` slugs only unlink the
-    note and never archive the entity or its facts. Content, id, and dates do not change.
+    `add` slugs must be registered entities (list_entities); `remove` slugs only unlink the
+    note and never delete the entity or its facts. Content, id, and dates do not change.
     Without `confirm` this returns each note's before and after and writes nothing; any
     refused id refuses the whole call. `author` is your author slug.
     """

@@ -94,7 +94,7 @@ near-duplicate refusal, and supersede. A note landing next to active notes above
 names one of them or `allow_similar` is set; an accepted override records the neighbours'
 ids in `metadata.similar_ack`. The response carries `similar[]` either way. Its optional
 `entities` (at most ten slugs, stripped and deduplicated) are checked inside the save
-transaction against active rows of the `entities` table, and an unknown or archived slug
+transaction against the `entities` table, and an unknown slug
 refuses the save with HTTP 400; they are stored as `metadata.entities`. A prior-note
 id in the payload archives that row; the replacement records the archived note's id as
 `metadata.supersedes`, which `GET /notes` rows and memory hits carry as `supersedes`, and
@@ -581,17 +581,37 @@ not include cards.
 `memory.entities` holds the people, agents, projects, organisations, places, and things
 that facts are about: `slug` (the key, `^[a-z0-9][a-z0-9-]{0,39}$`), `kind` (`person`,
 `agent`, `project`, `org`, `place`, `thing`), `name`, `aliases`, `description`,
-`created_by`, `updated_by`, `consent_method`, `consented_at`, the timestamps, and
-`archived_at`. The table has no namespace and is never embedded or searched.
+`created_by`, `updated_by`, `consent_method`, `consented_at`, and the timestamps. The table has no namespace and is never embedded or searched.
 
 **Uniqueness.** A slug, a normalized name (NFKC, case-folded, whitespace collapsed), and
-each normalized alias belong to at most one entity, archived entities included. A write is
+each normalized alias belong to at most one entity. A write is
 checked over the registry as it would be after the batch; a clash is refused with 409
 `{error, holder, value}`, and no row of the batch is written. Stored spelling is kept.
-A write runs under one advisory lock, so concurrent writes cannot both take a name. A name,
-alias, or description carrying a credential is refused. An archived entity cannot be edited.
+A write runs under the registry advisory lock, held exclusive, so concurrent writes cannot both take a name. A name,
+alias, or description carrying a credential is refused.
 
-**Consent.** Every create, edit, and archive of an entity passes one step (`serve/common/consent.py`)
+**Delete.** `POST /entities/{slug}/delete {author, consent_method, dry_run?, expect?}` runs in one
+transaction under the exclusive registry lock:
+
+| step | effect |
+|---|---|
+| notes | every agent note, active or archived, whose `metadata.entities` holds the slug loses it; an emptied list drops the key; `entities_set_by` and `entities_set_at` are stamped on changed notes only, and nothing else on the note changes |
+| facts | rows with `entity = slug` (current and past) and `value_entity = slug` are deleted; surviving rows whose `replaced_by` points at a deleted row get `replaced_by = NULL` first |
+| entity | the row is deleted; its slug, name, and aliases are free, and registering them again reattaches no note or fact |
+
+The plan is `{note_ids, facts, incoming}`: the notes to unlink, the entity's own facts, and
+other entities' facts pointing at it. A dry run returns it and writes nothing. `expect` is
+the preview's `{notes, facts, incoming}` counts; a plan recomputed under the locks that
+differs is refused with 409 `{error, plan}`, and a new preview is needed. An unknown slug is
+400.
+
+**Lock.** Every write that adds or removes entity slugs on notes or facts (note save with
+`entities`, `link_entities`, fact writes, a consolidation apply, and an undo) takes the
+registry lock shared before any row lock and checks its slugs afterwards, so a save racing
+a delete leaves no slug naming a deleted entity. A consolidation undo whose restored notes
+name a slug that is no longer registered is refused.
+
+**Consent.** Every create, edit, and delete of an entity passes one step (`serve/common/consent.py`)
 before the REST call:
 
 | client | path | recorded method |
@@ -605,12 +625,12 @@ cannot tell an unattended session from an interactive one; the server instructio
 agent without a user present never to pass `confirmed` and to leave a message instead.
 
 ```
-register_entity(entities, author, confirmed?)
-  -> GET /entities                 (summary: create / edit old -> new / archive;
+register_entity(entities, author, confirmed?, delete?, expect?)
+  -> GET /entities                 (summary: create / edit old -> new / delete with its plan;
                                     an edit that changes nothing returns `unchanged`)
   -> POST ... dry_run=true         every check runs, nothing is written; a refusal ends here
   -> consent.obtain(prompt)        elicitation dialog | needs_consent | confirmed
-  -> POST /entities | /entities/{slug}/archive   {author, consent_method}
+  -> POST /entities | /entities/{slug}/delete   {author, consent_method, expect?}
 ```
 
 A request refused by its checks never reaches the user. A write names an `author`, a slug; `import` is recorded as the client states it.
@@ -637,7 +657,7 @@ attributed to; the consolidation procedure, not the server, restricts who writes
 
 | rule | refusal |
 |---|---|
-| `entity` and `value_entity` are active entities | unknown or archived slug |
+| `entity` and `value_entity` are registered entities | unknown slug |
 | `note_id` is an active agent note; the fact takes that note's namespace | not an active agent note |
 | `value_text` is stripped, credential-scanned, and not a list of names | over 300 characters, a credential, `value lists several names; one row per element` |
 | `add` on an (entity, attribute) with a current row | refused naming that row's id, unless `allow_multiple` |
@@ -655,7 +675,7 @@ incoming}` for any key: `facts` are rows whose `entity` is the slug, `incoming` 
 `value_entity` is the slug, newest first, at most 200 each, current only unless
 `include_past` (a closed row carries `archived_at` and `replaced_by`). Rows cover every
 namespace unless narrowed by `namespace`; an
-unknown slug is 404 and an archived entity is served with its `archived_at`. The MCP tool
+unknown slug is 404. The MCP tool
 `read_entity` adds `notes`, the 20 newest notes naming the slug from `GET /notes?entity=`,
 to make the card.
 
