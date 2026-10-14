@@ -18,6 +18,7 @@ from memory_base.serve import api
 from memory_base.serve.common.entities import lock_slugs, require_registered
 from memory_base.serve.consolidation import verdicts
 from memory_base.serve.entities import store
+from memory_base.serve.notes import curation
 
 pytestmark = pytest.mark.integration
 
@@ -239,3 +240,45 @@ def test_a_delete_waits_for_a_write_that_holds_the_slug_and_then_unlinks_it():
     metadata, remaining = asyncio.run(scenario())
     assert "entities" not in metadata
     assert remaining == 0
+
+
+def test_an_entity_delete_and_a_note_delete_on_the_same_note_do_not_deadlock():
+    tag = uuid.uuid4().hex[:10]
+    slug, note = f"it-{tag}-x", f"note:default:it{tag}a"
+
+    async def waiting(conn, count):
+        for _ in range(100):
+            blocked = await conn.fetchval(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
+                " AND wait_event_type = 'Lock'"
+            )
+            if blocked >= count:
+                return
+            await asyncio.sleep(0.05)
+        raise AssertionError("the call never blocked")
+
+    async def scenario():
+        conn = await asyncpg.connect(db_url())
+        holder = await asyncpg.connect(db_url())
+        try:
+            await _entity(conn, slug)
+            await _note(conn, note, tag, {"entities": [slug]})
+            fact = await _fact(conn, slug, "city")
+            await conn.execute(f"UPDATE {FACTS} SET note_id = $2 WHERE id = $1", fact, note)
+            tx = holder.transaction()
+            await tx.start()
+            await holder.fetch(f"SELECT 1 FROM {NOTES} WHERE id = $1 FOR UPDATE", note)
+            entity_delete = asyncio.ensure_future(store.delete(slug, "claude-code"))
+            await waiting(conn, 1)
+            note_delete = asyncio.ensure_future(curation.delete_notes([note]))
+            await waiting(conn, 2)
+            await tx.rollback()
+            return await asyncio.wait_for(
+                asyncio.gather(entity_delete, note_delete, return_exceptions=True), 30
+            )
+        finally:
+            await holder.close()
+            await _cleanup(conn, tag)
+
+    results = asyncio.run(scenario())
+    assert not [r for r in results if isinstance(r, Exception)], results
