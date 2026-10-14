@@ -590,7 +590,7 @@ checked over the registry as it would be after the batch; a clash is refused wit
 A write runs under the registry advisory lock, held exclusive, so concurrent writes cannot both take a name. A name,
 alias, or description carrying a credential is refused.
 
-**Delete.** `POST /entities/{slug}/delete {author, consent_method, dry_run?, expect?}` runs in one
+**Delete.** `POST /entities/{slug}/delete {author, dry_run?, expect?}` runs in one
 transaction under the exclusive registry lock:
 
 | step | effect |
@@ -599,9 +599,9 @@ transaction under the exclusive registry lock:
 | facts | rows with `entity = slug` (current and past) and `value_entity = slug` are deleted; surviving rows whose `replaced_by` points at a deleted row get `replaced_by = NULL` first |
 | entity | the row is deleted; its slug, name, and aliases are free, and registering them again reattaches no note or fact |
 
-The plan is `{note_ids, facts, incoming}`: the notes to unlink, the entity's own facts, and
+The plan is `{note_ids, notes, facts, incoming}`: the notes to unlink and their count, the entity's own facts, and
 other entities' facts pointing at it. A dry run returns it and writes nothing. `expect` is
-the preview's `{notes, facts, incoming}` counts; a plan recomputed under the locks that
+the preview's `{notes, facts, incoming}` counts (the `needs_consent` reply carries them as `expect`); a plan recomputed under the locks that
 differs is refused with 409 `{error, plan}`, and a new preview is needed. An unknown slug is
 400.
 
@@ -630,7 +630,7 @@ register_entity(entities, author, confirmed?, delete?, expect?)
                                     an edit that changes nothing returns `unchanged`)
   -> POST ... dry_run=true         every check runs, nothing is written; a refusal ends here
   -> consent.obtain(prompt)        elicitation dialog | needs_consent | confirmed
-  -> POST /entities | /entities/{slug}/delete   {author, consent_method, expect?}
+  -> POST /entities {author, consent_method} | /entities/{slug}/delete {author, expect?}
 ```
 
 A request refused by its checks never reaches the user. A write names an `author`, a slug; `import` is recorded as the client states it.
@@ -743,7 +743,7 @@ in its metadata; `list_notes` and search hits return it.
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active` | save time; recency ranking and decay, and `since`/`until` when `occurred_at` is null |
 | `occurred_at` | when the remembered event happened; a hit's `date` and the `since`/`until` bound |
-| `metadata` | jsonb: `tags`, `entities`, `author`, `archived_by`, `supersedes`, `source_session`, `replaced_by`, `similar_ack`, `consolidated_into`, `merged_from`, `merged_dates`, `consolidation_action`, `undone_action`, `heading_path`, `content_hash`, `search_ref`, `created_by`, `columns`, … |
+| `metadata` | jsonb: `tags`, `entities`, `author`, `archived_by`, `supersedes`, `source_session`, `replaced_by`, `similar_ack`, `consolidated_into`, `merged_from`, `merged_dates`, `consolidation_action`, `undone_action`, `heading_path`, `content_hash`, `search_ref`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 
 `memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,

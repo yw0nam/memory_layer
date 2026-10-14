@@ -206,7 +206,7 @@ def test_undo_that_would_restore_a_deleted_slug_is_refused():
             await _cleanup(conn, tag)
 
     refused, reregistered, archived_at = asyncio.run(scenario())
-    assert slug in str(refused)
+    assert "entities changed after the action" in str(refused)
     assert "entities changed after the action" in str(reregistered)
     assert archived_at is not None
 
