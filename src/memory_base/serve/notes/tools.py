@@ -150,6 +150,7 @@ async def save_memory(
     `entities` names the registered entities the note is about (slugs from list_entities,
     at most 10). A preference the user authorizes as a direction to you is a change to your
     description, not a note; otherwise it is descriptive knowledge and belongs here.
+    A note that already exists gets its entities from link_entities, not from a second save.
     """
     body: dict[str, Any] = {
         "content": content,
@@ -268,6 +269,38 @@ async def delete_notes(
     return await rest_client.call(
         "POST",
         "/admin/notes/delete",
+        json=body,
+        headers=rest_client.auth_headers(ctx),
+    )
+
+
+async def link_entities(
+    ids: list[str],
+    author: str,
+    add: list[str] | None = None,
+    remove: list[str] | None = None,
+    confirm: bool = False,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Add or remove entity slugs on existing notes, recording `author` as the editor.
+
+    Each note's slugs become (its current slugs + `add`) - `remove`, the same change for
+    every id (1 to 200 active notes in the caller's namespaces, at most 10 slugs each).
+    `add` slugs must be active entities (list_entities); `remove` slugs only unlink the
+    note and never archive the entity or its facts. Content, id, and dates do not change.
+    Without `confirm` this returns each note's before and after and writes nothing; any
+    refused id refuses the whole call. `author` must be in the key's author allowlist.
+    """
+    body: dict[str, Any] = {"ids": ids, "author": author}
+    if add:
+        body["add"] = add
+    if remove:
+        body["remove"] = remove
+    if confirm:
+        body["confirm"] = True
+    return await rest_client.call(
+        "POST",
+        "/notes/entities",
         json=body,
         headers=rest_client.auth_headers(ctx),
     )

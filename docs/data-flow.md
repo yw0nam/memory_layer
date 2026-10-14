@@ -331,7 +331,8 @@ before unregistering it, not enough to touch a shared namespace. An admin key pu
 everywhere. Every mutating admin route previews by default and
 acts only with `{"confirm": true}`. The note routes are reachable over MCP as
 `list_memory_duplicates`, `archive_notes`, `restore_notes`, and `delete_notes`; the
-message purge is a REST-only call.
+message purge is a REST-only call. `link_entities` (`POST /notes/entities`) changes the
+entity links of existing notes and is open to any writer in scope.
 
 Namespace deletion counts messages as content: a namespace with messages — pending or
 terminal — cannot be unregistered until they are removed. `POST /admin/notes/move`

@@ -23,14 +23,15 @@ async def get(conn: Any, slug: str) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
-async def require_active(conn: Any, slugs: list[str]) -> None:
-    """Refuse the first slug that is not an active entity."""
+async def require_active(conn: Any, slugs: list[str], lock: bool = False) -> None:
+    """Refuse the first slug that is not an active entity; `lock` holds the active rows shared."""
     if not slugs:
         return
     active = {
         row["slug"]
         for row in await conn.fetch(
-            f'SELECT slug FROM "{PG_SCHEMA}".entities WHERE slug = ANY($1) AND archived_at IS NULL',
+            f'SELECT slug FROM "{PG_SCHEMA}".entities WHERE slug = ANY($1) AND archived_at IS NULL'
+            + (" ORDER BY slug FOR SHARE" if lock else ""),
             slugs,
         )
     }

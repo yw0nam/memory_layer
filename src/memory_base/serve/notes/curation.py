@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
+from memory_base.retrieval.search import metadata_dict
 from memory_base.serve.access import namespaces
+from memory_base.serve.common.entities import require_active
 from memory_base.serve.common.http import TEXT_LIMIT
-from memory_base.serve.notes.store import ARCHIVE_LINEAGE_FIELDS
+from memory_base.serve.notes.store import ARCHIVE_LINEAGE_FIELDS, MAX_NOTE_ENTITIES
 
 COLD_AGE_DAYS = int(os.getenv("COLD_AGE_DAYS", "180"))
 COLD_UNHIT_DAYS = int(os.getenv("COLD_UNHIT_DAYS", "90"))
@@ -314,3 +317,76 @@ async def rows_by_ids(
             notes_only,
         )
         return [dict(row) for row in rows]
+
+
+class LinkRefused(ValueError):
+    """A link_entities call refused as a whole; `ids` names the notes at fault."""
+
+    def __init__(self, message: str, ids: list[str]) -> None:
+        super().__init__(f"{message}: {', '.join(ids)}")
+        self.ids = ids
+
+
+async def link_entities(
+    ids: list[str],
+    add: list[str],
+    remove: list[str],
+    author: str,
+    confirm: bool,
+    namespaces: list[str] | None = None,
+) -> dict[str, list[dict]]:
+    """Apply (current + add) - remove to the entity slugs of active agent notes in scope.
+
+    Rows are locked in id order and the sets recomputed from them. A changed note records
+    who set its entities and when; an unchanged note is not touched. Without `confirm`
+    nothing is written.
+    """
+    async with db.acquire() as conn:
+        await ensure_schema_once(conn)
+        async with conn.transaction():
+            rows = await conn.fetch(
+                f"""
+                SELECT id, metadata FROM "{PG_SCHEMA}".memory_chunks
+                WHERE source_type = 'agent_note' AND archived_at IS NULL
+                  AND id = ANY($1::text[])
+                  AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
+                ORDER BY id
+                FOR UPDATE
+                """,
+                ids,
+                namespaces,
+            )
+            found = {row["id"]: metadata_dict(row["metadata"]) for row in rows}
+            if missing := [i for i in ids if i not in found]:
+                raise LinkRefused("not active notes in the caller's scope", missing)
+            await require_active(conn, add, lock=True)
+            results = []
+            for note_id in sorted(found):
+                before = found[note_id].get("entities", [])
+                after = [slug for slug in dict.fromkeys([*before, *add]) if slug not in remove]
+                results.append(
+                    {
+                        "id": note_id,
+                        "before": before,
+                        "after": after,
+                        "changed": set(before) != set(after),
+                    }
+                )
+            if over := [r["id"] for r in results if len(r["after"]) > MAX_NOTE_ENTITIES]:
+                raise LinkRefused(f"a note holds at most {MAX_NOTE_ENTITIES} entities", over)
+            if confirm:
+                now = time.time()
+                for result in results:
+                    if not result["changed"]:
+                        continue
+                    metadata = {k: v for k, v in found[result["id"]].items() if k != "entities"}
+                    if result["after"]:
+                        metadata["entities"] = result["after"]
+                    metadata["entities_set_by"] = author
+                    metadata["entities_set_at"] = now
+                    await conn.execute(
+                        f'UPDATE "{PG_SCHEMA}".memory_chunks SET metadata = $2::jsonb WHERE id = $1',
+                        result["id"],
+                        json.dumps(metadata, ensure_ascii=False),
+                    )
+            return {"notes": results}
