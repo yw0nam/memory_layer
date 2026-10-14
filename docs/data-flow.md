@@ -317,8 +317,11 @@ the cold agent notes when `ids` is omitted; its preview lists them as `notes_to_
 `POST /admin/messages/purge` previews claimed, cancelled, superseded, and expired
 messages as `messages_to_delete`, and its confirm pass deletes them, which also releases
 their idempotency keys. Archiving a note is reversible and deleting a message is not,
-so a purge covers every namespace. Every mutating admin route previews by default and
-acts only with `{"confirm": true}`. The note routes are reachable over MCP as
+so a purge covers every namespace. `POST /admin/notes/delete`, `POST /admin/archive`,
+`POST /admin/restore`, and `POST /admin/messages/purge` preview by default and act only
+with `{"confirm": true}`; `POST /admin/facts` and `POST /admin/consolidate/verdicts` take
+`dry_run`; `POST /admin/notes/move`, `POST /admin/consolidate/undo`, and
+`DELETE /admin/sessions/{origin}/{session_id}` act on the call. The note routes are reachable over MCP as
 `list_memory_duplicates`, `archive_notes`, `restore_notes`, and `delete_notes`; the
 message purge is a REST-only call. `link_entities` (`POST /notes/entities`) changes the
 entity links of existing notes.
