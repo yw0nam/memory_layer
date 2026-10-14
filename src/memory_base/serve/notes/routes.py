@@ -74,6 +74,7 @@ async def save_route(request: Request) -> JSONResponse:
             body.get("content", ""),
             kind=body.get("kind"),
             tags=body.get("tags"),
+            entities=body.get("entities"),
             supersedes=body.get("supersedes"),
             namespace=namespace,
             occurred_at=body.get("occurred_at"),
@@ -113,6 +114,7 @@ async def list_route(request: Request) -> JSONResponse:
     try:
         rows = await store.list_notes(
             tags=params.getlist("tags") or None,
+            entity=params.get("entity") or None,
             kind=params.get("kind") or None,
             namespaces=scope,
             include_archived=include_archived == "true",

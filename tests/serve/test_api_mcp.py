@@ -39,6 +39,7 @@ MEMORY_META = {
     "id": "note:default:0000000000000000",
     "kind": "work",
     "tags": [],
+    "entities": [],
     "occurred_at": None,
 }
 
@@ -168,11 +169,9 @@ def test_mcp_server_registers_expected_tools():
         "list_messages",
         "claim_message",
         "cancel_message",
-        "get_my_profile",
-        "update_my_profile",
-        "update_user_profile",
         "list_entities",
         "register_entity",
+        "read_entity",
         "list_sessions",
         "read_session",
         "search_transcript",

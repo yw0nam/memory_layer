@@ -214,6 +214,7 @@ def test_save_memory_posts_the_kind_it_is_given(monkeypatch, kind):
         "author": "natsume",
         "kind": kind,
         "tags": ["infra"],
+        "entities": None,
         "supersedes": None,
         "allow_similar": False,
     }
@@ -233,8 +234,7 @@ def test_save_memory_description_states_the_decision_points_only():
         "(PIN, password, lock combination, one-time, pickup, or verification code)",
         "stated in the same sentence as its name",
         "keep every other code, password, or combination out yourself",
-        "The session-start profile may narrow or widen these rules",
-        "the more specific rule wins, and the user's part over the agent's own",
+        "The `Remember` and `Don't remember` lines of your description outrank this default.",
         "English",
         "search_memory the same subject",
         "`supersedes`",

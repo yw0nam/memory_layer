@@ -21,7 +21,7 @@ from memory_base.serve.common import rest_client
 REGISTRY = [
     {
         "slug": "natsume", "kind": "person", "name": "Natsume", "aliases": ["Nat"],
-        "description": "A friend", "archived_at": None,
+        "description": "A friend", "archived_at": None, "updated_at": "2023-11-14T22:13:20+00:00",
     }
 ]  # fmt: skip
 NEW = {"slug": "yui", "kind": "person", "name": "Yui", "aliases": ["ゆい"]}
@@ -162,3 +162,49 @@ def test_an_edit_that_changes_nothing_asks_no_consent(backend):
     result, messages = _call({"entities": [same], "author": "claude-code"}, _accept())
     assert json.loads(_text(result)) == {"status": "unchanged"}
     assert messages == [] and backend.posts == [] and backend.dry_runs == []
+
+
+def test_a_description_edit_carries_the_updated_at_of_the_registry_it_read(backend):
+    edit = {"slug": "natsume", "description": "A close friend"}
+    _call({"entities": [edit], "author": "claude-code"}, _accept())
+    stamped = {**edit, "base_updated_at": "2023-11-14T22:13:20+00:00"}
+    assert backend.dry_runs[0]["entities"] == [stamped]
+    assert backend.posts[0][1]["entities"] == [stamped]
+
+
+def test_read_entity_composes_the_card_and_the_notes_naming_the_entity(monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append((request.url.path, sorted(request.url.params.multi_items())))
+        if request.url.path == "/notes":
+            return httpx.Response(200, json=[{"id": "note:a"}])
+        return httpx.Response(
+            200, json={"entity": {"slug": "natsume"}, "facts": [], "incoming": []}
+        )
+
+    monkeypatch.setattr(
+        rest_client,
+        "client",
+        lambda: httpx.AsyncClient(
+            base_url=rest_client.REST_URL, transport=httpx.MockTransport(handler)
+        ),
+    )
+
+    async def run():
+        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as c:
+            args = {"slug": "natsume", "include_past": True, "namespace": "team-a"}
+            return await c.call_tool("read_entity", args)
+
+    result = asyncio.run(run())
+    assert json.loads(_text(result)) == {
+        "entity": {"slug": "natsume"}, "facts": [], "incoming": [], "notes": [{"id": "note:a"}]
+    }  # fmt: skip
+    assert (
+        "/entities/natsume",
+        [("include_past", "true"), ("namespace", "team-a")],
+    ) in calls
+    assert (
+        "/notes",
+        [("entity", "natsume"), ("limit", "20"), ("namespace", "team-a")],
+    ) in calls

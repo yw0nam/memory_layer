@@ -1,7 +1,7 @@
 """memory_base Hermes memory plugin — MemoryProvider interface.
 
-Delivers the configured owner's profile in the system prompt, fetched once per
-session, pre-injects a per-turn semantic prefetch over the memory-base REST API
+Delivers the agent's own card and the user's card in the system prompt, fetched at each
+session start, pre-injects a per-turn semantic prefetch over the memory-base REST API
 into every conversation turn, and posts each primary turn to the turn lane.
 
 Config via config.yaml (memory.memory_base):
@@ -12,8 +12,9 @@ Config via config.yaml (memory.memory_base):
   api_key            — API key value, takes precedence over api_key_env (optional)
   namespace          — where this agent's turns land (default: the key's home namespace)
   api_key_env        — env var holding the API key (default: MEMORY_BASE_API_KEY)
-  owner              — profile owner, an author slug of the key (no default; absent,
-                       no profile is fetched)
+  author             — this agent's own slug, an author slug of the key (no default;
+                       absent, no card is fetched)
+  user_entity        — slug of the user's entity; its card is delivered too (optional)
 """
 
 from __future__ import annotations
@@ -67,12 +68,12 @@ def _turn_reasoning(messages: list[dict[str, Any]] | None) -> str | None:
 
 
 class MemoryBaseProvider(MemoryProvider):
-    """The owner's profile at session start, semantic prefetch and turn capture every turn."""
+    """The agent's and the user's cards at session start, semantic prefetch and turn capture."""
 
     def __init__(self) -> None:
         self._config = _load_plugin_config()
         self._client: client.MemoryBaseClient | None = None
-        self._profile_block = ""
+        self._cards = ""
         self._session_id = ""
         self._primary = True
         self._warn = None
@@ -113,19 +114,29 @@ class MemoryBaseProvider(MemoryProvider):
         warn = kwargs.get("warning_callback")
         self._warn = warn if callable(warn) else None
         self._reset_outage()
-        owner = str(self._config.get("owner") or "")
-        self._profile_block = self._client.build_profile_block(owner) if owner else ""
+        self._cards = self._build_cards()
+
+    def _build_cards(self) -> str:
+        author = str(self._config.get("author") or "")
+        if not author:
+            return ""
+        return self._client.build_cards(
+            author,
+            str(self._config.get("user_entity") or "") or None,
+            str(self._config.get("namespace") or "") or None,
+        )
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
         self._session_id = new_session_id
         self._reset_outage()
+        if self._client:
+            self._cards = self._build_cards()
 
     def system_prompt_block(self) -> str:
         if not self._client:
             return ""
         session = _SESSION_LINE.format(session_id=self._session_id)
-        header, _, rest = self._profile_block.partition("\n")
-        return "\n".join(line for line in (header, session, rest) if line)
+        return "\n\n".join(part for part in (self._cards, session) if part)
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         if not self._client:
@@ -203,10 +214,13 @@ class MemoryBaseProvider(MemoryProvider):
                 "env_var": client.DEFAULT_API_KEY_ENV,
             },
             {
-                "key": "owner",
-                "description": "Profile owner and note author this agent is "
-                "(an author slug of the key)",
+                "key": "author",
+                "description": "This agent's own slug and note author (an author slug of the key)",
                 "required": True,
+            },
+            {
+                "key": "user_entity",
+                "description": "Slug of the user's entity; its card is delivered at session start",
             },
             {
                 "key": "namespace",

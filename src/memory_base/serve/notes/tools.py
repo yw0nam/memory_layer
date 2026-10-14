@@ -12,6 +12,7 @@ from memory_base.serve.common import rest_client
 
 async def list_notes(
     tags: list[str] | None = None,
+    entity: str | None = None,
     kind: str | None = None,
     since: str | None = None,
     until: str | None = None,
@@ -24,17 +25,18 @@ async def list_notes(
     """List stored notes deterministically — no search query, no relevance ranking.
 
     Use this for exact reads a similarity search cannot promise to be complete:
-    every note carrying a tag (e.g. loading profile or preference notes at
+    every note carrying a tag (e.g. loading preference notes at
     session start), or every note saved in a time window ("what was saved last
     week"). Works without the embedding backend. Returns up to `limit` notes
     (default 50, max 200) newest-first, each with id, kind, text (truncated to
-    2000 chars), tags, author, namespace, and date (YYYY-MM-DD), plus the
+    2000 chars), tags, entities, author, namespace, and date (YYYY-MM-DD), plus the
     lineage it records: `supersedes`, `archived_by`, `replaced_by` (the note that
     superseded it), `consolidated_into` (the notes a consolidation folded it
     into), `merged_from` and `merged_dates` (the notes a consolidation merged
     into it), `consolidation_action`, and `undone_action`.
 
-    `tags` matches notes carrying any of the given tags. `kind` is "personal" or
+    `tags` matches notes carrying any of the given tags. `entity` is an entity slug
+    (from list_entities) and narrows to notes naming it. `kind` is "personal" or
     "work". `since`/`until` are ISO 8601 dates or datetimes (a bare date
     covers that whole day; naive values are read as UTC). `include_archived`
     adds superseded notes, marked "archived": true. `author` narrows to notes
@@ -42,6 +44,8 @@ async def list_notes(
     key can access; omitted, it covers every namespace the key can access.
     """
     params: list[tuple[str, str]] = [("tags", tag) for tag in tags or []]
+    if entity is not None:
+        params.append(("entity", entity))
     if kind is not None:
         params.append(("kind", kind))
     if since is not None:
@@ -84,6 +88,12 @@ async def save_memory(
             "note is stored."
         ),
     ],
+    entities: Annotated[
+        list[str] | None,
+        Field(
+            description="Slugs of the registered entities the note is about, from list_entities."
+        ),
+    ] = None,
     supersedes: Annotated[
         str | None, Field(description="Id of the note this one replaces; that note is archived.")
     ] = None,
@@ -129,19 +139,24 @@ async def save_memory(
     issue, commit, or file already says, generic advice, or filler. The server refuses API
     keys, tokens, and a digit code (PIN, password, lock combination, one-time, pickup, or
     verification code) stated in the same sentence as its name; keep every other code,
-    password, or combination out yourself. The session-start profile may narrow or widen
-    these rules; the more specific rule wins, and the user's part over the agent's own.
+    password, or combination out yourself. The `Remember` and `Don't remember` lines of your
+    description outrank this default.
 
     Write `content` in English, standalone, subject first, with absolute dates ("on
     2026-09-30"). Before saving, search_memory the same subject; if the new note replaces
     one, pass `supersedes` and state the previous value, e.g. "20 dozen eggs as of 2023-05
     (30 dozen as of 2023-01)".
+
+    `entities` names the registered entities the note is about (slugs from list_entities,
+    at most 10). A preference the user authorizes as a direction to you is a change to your
+    description, not a note; otherwise it is descriptive knowledge and belongs here.
     """
     body: dict[str, Any] = {
         "content": content,
         "author": author,
         "kind": kind,
         "tags": tags,
+        "entities": entities,
         "supersedes": supersedes,
         "allow_similar": allow_similar,
     }

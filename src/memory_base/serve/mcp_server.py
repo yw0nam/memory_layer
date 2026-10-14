@@ -29,9 +29,9 @@ from mcp.server.transport_security import TransportSecuritySettings
 from memory_base.core.logger import setup_logging
 from memory_base.serve.documents import tools as document_tools
 from memory_base.serve.entities import tools as entity_tools
+from memory_base.serve.facts import tools as fact_tools
 from memory_base.serve.messages import tools as message_tools
 from memory_base.serve.notes import tools as note_tools
-from memory_base.serve.profiles import tools as profile_tools
 from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.search import tools as search_tools
 from memory_base.serve.tables import tools as table_tools
@@ -73,7 +73,9 @@ Before naming one, list_entities and reuse a slug or alias that exists; register
 refuses a name another entity holds. Every create, edit, and archive needs the user's
 consent: a dialog on a client with elicitation, otherwise a needs_consent reply that you
 put to the user before calling again with confirmed=true. In an unattended session
-(cron, no user present) never pass confirmed; leave a message instead."""
+(cron, no user present) never pass confirmed; leave a message instead. read_entity returns
+an entity's card. Facts are written only by the consolidation run, from notes that name
+an entity; to correct one, save a note naming the entity."""
 
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
@@ -151,11 +153,9 @@ mcp.tool()(message_tools.send_message)
 mcp.tool()(message_tools.list_messages)
 mcp.tool()(message_tools.claim_message)
 mcp.tool()(message_tools.cancel_message)
-mcp.tool()(profile_tools.get_my_profile)
-mcp.tool()(profile_tools.update_my_profile)
-mcp.tool()(profile_tools.update_user_profile)
 mcp.tool()(entity_tools.list_entities)
 mcp.tool()(entity_tools.register_entity)
+mcp.tool()(fact_tools.read_entity)
 mcp.tool()(turn_tools.list_sessions)
 mcp.tool()(turn_tools.read_session)
 mcp.tool()(turn_tools.search_transcript)

@@ -15,8 +15,8 @@ The unit of storage and retrieval — one embedded, independently searchable pie
 _Avoid_: record, entry, item, document (for the unit)
 
 **Note**:
-An agent-authored memory, distilled by the agent before it arrives rather than extracted from a file.
-_Avoid_: memo, observation, fact
+An agent-authored memory, distilled by the agent before it arrives rather than extracted from a file. A note names the registered entities it is about in `entities`.
+_Avoid_: memo, observation
 
 **Kind**:
 The label a note carries: `personal` (the user: their life, their day, and moments with the agent) or `work` (knowledge of the work), chosen by the agent when it calls `save_memory`; it narrows search and listing and never decides whether the note is stored. A document chunk's kind is `doc`.
@@ -99,7 +99,7 @@ A set of active notes in one namespace, every pair at or above the similarity th
 _Avoid_: cluster, duplicate set
 
 **Group key**:
-A hash over a group's members and each member's prompt-visible fields (text, kind, author, save time, event date, tags, supersedes) and the procedure version; it changes whenever any of them does.
+A hash over a group's members and each member's prompt-visible fields (text, kind, author, save time, event date, tags, entities, supersedes) and the procedure version; it changes whenever any of them does.
 _Avoid_: group id, fingerprint
 
 **Verdict**:
@@ -114,24 +114,20 @@ _Avoid_: job, operation, change set
 Note metadata that links a note to the notes that replaced or absorbed it: `supersedes` and `replaced_by` from a supersede save, `consolidated_into` on a note a consolidation archived, and `merged_from` and `merged_dates` on a merge's replacement.
 _Avoid_: history, provenance, links
 
-**Profile**:
-Standing text an agent receives at every session start, outside search: the two versioned parts of one owner. Every version is kept; the latest version of each part is served when its content is non-empty.
-_Avoid_: summary, persona, memory block
-
-**Owner**:
-The agent a profile belongs to, named by its author slug (`claude-code`, `codex`); `user` and `consolidator` are never owners. A key acts for an owner only when the owner is one of its authors. Distinct from a namespace owner, which is a key label.
-_Avoid_: profile namespace, slot
-
-**Part**:
-One of an owner's two profile documents: `self`, the agent's persona, working rules, and conventions, which the owner replaces at will; and `user`, the user as this agent needs to know them, which changes only with the user's consent, recorded on the version. Each owner's `user` part is its own document.
-_Avoid_: slot, section
-
 **Entity**:
 A registered person, agent, project, organisation, place, or thing, keyed by a slug the user consented to. Aliases resolve other spellings of its name; the server infers no equivalence between names and merges nothing.
 _Avoid_: node, subject, topic
 
+**Fact**:
+One property or relation of an entity, keyed by entity and attribute and distilled from a note by the consolidation run. A `value_entity` instead of a `value_text` makes it a relation. A fact is current while its `archived_at` is null; a replace or remove closes it and a deleted note archives it.
+_Avoid_: triple, attribute row
+
+**Card**:
+An entity's registry row, the current facts it holds and the facts that point at it, and the notes naming it.
+_Avoid_: profile, summary
+
 **Consent**:
-The user's answer, inside the conversation, to a change of the entity registry or of a profile's `user` part; recorded as the method the client reported: `elicitation`, `conversation`, or `import`.
+The user's answer, inside the conversation, to a change of the entity registry; recorded as the method the client reported: `elicitation`, `conversation`, or `import`.
 _Avoid_: approval, permission, authorization
 
 **Distilled**:

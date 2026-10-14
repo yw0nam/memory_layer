@@ -218,33 +218,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS consolidation_actions__run
           ON {schema}.consolidation_actions (namespace, run_id);
-        CREATE TABLE IF NOT EXISTS {schema}.agent_profiles (
-          id bigserial PRIMARY KEY,
-          owner text NOT NULL,
-          part text NOT NULL CHECK (part IN ('self', 'user')),
-          version int NOT NULL,
-          content text NOT NULL,
-          author text NOT NULL,
-          reason text,
-          consent_method text CHECK (consent_method IN ('elicitation', 'conversation', 'import')),
-          consented_at double precision,
-          created_at double precision NOT NULL,
-          UNIQUE (owner, part, version)
-        );
-        ALTER TABLE {schema}.agent_profiles ADD COLUMN IF NOT EXISTS reason text;
-        ALTER TABLE {schema}.agent_profiles ADD COLUMN IF NOT EXISTS consent_method text
-          CHECK (consent_method IN ('elicitation', 'conversation', 'import'));
-        ALTER TABLE {schema}.agent_profiles ADD COLUMN IF NOT EXISTS consented_at double precision;
-        DO $$
-        BEGIN
-          IF to_regclass('{schema}.profile_proposals') IS NOT NULL THEN
-            UPDATE {schema}.agent_profiles p SET reason = pp.reason
-              FROM {schema}.profile_proposals pp
-              WHERE p.proposal_id = pp.id AND p.reason IS NULL;
-          END IF;
-        END
-        $$;
-        ALTER TABLE {schema}.agent_profiles DROP COLUMN IF EXISTS proposal_id;
+        DROP TABLE IF EXISTS {schema}.agent_profiles;
         DROP TABLE IF EXISTS {schema}.profile_proposals;
         CREATE TABLE IF NOT EXISTS {schema}.entities (
           slug text PRIMARY KEY,
@@ -262,6 +236,24 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           updated_at double precision NOT NULL,
           archived_at double precision
         );
+        CREATE TABLE IF NOT EXISTS {schema}.facts (
+          id uuid PRIMARY KEY,
+          namespace text NOT NULL,
+          entity text NOT NULL REFERENCES {schema}.entities (slug),
+          attribute text NOT NULL,
+          value_text text,
+          value_entity text REFERENCES {schema}.entities (slug),
+          note_id text REFERENCES {schema}.memory_chunks (id) ON DELETE SET NULL,
+          author text NOT NULL,
+          created_at double precision NOT NULL,
+          archived_at double precision,
+          replaced_by uuid REFERENCES {schema}.facts (id),
+          CHECK ((value_text IS NULL) <> (value_entity IS NULL))
+        );
+        CREATE INDEX IF NOT EXISTS facts__entity ON {schema}.facts (entity)
+          WHERE archived_at IS NULL;
+        CREATE INDEX IF NOT EXISTS facts__value_entity ON {schema}.facts (value_entity)
+          WHERE archived_at IS NULL;
         CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
           id bigserial PRIMARY KEY,
           query text NOT NULL,

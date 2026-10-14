@@ -1,7 +1,7 @@
 {
   "name": "memory-base",
   "version": "0.1.0",
-  "description": "Memory Base for Claude Code: the owner's profile and handoffs at session start, relevant notes on every prompt, and the verbatim turn record kept beside them.",
+  "description": "Memory Base for Claude Code: the agent's and the user's cards and the repo's handoffs at session start, relevant notes on every prompt, and the verbatim turn record kept beside them.",
   "author": { "name": "yw0nam" },
   "license": "MIT",
   "keywords": ["memory", "mcp", "hooks", "memory-base"],
@@ -30,9 +30,15 @@
     "author": {
       "type": "string",
       "title": "Author",
-      "description": "The profile owner and note author this agent saves as; it must be in the key's author list.",
+      "description": "The agent's own slug and note author; it must be in the key's author list.",
       "default": "claude-code",
       "required": true
+    },
+    "user_entity": {
+      "type": "string",
+      "title": "User entity",
+      "description": "Slug of the user's entity; its card is delivered at session start.",
+      "required": false
     },
     "namespace": {
       "type": "string",

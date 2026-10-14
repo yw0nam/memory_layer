@@ -149,6 +149,8 @@ async def delete_namespace(name: str) -> None:
                   SELECT 1 FROM "{PG_SCHEMA}".messages WHERE namespace = $1
                 ) OR EXISTS(
                   SELECT 1 FROM "{PG_SCHEMA}".turns WHERE namespace = $1
+                ) OR EXISTS(
+                  SELECT 1 FROM "{PG_SCHEMA}".facts WHERE namespace = $1
                 )
                 """,
                 name,

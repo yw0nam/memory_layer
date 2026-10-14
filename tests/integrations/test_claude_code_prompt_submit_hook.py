@@ -19,7 +19,7 @@ from prompt_submit import build_context_block
 from prompt_submit import is_trivial_prompt
 from prompt_submit import run_hook
 
-CONFIG = Config("http://memory.test", "key", "claude-code", None)
+CONFIG = Config("http://memory.test", "key", "claude-code", None, None)
 
 HITS = [
     {"date": "2026-08-22", "score": 0.97, "text": "tunnel terminates at 127.0.0.1:8770"},

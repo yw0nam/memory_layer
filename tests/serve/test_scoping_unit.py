@@ -61,6 +61,7 @@ def test_save_memory_omitted_namespace_lands_in_key_home(monkeypatch):
         content,
         *,
         tags,
+        entities=None,
         kind,
         supersedes=None,
         namespace="default",
