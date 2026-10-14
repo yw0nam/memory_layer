@@ -63,11 +63,16 @@ def _item(raw: Any) -> dict[str, Any]:
     return item
 
 
-def _consent(fields: dict[str, Any]) -> tuple[str, str, bool]:
-    author, method = fields["author"], fields["consent_method"]
+def _dry_run(fields: dict[str, Any]) -> bool:
     dry_run = fields.get("dry_run", False)
     if not isinstance(dry_run, bool):
         raise RequestError("dry_run must be a boolean")
+    return dry_run
+
+
+def _consent(fields: dict[str, Any]) -> tuple[str, str, bool]:
+    author, method = fields["author"], fields["consent_method"]
+    dry_run = _dry_run(fields)
     author_slug(author)
     if method not in CONSENT_METHODS:
         raise RequestError(f"consent_method must be one of {CONSENT_METHODS}")
@@ -113,13 +118,14 @@ async def upsert_route(request: Request) -> JSONResponse:
 
 
 def _expect(value: Any) -> dict[str, int]:
-    counts = ("notes", "facts", "incoming")
     if (
         not isinstance(value, dict)
-        or set(value) != set(counts)
+        or set(value) != set(store.COUNT_KEYS)
         or not all(type(count) is int for count in value.values())
     ):
-        raise RequestError(f"expect must be an object of integer counts: {', '.join(counts)}")
+        raise RequestError(
+            f"expect must be an object of integer counts: {', '.join(store.COUNT_KEYS)}"
+        )
     return value
 
 
@@ -129,10 +135,10 @@ async def delete_route(request: Request) -> JSONResponse:
     A plan that differs from `expect` is a 409 carrying the current plan."""
     try:
         slug = _slug(request.path_params["slug"])
-        fields = object_fields(
-            await request_body(request), {"author", "consent_method"}, {"dry_run", "expect"}
-        )
-        author, _, dry_run = _consent(fields)
+        fields = object_fields(await request_body(request), {"author"}, {"dry_run", "expect"})
+        author = fields["author"]
+        author_slug(author)
+        dry_run = _dry_run(fields)
         expect = _expect(fields["expect"]) if "expect" in fields else None
     except RequestError as exc:
         return error(str(exc))

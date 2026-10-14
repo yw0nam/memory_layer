@@ -23,6 +23,7 @@ from memory_base.serve.common.http import iso
 
 _ENTITIES = f'"{PG_SCHEMA}".entities'
 _FACTS = f'"{PG_SCHEMA}".facts'
+COUNT_KEYS = ("notes", "facts", "incoming")
 
 LIST_SQL = f"SELECT * FROM {_ENTITIES} ORDER BY slug"
 INSERT_SQL = f"""
@@ -184,8 +185,8 @@ async def delete(
 ) -> dict[str, Any]:
     """Delete an entity: unlink it from every agent note, delete its facts, drop its row.
 
-    The plan is `{note_ids, facts, incoming}`: the notes holding the slug, the entity's own
-    facts, and other entities' facts pointing at it. A dry run returns it and writes nothing.
+    The plan is `{note_ids, notes, facts, incoming}`: the notes holding the slug and their
+    count, the entity's own facts, and other entities' facts pointing at it. A dry run returns it and writes nothing.
     `expect` is the `{notes, facts, incoming}` counts of the preview; a plan that differs
     under the lock raises PlanChanged. Raises ValueError for an unknown slug.
     """
@@ -199,13 +200,13 @@ async def delete(
             facts = await conn.fetch(FACTS_SQL, slug)
             plan = {
                 "note_ids": [row["id"] for row in notes],
+                "notes": len(notes),
                 "facts": sum(row["own"] for row in facts),
                 "incoming": sum(not row["own"] for row in facts),
             }
-            counts = {"notes": len(notes), "facts": plan["facts"], "incoming": plan["incoming"]}
             if dry_run:
                 return plan
-            if expect is not None and expect != counts:
+            if expect is not None and expect != {key: plan[key] for key in COUNT_KEYS}:
                 raise PlanChanged(plan)
             now = _now()
             for row in notes:

@@ -43,7 +43,7 @@ def _based(item: dict[str, Any], current: dict[str, Any] | None) -> dict[str, An
 def _delete_summary(slug: str, name: str, plan: dict[str, Any]) -> str:
     notes = plan["note_ids"]
     return (
-        f"delete {slug} ({name}): unlink it from {len(notes)} notes"
+        f"delete {slug} ({name}): unlink it from {plan['notes']} notes"
         f"{': ' + ', '.join(notes) if notes else ''}; delete {plan['facts']} facts of it and "
         f"{plan['incoming']} facts of other entities that point at it"
     )
@@ -79,8 +79,8 @@ async def register_entity(
     delete is put to the user: on a client with elicitation a dialog appears in this call;
     on others the tool returns {status: "needs_consent", summary} and writes nothing, so ask
     the user in the conversation, then call again with confirmed=true and the same input; a
-    delete also needs expect, the {notes, facts, incoming} counts the summary states, and is
-    refused if the counts changed meanwhile. In an unattended session (cron, no user
+    delete's reply also carries expect, the {notes, facts, incoming} counts, to pass back
+    unchanged; the delete is refused if the counts changed meanwhile. In an unattended session (cron, no user
     present) never pass confirmed; send a message naming the entity on the messages lane
     instead, and the next interactive session asks. A refused request never reaches the user.
     The user is an entity of kind person; a project entity carries its repository origin
@@ -93,40 +93,51 @@ async def register_entity(
     current = await rest_client.call("GET", "/entities", headers=headers)
     registry = {row["slug"]: row for row in current["entities"]}
     if delete:
-        if len(entities) != 1 or set(entities[0]) != {"slug"}:
-            raise ValueError("delete takes exactly one item with only a slug")
-        if confirmed and expect is None:
-            raise ValueError("a confirmed delete needs expect, the counts of the summary")
-        slug = entities[0]["slug"]
-        path, payload = f"/entities/{slug}/delete", {}
-    else:
-        entities = [_based(item, registry.get(item["slug"])) for item in entities]
-        pairs = [(item, _line(item, registry.get(item["slug"]))) for item in entities]
-        entities = [item for item, line in pairs if line is not None]
-        if not entities:
-            return {"status": "unchanged"}
-        lines = [line for _, line in pairs if line is not None]
-        path, payload = "/entities", {"entities": entities}
-    body = {"author": author, **payload}
-    preview = await rest_client.call(
+        return await _delete(entities, author, confirmed, expect, registry, headers, ctx)
+    entities = [_based(item, registry.get(item["slug"])) for item in entities]
+    pairs = [(item, _line(item, registry.get(item["slug"]))) for item in entities]
+    entities = [item for item, line in pairs if line is not None]
+    if not entities:
+        return {"status": "unchanged"}
+    summary = "\n".join(line for _, line in pairs if line is not None)
+    body = {"author": author, "entities": entities}
+    await rest_client.call(
         "POST",
-        path,
+        "/entities",
         json={**body, "consent_method": "conversation", "dry_run": True},
         headers=headers,
     )
-    if delete:
-        lines = [_delete_summary(slug, registry[slug]["name"], preview)]
-    summary = "\n".join(lines)
     result = await consent.obtain(ctx, f"{PROMPT_HEADER}\n{summary}", confirmed)
     if isinstance(result, consent.NeedsConsent):
         return {"status": "needs_consent", "summary": summary}
-    if delete:
-        counts = {
-            "notes": len(preview["note_ids"]),
-            "facts": preview["facts"],
-            "incoming": preview["incoming"],
-        }
-        body["expect"] = counts if result.method == "elicitation" else expect
     return await rest_client.call(
-        "POST", path, json={**body, "consent_method": result.method}, headers=headers
+        "POST", "/entities", json={**body, "consent_method": result.method}, headers=headers
     )
+
+
+async def _delete(
+    entities: list[dict[str, Any]],
+    author: str,
+    confirmed: bool,
+    expect: dict[str, int] | None,
+    registry: dict[str, dict[str, Any]],
+    headers: dict[str, str],
+    ctx: Context | None,
+) -> dict[str, Any]:
+    """Preview a delete with a dry run, put it to the user, and delete with the previewed counts."""
+    if len(entities) != 1 or set(entities[0]) != {"slug"}:
+        raise ValueError("delete takes exactly one item with only a slug")
+    if confirmed and expect is None:
+        raise ValueError("a confirmed delete needs expect, the counts of the summary")
+    slug = entities[0]["slug"]
+    path = f"/entities/{slug}/delete"
+    plan = await rest_client.call(
+        "POST", path, json={"author": author, "dry_run": True}, headers=headers
+    )
+    counts = {key: plan[key] for key in ("notes", "facts", "incoming")}
+    summary = _delete_summary(slug, registry[slug]["name"], plan)
+    result = await consent.obtain(ctx, f"{PROMPT_HEADER}\n{summary}", confirmed)
+    if isinstance(result, consent.NeedsConsent):
+        return {"status": "needs_consent", "summary": summary, "expect": counts}
+    body = {"author": author, "expect": counts if result.method == "elicitation" else expect}
+    return await rest_client.call("POST", path, json=body, headers=headers)
