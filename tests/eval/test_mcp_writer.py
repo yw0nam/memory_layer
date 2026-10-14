@@ -61,10 +61,11 @@ def test_the_prompt_is_the_published_instruction_the_author_and_the_session():
         {"role": "user", "content": "I adopted a cat.", "has_answer": True},
         {"role": "assistant", "content": "Congratulations!"},
     ]
-    prompt = mcp_writer.writer_prompt("2023/05/20 (Sat) 02:21", turns)
+    prompt = mcp_writer.writer_prompt("2023/05/20 (Sat) 02:21", turns, "lme-q")
     assert prompt == (
         f"{mcp_writer.INSTRUCTION}\n"
-        f"{mcp_writer.AUTHOR_LINE}\n\n"
+        f"{mcp_writer.AUTHOR_LINE}\n"
+        "Pass namespace lme-q to every memory tool call that takes one.\n\n"
         "Session date: 2023-05-20T02:21:00\n\n"
         "User: I adopted a cat.\n\n"
         "Assistant: Congratulations!"

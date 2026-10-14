@@ -21,7 +21,7 @@ def _postgres_message(exc: asyncpg.PostgresError) -> str:
 
 
 async def query_route(request: Request) -> JSONResponse:
-    """Validate and execute a raw SELECT in one namespace permitted by the caller's key."""
+    """Validate and execute a raw SELECT, in one namespace when `namespace` is given."""
     try:
         body = await json_body(request)
     except Exception as exc:
@@ -34,13 +34,12 @@ async def query_route(request: Request) -> JSONResponse:
     if _SELECT_PREFIX.match(sql) is None:
         return error("sql must start with SELECT or WITH")
 
-    namespace = body.get("namespace", request.state.key.home)
-    try:
-        namespace = namespaces.validate_namespace_name(namespace)
-    except namespaces.NamespaceError as exc:
-        return error(str(exc))
-    if not request.state.key.permits(namespace):
-        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
+    namespace = body.get("namespace")
+    if namespace is not None:
+        try:
+            namespace = namespaces.validate_namespace_name(namespace)
+        except namespaces.NamespaceError as exc:
+            return error(str(exc))
 
     try:
         payload = await store.execute_table_query(sql, namespace)

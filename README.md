@@ -86,46 +86,46 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `namespaces`, `since`/`until`, `include_archived`; without `budget_tokens` the reranked results are capped at 10 before `top_k` applies |
 | `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the optional `entities` (at most ten active entity slugs; 400 on a malformed slug, an unknown or archived one, or more than ten), the required `kind` (`personal` or `work`, a label for search and listing), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); no chat model judges the note; refused with 409 when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set, and before embedding when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `entity` (a slug), `kind` (`personal` or `work`), `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
-| `POST` | `/notes/entities` | add or remove entity slugs on 1–200 existing active notes in the caller's namespaces — `ids`, `author` (one of the key's authors), `add` (active entity slugs), `remove` (slugs, any state), `confirm`; each note's set becomes (current ∪ `add`) − `remove`, at most ten; 400 naming the ids when any is not an active note in scope or would exceed ten; without `confirm` returns `{notes: [{id, before, after, changed}]}` and writes nothing; a changed note records `entities_set_by` and `entities_set_at` |
+| `POST` | `/notes/entities` | add or remove entity slugs on 1–200 existing active notes — `ids`, `author` (an author slug), `add` (active entity slugs), `remove` (slugs, any state), `confirm`; each note's set becomes (current ∪ `add`) − `remove`, at most ten; 400 naming the ids when any is not an active note or would exceed ten; without `confirm` returns `{notes: [{id, before, after, changed}]}` and writes nothing; a changed note records `entities_set_by` and `entities_set_at` |
 | `GET` | `/entities` | the entity registry ordered by slug — `include_archived` (`true`\|`false`, default `false`); see [data flow](docs/data-flow.md#entity-registry) |
-| `POST` | `/entities` | create or edit 1–50 entities in one batch — `entities` (`slug`, and `kind`, `name`, `aliases`, `description` on a create), `author` (one of the key's authors), `dry_run` (run every check, write nothing), `consent_method` (`elicitation`\|`conversation`\|`import`; `import` needs an admin key carrying `user`); 409 `{error, holder, value}` when a slug, name, or alias is held by another entity |
+| `POST` | `/entities` | create or edit 1–50 entities in one batch — `entities` (`slug`, and `kind`, `name`, `aliases`, `description` on a create), `author` (an author slug), `dry_run` (run every check, write nothing), `consent_method` (`elicitation`\|`conversation`\|`import`, recorded as the client states it); 409 `{error, holder, value}` when a slug, name, or alias is held by another entity |
 | `POST` | `/entities/{slug}/archive` | archive an active entity — `author`, `consent_method`, `dry_run` as for `POST /entities`; its name stays reserved |
-| `GET` | `/entities/{slug}` | an entity's card — `{entity, facts, incoming}`; `include_past` (`true`\|`false`, default `false`) adds closed facts, `namespace` (repeatable) narrows to namespaces the key may read; 404 for an unknown slug; see [data flow](docs/data-flow.md#facts-and-cards) |
-| `POST` | `/admin/facts` | apply 1–100 fact ops (`add`, `replace`, `remove`) all or nothing — `author`, `ops`, `dry_run`; needs an admin key carrying `consolidator`; 400 names the refused op |
+| `GET` | `/entities/{slug}` | an entity's card — `{entity, facts, incoming}`; `include_past` (`true`\|`false`, default `false`) adds closed facts, `namespace` (repeatable) narrows to those namespaces; 404 for an unknown slug; see [data flow](docs/data-flow.md#facts-and-cards) |
+| `POST` | `/admin/facts` | apply 1–100 fact ops (`add`, `replace`, `remove`) all or nothing — `author`, `ops`, `dry_run`; 400 names the refused op |
 | `POST` | `/turns` | append one verbatim turn — `id` (client-chosen UUID), `origin` (`claude_code`\|`hermes`), `session_id`, `role` (`user`\|`assistant`), `content` (at most 64,000 characters), optional `reasoning`, `repo` (`repo:<host>/<path>`), `namespace`; returns `{id, seq, stored}`; a replay with the same payload returns the stored `seq` with `stored: false`, the same `id` with a different payload is 409, a credential is refused, and a session's namespace is fixed by its first turn |
 | `GET` | `/sessions` | sessions newest first — `since`, `until`, `origin`, `repo`, repeated `namespace`, `limit` (default 50, max 200); each `{origin, session_id, namespace, repo, started_at, last_at, turns, title}` |
 | `GET` | `/sessions/{origin}/{session_id}` | a session's turns in `seq` order — `offset` (a seq), `limit`, and `contains` (case-insensitive substring of at least 2 characters: the matching turns and one neighbour each side, matches marked `match: true`); cut by `limit` or 40,000 characters with `next_offset`; see [data flow](docs/data-flow.md#turn-lane) |
 | `GET` | `/turns/search` | turns whose content holds the literal substring `q` (at least 2 characters), newest first, each with a 300-character window — `since`, `until`, `origin`, `repo`, repeated `namespace`, `limit` |
 | `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, `author`, optional `idempotency_key` and `expires_at`; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
-| `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown or out-of-scope id a 404 |
-| `DELETE` | `/messages/{id}` | cancel a pending message — the sender, or an admin key for any accessible one |
-| `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, `namespace` (default the key's home), repeated `tags`; overwriting an existing `document_id` is creator-or-admin only; a credential in the filename, `document_id`, `origin`, or a tag is refused with 400, and one in the content fails the job with nothing stored |
-| `DELETE` | `/ingest/documents/{document_id}` | remove a document's chunks and table rows in one namespace (`namespace` query param, default the key's home) — the document's creator or an admin key only |
-| `POST` | `/tables/query` | read-only SQL over `memory.doc_rows` — `sql` (`SELECT`/`WITH`), `namespace`; 1,000-row / 5 MB / 10 s caps |
+| `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown id a 404 |
+| `DELETE` | `/messages/{id}` | cancel a pending message |
+| `POST` | `/ingest/document` | multipart upload — `file`, `document_id`, `mode` (`upsert`\|`force`), `origin`, `namespace` (default `default`), repeated `tags`; a credential in the filename, `document_id`, `origin`, or a tag is refused with 400, and one in the content fails the job with nothing stored |
+| `DELETE` | `/ingest/documents/{document_id}` | remove a document's chunks and table rows in one namespace (`namespace` query param, default `default`) |
+| `POST` | `/tables/query` | read-only SQL over `memory.doc_rows` — `sql` (`SELECT`/`WITH`), optional `namespace` (omitted: every namespace); 1,000-row / 5 MB / 10 s caps |
 | `GET` | `/ingest/jobs` | newest document jobs, optionally filtered by exact `origin` and `status` |
 | `GET` | `/ingest/jobs/{job_id}` | document job state |
 | `POST` | `/repos` | add or re-sync a git repo — `url`, `branch`, `name` |
-| `GET` | `/repos` | cached repos with url, branch, head, chunk count, owner |
-| `DELETE` | `/repos/{name}` | remove a repo and re-index — the repo's owner or an admin key only |
+| `GET` | `/repos` | cached repos with url, branch, head, chunk count |
+| `DELETE` | `/repos/{name}` | remove a repo and re-index |
 | `GET` | `/repos/jobs/{job_id}` | repo job state |
-| `POST` | `/namespaces` | register a namespace — `name` (`^[a-z0-9_-]{1,64}$`), `visibility` (`public`\|`private`, default `public`); a private namespace records the caller's key label as owner |
-| `GET` | `/namespaces` | list namespaces the caller can access (every namespace for an admin key) |
-| `DELETE` | `/namespaces/{name}` | unregister a namespace with no notes, chunks, table rows, messages, or turns — the namespace's owner or an admin key only; the reserved `default` namespace cannot be deleted |
-| `GET` | `/keys/{label}/authors` | a label's author allowlist — an admin key reads any label, a member key only its own |
-| `PUT` | `/keys/{label}/authors` | replace a label's allowlist — `authors` (slugs matching `^[a-z0-9][a-z0-9-]{0,39}$`); admin keys only |
+| `POST` | `/namespaces` | register a namespace — `name` (`^[a-z0-9_-]{1,64}$`) |
+| `GET` | `/namespaces` | list the registered namespaces |
+| `DELETE` | `/namespaces/{name}` | unregister a namespace with no notes, chunks, table rows, messages, or turns; the reserved `default` namespace cannot be deleted |
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
 | `POST` | `/admin/notes/delete` | preview, or delete with `confirm` |
-| `POST` | `/admin/notes/move` | move agent notes into another registered namespace — admin key only; `ids`, `namespace`; returns `{moved, skipped}`, rewriting each moved note's id to `note:<target>:<hash>`; an id already present in the target, or naming no agent note, is skipped |
+| `POST` | `/admin/notes/move` | move agent notes into another registered namespace — `ids`, `namespace`; returns `{moved, skipped}`, rewriting each moved note's id to `note:<target>:<hash>`; an id already present in the target, or naming no agent note, is skipped |
 | `GET` | `/admin/duplicates` | near-duplicate agent-note pairs above `threshold` (default 0.75) |
-| `GET` | `/admin/consolidate/groups` | groups of active agent notes that may state the same thing, for an agent to judge; a pair either note lists in `similar_ack` is ignored and counted; a group with a recorded verdict, or with exactly the members of an undone action, is left out and counted `cached`; changes no note — an admin key with `consolidator` in its authors only; `namespace` (repeatable, default every registered namespace), `threshold` (0 < x ≤ 1, default 0.72), `neighbors` (1–50, default 5), `max_group` (2–20, default 6), `max_group_chars` (≥ 500, default 12000), `limit` (groups per namespace, 1–1000, default 200); see [data flow](docs/data-flow.md#consolidation-groups) |
-| `POST` | `/admin/consolidate/verdicts` | apply an agent's `keep` / `retire` / `merge` verdicts on issued groups, each alone in one transaction under a per-namespace lock — same key as the groups route, `author` one of its authors; `run_id`, `model`, `dry_run` (plan only, no write), the groups call's `threshold` / `neighbors` / `max_group` / `max_group_chars`, `max_actions` (retire and merge per run and namespace, 1–500, default 20), 1–200 `verdicts`; a schema violation refuses the whole request with 400; each result is `applied`, `planned`, `cached`, `duplicate`, `stale` (with the current groups), `rejected`, or `failed` (an embedder or database error rolled that verdict back; retry it with the same idempotency key); a merge text must pass a two-direction token check (numbers, dates, backticked spans, names) that a changed sentence-initial name, a negation, a caseless-script name, or a version inside an identifier (`v2.0`) passes; see [data flow](docs/data-flow.md#consolidation-verdicts) |
+| `GET` | `/admin/consolidate/groups` | groups of active agent notes that may state the same thing, for an agent to judge; a pair either note lists in `similar_ack` is ignored and counted; a group with a recorded verdict, or with exactly the members of an undone action, is left out and counted `cached`; changes no note — `namespace` (repeatable, default every registered namespace), `threshold` (0 < x ≤ 1, default 0.72), `neighbors` (1–50, default 5), `max_group` (2–20, default 6), `max_group_chars` (≥ 500, default 12000), `limit` (groups per namespace, 1–1000, default 200); see [data flow](docs/data-flow.md#consolidation-groups) |
+| `POST` | `/admin/consolidate/verdicts` | apply an agent's `keep` / `retire` / `merge` verdicts on issued groups, each alone in one transaction under a per-namespace lock — `author` (an author slug), `run_id`, `model`, `dry_run` (plan only, no write), the groups call's `threshold` / `neighbors` / `max_group` / `max_group_chars`, `max_actions` (retire and merge per run and namespace, 1–500, default 20), 1–200 `verdicts`; a schema violation refuses the whole request with 400; each result is `applied`, `planned`, `cached`, `duplicate`, `stale` (with the current groups), `rejected`, or `failed` (an embedder or database error rolled that verdict back; retry it with the same idempotency key); a merge text must pass a two-direction token check (numbers, dates, backticked spans, names) that a changed sentence-initial name, a negation, a caseless-script name, or a version inside an identifier (`v2.0`) passes; see [data flow](docs/data-flow.md#consolidation-verdicts) |
 | `POST` | `/admin/consolidate/undo` | reverse one action — `action_id`, `author`; restores the notes it archived with their prior metadata and archives a replacement it created; 409 with nothing changed when a later change touched them or for a keep, 404 for an unknown id, the recorded result when already undone; see [data flow](docs/data-flow.md#consolidation-undo-and-actions) |
 | `GET` | `/admin/consolidate/actions` | consolidation actions newest first with the full text and lineage of every note they name — `namespace`, `run_id`, `note_id`, `limit` (1–500, default 50) |
-| `POST` | `/admin/archive` | preview cold agent notes (`notes_to_archive`), then archive them with `confirm`; `ids` selects agent notes in the caller's scope and requires an `author`, stamped on every row archived; an id that is not an active note in scope makes the whole call a 400 that lists them as `missing` |
-| `DELETE` | `/admin/sessions/{origin}/{session_id}` | hard-delete every turn of a session — admin key only; returns `{deleted}` |
-| `POST` | `/admin/messages/purge` | preview claimed, cancelled, superseded, and expired messages (`messages_to_delete`), then delete them with `confirm` (`deleted`); deletion is permanent and releases their idempotency keys, so a member key purges only the namespaces it owns |
+| `POST` | `/admin/archive` | preview cold agent notes (`notes_to_archive`), then archive them with `confirm`; `ids` selects agent notes and requires an `author`, stamped on every row archived; an id that is not an active note makes the whole call a 400 that lists them as `missing` |
+| `DELETE` | `/admin/sessions/{origin}/{session_id}` | hard-delete every turn of a session; returns `{deleted}` |
+| `POST` | `/admin/messages/purge` | preview claimed, cancelled, superseded, and expired messages (`messages_to_delete`), then delete them with `confirm` (`deleted`); deletion is permanent and releases their idempotency keys |
 | `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author and the `replaced_by` and `consolidated_into` lineage |
+
+The `/admin/*` routes are maintenance routes; any valid key may call them.
 
 An agent runs the consolidation routes on a schedule by following [docs/consolidation-procedure.md](docs/consolidation-procedure.md).
 
@@ -249,36 +249,32 @@ Every route except `/health` and `/health/services` requires an `X-API-Key` head
 (`ApiKeyAuthMiddleware` in `serve/access/auth.py`); a missing, unknown, or revoked key gets a
 fail-closed `401`.
 
+A key is a credential for the network boundary and grants nothing else: any valid key may
+call every route, and every key is equal. Each client holds its own key, so one host or
+agent is cut off by revoking its key alone. The `label` of a key names the client that
+holds it.
+
 Keys are provisioned with an operator CLI, not through the API:
 
 ```bash
-uv run python -m memory_base.serve.access.keys new <label> [--home <namespace>] [--admin] [--author <slug>]...
-uv run python -m memory_base.serve.access.keys authors <label> [<slug>...]
+uv run python -m memory_base.serve.access.keys new <label>
 uv run python -m memory_base.serve.access.keys list
 uv run python -m memory_base.serve.access.keys revoke <key-hash-prefix>
 ```
 
-`new` prints the plaintext key once, on its last line — only its sha256 hash is stored. `--home` sets the
-namespace `save_memory` and document ingest default into (`default` when omitted);
-minting fails if that namespace does not exist or is not accessible to the label.
+`new` prints the plaintext key once, on its last line — only its sha256 hash is stored.
 `revoke` takes an 8+ character prefix of the stored hash, as shown by `list`, and
 revokes every active key matching it.
 
-An admin key (`--admin`) can read and act in every namespace. A member key's allowed
-set is every public namespace plus any private namespace it owns — ownership is set to
-the minting key's label when the namespace is created with `visibility: private`.
-Requests naming a namespace outside that set get `403`.
+Every saved note, archive, link, message, and fact names its `author`, a slug matching
+`^[a-z0-9][a-z0-9-]{0,39}$` that the client declares in its configuration. The server
+records it and grants nothing by it. A namespace is a registered label for filtering:
+a write without `namespace` lands in `default`, a read without a namespace filter covers
+every namespace, and nothing in a namespace is private.
 
-Every saved note names its author, and the value must be in the key's author allowlist
-(`api_keys.authors`; a key minted without `--author` cannot save until an allowlist is set).
-Admin keys get no bypass. `keys authors <label>` prints a label's allowlist and, given
-slugs, replaces it on every active key of the label; over REST the same list is
-`GET /keys/{label}/authors` and `PUT /keys/{label}/authors` (admin only).
-
-Each agent gets its own key whose allowlist is its own author slug, so it writes only its
-own notes. The `connect-agent` skill
+Each agent gets its own key and author slug. The `connect-agent` skill
 ([integrations/claude_code/skills/connect-agent/SKILL.md](integrations/claude_code/skills/connect-agent/SKILL.md))
-walks through connecting, changing, and disconnecting an agent.
+walks through connecting and disconnecting an agent.
 
 The MCP server needs the same header: over streamable HTTP it forwards the caller's own
 `X-API-Key`, and over stdio (no inbound HTTP request to read one from) it reads the

@@ -187,7 +187,6 @@ def test_repo_job_response_shape():
         url="https://example.com/repo.git",
         branch=None,
         key_id="hash",
-        key_label="label",
         created_at=now,
         updated_at=now,
     )
@@ -218,7 +217,6 @@ class AcceptingBacklog:
             url=kwargs["url"],
             branch=kwargs["branch"],
             key_id=kwargs["key_id"],
-            key_label=kwargs["key_label"],
             created_at=now,
             updated_at=now,
         )

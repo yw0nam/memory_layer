@@ -14,7 +14,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api
-from memory_base.serve.access import auth
 from memory_base.serve.consolidation import verdicts
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
@@ -281,22 +280,6 @@ def test_an_active_descendant_refuses_through_the_recursive_query(monkeypatch):
 # ---- routes -----------------------------------------------------------------
 
 
-def _use_identity(monkeypatch, is_admin=True, authors=("consolidator",)):
-    identity = auth.KeyIdentity(
-        key_id="consolidator-key-hash",
-        label="consolidator",
-        home="default",
-        is_admin=is_admin,
-        allowed=frozenset({"default"}),
-        authors=frozenset(authors),
-    )
-
-    async def fake_authenticate_request(plaintext_key):
-        return identity if plaintext_key == "test-key" else None
-
-    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
-
-
 @pytest.fixture()
 def undo_calls(monkeypatch):
     calls = []
@@ -312,28 +295,6 @@ def undo_calls(monkeypatch):
     return calls, outcome
 
 
-def test_undo_route_refuses_a_non_admin_key(monkeypatch, undo_calls):
-    _use_identity(monkeypatch, is_admin=False)
-    response = client.post(
-        "/admin/consolidate/undo", json={"action_id": 5, "author": "consolidator"}
-    )
-    assert response.status_code == 403
-    assert undo_calls[0] == []
-
-
-def test_undo_route_refuses_an_admin_key_without_the_consolidator_author(undo_calls):
-    response = client.post("/admin/consolidate/undo", json={"action_id": 5, "author": "natsume"})
-    assert response.status_code == 403
-    assert undo_calls[0] == []
-
-
-def test_undo_route_refuses_an_author_outside_the_keys_authors(monkeypatch, undo_calls):
-    _use_identity(monkeypatch)
-    response = client.post("/admin/consolidate/undo", json={"action_id": 5, "author": "natsume"})
-    assert response.status_code == 403
-    assert undo_calls[0] == []
-
-
 @pytest.mark.parametrize(
     "raw",
     [
@@ -345,7 +306,6 @@ def test_undo_route_refuses_an_author_outside_the_keys_authors(monkeypatch, undo
     ],
 )
 def test_undo_route_rejects_a_bad_body(monkeypatch, undo_calls, raw):
-    _use_identity(monkeypatch)
     response = client.post("/admin/consolidate/undo", json=raw)
     assert response.status_code == 400
     assert undo_calls[0] == []
@@ -356,7 +316,6 @@ def test_undo_route_rejects_a_bad_body(monkeypatch, undo_calls, raw):
     [(verdicts.UndoNotFound("no action 5"), 404), (verdicts.UndoRefused("nothing to undo"), 409)],
 )
 def test_undo_route_maps_errors(monkeypatch, undo_calls, error, status):
-    _use_identity(monkeypatch)
     undo_calls[1]["raise"] = error
     response = client.post(
         "/admin/consolidate/undo", json={"action_id": 5, "author": "consolidator"}
@@ -366,7 +325,6 @@ def test_undo_route_maps_errors(monkeypatch, undo_calls, error, status):
 
 
 def test_undo_route_returns_the_undo_result(monkeypatch, undo_calls):
-    _use_identity(monkeypatch)
     response = client.post(
         "/admin/consolidate/undo", json={"action_id": 5, "author": "consolidator"}
     )
@@ -387,13 +345,7 @@ def listing(monkeypatch):
     return calls
 
 
-def test_actions_route_refuses_without_the_consolidator_author(listing):
-    assert client.get("/admin/consolidate/actions").status_code == 403
-    assert listing == []
-
-
 def test_actions_route_defaults(monkeypatch, listing):
-    _use_identity(monkeypatch)
     response = client.get("/admin/consolidate/actions")
     assert response.status_code == 200
     assert response.json() == {"actions": [], "notes": {}}
@@ -401,7 +353,6 @@ def test_actions_route_defaults(monkeypatch, listing):
 
 
 def test_actions_route_forwards_filters(monkeypatch, listing):
-    _use_identity(monkeypatch)
     response = client.get(
         "/admin/consolidate/actions",
         params={"namespace": NS, "run_id": "run-1", "note_id": A, "limit": "7"},
@@ -422,7 +373,6 @@ def test_actions_route_forwards_filters(monkeypatch, listing):
     ],
 )
 def test_actions_route_rejects_a_bad_parameter(monkeypatch, listing, params):
-    _use_identity(monkeypatch)
     response = client.get("/admin/consolidate/actions", params=params)
     assert response.status_code == 400
     assert listing == []

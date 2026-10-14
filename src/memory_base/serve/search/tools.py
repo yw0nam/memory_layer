@@ -80,9 +80,8 @@ async def search_all(
     `include_archived` widens the search to archived memory; use `search_memory`
     for the `kind`/`tags` filters, which apply to memory only.
 
-    `namespace` narrows the memory search to one namespace the caller's API
-    key can access; omitted, it covers every namespace the key can access.
-    A namespace the key cannot access is rejected by the server.
+    `namespace` narrows the memory search to one namespace; omitted, it covers
+    every namespace.
 
     Hits scoring below `min_score` are dropped (default 0.25 on the 0-1 rerank
     relevance scale; pass 0 to disable).
@@ -168,9 +167,8 @@ async def search_memory(
     adds carry "archived": true because they may have been replaced by a newer
     note.
 
-    `namespace` narrows the search to one namespace the caller's API key can
-    access; omitted, it covers every namespace the key can access. A
-    namespace the key cannot access is rejected by the server.
+    `namespace` narrows the search to one namespace; omitted, it covers every
+    namespace.
 
     `kind` is "personal", "work", or "doc" (document chunks and CSV cards).
 

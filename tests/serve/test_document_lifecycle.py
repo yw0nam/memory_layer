@@ -1,5 +1,4 @@
-"""Unit tests for document ownership and deletion: created_by stamping, the
-overwrite gate on re-ingest, and DELETE /ingest/documents/{document_id}."""
+"""Unit tests for document re-ingest and DELETE /ingest/documents/{document_id}."""
 
 from __future__ import annotations
 
@@ -12,7 +11,7 @@ import httpx
 import pytest
 
 from memory_base.serve import api
-from memory_base.serve.access import auth, namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.common import job_store
 from memory_base.serve.documents import pipeline as document_pipeline
 from memory_base.serve.documents import store as document_store
@@ -26,19 +25,6 @@ def _default_namespace_registered(monkeypatch):
         return name in {"default", "team-a"}
 
     monkeypatch.setattr(namespaces, "namespace_exists", fake_namespace_exists)
-
-
-def _identity(label, *, is_admin=False, allowed=frozenset({"default"})):
-    return auth.KeyIdentity(
-        key_id=f"{label}-hash", label=label, home="default", is_admin=is_admin, allowed=allowed
-    )
-
-
-def _auth_map(monkeypatch, mapping):
-    async def fake_authenticate_request(plaintext_key):
-        return mapping.get(plaintext_key)
-
-    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
 
 
 def _post(path, api_key="test-key", **kwargs):
@@ -82,7 +68,6 @@ class AcceptingBacklog:
             filename=kwargs["filename"],
             spool_path=kwargs["spool_path"],
             key_id=kwargs["key_id"],
-            key_label=kwargs["key_label"],
             tags=kwargs["tags"],
             created_at=now,
             updated_at=now,
@@ -90,81 +75,15 @@ class AcceptingBacklog:
         return self.job
 
 
-def _job(document_id="guide.md", key_label="test"):
+def _job(document_id="guide.md"):
     now = time.time()
     return job_store.IngestJob(
         "job",
         document_id,
         status="running",
-        key_label=key_label,
         created_at=now,
         updated_at=now,
     )
-
-
-# ---- created_by stamping on ingest -----------------------------------------
-
-
-def test_ingest_stamps_created_by_with_key_label(monkeypatch, tmp_path):
-    upload = tmp_path / "guide.md"
-    upload.write_text("source")
-    written = []
-
-    async def no_owner(document_id, namespace="default", schema=None):
-        return False, None
-
-    async def converted(path):
-        from memory_base.adapters import document
-
-        return document.ConversionResult("Useful document prose. " * 40, "markitdown:0.1.2")
-
-    async def embed(rows):
-        for row in rows:
-            row["embedding"] = "[0]"
-            row.pop("embedding_text")
-
-    async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
-        written.extend(rows)
-
-    monkeypatch.setattr(document_store, "existing_document_owner", no_owner)
-    monkeypatch.setattr(document_pipeline, "convert_to_markdown", converted)
-    monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
-    monkeypatch.setattr(document_store, "replace_document_rows", write)
-    job = _job(key_label="alice")
-    asyncio.run(document_pipeline.run_document_job(job, upload, "guide.md", "force", None))
-    assert written
-    assert all(row["metadata"]["created_by"] == "alice" for row in written)
-
-
-def test_reingest_preserves_original_created_by(monkeypatch, tmp_path):
-    upload = tmp_path / "guide.md"
-    upload.write_text("source")
-    written = []
-
-    async def existing_owner(document_id, namespace="default", schema=None):
-        return True, "alice"
-
-    async def converted(path):
-        from memory_base.adapters import document
-
-        return document.ConversionResult("Useful document prose. " * 40, "markitdown:0.1.2")
-
-    async def embed(rows):
-        for row in rows:
-            row["embedding"] = "[0]"
-            row.pop("embedding_text")
-
-    async def write(document_id, rows, namespace="default", schema=None, table_rows=()):
-        written.extend(rows)
-
-    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
-    monkeypatch.setattr(document_pipeline, "convert_to_markdown", converted)
-    monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
-    monkeypatch.setattr(document_store, "replace_document_rows", write)
-    job = _job(key_label="root")  # an admin re-ingesting alice's document
-    asyncio.run(document_pipeline.run_document_job(job, upload, "guide.md", "force", None))
-    assert written
-    assert all(row["metadata"]["created_by"] == "alice" for row in written)
 
 
 # ---- CSV card write-time bound ---------------------------------------------
@@ -192,218 +111,44 @@ def test_run_document_job_rejects_oversized_csv_summary(monkeypatch, tmp_path):
     monkeypatch.setattr(document_pipeline, "_embed_rows", embed)
     monkeypatch.setattr(document_store, "replace_document_rows", write)
 
-    job = _job(document_id="data.csv", key_label="alice")
+    job = _job(document_id="data.csv")
     with pytest.raises(document.DocumentError, match=str(document.HARD_CHUNK_CHARS)):
         asyncio.run(document_pipeline.run_document_job(job, upload, "data.csv", "force", None))
     assert not embed_calls
     assert not write_calls
 
 
-# ---- REST overwrite gate on POST /ingest/document --------------------------
+# ---- POST /ingest/document and DELETE /ingest/documents/{document_id} -----------
 
 
-@pytest.mark.parametrize("mode", ["upsert", "force"])
-def test_reingest_by_other_non_admin_key_gets_403(monkeypatch, mode):
-    async def existing_owner(document_id, namespace="default", schema=None):
-        return True, "alice"
-
-    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
-    _auth_map(monkeypatch, {"intruder-key": _identity("bob")})
+def test_any_key_overwrites_and_deletes_a_document(monkeypatch):
     fake = AcceptingBacklog()
     monkeypatch.setattr(job_store, "admit_document", fake.admit)
-
-    response = _post(
-        "/ingest/document",
-        api_key="intruder-key",
-        data={"document_id": "guide.md", "mode": mode},
-        files={"file": ("guide.md", b"content")},
-    )
-    assert response.status_code == 403
-    assert fake.job is None
-
-
-def test_reingest_by_creator_succeeds(monkeypatch):
-    async def existing_owner(document_id, namespace="default", schema=None):
-        return True, "alice"
-
-    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
-    _auth_map(monkeypatch, {"alice-key": _identity("alice")})
-    fake = AcceptingBacklog()
-    monkeypatch.setattr(job_store, "admit_document", fake.admit)
-
-    response = _post(
-        "/ingest/document",
-        api_key="alice-key",
-        data={"document_id": "guide.md"},
-        files={"file": ("guide.md", b"content")},
-    )
-    assert response.status_code == 202
-    Path(fake.kwargs["spool_path"]).unlink(missing_ok=True)
-
-
-def test_reingest_by_admin_succeeds(monkeypatch):
-    async def existing_owner(document_id, namespace="default", schema=None):
-        return True, "alice"
-
-    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
-    _auth_map(monkeypatch, {"admin-key": _identity("root", is_admin=True)})
-    fake = AcceptingBacklog()
-    monkeypatch.setattr(job_store, "admit_document", fake.admit)
-
-    response = _post(
-        "/ingest/document",
-        api_key="admin-key",
-        data={"document_id": "guide.md"},
-        files={"file": ("guide.md", b"content")},
-    )
-    assert response.status_code == 202
-    Path(fake.kwargs["spool_path"]).unlink(missing_ok=True)
-
-
-def test_reingest_of_ownerless_document_by_non_admin_gets_403(monkeypatch):
-    async def existing_owner(document_id, namespace="default", schema=None):
-        return True, None
-
-    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
-    _auth_map(monkeypatch, {"member-key": _identity("member")})
-    fake = AcceptingBacklog()
-    monkeypatch.setattr(job_store, "admit_document", fake.admit)
-
-    response = _post(
-        "/ingest/document",
-        api_key="member-key",
-        data={"document_id": "guide.md"},
-        files={"file": ("guide.md", b"content")},
-    )
-    assert response.status_code == 403
-    assert fake.job is None
-
-
-def test_ingest_of_new_document_id_is_unaffected_by_gate(monkeypatch):
-    async def no_owner(document_id, namespace="default", schema=None):
-        return False, None
-
-    monkeypatch.setattr(document_store, "existing_document_owner", no_owner)
-    _auth_map(monkeypatch, {"member-key": _identity("member")})
-    fake = AcceptingBacklog()
-    monkeypatch.setattr(job_store, "admit_document", fake.admit)
-
-    response = _post(
-        "/ingest/document",
-        api_key="member-key",
-        data={"document_id": "new-doc.md"},
-        files={"file": ("new-doc.md", b"content")},
-    )
-    assert response.status_code == 202
-    Path(fake.kwargs["spool_path"]).unlink(missing_ok=True)
-
-
-# ---- DELETE /ingest/documents/{document_id} --------------------------------
-
-
-def test_delete_by_creator_removes_chunks(monkeypatch):
-    async def existing_owner(document_id, namespace="default", schema=None):
-        return True, "alice"
-
     deleted_calls = []
+
+    async def exists(document_id, namespace="default"):
+        return document_id == "guide.md"
 
     async def delete_rows(document_id, namespace="default"):
         deleted_calls.append((document_id, namespace))
         return 3
 
-    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
+    monkeypatch.setattr(document_store, "document_exists", exists)
     monkeypatch.setattr(document_store, "delete_document_rows", delete_rows)
-    _auth_map(monkeypatch, {"alice-key": _identity("alice")})
 
-    response = _delete("/ingest/documents/guide.md", api_key="alice-key")
-    assert response.status_code == 200
-    assert response.json() == {"document_id": "guide.md", "namespace": "default", "deleted": 3}
-    assert deleted_calls == [("guide.md", "default")]
-
-
-def test_delete_by_admin_removes_chunks(monkeypatch):
-    async def existing_owner(document_id, namespace="default", schema=None):
-        return True, "alice"
-
-    async def delete_rows(document_id, namespace="default"):
-        return 1
-
-    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
-    monkeypatch.setattr(document_store, "delete_document_rows", delete_rows)
-    _auth_map(monkeypatch, {"admin-key": _identity("root", is_admin=True)})
-
-    response = _delete("/ingest/documents/guide.md", api_key="admin-key")
-    assert response.status_code == 200
-
-
-def test_delete_by_other_non_admin_key_gets_403(monkeypatch):
-    async def existing_owner(document_id, namespace="default", schema=None):
-        return True, "alice"
-
-    called = []
-
-    async def delete_rows(document_id, namespace="default"):
-        called.append(True)
-        return 1
-
-    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
-    monkeypatch.setattr(document_store, "delete_document_rows", delete_rows)
-    _auth_map(monkeypatch, {"intruder-key": _identity("bob")})
-
-    response = _delete("/ingest/documents/guide.md", api_key="intruder-key")
-    assert response.status_code == 403
-    assert called == []
-
-
-def test_delete_of_ownerless_document_by_non_admin_gets_403(monkeypatch):
-    async def existing_owner(document_id, namespace="default", schema=None):
-        return True, None
-
-    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
-    _auth_map(monkeypatch, {"member-key": _identity("member")})
-
-    response = _delete("/ingest/documents/guide.md", api_key="member-key")
-    assert response.status_code == 403
-
-
-def test_delete_missing_document_gets_404(monkeypatch):
-    async def no_owner(document_id, namespace="default", schema=None):
-        return False, None
-
-    monkeypatch.setattr(document_store, "existing_document_owner", no_owner)
-
-    response = _delete("/ingest/documents/ghost.md")
-    assert response.status_code == 404
-
-
-def test_delete_respects_namespace_query_param(monkeypatch):
-    captured = []
-
-    async def existing_owner(document_id, namespace="default", schema=None):
-        captured.append(("owner", document_id, namespace))
-        return True, "alice"
-
-    async def delete_rows(document_id, namespace="default"):
-        captured.append(("delete", document_id, namespace))
-        return 2
-
-    monkeypatch.setattr(document_store, "existing_document_owner", existing_owner)
-    monkeypatch.setattr(document_store, "delete_document_rows", delete_rows)
-    _auth_map(
-        monkeypatch, {"alice-key": _identity("alice", allowed=frozenset({"default", "team-a"}))}
+    response = _post(
+        "/ingest/document",
+        data={"document_id": "guide.md", "mode": "force"},
+        files={"file": ("guide.md", b"content")},
     )
+    assert response.status_code == 202
+    Path(fake.kwargs["spool_path"]).unlink(missing_ok=True)
 
-    response = _delete("/ingest/documents/guide.md?namespace=team-a", api_key="alice-key")
+    response = _delete("/ingest/documents/guide.md?namespace=team-a")
     assert response.status_code == 200
-    assert response.json()["namespace"] == "team-a"
-    assert captured == [("owner", "guide.md", "team-a"), ("delete", "guide.md", "team-a")]
-
-
-def test_delete_rejects_namespace_outside_callers_allowed_set(monkeypatch):
-    _auth_map(monkeypatch, {"member-key": _identity("member")})
-
-    response = _delete("/ingest/documents/guide.md?namespace=other-team", api_key="member-key")
-    assert response.status_code == 403
+    assert response.json() == {"document_id": "guide.md", "namespace": "team-a", "deleted": 3}
+    assert deleted_calls == [("guide.md", "team-a")]
+    assert _delete("/ingest/documents/ghost.md").status_code == 404
 
 
 # ---- integration: DELETE scoped to one namespace ---------------------------
@@ -429,10 +174,9 @@ class FakeConnection:
     def transaction(self):
         return FakeTransaction()
 
-    async def fetchrow(self, query, *args):
+    async def fetchval(self, query, *args):
         document_id, namespace = args
-        row = self.rows_by_key.get((document_id, namespace))
-        return {"created_by": row} if row is not None else None
+        return (document_id, namespace) in self.rows_by_key
 
     async def execute(self, query, *args):
         if not args:

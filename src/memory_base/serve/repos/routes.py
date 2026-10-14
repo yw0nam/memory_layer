@@ -60,7 +60,6 @@ async def ingest_route(request: Request) -> JSONResponse:
         job = await job_store.admit_repo(
             job_id=uuid.uuid4().hex,
             key_id=key.key_id,
-            key_label=key.label,
             name=name,
             action="ingest",
             url=url,
@@ -80,11 +79,7 @@ async def ingest_route(request: Request) -> JSONResponse:
 
 
 async def remove_route(request: Request) -> JSONResponse:
-    """Remove a cached repo and queue a code re-index to tear down its rows.
-
-    Restricted to an admin key or the repo's owner (the key label that first
-    ingested it); a repo with no owner record is admin-only (fail-closed).
-    """
+    """Remove a cached repo and queue a code re-index to tear down its rows."""
     try:
         name = cache.check_name(request.path_params["name"])
     except ValueError as exc:
@@ -92,14 +87,10 @@ async def remove_route(request: Request) -> JSONResponse:
     dest = cache.CACHE_ROOT / name
     if not dest.is_dir():
         return error("repo not found", 404)
-    key = request.state.key
-    if not key.is_admin and cache.read_owner(name) != key.label:
-        return error("only the repo owner or an admin can remove this repo", 403)
     try:
         job = await job_store.admit_repo(
             job_id=uuid.uuid4().hex,
-            key_id=key.key_id,
-            key_label=key.label,
+            key_id=request.state.key.key_id,
             name=name,
             action="remove",
             url=None,

@@ -19,7 +19,7 @@ from starlette.testclient import TestClient
 
 from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api
-from memory_base.serve.access import auth, namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.consolidation import groups
 from memory_base.serve.notes.store import NOTE_SIMILAR_THRESHOLD, save_note
 
@@ -47,23 +47,6 @@ UNRELATED = (
 )
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
-
-
-@pytest.fixture(autouse=True)
-def consolidator(monkeypatch):
-    identity = auth.KeyIdentity(
-        key_id="consolidator-key-hash",
-        label="consolidator",
-        home="default",
-        is_admin=True,
-        allowed=frozenset(),
-        authors=frozenset({"consolidator"}),
-    )
-
-    async def fake_authenticate_request(plaintext_key):
-        return identity if plaintext_key == "test-key" else None
-
-    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
 
 
 async def _save(content, namespace, allow_similar=False):

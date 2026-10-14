@@ -94,7 +94,7 @@
       "id": "auth",
       "type": "security",
       "label": "API Key Auth",
-      "sublabel": "namespace scope · ownership",
+      "sublabel": "authentication · revocation",
       "pos": [
         520,
         146
@@ -329,7 +329,7 @@
       "items": [
         "Every consumer reaches stored chunks through REST API :8010, never the database directly",
         "The MCP server forwards 19 tools to REST and holds no logic of its own",
-        "The API key decides namespace scope and document · repo ownership"
+        "The API key authenticates the caller and grants nothing else"
       ]
     },
     {

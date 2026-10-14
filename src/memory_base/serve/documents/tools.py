@@ -25,9 +25,8 @@ async def ingest_document(
     The filename must use a supported text extension: .md, .markdown, .txt,
     .rst, .html, .htm, or .csv. Binary documents upload through REST directly.
 
-    `namespace` picks one namespace the caller's API key can access; omitted,
-    the document lands in the key's home namespace. A namespace the key
-    cannot access is rejected by the server.
+    `namespace` picks a registered namespace; omitted, the document lands in
+    `default`.
 
     `tags` are lowercased topical labels stamped on every chunk of the
     document and usable as the `tags` search filter.
@@ -67,10 +66,8 @@ async def remove_document(
 ) -> dict[str, Any]:
     """Delete a document's stored chunks and table rows from one namespace by its document_id.
 
-    Restricted to an admin key or the document's creator (the key that first
-    ingested it); a non-creator, non-admin caller gets a 403, and an unknown
-    document in that namespace gets a 404. `namespace` defaults to the
-    caller's home namespace. Returns {document_id, namespace, deleted} where
+    An unknown document in that namespace gets a 404. `namespace` defaults to
+    `default`. Returns {document_id, namespace, deleted} where
     `deleted` is the number of chunk rows removed; a tabular document's
     `doc_rows` rows are removed with them.
     """

@@ -18,9 +18,9 @@ Enabling the plugin asks for its options. Change them later in `/config`.
 | REST URL | the REST API the hooks call | `http://127.0.0.1:8010` |
 | MCP URL | the MCP server (streamable HTTP) | `http://localhost:8765/mcp` |
 | API key | this agent's key, sent as `X-API-Key`; held in the secure store | none |
-| Author | the agent's own slug and note author; one of the key's authors; its card is delivered at session start | `claude-code` |
+| Author | the agent's own slug and note author; its card is delivered at session start | `claude-code` |
 | User entity | slug of the user's entity; its card is delivered at session start | none |
-| Namespace | where this agent's turns land; empty means the key's home namespace | none |
+| Namespace | where this agent's turns land; empty means `default` | none |
 
 The `connect-agent` skill walks through minting a key for an agent.
 
@@ -35,7 +35,7 @@ The `connect-agent` skill walks through minting a key for an agent.
 | `/memory-base:init` | `skills/init` | on demand | reports `status.json` and flags old hand-installed entries |
 | `/memory-base:connect-agent` | `skills/connect-agent` | on demand | connects, changes, or disconnects an agent |
 
-The search spans every namespace the key allows. Hooks are stdlib Python, fail open (exit 0),
+The search spans every namespace. Hooks are stdlib Python, fail open (exit 0),
 and run synchronously.
 
 ## Turn capture

@@ -1,24 +1,17 @@
-"""API-key provisioning CLI, and the author allowlist behind /keys/{label}/authors.
+"""API-key provisioning CLI.
 
-    uv run python -m memory_base.serve.access.keys new <label> [--home <ns>] [--admin] [--author <slug>]...
-    uv run python -m memory_base.serve.access.keys authors <label> [<slug>...]
+    uv run python -m memory_base.serve.access.keys new <label>
     uv run python -m memory_base.serve.access.keys list
     uv run python -m memory_base.serve.access.keys revoke <prefix-or-hash>
 
 `new` prints the plaintext key exactly once, on its last line; only its sha256 hash is stored.
-`authors` prints a label's authors, or replaces them on every active key of the label when
-slugs are given.
-
-A label's authors are the note authors its keys may save as; the `user` author, with
-admin, marks imports of entities and is held only by the user's key. An admin key can
-replace any label's authors.
+The label names the client that holds the key; every key is equal and revoked on its own.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import re
 from typing import Any
 
 from memory_base.core import db
@@ -27,92 +20,21 @@ from memory_base.core.schema import ensure_schema_once
 from memory_base.serve.access.auth import generate_key, hash_key
 
 
-AUTHOR_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
-
-
-class HomeNamespaceError(ValueError):
-    """A key-provisioning request is invalid."""
-
-
-class AuthorError(ValueError):
-    """An author allowlist request is invalid; REST maps it to 400."""
-
-
 class KeyPrefixError(ValueError):
     """A key prefix is too short to revoke safely."""
 
 
-async def _home_is_accessible(conn: Any, home: str, label: str, is_admin: bool) -> bool:
-    row = await conn.fetchrow(
-        f'SELECT visibility, owner FROM "{PG_SCHEMA}".namespaces WHERE name = $1', home
-    )
-    if row is None:
-        return False
-    if row["visibility"] == "public":
-        return True
-    return is_admin or row["owner"] == label
-
-
-async def new_key(
-    label: str, home: str = "default", is_admin: bool = False, authors: list[str] | None = None
-) -> str:
-    """Mint a key for `label` with `authors`; returns the plaintext (never stored)."""
-    authors = validate_authors(authors or [])
+async def new_key(label: str) -> str:
+    """Mint a key for the client `label`; returns the plaintext (never stored)."""
     plaintext = generate_key()
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
-        if not await _home_is_accessible(conn, home, label, is_admin):
-            raise HomeNamespaceError(
-                f"home namespace {home!r} does not exist or is not accessible to {label!r}"
-            )
         await conn.execute(
-            f"""
-            INSERT INTO "{PG_SCHEMA}".api_keys (key_hash, label, home, is_admin, authors)
-            VALUES ($1, $2, $3, $4, $5::text[])
-            """,
+            f'INSERT INTO "{PG_SCHEMA}".api_keys (key_hash, label) VALUES ($1, $2)',
             hash_key(plaintext),
             label,
-            home,
-            is_admin,
-            authors,
         )
     return plaintext
-
-
-def validate_authors(authors: Any) -> list[str]:
-    """Validate an author allowlist and return it deduplicated and sorted."""
-    if not isinstance(authors, list) or any(not isinstance(name, str) for name in authors):
-        raise AuthorError("authors must be a list of strings")
-    for name in authors:
-        if not AUTHOR_RE.fullmatch(name):
-            raise AuthorError("each author must match ^[a-z0-9][a-z0-9-]{0,39}$")
-    return sorted(set(authors))
-
-
-async def get_authors(label: str) -> list[str] | None:
-    """The authors every non-revoked key for `label` may save as; None when no such key exists."""
-    async with db.acquire() as conn:
-        await ensure_schema_once(conn)
-        rows = await conn.fetch(
-            f'SELECT authors FROM "{PG_SCHEMA}".api_keys WHERE label = $1 AND revoked_at IS NULL',
-            label,
-        )
-    if not rows:
-        return None
-    return sorted({name for row in rows for name in (row["authors"] or ())})
-
-
-async def set_authors(label: str, authors: list[str]) -> list[str] | None:
-    """Replace the allowlist on every non-revoked key for `label`; None when no such key exists."""
-    async with db.acquire() as conn:
-        await ensure_schema_once(conn)
-        status = await conn.execute(
-            f'UPDATE "{PG_SCHEMA}".api_keys SET authors = $2::text[] '
-            "WHERE label = $1 AND revoked_at IS NULL",
-            label,
-            authors,
-        )
-    return authors if int(status.rsplit(" ", 1)[-1]) else None
 
 
 async def list_keys() -> list[dict[str, Any]]:
@@ -121,7 +43,7 @@ async def list_keys() -> list[dict[str, Any]]:
         await ensure_schema_once(conn)
         rows = await conn.fetch(
             f"""
-            SELECT key_hash, label, home, is_admin, created_at, revoked_at
+            SELECT key_hash, label, created_at, revoked_at
             FROM "{PG_SCHEMA}".api_keys
             ORDER BY created_at
             """
@@ -152,9 +74,8 @@ def _print_keys(rows: list[dict[str, Any]]) -> None:
         return
     for row in rows:
         status = "revoked" if row["revoked_at"] else "active"
-        role = "admin" if row["is_admin"] else "member"
         print(
-            f"{row['label']:<20} home={row['home']:<20} {role:<6} {status:<8} "
+            f"{row['label']:<20} {status:<8} "
             f"created={row['created_at']} hash={row['key_hash'][:12]}..."
         )
 
@@ -165,13 +86,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     new_parser = subparsers.add_parser("new", help="mint a key")
     new_parser.add_argument("label")
-    new_parser.add_argument("--home", default="default")
-    new_parser.add_argument("--admin", action="store_true")
-    new_parser.add_argument("--author", dest="authors", action="append", default=[])
-
-    authors_parser = subparsers.add_parser("authors", help="show or replace a label's authors")
-    authors_parser.add_argument("label")
-    authors_parser.add_argument("authors", nargs="*")
 
     subparsers.add_parser("list", help="list keys")
 
@@ -185,24 +99,9 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
 
     if args.command == "new":
-        try:
-            plaintext = asyncio.run(new_key(args.label, args.home, args.admin, args.authors))
-        except (HomeNamespaceError, AuthorError) as exc:
-            raise SystemExit(str(exc)) from exc
+        plaintext = asyncio.run(new_key(args.label))
         print(f"API key for {args.label!r} (store this now, it will not be shown again):")
         print(plaintext)
-    elif args.command == "authors":
-        try:
-            authors = asyncio.run(
-                set_authors(args.label, validate_authors(args.authors))
-                if args.authors
-                else get_authors(args.label)
-            )
-        except AuthorError as exc:
-            raise SystemExit(str(exc)) from exc
-        if authors is None:
-            raise SystemExit(f"no active key for {args.label!r}")
-        print(f"{args.label}: {', '.join(authors) or '(none)'}")
     elif args.command == "list":
         _print_keys(asyncio.run(list_keys()))
     elif args.command == "revoke":

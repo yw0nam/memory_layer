@@ -67,11 +67,6 @@ The at-most-once delivery of a pending message: exactly one claimer wins, and th
 loser is refused. Terminal — a claimed message is never delivered again.
 _Avoid_: pop, read receipt, acknowledge
 
-**Creator**:
-The key label that first ingested a document or repo. Fixed at first ingest; the only
-non-admin identity allowed to overwrite or delete it.
-_Avoid_: owner (reserved for namespaces), author, uploader
-
 **Code chunk**:
 A span of source lines from an indexed repository. Retrieved from its own lane, separate from memories.
 _Avoid_: snippet, fragment
@@ -83,7 +78,7 @@ _Avoid_: codebase, project, source
 ### Organization
 
 **Namespace**:
-A registered isolation boundary that partitions memories. Either public, or private to the key that created it.
+A registered label that partitions memories for filtering; nothing in it is private.
 _Avoid_: tenant, workspace, bucket, collection
 
 **Tag**:

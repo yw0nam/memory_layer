@@ -44,59 +44,15 @@ def _patch_acquire(monkeypatch, conn):
 # ---- new_key ------------------------------------------------------------------
 
 
-def test_new_key_stores_sha256_hash_not_plaintext(monkeypatch):
-    conn = FakeConnection(fetchrow_results=[{"visibility": "public", "owner": None}])
+def test_new_key_stores_sha256_hash_not_plaintext_and_the_label(monkeypatch):
+    conn = FakeConnection()
     _patch_acquire(monkeypatch, conn)
     plaintext = asyncio.run(keys.new_key("alice"))
     assert len(plaintext) > 20
     insert_query, insert_args = conn.executed[0]
     assert "INSERT INTO" in insert_query
-    stored_hash = insert_args[0]
-    assert stored_hash == hashlib.sha256(plaintext.encode()).hexdigest()
+    assert insert_args == (hashlib.sha256(plaintext.encode()).hexdigest(), "alice")
     assert plaintext not in insert_query
-    assert stored_hash != plaintext
-
-
-def test_new_key_defaults_home_to_default_and_non_admin(monkeypatch):
-    conn = FakeConnection(fetchrow_results=[{"visibility": "public", "owner": None}])
-    _patch_acquire(monkeypatch, conn)
-    asyncio.run(keys.new_key("alice"))
-    _, args = conn.executed[0]
-    assert args[1] == "alice"
-    assert args[2] == "default"
-    assert args[3] is False
-
-
-def test_new_key_rejects_unknown_home(monkeypatch):
-    conn = FakeConnection(fetchrow_results=[None])
-    _patch_acquire(monkeypatch, conn)
-    with pytest.raises(keys.HomeNamespaceError):
-        asyncio.run(keys.new_key("alice", home="ghost"))
-    assert conn.executed == []
-
-
-def test_new_key_rejects_private_home_not_owned_by_label(monkeypatch):
-    conn = FakeConnection(fetchrow_results=[{"visibility": "private", "owner": "bob"}])
-    _patch_acquire(monkeypatch, conn)
-    with pytest.raises(keys.HomeNamespaceError):
-        asyncio.run(keys.new_key("alice", home="team-b"))
-    assert conn.executed == []
-
-
-def test_new_key_allows_private_home_owned_by_label(monkeypatch):
-    conn = FakeConnection(fetchrow_results=[{"visibility": "private", "owner": "alice"}])
-    _patch_acquire(monkeypatch, conn)
-    plaintext = asyncio.run(keys.new_key("alice", home="team-a"))
-    assert plaintext
-    assert conn.executed
-
-
-def test_new_key_admin_bypasses_private_home_ownership(monkeypatch):
-    conn = FakeConnection(fetchrow_results=[{"visibility": "private", "owner": "bob"}])
-    _patch_acquire(monkeypatch, conn)
-    plaintext = asyncio.run(keys.new_key("alice", home="team-b", is_admin=True))
-    assert plaintext
-    assert conn.executed
 
 
 # ---- revoke_key -----------------------------------------------------------------
@@ -129,12 +85,15 @@ def test_cli_new_requires_label():
         keys.build_parser().parse_args(["new"])
 
 
-def test_cli_new_parses_home_and_admin_flag():
-    args = keys.build_parser().parse_args(["new", "alice", "--home", "team-a", "--admin"])
-    assert args.command == "new"
-    assert args.label == "alice"
-    assert args.home == "team-a"
-    assert args.admin is True
+@pytest.mark.parametrize("flag", ["--home", "--admin", "--author"])
+def test_cli_new_takes_nothing_but_a_label(flag):
+    with pytest.raises(SystemExit):
+        keys.build_parser().parse_args(["new", "alice", flag, "x"])
+
+
+def test_cli_has_no_authors_command():
+    with pytest.raises(SystemExit):
+        keys.build_parser().parse_args(["authors", "alice"])
 
 
 def test_cli_revoke_parses_prefix():
@@ -146,53 +105,3 @@ def test_cli_revoke_parses_prefix():
 def test_cli_revoke_reports_short_prefix_cleanly():
     with pytest.raises(SystemExit, match="at least 8 characters"):
         keys.main(["revoke", "short"])
-
-
-def test_cli_list_parses():
-    args = keys.build_parser().parse_args(["list"])
-    assert args.command == "list"
-
-
-# ---- authors ------------------------------------------------------------------
-
-
-def test_new_key_stores_its_authors(monkeypatch):
-    conn = FakeConnection(fetchrow_results=[{"visibility": "public", "owner": None}])
-    _patch_acquire(monkeypatch, conn)
-    asyncio.run(keys.new_key("codex", authors=["codex"]))
-    _, insert_args = conn.executed[0]
-    assert insert_args[-1] == ["codex"]
-
-
-def test_cli_new_rejects_an_invalid_author_before_minting(monkeypatch):
-    conn = FakeConnection(fetchrow_results=[{"visibility": "public", "owner": None}])
-    _patch_acquire(monkeypatch, conn)
-    with pytest.raises(SystemExit, match="each author must match"):
-        keys.main(["new", "codex", "--author", "Codex!"])
-    assert conn.executed == []
-
-
-def test_cli_authors_replaces_the_list_when_names_are_given(monkeypatch, capsys):
-    calls = []
-
-    async def set_authors(label, authors):
-        calls.append((label, authors))
-        return authors
-
-    monkeypatch.setattr(keys, "set_authors", set_authors)
-    keys.main(["authors", "codex", "codex", "user", "codex"])
-    assert calls == [("codex", ["codex", "user"])]
-    assert capsys.readouterr().out.strip() == "codex: codex, user"
-
-
-def test_cli_authors_without_names_shows_the_list_and_fails_for_an_unknown_label(
-    monkeypatch, capsys
-):
-    async def get_authors(label):
-        return ["claude-code"] if label == "claude-code" else None
-
-    monkeypatch.setattr(keys, "get_authors", get_authors)
-    keys.main(["authors", "claude-code"])
-    assert capsys.readouterr().out.strip() == "claude-code: claude-code"
-    with pytest.raises(SystemExit, match="no active key"):
-        keys.main(["authors", "nobody"])

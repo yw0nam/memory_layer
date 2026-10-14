@@ -22,7 +22,7 @@ from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
-from memory_base.serve.common.http import iso
+from memory_base.serve.common.http import RequestError, author_slug, iso
 from memory_base.serve.consolidation import groups
 from memory_base.serve.consolidation.groups import Note, Pair, build_groups, group_entry, group_key
 from memory_base.serve.notes.store import (
@@ -164,10 +164,6 @@ SELECT id, chunk_kind AS kind, content_raw AS text, metadata, ts_last_active, oc
 FROM {_NOTES}
 WHERE source_type = 'agent_note' AND id = ANY($1::text[])
 """
-
-
-class RequestError(ValueError):
-    """A verdict or undo request body breaks the schema; REST maps it to 400."""
 
 
 class Rollback(Exception):
@@ -393,7 +389,7 @@ def parse_batch(body: Any, registered: set[str]) -> Batch:
         raise RequestError(f"verdicts must be a list of 1 to {MAX_VERDICTS} objects")
     return Batch(
         run_id=_text(body.get("run_id"), "run_id", MAX_RUN_ID_CHARS),
-        author=_text(body.get("author"), "author"),
+        author=author_slug(body.get("author")),
         model=model,
         dry_run=dry_run,
         params=_params(body),
@@ -412,7 +408,7 @@ def parse_undo(body: Any) -> tuple[int, str]:
     action_id = body.get("action_id")
     if isinstance(action_id, bool) or not isinstance(action_id, int) or action_id < 1:
         raise RequestError("action_id must be a positive integer")
-    return action_id, _text(body.get("author"), "author")
+    return action_id, author_slug(body.get("author"))
 
 
 def payload_hash(verdict: Verdict, batch: Batch) -> str:

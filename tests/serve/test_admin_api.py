@@ -8,39 +8,35 @@ time, so every curation function is monkeypatched here directly on the
 Endpoint contract pinned by these tests:
 
 - ``GET /admin/notes?older_than_days=N`` (default 90) -> calls
-  ``curation.list_old_notes(N, namespaces=<caller's scope>)``, response body is
+  ``curation.list_old_notes(N)``, response body is
   that list verbatim. Non-integer ``older_than_days`` -> 400.
 - ``POST /admin/notes/delete {"ids": [...], "confirm": bool}``
   - confirm missing/false (dry-run): calls
-    ``curation.notes_by_ids(ids, namespaces=<scope>)``; response
+    ``curation.notes_by_ids(ids)``; response
     ``{"rows": <that list>}``; ``curation.delete_notes`` is NOT called.
-  - confirm true: calls ``curation.delete_notes(ids, namespaces=<scope>) -> int``;
+  - confirm true: calls ``curation.delete_notes(ids) -> int``;
     response ``{"deleted": <count>}``.
   - missing/empty ``ids``, or malformed JSON -> 400.
 - ``GET /admin/duplicates?threshold=0.75&kind=&limit=50`` -> calls
-  ``curation.find_duplicates(threshold, kind, limit, namespaces=<scope>)``;
+  ``curation.find_duplicates(threshold, kind, limit)``;
   response ``{"pairs": <that list>}``. Non-numeric ``threshold`` -> 400.
 - ``POST /admin/archive {"confirm": bool}``
   - confirm missing/false (dry-run): calls
-    ``curation.archive_candidates(now, namespaces=<scope>)``; response
+    ``curation.archive_candidates(now)``; response
     ``{"notes_to_archive": <that list>}``; ``curation.archive_rows`` is NOT called.
   - confirm true: archives the note candidates; response ``{"archived": <count>}``.
-  - with ``ids``: only rows in the caller's scope are touched.
+  - with ``ids``: only the named rows are touched.
 - ``POST /admin/restore {"ids": [...], "confirm": bool}``
   - confirm missing/false (dry-run): calls
-    ``curation.rows_by_ids(ids, namespaces=<scope>)``; response
+    ``curation.rows_by_ids(ids)``; response
     ``{"rows": <that list>}``; ``curation.restore_rows`` is NOT called.
-  - confirm true: calls ``curation.restore_rows(ids, namespaces=<scope>) -> int``;
+  - confirm true: calls ``curation.restore_rows(ids) -> int``;
     response ``{"restored": <count>}``.
   - missing ``ids`` -> 400.
 - ``POST /search`` gains optional ``"include_archived"`` (default False),
   forwarded to ``memory_base.retrieval.search.search`` as the keyword
   ``include_archived``.
 
-``<scope>`` is ``None`` for an admin key (unfiltered) or the caller's
-sorted allowed-namespace list otherwise; the fixed ``test-key`` used by the
-client here stubs to an admin identity (see tests/serve/conftest.py), so
-every call below observes ``namespaces=None``.
 """
 
 from __future__ import annotations
@@ -64,7 +60,9 @@ def test_admin_notes_defaults_older_than_days_to_90(monkeypatch):
     captured = {}
     rows = [{"id": "note:a", "hit_count": 0, "last_hit_at": None}]
 
-    async def fake_list_old_notes(older_than_days, namespaces=None):
+    async def fake_list_old_notes(
+        older_than_days,
+    ):
         captured["older_than_days"] = older_than_days
         return rows
 
@@ -78,7 +76,9 @@ def test_admin_notes_defaults_older_than_days_to_90(monkeypatch):
 def test_admin_notes_custom_older_than_days_reaches_admin(monkeypatch):
     captured = {}
 
-    async def fake_list_old_notes(older_than_days, namespaces=None):
+    async def fake_list_old_notes(
+        older_than_days,
+    ):
         captured["older_than_days"] = older_than_days
         return []
 
@@ -101,11 +101,15 @@ def test_admin_notes_delete_dry_run_by_default(monkeypatch):
     calls = {"notes_by_ids": None, "delete_notes": None}
     rows = [{"id": "note:a", "kind": "agent_note"}]
 
-    async def fake_notes_by_ids(ids, namespaces=None):
+    async def fake_notes_by_ids(
+        ids,
+    ):
         calls["notes_by_ids"] = ids
         return rows
 
-    async def fake_delete_notes(ids, namespaces=None):
+    async def fake_delete_notes(
+        ids,
+    ):
         calls["delete_notes"] = ids
         return 999
 
@@ -121,10 +125,14 @@ def test_admin_notes_delete_dry_run_by_default(monkeypatch):
 def test_admin_notes_delete_confirm_true_calls_delete_notes(monkeypatch):
     calls = {}
 
-    async def fake_notes_by_ids(ids, namespaces=None):
+    async def fake_notes_by_ids(
+        ids,
+    ):
         return [{"id": i} for i in ids]
 
-    async def fake_delete_notes(ids, namespaces=None):
+    async def fake_delete_notes(
+        ids,
+    ):
         calls["ids"] = ids
         return len(ids)
 
@@ -161,7 +169,11 @@ def test_admin_duplicates_defaults(monkeypatch):
     captured = {}
     pairs = [{"a": {"id": "x"}, "b": {"id": "y"}, "score": 0.95}]
 
-    async def fake_find_duplicates(threshold, kind, limit, namespaces=None):
+    async def fake_find_duplicates(
+        threshold,
+        kind,
+        limit,
+    ):
         captured["threshold"] = threshold
         captured["kind"] = kind
         captured["limit"] = limit
@@ -177,7 +189,11 @@ def test_admin_duplicates_defaults(monkeypatch):
 def test_admin_duplicates_custom_params_reach_admin(monkeypatch):
     captured = {}
 
-    async def fake_find_duplicates(threshold, kind, limit, namespaces=None):
+    async def fake_find_duplicates(
+        threshold,
+        kind,
+        limit,
+    ):
         captured["threshold"] = threshold
         captured["kind"] = kind
         captured["limit"] = limit
@@ -240,12 +256,14 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
     calls = {"archive_candidates": 0, "archive_rows": None}
     candidates = [{"id": "note:old", "kind": "agent_note", "hit_count": 0, "last_hit_at": None}]
 
-    async def fake_archive_candidates(now, namespaces=None):
+    async def fake_archive_candidates(
+        now,
+    ):
         calls["archive_candidates"] += 1
         assert isinstance(now, float)
         return candidates
 
-    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+    async def fake_archive_rows(ids, now, archived_by=None):
         calls["archive_rows"] = (ids, now)
         return len(ids)
 
@@ -265,10 +283,12 @@ def test_admin_archive_confirm_archives_the_cold_notes(monkeypatch):
         {"id": "note:old2", "kind": "history", "hit_count": 2, "last_hit_at": 123.0},
     ]
 
-    async def fake_archive_candidates(now, namespaces=None):
+    async def fake_archive_candidates(
+        now,
+    ):
         return candidates
 
-    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+    async def fake_archive_rows(ids, now, archived_by=None):
         calls["ids"] = ids
         return len(ids)
 
@@ -284,16 +304,18 @@ def test_admin_archive_with_ids_previews_those_rows(monkeypatch):
     calls = {"rows_by_ids": None, "archive_rows": None, "archive_candidates": 0}
     rows = [{"id": "note:a", "kind": "note", "archived_at": None, "archived_by": None}]
 
-    async def fake_rows_by_ids(ids, namespaces=None, notes_only=False):
+    async def fake_rows_by_ids(ids, notes_only=False):
         assert notes_only
         calls["rows_by_ids"] = ids
         return rows
 
-    async def fake_archive_candidates(now, namespaces=None):
+    async def fake_archive_candidates(
+        now,
+    ):
         calls["archive_candidates"] += 1
         return []
 
-    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+    async def fake_archive_rows(ids, now, archived_by=None):
         calls["archive_rows"] = ids
         return len(ids)
 
@@ -311,10 +333,10 @@ def test_admin_archive_with_ids_previews_those_rows(monkeypatch):
 def test_admin_archive_with_ids_confirm_stamps_the_author(monkeypatch):
     captured = {}
 
-    async def fake_rows_by_ids(ids, namespaces=None, notes_only=False):
+    async def fake_rows_by_ids(ids, notes_only=False):
         return [{"id": i} for i in ids]
 
-    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+    async def fake_archive_rows(ids, now, archived_by=None):
         captured["ids"] = ids
         captured["archived_by"] = archived_by
         return len(ids)
@@ -333,10 +355,10 @@ def test_admin_archive_with_ids_confirm_stamps_the_author(monkeypatch):
 def test_admin_archive_with_ids_names_the_ids_not_in_scope(monkeypatch):
     calls = {"archive_rows": None}
 
-    async def fake_rows_by_ids(ids, namespaces=None, notes_only=False):
+    async def fake_rows_by_ids(ids, notes_only=False):
         return [{"id": "note:a"}]
 
-    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+    async def fake_archive_rows(ids, now, archived_by=None):
         calls["archive_rows"] = ids
         return len(ids)
 
@@ -348,7 +370,7 @@ def test_admin_archive_with_ids_names_the_ids_not_in_scope(monkeypatch):
     )
     assert response.status_code == 400
     assert response.json() == {
-        "error": "2 of 3 ids are not active notes in the caller's scope: doc:y:0, note:x",
+        "error": "2 of 3 ids are not active notes: doc:y:0, note:x",
         "missing": ["doc:y:0", "note:x"],
     }
     assert calls["archive_rows"] is None
@@ -360,23 +382,17 @@ def test_admin_archive_with_ids_requires_an_author():
     assert response.json()["error"] == "author is required"
 
 
-def test_admin_archive_author_outside_the_allowlist_403():
-    response = client.post("/admin/archive", json={"ids": ["note:a"], "author": "mallory"})
-    assert response.status_code == 403
-    assert response.json()["error"] == "author 'mallory' is not permitted for this key"
-
-
 @pytest.mark.parametrize("author", [123, "   "])
 def test_admin_archive_malformed_author_400(author):
     response = client.post("/admin/archive", json={"author": author})
     assert response.status_code == 400
-    assert response.json()["error"] == "author must be a non-empty string"
+    assert response.json()["error"] == "author must be an author slug"
 
 
 def test_admin_archive_malformed_author_with_ids_400():
     response = client.post("/admin/archive", json={"ids": ["note:a"], "author": ""})
     assert response.status_code == 400
-    assert response.json()["error"] == "author must be a non-empty string"
+    assert response.json()["error"] == "author must be an author slug"
 
 
 def test_admin_archive_malformed_ids_400():
@@ -389,10 +405,12 @@ def test_admin_archive_cold_candidates_stamp_a_given_author(monkeypatch):
     captured = {}
     candidates = [{"id": "note:old", "kind": "note", "hit_count": 0, "last_hit_at": None}]
 
-    async def fake_archive_candidates(now, namespaces=None):
+    async def fake_archive_candidates(
+        now,
+    ):
         return candidates
 
-    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+    async def fake_archive_rows(ids, now, archived_by=None):
         captured["archived_by"] = archived_by
         return len(ids)
 
@@ -407,10 +425,12 @@ def test_admin_archive_without_ids_or_author_stamps_nothing(monkeypatch):
     captured = {}
     candidates = [{"id": "note:old", "kind": "note", "hit_count": 0, "last_hit_at": None}]
 
-    async def fake_archive_candidates(now, namespaces=None):
+    async def fake_archive_candidates(
+        now,
+    ):
         return candidates
 
-    async def fake_archive_rows(ids, now, namespaces=None, archived_by=None):
+    async def fake_archive_rows(ids, now, archived_by=None):
         captured["archived_by"] = archived_by
         return len(ids)
 
@@ -491,10 +511,14 @@ def test_admin_restore_dry_run_by_default(monkeypatch):
     calls = {"restore_rows": None}
     rows = [{"id": "note:old", "kind": "agent_note"}]
 
-    async def fake_rows_by_ids(ids, namespaces=None):
+    async def fake_rows_by_ids(
+        ids,
+    ):
         return rows
 
-    async def fake_restore_rows(ids, namespaces=None):
+    async def fake_restore_rows(
+        ids,
+    ):
         calls["restore_rows"] = ids
         return len(ids)
 
@@ -509,10 +533,14 @@ def test_admin_restore_dry_run_by_default(monkeypatch):
 def test_admin_restore_confirm_true_calls_restore_rows(monkeypatch):
     calls = {}
 
-    async def fake_rows_by_ids(ids, namespaces=None):
+    async def fake_rows_by_ids(
+        ids,
+    ):
         return [{"id": i} for i in ids]
 
-    async def fake_restore_rows(ids, namespaces=None):
+    async def fake_restore_rows(
+        ids,
+    ):
         calls["ids"] = ids
         return len(ids)
 

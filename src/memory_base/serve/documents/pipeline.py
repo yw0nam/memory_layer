@@ -207,12 +207,6 @@ async def run_document_job(
         raise DocumentError("document produced zero accepted rows")
     if len(rows) > MAX_TOTAL_ROWS:
         raise DocumentError("document exceeds 5000 total rows")
-    _, existing_created_by = await store.existing_document_owner(
-        job.document_id, namespace, schema=schema
-    )
-    created_by = existing_created_by or job.key_label
-    for row in rows:
-        row.setdefault("metadata", {})["created_by"] = created_by
     job.touch(stage="embedding")
     await job_store.update_document_progress(job)
     await _embed_rows(rows)

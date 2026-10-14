@@ -81,14 +81,16 @@ def provision_sql_lane():
     asyncio.run(teardown())
 
 
-def _post(sql: str, namespace: str = NAMESPACE_A):
+def _post(sql: str, namespace: str | None = NAMESPACE_A):
+    body = {"sql": sql} if namespace is None else {"sql": sql, "namespace": namespace}
+
     async def request():
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app),
             base_url="http://testserver",
             headers={"X-API-Key": "test-key"},
         ) as client:
-            return await client.post("/tables/query", json={"sql": sql, "namespace": namespace})
+            return await client.post("/tables/query", json=body)
 
     return asyncio.run(request())
 
@@ -107,7 +109,6 @@ def _job(document_id: str) -> job_store.IngestJob:
         document_id=document_id,
         namespace=NAMESPACE_A,
         filename=document_id,
-        key_label="integration",
         status="running",
         created_at=now,
         updated_at=now,
@@ -260,6 +261,8 @@ def test_rls_isolates_same_document_id_across_namespaces():
     )
     assert a.json()["rows"] == [[2_000]]
     assert b.json()["rows"] == [[{"scope": "namespace-b"}]]
+    both = _post(f"SELECT COUNT(*) FROM memory.doc_rows WHERE document_id = '{DOCUMENT_ID}'", None)
+    assert both.json()["rows"] == [[2_001]]
 
 
 def test_insert_prefix_is_rejected():

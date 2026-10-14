@@ -100,7 +100,7 @@ def test_production_schema_self_heals_query_role_and_hardens_function_acls(
     assert "DROP POLICY IF EXISTS doc_rows_namespace ON memory.doc_rows" in sql
     assert "CREATE POLICY doc_rows_namespace ON memory.doc_rows" in sql
     assert "FOR SELECT TO memory_tables_query" in sql
-    assert "namespace = current_setting('app.namespace', true)" in sql
+    assert "COALESCE(NULLIF(current_setting('app.namespace', true), ''), namespace)" in sql
     assert "REVOKE EXECUTE ON FUNCTION pg_catalog.set_config(text,text,boolean) FROM PUBLIC" in sql
     assert "REVOKE EXECUTE ON FUNCTION pg_catalog.pg_notify(text,text) FROM PUBLIC" in sql
     for function in (

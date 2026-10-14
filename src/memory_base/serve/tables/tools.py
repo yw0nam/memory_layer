@@ -21,8 +21,8 @@ async def query_table(
     top-level `columns` field lists the available JSON keys. Rows live in `memory.doc_rows`
     as jsonb: use `(data->>'column')::numeric` for numeric calculations and
     `WHERE document_id = '...'` to scope one table.
-    The server restricts the query to one permitted namespace and returns at
-    most 1,000 rows.
+    `namespace` restricts the query to one namespace; omitted, it covers every
+    namespace. At most 1,000 rows are returned.
     """
     body: dict[str, Any] = {"sql": sql}
     if namespace is not None:

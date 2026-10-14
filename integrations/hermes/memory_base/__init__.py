@@ -10,9 +10,9 @@ Config via config.yaml (memory.memory_base):
   top_k              — max prefetch search results (default: 5)
   min_score          — relevance floor for prefetch search (default: 0.25)
   api_key            — API key value, takes precedence over api_key_env (optional)
-  namespace          — where this agent's turns land (default: the key's home namespace)
+  namespace          — where this agent's turns land (default: `default`)
   api_key_env        — env var holding the API key (default: MEMORY_BASE_API_KEY)
-  author             — this agent's own slug, an author slug of the key (no default;
+  author             — this agent's own author slug (no default;
                        absent, no card is fetched)
   user_entity        — slug of the user's entity; its card is delivered too (optional)
 """
@@ -224,8 +224,7 @@ class MemoryBaseProvider(MemoryProvider):
             },
             {
                 "key": "namespace",
-                "description": "Namespace this agent's turns land in "
-                "(empty: the key's home namespace)",
+                "description": "Namespace this agent's turns land in (empty: `default`)",
             },
             {
                 "key": "top_k",

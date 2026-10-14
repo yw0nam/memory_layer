@@ -6,11 +6,11 @@ import asyncio
 import time
 from pathlib import Path
 
-import httpx
 import pytest
+from starlette.testclient import TestClient
 
 from memory_base.serve import api
-from memory_base.serve.access import auth, namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.common import job_store
 from memory_base.serve.documents import store as document_store
 from memory_base.serve.documents import pipeline as document_pipeline
@@ -28,7 +28,6 @@ def test_document_row_keeps_internal_fields_out_of_the_response():
         filename="Guide.MD",
         spool_path="/spool/job-1.md",
         key_id="hash",
-        key_label="duplicate-label",
         created_at=now,
         updated_at=now,
     )
@@ -59,7 +58,6 @@ def test_repo_row_keeps_persisted_runner_fields_out_of_the_response():
         url="https://example.com/repo.git",
         branch="main",
         key_id="hash",
-        key_label="label",
         created_at=now,
         updated_at=now,
     )
@@ -125,9 +123,7 @@ def test_recovered_ingest_reclones_a_partial_checkout(monkeypatch, tmp_path):
     monkeypatch.setattr(repo_cache, "clone", fake_clone)
     monkeypatch.setattr(repo_cache, "pull", forbidden_pull)
     monkeypatch.setattr(repo_cache, "run_index", fake_index)
-    asyncio.run(
-        repo_cache._run_ingest_job("https://example.com/repo.git", destination, "main", "label")
-    )
+    asyncio.run(repo_cache._run_ingest_job("https://example.com/repo.git", destination, "main"))
     assert calls == [
         ("clone", "https://example.com/repo.git", destination, "main"),
         ("index",),
@@ -152,7 +148,6 @@ def test_document_runner_revalidates_namespace(monkeypatch, tmp_path):
         filename="guide.md",
         spool_path=str(upload),
         key_id="hash",
-        key_label="label",
     )
     with pytest.raises(RuntimeError, match="namespace.*deleted"):
         asyncio.run(document_pipeline.run_document_job(job))
@@ -178,44 +173,18 @@ def test_startup_prune_removes_terminal_and_orphan_spool_files(monkeypatch, tmp_
     assert active.exists()
 
 
-def test_listing_scopes_non_admin_and_leaves_admin_unrestricted(monkeypatch):
+def test_listing_forwards_its_filters(monkeypatch):
     calls = []
 
-    async def fake_list(*, namespaces, origin, status):
-        calls.append((namespaces, origin, status))
+    async def fake_list(*, origin, status):
+        calls.append((origin, status))
         return []
 
     monkeypatch.setattr(job_store, "list_document_jobs", fake_list)
-
-    async def request(identity, query=""):
-        async def authenticate(plaintext_key):
-            return identity
-
-        monkeypatch.setattr(auth, "authenticate_request", authenticate)
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=api.app),
-            base_url="http://testserver",
-            headers={"X-API-Key": "key"},
-        ) as client:
-            return await client.get(f"/ingest/jobs{query}")
-
-    member = auth.KeyIdentity(
-        key_id="member-hash",
-        label="same-label",
-        home="default",
-        is_admin=False,
-        allowed=frozenset({"default", "team"}),
-    )
-    admin = auth.KeyIdentity(
-        key_id="admin-hash",
-        label="same-label",
-        home="default",
-        is_admin=True,
-        allowed=frozenset(),
-    )
-    assert asyncio.run(request(member, "?origin=manual&status=failed")).json() == {"jobs": []}
-    assert asyncio.run(request(admin)).json() == {"jobs": []}
-    assert calls == [(["default", "team"], "manual", "failed"), (None, None, None)]
+    client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+    assert client.get("/ingest/jobs?origin=manual&status=failed").json() == {"jobs": []}
+    assert client.get("/ingest/jobs").json() == {"jobs": []}
+    assert calls == [("manual", "failed"), (None, None)]
 
 
 def test_lifespan_starts_background_in_order_and_stops_it_in_reverse_before_pool_close(

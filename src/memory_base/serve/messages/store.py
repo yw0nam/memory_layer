@@ -17,7 +17,7 @@ import re
 import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import urlsplit
 
 import asyncpg
@@ -541,15 +541,17 @@ async def list_messages(
     return [public_row(row) for row in rows]
 
 
-async def claim_message(message_id: uuid.UUID, key, *, connection=None) -> dict[str, Any]:
+async def _refuse(conn, message_id: uuid.UUID, verb: str) -> NoReturn:
+    """Raise 404 for an unknown id, 409 for a message that is no longer pending."""
+    if await conn.fetchval(f'SELECT 1 FROM "{PG_SCHEMA}".messages WHERE id = $1', message_id):
+        raise MessageConflict(f"message {message_id} is not pending")
+    raise MessageNotFound(f"no {verb} message {message_id}")
+
+
+async def claim_message(message_id: uuid.UUID, *, connection=None) -> dict[str, Any]:
     """Claim a pending message at most once; the conditional UPDATE decides."""
 
     async def _claim(conn):
-        row = await conn.fetchrow(
-            f'SELECT namespace FROM "{PG_SCHEMA}".messages WHERE id = $1', message_id
-        )
-        if row is None or not key.permits(row["namespace"]):
-            raise MessageNotFound(f"no claimable message {message_id}")
         updated = await conn.fetchrow(
             f"""
             UPDATE "{PG_SCHEMA}".messages
@@ -562,7 +564,7 @@ async def claim_message(message_id: uuid.UUID, key, *, connection=None) -> dict[
             message_id,
         )
         if updated is None:
-            raise MessageConflict(f"message {message_id} is not pending")
+            await _refuse(conn, message_id, "claimable")
         return public_row(updated)
 
     if connection is not None:
@@ -572,17 +574,10 @@ async def claim_message(message_id: uuid.UUID, key, *, connection=None) -> dict[
         return await _claim(conn)
 
 
-async def cancel_message(message_id: uuid.UUID, key, *, connection=None) -> dict[str, Any]:
-    """A sender withdraws its own pending message; an admin cancels any pending."""
+async def cancel_message(message_id: uuid.UUID, *, connection=None) -> dict[str, Any]:
+    """Cancel a pending message."""
 
     async def _cancel(conn):
-        row = await conn.fetchrow(
-            f'SELECT namespace, sender_key FROM "{PG_SCHEMA}".messages WHERE id = $1', message_id
-        )
-        if row is None or not key.permits(row["namespace"]):
-            raise MessageNotFound(f"no cancellable message {message_id}")
-        if not (key.is_admin or row["sender_key"] == key.key_id):
-            raise MessageNotFound(f"no cancellable message {message_id}")
         updated = await conn.fetchrow(
             f"""
             UPDATE "{PG_SCHEMA}".messages
@@ -595,7 +590,7 @@ async def cancel_message(message_id: uuid.UUID, key, *, connection=None) -> dict
             message_id,
         )
         if updated is None:
-            raise MessageConflict(f"message {message_id} is not pending")
+            await _refuse(conn, message_id, "cancellable")
         return public_row(updated)
 
     if connection is not None:
@@ -611,40 +606,26 @@ _TERMINAL_PREDICATE = (
 )
 
 
-def _owner_filter(owner: str | None) -> tuple[str, list[Any]]:
-    """Scope a purge to the namespaces owner holds at execution time; None means all."""
-    if owner is None:
-        return "", []
-    return (
-        f' AND namespace IN (SELECT name FROM "{PG_SCHEMA}".namespaces WHERE owner = $1)',
-        [owner],
-    )
-
-
-async def terminal_messages(owner: str | None = None) -> list[dict[str, Any]]:
+async def terminal_messages() -> list[dict[str, Any]]:
     """Claimed, cancelled, superseded, or expired messages, for the purge preview."""
-    scope_sql, args = _owner_filter(owner)
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         rows = await conn.fetch(
             f"""
             SELECT {_PUBLIC_COLUMNS}
             FROM "{PG_SCHEMA}".messages
-            WHERE {_TERMINAL_PREDICATE}{scope_sql}
+            WHERE {_TERMINAL_PREDICATE}
             ORDER BY created_at DESC
-            """,
-            *args,
+            """
         )
     return [public_row(row) for row in rows]
 
 
-async def delete_terminal_messages(owner: str | None = None) -> int:
+async def delete_terminal_messages() -> int:
     """Delete claimed/cancelled/superseded/expired messages; releasing idempotency keys."""
-    scope_sql, args = _owner_filter(owner)
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         status = await conn.execute(
-            f'DELETE FROM "{PG_SCHEMA}".messages WHERE {_TERMINAL_PREDICATE}{scope_sql}',
-            *args,
+            f'DELETE FROM "{PG_SCHEMA}".messages WHERE {_TERMINAL_PREDICATE}'
         )
         return int(status.rsplit(" ", 1)[-1])

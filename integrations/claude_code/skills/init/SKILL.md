@@ -27,7 +27,7 @@ Show one short table:
 | checked at | `checked_at` |
 | author | `author` |
 | REST URL | `url` |
-| namespace | `namespace`, or "the key's home namespace" when null |
+| namespace | `namespace`, or `default` when null |
 
 ## 3. Find leftover hand-installed entries
 

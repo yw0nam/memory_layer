@@ -41,9 +41,7 @@ async def ingest_repo(
 async def remove_repo(name: str, ctx: Context | None = None) -> dict[str, Any]:
     """Remove a repository from the code index by its cache name.
 
-    Restricted to an admin key or the repo's owner (the key that first
-    ingested it); a non-owner, non-admin caller gets a 403. Queues a re-index
-    that tears down the removed repo's code chunks. Returns
+    Queues a re-index that tears down the removed repo's code chunks. Returns
     {job_id, status_url}; poll status_url for progress.
     """
     payload = await rest_client.call(

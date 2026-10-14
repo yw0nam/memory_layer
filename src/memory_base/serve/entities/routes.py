@@ -1,8 +1,4 @@
-"""REST routes for the entity registry: request validation, authority, and status codes.
-
-Authority comes from the key's authors: a write names the author it acts as, which must be
-one of them. The `import` consent method is for an admin key carrying the `user` author.
-"""
+"""REST routes for the entity registry: request validation and status codes."""
 
 from __future__ import annotations
 
@@ -12,12 +8,11 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from memory_base.serve.access.keys import AUTHOR_RE
-from memory_base.serve.common import consent
 from memory_base.serve.common.consent import CONSENT_METHODS
 from memory_base.serve.common.entities import SLUG_RE, entity_row
 from memory_base.serve.common.http import (
     RequestError,
+    author_slug,
     bounded_text,
     error,
     object_fields,
@@ -73,8 +68,7 @@ def _consent(fields: dict[str, Any]) -> tuple[str, str, bool]:
     dry_run = fields.get("dry_run", False)
     if not isinstance(dry_run, bool):
         raise RequestError("dry_run must be a boolean")
-    if not isinstance(author, str) or not AUTHOR_RE.fullmatch(author):
-        raise RequestError("author must be an author slug")
+    author_slug(author)
     if method not in CONSENT_METHODS:
         raise RequestError(f"consent_method must be one of {CONSENT_METHODS}")
     return author, method, dry_run
@@ -87,14 +81,6 @@ def parse_upsert(body: Any) -> tuple[list[dict[str, Any]], str, str, bool]:
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_ITEMS:
         raise RequestError(f"entities must be a list of 1 to {MAX_ITEMS} items")
     return [_item(item) for item in items], *_consent(fields)
-
-
-def _denied(key: Any, author: str, method: str) -> JSONResponse | None:
-    if author not in key.authors:
-        return error(f"author {author!r} is not one of this key's authors", 403)
-    if method == "import" and not consent.may_import(key):
-        return error("consent_method import needs an admin key carrying the 'user' author", 403)
-    return None
 
 
 async def list_route(request: Request) -> JSONResponse:
@@ -116,8 +102,6 @@ async def upsert_route(request: Request) -> JSONResponse:
         items, author, method, dry_run = parse_upsert(await request_body(request))
     except RequestError as exc:
         return error(str(exc))
-    if (denied := _denied(request.state.key, author, method)) is not None:
-        return denied
     try:
         rows = await store.upsert(items, author, method, dry_run)
     except store.Stale as exc:
@@ -143,8 +127,6 @@ async def archive_route(request: Request) -> JSONResponse:
         author, method, dry_run = _consent(fields)
     except RequestError as exc:
         return error(str(exc))
-    if (denied := _denied(request.state.key, author, method)) is not None:
-        return denied
     try:
         row = await store.archive(slug, author, method, dry_run)
     except ValueError as exc:

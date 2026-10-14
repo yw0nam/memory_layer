@@ -8,7 +8,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api
-from memory_base.serve.access import auth
 from memory_base.serve.turns import store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key"})
@@ -25,32 +24,6 @@ def _turn(**overrides):
         "content": "hello",
     }
     return {**body, **overrides}
-
-
-def _member(monkeypatch, allowed):
-    identity = auth.KeyIdentity(
-        key_id="m-hash",
-        label="m",
-        home="default",
-        is_admin=False,
-        allowed=frozenset(allowed),
-        authors=frozenset({"claude-code"}),
-    )
-
-    admin = auth.KeyIdentity(
-        key_id="a-hash",
-        label="a",
-        home="default",
-        is_admin=True,
-        allowed=frozenset(),
-        authors=frozenset({"claude-code"}),
-    )
-
-    async def fake_authenticate_request(plaintext_key):
-        return {"member-key": identity, "test-key": admin}.get(plaintext_key)
-
-    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
-    return TestClient(api.app, headers={"X-API-Key": "member-key"})
 
 
 @pytest.fixture
@@ -84,19 +57,12 @@ def test_a_malformed_turn_is_refused_and_nothing_is_stored(appended, overrides):
     assert appended == []
 
 
-def test_a_valid_turn_defaults_to_the_home_namespace(appended):
+def test_a_valid_turn_defaults_to_the_default_namespace(appended):
     response = client.post("/turns", json=_turn(repo="repo:github.com/o/r", reasoning="because"))
     assert response.status_code == 200
     assert response.json()["seq"] == 1
     assert appended[0]["namespace"] == "default"
     assert appended[0]["reasoning"] == "because"
-
-
-def test_a_namespace_the_key_cannot_write_is_403(monkeypatch, appended):
-    member = _member(monkeypatch, {"default"})
-    response = member.post("/turns", json=_turn(namespace="personal"))
-    assert response.status_code == 403
-    assert appended == []
 
 
 @pytest.mark.parametrize("field", ["content", "reasoning"])
@@ -114,7 +80,7 @@ def test_an_id_holding_another_turn_is_409(monkeypatch):
     assert client.post("/turns", json=_turn()).status_code == 409
 
 
-def test_sessions_pass_their_filters_and_scope_a_member_to_its_namespaces(monkeypatch):
+def test_sessions_pass_their_filters_and_cover_every_namespace_unless_narrowed(monkeypatch):
     captured = {}
 
     async def fake_list_sessions(**kwargs):
@@ -122,18 +88,16 @@ def test_sessions_pass_their_filters_and_scope_a_member_to_its_namespaces(monkey
         return []
 
     monkeypatch.setattr(store, "list_sessions", fake_list_sessions)
-    member = _member(monkeypatch, {"default", "team"})
-    response = member.get(
+    response = client.get(
         "/sessions", params={"origin": "hermes", "repo": "repo:h/p", "since": "2026-01-01"}
     )
     assert response.status_code == 200
-    assert captured["namespaces"] == ["default", "team"]
+    assert captured["namespaces"] is None
     assert captured["origin"] == "hermes"
     assert captured["repo"] == "repo:h/p"
     assert captured["since"] is not None
-    assert member.get("/sessions", params={"namespace": "personal"}).status_code == 403
-    assert client.get("/sessions").status_code == 200
-    assert captured["namespaces"] is None
+    assert client.get("/sessions", params={"namespace": "personal"}).status_code == 200
+    assert captured["namespaces"] == ["personal"]
 
 
 def test_an_unknown_session_is_404(monkeypatch):
@@ -148,13 +112,11 @@ def test_a_search_query_under_two_characters_is_refused():
     assert client.get("/turns/search", params={"q": "a"}).status_code == 400
 
 
-def test_only_an_admin_deletes_a_session(monkeypatch):
+def test_a_session_delete_returns_the_count(monkeypatch):
     async def fake_delete_session(origin, session_id):
         return 3
 
     monkeypatch.setattr(store, "delete_session", fake_delete_session)
-    member = _member(monkeypatch, {"default"})
-    assert member.delete("/admin/sessions/hermes/s-1").status_code == 403
     assert client.delete("/admin/sessions/hermes/s-1").json() == {"deleted": 3}
 
 

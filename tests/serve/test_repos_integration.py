@@ -183,8 +183,8 @@ def test_multi_repo_index_search_and_teardown(isolated_stack, tmp_path):
 
     # Local paths are intentionally rejected by the URL trust boundary, so drive
     # the ingest runner directly (clone + index) rather than POST /repos.
-    asyncio.run(repo_cache._run_ingest_job(str(origin_a), cache / "repo_a", None, "test"))
-    asyncio.run(repo_cache._run_ingest_job(str(origin_b), cache / "repo_b", None, "test"))
+    asyncio.run(repo_cache._run_ingest_job(str(origin_a), cache / "repo_a", None))
+    asyncio.run(repo_cache._run_ingest_job(str(origin_b), cache / "repo_b", None))
 
     listed = {r["name"]: r for r in _get("/repos").json()}
     assert {"repo_a", "repo_b"} <= set(listed)

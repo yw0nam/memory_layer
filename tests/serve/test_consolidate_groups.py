@@ -16,7 +16,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api
-from memory_base.serve.access import auth, namespaces
+from memory_base.serve.access import namespaces
 from memory_base.serve.consolidation import groups
 from memory_base.serve.consolidation.groups import (
     Deferred,
@@ -325,24 +325,6 @@ def test_group_key_is_sha256_of_canonical_json():
 # ---- route ------------------------------------------------------------------
 
 
-def _identity(is_admin=True, authors=("consolidator",)):
-    return auth.KeyIdentity(
-        key_id="consolidator-key-hash",
-        label="consolidator",
-        home="default",
-        is_admin=is_admin,
-        allowed=frozenset({"default"}),
-        authors=frozenset(authors),
-    )
-
-
-def _use_identity(monkeypatch, identity):
-    async def fake_authenticate_request(plaintext_key):
-        return identity if plaintext_key == "test-key" else None
-
-    monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
-
-
 class FakeTransaction:
     def __init__(self, conn, options):
         self.conn = conn
@@ -397,7 +379,7 @@ def registry(monkeypatch):
     registered = ["work", "default"]
 
     async def fake_list_namespaces():
-        return [{"name": name, "visibility": "public", "owner": None} for name in registered]
+        return [{"name": name} for name in registered]
 
     monkeypatch.setattr(namespaces, "list_namespaces", fake_list_namespaces)
     return registered
@@ -413,24 +395,6 @@ def fake_db(monkeypatch, registry):
 
     monkeypatch.setattr(groups.db, "acquire", acquire)
     return conn
-
-
-@pytest.fixture()
-def consolidator(monkeypatch):
-    _use_identity(monkeypatch, _identity())
-
-
-def test_route_refuses_a_non_admin_key(monkeypatch, fake_db):
-    _use_identity(monkeypatch, _identity(is_admin=False))
-    response = client.get("/admin/consolidate/groups")
-    assert response.status_code == 403
-    assert "consolidator" in response.json()["error"]
-
-
-def test_route_refuses_an_admin_key_without_the_consolidator_author(fake_db):
-    response = client.get("/admin/consolidate/groups")
-    assert response.status_code == 403
-    assert "consolidator" in response.json()["error"]
 
 
 @pytest.mark.parametrize(
@@ -455,14 +419,14 @@ def test_route_refuses_an_admin_key_without_the_consolidator_author(fake_db):
         [("limit", "5"), ("limit", "5")],
     ],
 )
-def test_route_rejects_a_bad_parameter(consolidator, fake_db, params):
+def test_route_rejects_a_bad_parameter(fake_db, params):
     response = client.get("/admin/consolidate/groups", params=params)
     assert response.status_code == 400
     assert "error" in response.json()
     assert fake_db.fetched == []
 
 
-def test_route_resolves_defaults_and_every_registered_namespace(consolidator, fake_db):
+def test_route_resolves_defaults_and_every_registered_namespace(fake_db):
     response = client.get("/admin/consolidate/groups")
     assert response.status_code == 200
     body = response.json()
@@ -487,7 +451,7 @@ def test_route_resolves_defaults_and_every_registered_namespace(consolidator, fa
     }
 
 
-def test_route_deduplicates_and_sorts_namespaces(consolidator, fake_db):
+def test_route_deduplicates_and_sorts_namespaces(fake_db):
     response = client.get(
         "/admin/consolidate/groups",
         params=[("namespace", "work"), ("namespace", "default"), ("namespace", "work")],
@@ -497,7 +461,7 @@ def test_route_deduplicates_and_sorts_namespaces(consolidator, fake_db):
     assert list(response.json()["namespaces"]) == ["default", "work"]
 
 
-def test_route_reads_one_exact_snapshot_per_namespace(consolidator, fake_db):
+def test_route_reads_one_exact_snapshot_per_namespace(fake_db):
     response = client.get(
         "/admin/consolidate/groups",
         params={"namespace": "work", "threshold": "0.8", "neighbors": "7"},
@@ -511,7 +475,7 @@ def test_route_reads_one_exact_snapshot_per_namespace(consolidator, fake_db):
     assert set(pair_args) >= {"work", 0.8, 7}
 
 
-def test_route_response_shape_and_member_ordering(consolidator, fake_db):
+def test_route_response_shape_and_member_ordering(fake_db):
     fake_db.note_rows = [
         _note_row("note:default:a", "rule one", 1_700_086_400.0, occurred_at=0.0),
         _note_row("note:default:b", "rule two", 1_700_000_000.0, supersedes="note:default:z"),
@@ -565,7 +529,7 @@ def test_route_response_shape_and_member_ordering(consolidator, fake_db):
     assert only["key"] == group_key("default", members)
 
 
-def test_route_reports_deferred_notes(consolidator, fake_db):
+def test_route_reports_deferred_notes(fake_db):
     fake_db.note_rows = [
         _note_row("note:default:a", "a" * 400, 1.0),
         _note_row("note:default:b", "b" * 400, 2.0),
@@ -582,7 +546,7 @@ def test_route_reports_deferred_notes(consolidator, fake_db):
     ]
 
 
-def test_route_counts_acknowledged_pairs_and_applies_the_limit(consolidator, fake_db):
+def test_route_counts_acknowledged_pairs_and_applies_the_limit(fake_db):
     fake_db.note_rows = [
         _note_row("note:default:a", "a", 1.0),
         _note_row("note:default:b", "b", 2.0, similar_ack=["note:default:a"]),
@@ -611,7 +575,7 @@ def test_route_counts_acknowledged_pairs_and_applies_the_limit(consolidator, fak
     assert exact["truncated"] is False
 
 
-def test_route_surfaces_a_duplicate_beside_an_acknowledged_pair(consolidator, fake_db):
+def test_route_surfaces_a_duplicate_beside_an_acknowledged_pair(fake_db):
     fake_db.note_rows = [
         _note_row("note:default:a", "a", 1.0, similar_ack=["note:default:b"]),
         _note_row("note:default:b", "b", 2.0),
@@ -642,7 +606,7 @@ def test_route_surfaces_a_duplicate_beside_an_acknowledged_pair(consolidator, fa
     ],
 )
 def test_route_takes_its_bounds_from_the_module(
-    monkeypatch, consolidator, fake_db, bound, value, param, rejected
+    monkeypatch, fake_db, bound, value, param, rejected
 ):
     monkeypatch.setattr(groups, bound, value)
     response = client.get("/admin/consolidate/groups", params={param: rejected})
@@ -676,7 +640,7 @@ def _member_ids(section):
     return [[m["id"] for m in g["members"]] for g in section["groups"]]
 
 
-def test_route_skips_a_group_whose_key_has_a_recorded_verdict(consolidator, fake_db):
+def test_route_skips_a_group_whose_key_has_a_recorded_verdict(fake_db):
     _three_pairs(fake_db)
     first = _section()["groups"][0]
     fake_db.action_rows = [{"group_key": first["key"], "member_ids": ["x"], "undone": False}]
@@ -692,7 +656,7 @@ def test_route_skips_a_group_whose_key_has_a_recorded_verdict(consolidator, fake
 
 
 def test_route_skips_the_member_set_of_an_undone_action_across_procedure_versions(
-    monkeypatch, consolidator, fake_db
+    monkeypatch, fake_db
 ):
     _three_pairs(fake_db)
     monkeypatch.setattr(groups, "PROCEDURE_VERSION", "3")

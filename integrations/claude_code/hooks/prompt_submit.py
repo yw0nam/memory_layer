@@ -7,9 +7,8 @@ first line marks them as retrieved reference data, not instructions.
 Memory-context tags inside a hit are defused so a note cannot close the fence.
 Every failure mode is fail-open: exit 0, never a blocked prompt. Stdlib only.
 
-The search sends no namespace filter, so it spans every namespace the key
-allows; personal memory appears only when the key used from Claude Code is
-allowed to read the `personal` namespace.
+The search sends no namespace filter, so it spans every namespace, personal
+memory included.
 
 Config comes from the plugin options (`CLAUDE_PLUGIN_OPTION_*`). Each
 invocation appends one metrics row to MEMORY_PREFETCH_LOG (default

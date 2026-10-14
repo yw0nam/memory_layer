@@ -1,9 +1,7 @@
-"""Authorization contracts for claiming and cancelling messages: who may act.
+"""Claim and cancel outcomes: success, 404 for an unknown id, 409 for a non-pending one.
 
 Drives memory_base.serve.messages.store.claim_message / cancel_message against a
-fake connection, so the permission decisions (namespace access for claims,
-sender-or-admin for cancels, 404 for anything invisible) are pinned without a
-database.
+fake connection, without a database.
 """
 
 from __future__ import annotations
@@ -15,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from memory_base.serve.access import auth
 from memory_base.serve.messages import store
 
 NOW = datetime.now(timezone.utc)
@@ -45,31 +42,17 @@ def _row(**overrides):
 
 
 class FakeConn:
-    """Hands out scripted fetchrow answers, tagged by the SQL kind."""
+    """Answers the conditional UPDATE with `updated` and the existence lookup with `exists`."""
 
-    def __init__(self, selects=(), updates=()):
-        self._selects = list(selects)
-        self._updates = list(updates)
-        self.executed: list[tuple] = []
+    def __init__(self, updated, exists=True):
+        self._updated = updated
+        self._exists = exists
 
     async def fetchrow(self, query, *args):
-        if "SELECT" in query:
-            return self._selects.pop(0)
-        return self._updates.pop(0)
+        return self._updated
 
-    async def execute(self, query, *args):
-        self.executed.append((query, args))
-
-    def transaction(self):
-        return _FakeTransaction()
-
-
-class _FakeTransaction:
-    async def __aenter__(self):
-        return None
-
-    async def __aexit__(self, *args):
-        return None
+    async def fetchval(self, query, *args):
+        return 1 if self._exists else None
 
 
 def _patch_acquire(monkeypatch, conn):
@@ -78,108 +61,29 @@ def _patch_acquire(monkeypatch, conn):
         yield conn
 
     monkeypatch.setattr(store.db, "acquire", acquire)
+    monkeypatch.setattr(store, "ensure_schema_once", _noop)
 
 
-def _identity(label="eve", key_id="eve-key-hash", is_admin=False, allowed=("default",)):
-    return auth.KeyIdentity(
-        key_id=key_id,
-        label=label,
-        home="default",
-        is_admin=is_admin,
-        allowed=frozenset(allowed),
-        authors=frozenset({"claude-code"}),
-    )
+async def _noop(conn):
+    return None
 
 
-# ---- claim authorization ------------------------------------------------------
-
-
-def test_claim_by_namespace_authorized_member_succeeds(monkeypatch):
+@pytest.mark.parametrize("action", [store.claim_message, store.cancel_message])
+def test_a_pending_message_is_actionable(monkeypatch, action):
     message_id = uuid.uuid4()
-    conn = FakeConn(
-        selects=[_row(id=message_id)],
-        updates=[_row(id=message_id, claimed_at=NOW)],
-    )
-    _patch_acquire(monkeypatch, conn)
-    row = asyncio.run(store.claim_message(message_id, _identity()))
-    assert row["status"] == "info"
+    _patch_acquire(monkeypatch, FakeConn(_row(id=message_id)))
+    assert asyncio.run(action(message_id))["status"] == "info"
 
 
-def test_claim_out_of_scope_namespace_404(monkeypatch):
-    message_id = uuid.uuid4()
-    conn = FakeConn(selects=[_row(id=message_id, namespace="team-b")])
-    _patch_acquire(monkeypatch, conn)
+@pytest.mark.parametrize("action", [store.claim_message, store.cancel_message])
+def test_an_unknown_id_is_404(monkeypatch, action):
+    _patch_acquire(monkeypatch, FakeConn(None, exists=False))
     with pytest.raises(store.MessageNotFound):
-        asyncio.run(store.claim_message(message_id, _identity(allowed=("default",))))
+        asyncio.run(action(uuid.uuid4()))
 
 
-def test_claim_unknown_id_404(monkeypatch):
-    conn = FakeConn(selects=[None])
-    _patch_acquire(monkeypatch, conn)
-    with pytest.raises(store.MessageNotFound):
-        asyncio.run(store.claim_message(uuid.uuid4(), _identity()))
-
-
-def test_claim_admin_may_claim_any_accessible_namespace(monkeypatch):
-    message_id = uuid.uuid4()
-    conn = FakeConn(
-        selects=[_row(id=message_id, namespace="team-b")],
-        updates=[_row(id=message_id, claimed_at=NOW)],
-    )
-    _patch_acquire(monkeypatch, conn)
-    row = asyncio.run(store.claim_message(message_id, _identity(is_admin=True)))
-    assert row["status"] == "info"
-
-
-# ---- cancel authorization -------------------------------------------------------
-
-
-def test_sender_may_cancel_own_pending(monkeypatch):
-    message_id = uuid.uuid4()
-    conn = FakeConn(
-        selects=[_row(id=message_id)],
-        updates=[_row(id=message_id, cancelled_at=NOW)],
-    )
-    _patch_acquire(monkeypatch, conn)
-    row = asyncio.run(store.cancel_message(message_id, _identity(key_id="sender-key-hash")))
-    assert row["status"] == "info"
-
-
-def test_cancel_by_other_member_404(monkeypatch):
-    message_id = uuid.uuid4()
-    conn = FakeConn(selects=[_row(id=message_id, sender_key="sender-key-hash")])
-    _patch_acquire(monkeypatch, conn)
-    with pytest.raises(store.MessageNotFound):
-        asyncio.run(store.cancel_message(message_id, _identity(key_id="eve-key-hash")))
-
-
-def test_admin_may_cancel_any_pending(monkeypatch):
-    message_id = uuid.uuid4()
-    conn = FakeConn(
-        selects=[_row(id=message_id, sender_key="sender-key-hash")],
-        updates=[_row(id=message_id, cancelled_at=NOW)],
-    )
-    _patch_acquire(monkeypatch, conn)
-    row = asyncio.run(store.cancel_message(message_id, _identity(is_admin=True)))
-    assert row["status"] == "info"
-
-
-def test_sender_without_namespace_visibility_gets_404(monkeypatch):
-    """Visibility gates cancel before the sender check: no access, no cancel."""
-    message_id = uuid.uuid4()
-    conn = FakeConn(selects=[_row(id=message_id, namespace="team-b")])
-    _patch_acquire(monkeypatch, conn)
-    with pytest.raises(store.MessageNotFound):
-        asyncio.run(
-            store.cancel_message(
-                message_id, _identity(key_id="sender-key-hash", allowed=("default",))
-            )
-        )
-
-
-def test_cancel_non_pending_409(monkeypatch):
-    message_id = uuid.uuid4()
-    conn = FakeConn(selects=[_row(id=message_id)], updates=[None])
-    _patch_acquire(monkeypatch, conn)
+@pytest.mark.parametrize("action", [store.claim_message, store.cancel_message])
+def test_a_message_that_is_no_longer_pending_is_409(monkeypatch, action):
+    _patch_acquire(monkeypatch, FakeConn(None))
     with pytest.raises(store.MessageConflict):
-        asyncio.run(store.cancel_message(message_id, _identity(key_id="sender-key-hash")))
+        asyncio.run(action(uuid.uuid4()))

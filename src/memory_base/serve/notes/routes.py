@@ -1,4 +1,4 @@
-"""REST routes for agent notes: saving, listing, and curation, scoped by the caller's key."""
+"""REST routes for agent notes: saving, listing, and curation."""
 
 from __future__ import annotations
 
@@ -9,7 +9,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.retrieval.search import normalize_namespaces
-from memory_base.serve.common.http import RequestError, error, json_body, object_fields
+from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
+from memory_base.serve.common.http import (
+    RequestError,
+    author_slug,
+    error,
+    json_body,
+    object_fields,
+)
 from memory_base.serve.common.origins import ORIGINS
 from memory_base.serve.notes import curation, store
 
@@ -19,11 +26,6 @@ def _ids(body: dict[str, Any]) -> list[str] | None:
     if not isinstance(ids, list) or not ids or any(not isinstance(item, str) for item in ids):
         return None
     return ids
-
-
-def _admin_scope(key) -> list[str] | None:
-    """None means unfiltered (an admin key); otherwise the caller's allowed set."""
-    return None if key.is_admin else sorted(key.allowed)
 
 
 def _source_session(body: dict[str, Any]) -> dict[str, str] | None:
@@ -43,26 +45,19 @@ def _source_session(body: dict[str, Any]) -> dict[str, str] | None:
 
 
 async def save_route(request: Request) -> JSONResponse:
-    """Validate and store an agent-authored memory request; omitted namespace lands in key.home."""
-    key = request.state.key
+    """Validate and store an agent-authored memory request; omitted namespace lands in `default`."""
     try:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
 
-    namespace = body.get("namespace", key.home)
+    namespace = body.get("namespace", DEFAULT_NAMESPACE)
     if not isinstance(namespace, str) or not namespace.strip():
         return error("namespace must be a non-empty string")
-    if not key.permits(namespace):
-        return error(f"namespace {namespace!r} is outside the caller's allowed set", 403)
     if "occurred_at" in body and body["occurred_at"] is None:
         return error("occurred_at must be an ISO 8601 date or datetime string")
-    author = body.get("author")
-    if not isinstance(author, str) or not author.strip():
-        return error("author is required")
-    if author not in key.authors:
-        return error(f"author {author!r} is not permitted for this key", 403)
     try:
+        author = author_slug(body.get("author"))
         source_session = _source_session(body)
     except ValueError as exc:
         return error(str(exc))
@@ -92,8 +87,7 @@ async def save_route(request: Request) -> JSONResponse:
 
 
 async def list_route(request: Request) -> JSONResponse:
-    """List agent notes by filters alone — no query, no embedding — scoped like search."""
-    key = request.state.key
+    """List agent notes by filters alone — no query, no embedding."""
     params = request.query_params
     try:
         limit = int(params.get("limit", str(store.LIST_NOTES_DEFAULT_LIMIT)))
@@ -106,17 +100,12 @@ async def list_route(request: Request) -> JSONResponse:
         requested_namespaces = normalize_namespaces(params.getlist("namespace") or None)
     except ValueError as exc:
         return error(str(exc))
-    if requested_namespaces is not None and not key.permits_all(set(requested_namespaces)):
-        return error("requested namespaces are outside the caller's allowed set", 403)
-    scope = requested_namespaces
-    if scope is None and not key.is_admin:
-        scope = sorted(key.allowed)
     try:
         rows = await store.list_notes(
             tags=params.getlist("tags") or None,
             entity=params.get("entity") or None,
             kind=params.get("kind") or None,
-            namespaces=scope,
+            namespaces=requested_namespaces,
             include_archived=include_archived == "true",
             since=params.get("since"),
             until=params.get("until"),
@@ -129,19 +118,17 @@ async def list_route(request: Request) -> JSONResponse:
 
 
 async def old_notes_route(request: Request) -> JSONResponse:
-    """List active agent notes older than a requested age, scoped to the caller's namespaces."""
+    """List active agent notes older than a requested age."""
     try:
         older_than_days = int(request.query_params.get("older_than_days", "90"))
     except ValueError:
         return error("older_than_days must be an integer")
-    rows = await curation.list_old_notes(
-        older_than_days, namespaces=_admin_scope(request.state.key)
-    )
+    rows = await curation.list_old_notes(older_than_days)
     return JSONResponse(rows)
 
 
 async def delete_route(request: Request) -> JSONResponse:
-    """Preview or delete selected agent notes, scoped to the caller's namespaces."""
+    """Preview or delete selected agent notes."""
     try:
         body = await json_body(request)
     except Exception as exc:
@@ -149,21 +136,17 @@ async def delete_route(request: Request) -> JSONResponse:
     ids = _ids(body)
     if ids is None:
         return error("ids must be a non-empty list")
-    scope = _admin_scope(request.state.key)
-    rows = await curation.notes_by_ids(ids, namespaces=scope)
+    rows = await curation.notes_by_ids(ids)
     if {row["id"] for row in rows} != set(ids):
         return error("ids must refer only to agent_note rows")
     if body.get("confirm") is True:
-        deleted = await curation.delete_notes(ids, namespaces=scope)
+        deleted = await curation.delete_notes(ids)
         return JSONResponse({"deleted": deleted})
     return JSONResponse({"rows": rows})
 
 
 async def move_route(request: Request) -> JSONResponse:
-    """Move agent notes into another registered namespace; admin keys only."""
-    key = request.state.key
-    if not key.is_admin:
-        return error("admin key required", 403)
+    """Move agent notes into another registered namespace."""
     try:
         body = await json_body(request)
     except Exception as exc:
@@ -182,7 +165,7 @@ async def move_route(request: Request) -> JSONResponse:
 
 
 async def duplicates_route(request: Request) -> JSONResponse:
-    """List active near-duplicate agent-note pairs, scoped to the caller's namespaces."""
+    """List active near-duplicate agent-note pairs."""
     try:
         threshold = float(request.query_params.get("threshold", "0.75"))
     except ValueError:
@@ -194,15 +177,12 @@ async def duplicates_route(request: Request) -> JSONResponse:
         limit = int(request.query_params.get("limit", "50"))
     except ValueError:
         return error("limit must be an integer")
-    pairs = await curation.find_duplicates(
-        threshold, kind, limit, namespaces=_admin_scope(request.state.key)
-    )
+    pairs = await curation.find_duplicates(threshold, kind, limit)
     return JSONResponse({"pairs": pairs})
 
 
 async def archive_route(request: Request) -> JSONResponse:
-    """Preview or archive the agent notes named by ids, or the cold ones, in scope."""
-    key = request.state.key
+    """Preview or archive the agent notes named by ids, or the cold ones."""
     try:
         body = await json_body(request)
     except Exception as exc:
@@ -216,41 +196,40 @@ async def archive_route(request: Request) -> JSONResponse:
     if ids is not None and author is None:
         return error("author is required")
     if author is not None:
-        if not isinstance(author, str) or not author.strip():
-            return error("author must be a non-empty string")
-        if author not in key.authors:
-            return error(f"author {author!r} is not permitted for this key", 403)
+        try:
+            author = author_slug(author)
+        except RequestError as exc:
+            return error(str(exc))
     now = time.time()
-    scope = _admin_scope(key)
     if ids is not None:
-        rows = await curation.rows_by_ids(ids, namespaces=scope, notes_only=True)
+        rows = await curation.rows_by_ids(ids, notes_only=True)
         missing = sorted(set(ids) - {row["id"] for row in rows})
         if missing:
             return JSONResponse(
                 {
                     "error": (
-                        f"{len(missing)} of {len(set(ids))} ids are not active notes in the "
-                        f"caller's scope: {', '.join(missing)}"
+                        f"{len(missing)} of {len(set(ids))} ids are not active notes: "
+                        f"{', '.join(missing)}"
                     ),
                     "missing": missing,
                 },
                 status_code=400,
             )
         if body.get("confirm") is True:
-            archived = await curation.archive_rows(ids, now, namespaces=scope, archived_by=author)
+            archived = await curation.archive_rows(ids, now, archived_by=author)
             return JSONResponse({"archived": archived})
         return JSONResponse({"notes_to_archive": rows})
-    candidates = await curation.archive_candidates(now, namespaces=scope)
+    candidates = await curation.archive_candidates(now)
     if body.get("confirm") is True:
         archived = await curation.archive_rows(
-            [row["id"] for row in candidates], now, namespaces=scope, archived_by=author
+            [row["id"] for row in candidates], now, archived_by=author
         )
         return JSONResponse({"archived": archived})
     return JSONResponse({"notes_to_archive": candidates})
 
 
 async def restore_route(request: Request) -> JSONResponse:
-    """Preview or restore selected memory rows, scoped to the caller's namespaces."""
+    """Preview or restore selected memory rows."""
     try:
         body = await json_body(request)
     except Exception as exc:
@@ -258,11 +237,10 @@ async def restore_route(request: Request) -> JSONResponse:
     ids = _ids(body)
     if ids is None:
         return error("ids must be a non-empty list")
-    scope = _admin_scope(request.state.key)
     if body.get("confirm") is True:
-        restored = await curation.restore_rows(ids, namespaces=scope)
+        restored = await curation.restore_rows(ids)
         return JSONResponse({"restored": restored})
-    rows = await curation.rows_by_ids(ids, namespaces=scope)
+    rows = await curation.rows_by_ids(ids)
     return JSONResponse({"rows": rows})
 
 
@@ -270,8 +248,7 @@ MAX_LINK_IDS = 200
 
 
 async def link_entities_route(request: Request) -> JSONResponse:
-    """Preview or apply one add/remove delta of entity slugs to existing notes in scope."""
-    key = request.state.key
+    """Preview or apply one add/remove delta of entity slugs to existing notes."""
     try:
         body = object_fields(
             await json_body(request), {"ids", "author"}, {"add", "remove", "confirm"}
@@ -279,9 +256,7 @@ async def link_entities_route(request: Request) -> JSONResponse:
         ids = _ids(body)
         if ids is None or len(ids) > MAX_LINK_IDS or len(set(ids)) != len(ids):
             raise RequestError(f"ids must hold 1 to {MAX_LINK_IDS} unique note ids")
-        author = body["author"]
-        if not isinstance(author, str) or not author.strip():
-            raise RequestError("author must be a non-empty string")
+        author = author_slug(body["author"])
         confirm = body.get("confirm", False)
         if not isinstance(confirm, bool):
             raise RequestError("confirm must be a boolean")
@@ -293,10 +268,8 @@ async def link_entities_route(request: Request) -> JSONResponse:
             raise RequestError(f"slugs in both add and remove: {', '.join(both)}")
     except (RequestError, ValueError) as exc:
         return error(str(exc))
-    if author not in key.authors:
-        return error(f"author {author!r} is not permitted for this key", 403)
     try:
-        result = await curation.link_entities(ids, add, remove, author, confirm, _admin_scope(key))
+        result = await curation.link_entities(ids, add, remove, author, confirm)
     except curation.LinkRefused as exc:
         return JSONResponse({"error": str(exc), "ids": exc.ids}, status_code=400)
     except ValueError as exc:

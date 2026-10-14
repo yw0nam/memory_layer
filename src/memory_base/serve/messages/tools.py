@@ -41,12 +41,12 @@ async def send_message(
     of a work state, `status` "in_progress", "blocked", or "completed";
     "in_progress" and "blocked" require a nonblank `next_step`, "completed"
     requires none. A new snapshot supersedes the pending one for the same
-    subject, and any sender who can access the namespace may publish it.
+    subject. `namespace` defaults to `default`.
 
     `verification`, when given, is exactly {command, status, result} with
     status "passed", "failed", or "not_run". `refs` holds at most 10 absolute
     https URLs; localhost, private/loopback IP literals, and file URLs are
-    rejected. `author` must be in the calling key's author allowlist.
+    rejected. `author` is your author slug.
     `idempotency_key` (max 128 chars) replays an identical send instead of
     duplicating it. `expires_at` is an ISO 8601 datetime at most 30 days out;
     without it a general message expires after the server's configured default
@@ -89,7 +89,7 @@ async def list_messages(
     limit: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
-    """List pending, unexpired messages addressed to the caller's namespaces.
+    """List pending, unexpired messages addressed to a namespace.
 
     No query and no embedding call: messages are read by address, never by
     similarity, and never appear in search results. Returns newest-first rows
@@ -101,8 +101,8 @@ async def list_messages(
     `purpose` is "message" or "handoff"; `scope` is the portable scope the
     message was sent with; `subject` matches after the same normalization the
     server applies on send (any spelling variant of the subject finds it).
-    `namespace` narrows to one namespace the caller's API key can access;
-    omitted, it covers every accessible namespace. `limit` defaults to 50,
+    `namespace` narrows to one namespace; omitted, it covers every
+    namespace. `limit` defaults to 50,
     max 100.
     """
     params: list[tuple[str, str]] = []
@@ -131,7 +131,7 @@ async def claim_message(message_id: str, ctx: Context | None = None) -> dict[str
     succeeds; a second claim of the same id is refused. Call this at the start
     of a session for each message from list_messages you are about to act on.
     A 200 is the claim; the returned row keeps its original report `status`.
-    An unknown id, or one outside the caller's namespaces, gets a 404; an
+    An unknown id gets a 404; an
     already-claimed, cancelled, superseded, or expired id gets a 409.
     """
     return await rest_client.call(
@@ -144,10 +144,8 @@ async def claim_message(message_id: str, ctx: Context | None = None) -> dict[str
 async def cancel_message(message_id: str, ctx: Context | None = None) -> dict[str, Any]:
     """Withdraw a pending message the sender no longer wants delivered.
 
-    A sender can cancel its own pending messages; an admin key can cancel any
-    accessible pending message. A 200 is the cancellation; the returned row
-    keeps its report `status`. Unknown, unauthorized, or no-longer-pending ids
-    get 404/409.
+    A 200 is the cancellation; the returned row keeps its report `status`.
+    An unknown id gets a 404; a no-longer-pending one gets a 409.
     """
     return await rest_client.call(
         "DELETE",

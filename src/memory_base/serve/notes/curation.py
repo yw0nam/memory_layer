@@ -21,8 +21,8 @@ DAY_SECONDS = 86400.0
 DUPLICATE_NEIGHBORS = 5
 
 
-async def list_old_notes(older_than_days: int, namespaces: list[str] | None = None) -> list[dict]:
-    """Return active agent notes older than the requested age, scoped to namespaces (None: all)."""
+async def list_old_notes(older_than_days: int) -> list[dict]:
+    """Return active agent notes older than the requested age."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -32,17 +32,15 @@ async def list_old_notes(older_than_days: int, namespaces: list[str] | None = No
               AND archived_at IS NULL
               AND ts_last_active
                   < extract(epoch FROM now()) - $1::double precision * {DAY_SECONDS}
-              AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             ORDER BY ts_last_active ASC
             """,
             older_than_days,
-            namespaces,
         )
         return [dict(row) for row in rows]
 
 
-async def notes_by_ids(ids: list[str], namespaces: list[str] | None = None) -> list[dict]:
-    """Return agent notes matching the supplied identifiers, scoped to namespaces (None: all)."""
+async def notes_by_ids(ids: list[str]) -> list[dict]:
+    """Return agent notes matching the supplied identifiers."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -50,17 +48,15 @@ async def notes_by_ids(ids: list[str], namespaces: list[str] | None = None) -> l
                    archived_at
             FROM "{PG_SCHEMA}".memory_chunks
             WHERE source_type = 'agent_note' AND id = ANY($1::text[])
-              AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             ORDER BY ts_last_active ASC
             """,
             ids,
-            namespaces,
         )
         return [dict(row) for row in rows]
 
 
-async def delete_notes(ids: list[str], namespaces: list[str] | None = None) -> int:
-    """Delete agent notes matching the supplied identifiers, scoped to namespaces (None: all).
+async def delete_notes(ids: list[str]) -> int:
+    """Delete agent notes matching the supplied identifiers.
 
     Current facts citing a deleted note are archived and lose their citation.
     """
@@ -72,21 +68,17 @@ async def delete_notes(ids: list[str], namespaces: list[str] | None = None) -> i
                 WHERE archived_at IS NULL AND note_id IN (
                   SELECT id FROM "{PG_SCHEMA}".memory_chunks
                   WHERE source_type = 'agent_note' AND id = ANY($1::text[])
-                    AND ($3::text[] IS NULL OR namespace = ANY($3::text[]))
                 )
                 """,
                 ids,
                 time.time(),
-                namespaces,
             )
             status = await conn.execute(
                 f"""
                 DELETE FROM "{PG_SCHEMA}".memory_chunks
                 WHERE source_type = 'agent_note' AND id = ANY($1::text[])
-                  AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
                 """,
                 ids,
-                namespaces,
             )
             return int(status.rsplit(" ", 1)[-1])
 
@@ -137,10 +129,8 @@ async def move_notes(ids: list[str], target_namespace: str) -> dict[str, list]:
             return {"moved": moved, "skipped": skipped}
 
 
-async def find_duplicates(
-    threshold: float, kind: str | None, limit: int, namespaces: list[str] | None = None
-) -> list[dict]:
-    """Return active agent-note pairs meeting the cosine-similarity threshold, scoped to namespaces."""
+async def find_duplicates(threshold: float, kind: str | None, limit: int) -> list[dict]:
+    """Return active agent-note pairs meeting the cosine-similarity threshold."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -170,14 +160,12 @@ async def find_duplicates(
                   AND candidate.archived_at IS NULL
                   AND candidate.id <> a.id
                   AND ($2::text IS NULL OR candidate.chunk_kind = $2)
-                  AND ($4::text[] IS NULL OR candidate.namespace = ANY($4::text[]))
                 ORDER BY candidate.embedding <=> a.embedding
                 LIMIT {DUPLICATE_NEIGHBORS}
               ) AS b
               WHERE a.source_type = 'agent_note'
                 AND a.archived_at IS NULL
                 AND ($2::text IS NULL OR a.chunk_kind = $2)
-                AND ($4::text[] IS NULL OR a.namespace = ANY($4::text[]))
             ),
             deduplicated AS (
               SELECT DISTINCT ON (least_id, greatest_id)
@@ -197,7 +185,6 @@ async def find_duplicates(
             threshold,
             kind,
             limit,
-            namespaces,
         )
         return [
             {
@@ -219,8 +206,8 @@ async def find_duplicates(
         ]
 
 
-async def archive_candidates(now: float, namespaces: list[str] | None = None) -> list[dict]:
-    """Return active agent notes matching the configured cold-tier rule, scoped to namespaces."""
+async def archive_candidates(now: float) -> list[dict]:
+    """Return active agent notes matching the configured cold-tier rule."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -233,13 +220,11 @@ async def archive_candidates(now: float, namespaces: list[str] | None = None) ->
               AND ts_last_active < $1 - $2::double precision * {DAY_SECONDS}
               AND coalesce(last_hit_at, ts_last_active)
                   < $1 - $3::double precision * {DAY_SECONDS}
-              AND ($4::text[] IS NULL OR namespace = ANY($4::text[]))
             ORDER BY ts_last_active ASC
             """,
             now,
             COLD_AGE_DAYS,
             COLD_UNHIT_DAYS,
-            namespaces,
         )
         return [dict(row) for row in rows]
 
@@ -247,12 +232,11 @@ async def archive_candidates(now: float, namespaces: list[str] | None = None) ->
 async def archive_rows(
     ids: list[str],
     now: float,
-    namespaces: list[str] | None = None,
     archived_by: str | None = None,
 ) -> int:
-    """Archive active agent notes matching the supplied identifiers, scoped to namespaces."""
+    """Archive active agent notes matching the supplied identifiers."""
     stamp = (
-        ", metadata = metadata || jsonb_build_object('archived_by', $4::text)"
+        ", metadata = metadata || jsonb_build_object('archived_by', $3::text)"
         if archived_by is not None
         else ""
     )
@@ -263,18 +247,16 @@ async def archive_rows(
             UPDATE "{PG_SCHEMA}".memory_chunks
             SET archived_at = $2{stamp}
             WHERE source_type = 'agent_note' AND id = ANY($1::text[]) AND archived_at IS NULL
-              AND ($3::text[] IS NULL OR namespace = ANY($3::text[]))
             """,
             ids,
             now,
-            namespaces,
             *extra,
         )
         return int(status.rsplit(" ", 1)[-1])
 
 
-async def restore_rows(ids: list[str], namespaces: list[str] | None = None) -> int:
-    """Restore rows matching the supplied identifiers, scoped to namespaces.
+async def restore_rows(ids: list[str]) -> int:
+    """Restore rows matching the supplied identifiers.
 
     Restoring clears the fields that recorded the archive: its author and the note that
     replaced or absorbed the row.
@@ -286,18 +268,14 @@ async def restore_rows(ids: list[str], namespaces: list[str] | None = None) -> i
             UPDATE "{PG_SCHEMA}".memory_chunks
             SET archived_at = NULL, metadata = metadata{cleared}
             WHERE id = ANY($1::text[])
-              AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
             """,
             ids,
-            namespaces,
         )
         return int(status.rsplit(" ", 1)[-1])
 
 
-async def rows_by_ids(
-    ids: list[str], namespaces: list[str] | None = None, notes_only: bool = False
-) -> list[dict]:
-    """Return lifecycle fields for rows matching the supplied identifiers, scoped to namespaces.
+async def rows_by_ids(ids: list[str], notes_only: bool = False) -> list[dict]:
+    """Return lifecycle fields for rows matching the supplied identifiers.
 
     ``notes_only`` drops every row that is not an agent note.
     """
@@ -308,12 +286,10 @@ async def rows_by_ids(
                    metadata->>'archived_by' AS archived_by
             FROM "{PG_SCHEMA}".memory_chunks
             WHERE id = ANY($1::text[])
-              AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
-              AND (NOT $3::boolean OR source_type = 'agent_note')
+              AND (NOT $2::boolean OR source_type = 'agent_note')
             ORDER BY id
             """,
             ids,
-            namespaces,
             notes_only,
         )
         return [dict(row) for row in rows]
@@ -333,9 +309,8 @@ async def link_entities(
     remove: list[str],
     author: str,
     confirm: bool,
-    namespaces: list[str] | None = None,
 ) -> dict[str, list[dict]]:
-    """Apply (current + add) - remove to the entity slugs of active agent notes in scope.
+    """Apply (current + add) - remove to the entity slugs of active agent notes.
 
     Rows are locked in id order and the sets recomputed from them. A changed note records
     who set its entities and when; an unchanged note is not touched. Without `confirm`
@@ -349,16 +324,14 @@ async def link_entities(
                 SELECT id, metadata FROM "{PG_SCHEMA}".memory_chunks
                 WHERE source_type = 'agent_note' AND archived_at IS NULL
                   AND id = ANY($1::text[])
-                  AND ($2::text[] IS NULL OR namespace = ANY($2::text[]))
                 ORDER BY id
                 FOR UPDATE
                 """,
                 ids,
-                namespaces,
             )
             found = {row["id"]: metadata_dict(row["metadata"]) for row in rows}
             if missing := [i for i in ids if i not in found]:
-                raise LinkRefused("not active notes in the caller's scope", missing)
+                raise LinkRefused("not active notes", missing)
             await require_active(conn, add, lock=True)
             results = []
             for note_id in sorted(found):
