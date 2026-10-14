@@ -210,9 +210,8 @@ async def save_note(
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
-            if slugs := row["metadata"].get("entities", []):
-                await lock_slugs(conn)
-                await require_registered(conn, slugs)
+            await lock_slugs(conn)
+            await require_registered(conn, row["metadata"].get("entities", []))
             await namespaces.require_registered(conn, namespace)
             if supersedes is not None:
                 exists = await conn.fetchval(

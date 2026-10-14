@@ -47,6 +47,8 @@ class RecordingConn:
         return []
 
     async def execute(self, query, *args):
+        if "pg_advisory" in query:
+            return "SELECT 1"
         self._record(query, args)
         if "INSERT INTO" in query:
             return "INSERT 0 1"

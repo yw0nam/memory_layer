@@ -264,6 +264,8 @@ class FakeConnection:
         return True
 
     async def execute(self, query, *args):
+        if "pg_advisory" in query:
+            return "SELECT 1"
         if "SET archived_at" in query:
             self.updates.append((query, args))
             return "UPDATE 1"

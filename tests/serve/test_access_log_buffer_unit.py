@@ -28,14 +28,26 @@ WRITE_VERBS = ("INSERT", "UPDATE", "DELETE")
 NOW = 1_700_000_000.0
 
 
+class _NoTransaction:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class RecordingConnection:
     """Collects statements instead of running them."""
 
     def __init__(self) -> None:
         self.statements: list[tuple[str, tuple]] = []
 
+    def transaction(self):
+        return _NoTransaction()
+
     async def execute(self, sql: str, *args):
-        self.statements.append((sql, args))
+        if "pg_advisory" not in sql:
+            self.statements.append((sql, args))
         return "OK"
 
     async def executemany(self, sql: str, args):
