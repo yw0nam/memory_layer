@@ -378,9 +378,12 @@ Hold, list in the report, and never write:
 - An `attribute` is a short slug (`^[a-z0-9][a-z0-9_-]{0,39}$`); reuse those already on the
   card (`works_at`, `likes`, `role`, `repo`).
 - A relation is `value_entity`, a registered active slug. A value naming a subject with no
-  entity is `value_text` (1 to 300 characters).
+  entity is `value_text`: one short value, 1 to 300 characters, with no comma. The server
+  reads a comma as several values in one row and refuses the batch; write a second fact or
+  a shorter value instead of a clause list.
 - `allow_multiple` only for an attribute that holds several values by nature (members,
-  aliases of a thing), one row per element; never a conjunction value.
+  aliases of a thing, `likes`, `prefers`), one row per element; never a conjunction value.
+  A second current row of the same attribute without it is refused.
 - A batch holds 1 to 100 ops.
 
 **Statuses.** The response is `{"results": [{"op", "status", ...fact row}]}`.
