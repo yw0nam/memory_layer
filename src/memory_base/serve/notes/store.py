@@ -21,7 +21,7 @@ from memory_base.retrieval.search import (
     parse_time_bound,
 )
 from memory_base.serve.access import namespaces
-from memory_base.serve.common.entities import SLUG_RE, require_active
+from memory_base.serve.common.entities import SLUG_RE, lock_slugs, require_registered
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 
@@ -210,8 +210,10 @@ async def save_note(
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
+            if slugs := row["metadata"].get("entities", []):
+                await lock_slugs(conn)
+                await require_registered(conn, slugs)
             await namespaces.require_registered(conn, namespace)
-            await require_active(conn, row["metadata"].get("entities", []))
             if supersedes is not None:
                 exists = await conn.fetchval(
                     f"""

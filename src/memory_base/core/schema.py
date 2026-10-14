@@ -229,8 +229,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
             CHECK (consent_method IN ('elicitation', 'conversation', 'import')),
           consented_at double precision NOT NULL,
           created_at double precision NOT NULL,
-          updated_at double precision NOT NULL,
-          archived_at double precision
+          updated_at double precision NOT NULL
         );
         CREATE TABLE IF NOT EXISTS {schema}.facts (
           id uuid PRIMARY KEY,

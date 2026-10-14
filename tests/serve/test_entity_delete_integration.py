@@ -74,7 +74,9 @@ async def _fact(conn, entity, attribute, value_entity=None, archived_at=None, re
 
 
 async def _note_metadata(conn, note_id):
-    return metadata_dict(await conn.fetchval(f"SELECT metadata FROM {NOTES} WHERE id = $1", note_id))
+    return metadata_dict(
+        await conn.fetchval(f"SELECT metadata FROM {NOTES} WHERE id = $1", note_id)
+    )
 
 
 async def _cleanup(conn, tag):
@@ -90,7 +92,12 @@ def test_delete_unlinks_notes_removes_facts_and_frees_the_names():
     tag = uuid.uuid4().hex[:10]
     slug, other = f"it-{tag}-x", f"it-{tag}-o"
     active, archived, untouched = (f"note:default:it{tag}{n}" for n in "abc")
-    original = {"author": "hermes", "tags": ["t"], "entities": [slug, other], "entities_set_by": "z"}
+    original = {
+        "author": "hermes",
+        "tags": ["t"],
+        "entities": [slug, other],
+        "entities_set_by": "z",
+    }
 
     async def scenario():
         conn = await asyncpg.connect(db_url())
@@ -131,7 +138,9 @@ def test_delete_unlinks_notes_removes_facts_and_frees_the_names():
                     headers=HEADERS,
                 )
             after = {n: await _note_metadata(conn, n) for n in (active, archived, untouched)}
-            archived_at = await conn.fetchval(f"SELECT archived_at FROM {NOTES} WHERE id=$1", archived)
+            archived_at = await conn.fetchval(
+                f"SELECT archived_at FROM {NOTES} WHERE id=$1", archived
+            )
             facts = await conn.fetch(f"SELECT entity, attribute, replaced_by FROM {FACTS} WHERE entity LIKE $1", f"it-{tag}-%")  # fmt: skip
             linked = await conn.fetchval(f"SELECT count(*) FROM {NOTES} WHERE metadata->'entities' ? $1", slug)  # fmt: skip
             return dict(**locals())

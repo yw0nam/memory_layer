@@ -40,60 +40,65 @@ def _based(item: dict[str, Any], current: dict[str, Any] | None) -> dict[str, An
     return {**item, "base_updated_at": current["updated_at"]}
 
 
-async def list_entities(
-    include_archived: bool = False, ctx: Context | None = None
-) -> dict[str, Any]:
+def _delete_summary(slug: str, name: str, plan: dict[str, Any]) -> str:
+    notes = plan["note_ids"]
+    return (
+        f"delete {slug} ({name}): unlink it from {len(notes)} notes"
+        f"{': ' + ', '.join(notes) if notes else ''}; delete {plan['facts']} facts of it and "
+        f"{plan['incoming']} facts of other entities that point at it"
+    )
+
+
+async def list_entities(ctx: Context | None = None) -> dict[str, Any]:
     """List the entity registry: every person, agent, project, organisation, place, or thing
     the user has consented to, as {slug, kind, name, aliases, description, ...}.
 
     Read it before register_entity: the registry is what makes two writers agree on one slug
-    for one thing. Match a name by its slug, name, or any alias. `include_archived` also
-    returns archived entities, whose names stay reserved.
+    for one thing. Match a name by its slug, name, or any alias.
     """
-    return await rest_client.call(
-        "GET",
-        "/entities",
-        params={"include_archived": str(include_archived).lower()},
-        headers=rest_client.auth_headers(ctx),
-    )
+    return await rest_client.call("GET", "/entities", headers=rest_client.auth_headers(ctx))
 
 
 async def register_entity(
     entities: list[dict[str, Any]],
     author: str,
     confirmed: bool = False,
-    archive: bool = False,
+    delete: bool = False,
+    expect: dict[str, int] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Create, edit, or archive entities in the registry, with the user's consent.
+    """Create, edit, or delete entities in the registry, with the user's consent.
 
     Reuse before create: call list_entities (or read the registry the server shows) first; a
     slug, name, or alias that already exists is refused and the refusal names its holder.
     `entities` are {slug, kind, name, aliases, description}; an edit sends the slug and the
-    fields that change (aliases replace the list); archive=true takes one {slug}. Every
-    create, edit, and archive is put to the user: on a client with elicitation a dialog
-    appears in this call; on others the tool returns {status: "needs_consent", summary} and
-    writes nothing, so ask the user in the conversation, then call again with confirmed=true
-    and the same input. In an unattended session (cron, no user present) never pass confirmed;
-    send a message naming the entity on the messages lane instead, and the next interactive
-    session asks. A refused request never reaches the user. The user is an entity of kind
-    person; a project entity carries its repository origin among its aliases. For a person
-    the description says who they are; for an agent it holds the user's standing directions
-    to that agent, including its `Remember` and `Don't remember` lines, and only the agent's
-    own description governs it. `author` is your declared author slug.
+    fields that change (aliases replace the list). delete=true takes one {slug} and, in one
+    step, unlinks the slug from every note (archived ones included), deletes the entity's
+    facts and the facts of other entities that point at it, and frees its slug, name, and
+    aliases; nothing reattaches when the name is registered again. Every create, edit, and
+    delete is put to the user: on a client with elicitation a dialog appears in this call;
+    on others the tool returns {status: "needs_consent", summary} and writes nothing, so ask
+    the user in the conversation, then call again with confirmed=true and the same input; a
+    delete also needs expect, the {notes, facts, incoming} counts the summary states, and is
+    refused if the counts changed meanwhile. In an unattended session (cron, no user
+    present) never pass confirmed; send a message naming the entity on the messages lane
+    instead, and the next interactive session asks. A refused request never reaches the user.
+    The user is an entity of kind person; a project entity carries its repository origin
+    among its aliases. For a person the description says who they are; for an agent it holds
+    the user's standing directions to that agent, including its `Remember` and `Don't
+    remember` lines, and only the agent's own description governs it. `author` is your
+    declared author slug.
     """
-    if archive and (len(entities) != 1 or set(entities[0]) != {"slug"}):
-        raise ValueError("archive takes exactly one item with only a slug")
     headers = rest_client.auth_headers(ctx)
-    current = await rest_client.call(
-        "GET", "/entities", params={"include_archived": "true"}, headers=headers
-    )
+    current = await rest_client.call("GET", "/entities", headers=headers)
     registry = {row["slug"]: row for row in current["entities"]}
-    if archive:
+    if delete:
+        if len(entities) != 1 or set(entities[0]) != {"slug"}:
+            raise ValueError("delete takes exactly one item with only a slug")
+        if confirmed and expect is None:
+            raise ValueError("a confirmed delete needs expect, the counts of the summary")
         slug = entities[0]["slug"]
-        name = registry[slug]["name"] if slug in registry else "unknown"
-        lines = [f"archive {slug} ({name})"]
-        path, payload = f"/entities/{slug}/archive", {}
+        path, payload = f"/entities/{slug}/delete", {}
     else:
         entities = [_based(item, registry.get(item["slug"])) for item in entities]
         pairs = [(item, _line(item, registry.get(item["slug"]))) for item in entities]
@@ -103,16 +108,25 @@ async def register_entity(
         lines = [line for _, line in pairs if line is not None]
         path, payload = "/entities", {"entities": entities}
     body = {"author": author, **payload}
-    await rest_client.call(
+    preview = await rest_client.call(
         "POST",
         path,
         json={**body, "consent_method": "conversation", "dry_run": True},
         headers=headers,
     )
+    if delete:
+        lines = [_delete_summary(slug, registry[slug]["name"], preview)]
     summary = "\n".join(lines)
     result = await consent.obtain(ctx, f"{PROMPT_HEADER}\n{summary}", confirmed)
     if isinstance(result, consent.NeedsConsent):
         return {"status": "needs_consent", "summary": summary}
+    if delete:
+        counts = {
+            "notes": len(preview["note_ids"]),
+            "facts": preview["facts"],
+            "incoming": preview["incoming"],
+        }
+        body["expect"] = counts if result.method == "elicitation" else expect
     return await rest_client.call(
         "POST", path, json={**body, "consent_method": result.method}, headers=headers
     )

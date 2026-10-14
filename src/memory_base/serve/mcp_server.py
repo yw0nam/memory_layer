@@ -70,7 +70,7 @@ state the same stale value, archive them with archive_notes."""
 _ENTITY_REGISTRY = """\
 Entities are a registry of the people, projects, and things the user has consented to.
 Before naming one, list_entities and reuse a slug or alias that exists; register_entity
-refuses a name another entity holds. Every create, edit, and archive needs the user's
+refuses a name another entity holds. Every create, edit, and delete needs the user's
 consent: a dialog on a client with elicitation, otherwise a needs_consent reply that you
 put to the user before calling again with confirmed=true. In an unattended session
 (cron, no user present) never pass confirmed; leave a message instead. read_entity returns

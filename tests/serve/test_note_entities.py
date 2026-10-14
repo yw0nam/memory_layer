@@ -115,7 +115,7 @@ def test_an_unknown_or_archived_slug_is_refused_and_nothing_is_written(use, acti
     with pytest.raises(ValueError) as refused:
         _save(entities=["shiro", "kuro"])
     assert str(refused.value) == (
-        f"unknown or archived entity '{missing}'; register it with register_entity "
+        f"unknown entity '{missing}'; register it with register_entity "
         "or reuse a slug from list_entities"
     )
     assert not [s for s in conn.statements if "INSERT INTO" in s[0]]

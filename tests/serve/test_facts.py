@@ -39,10 +39,7 @@ class FakeTransaction:
 
 class FakeConnection:
     def __init__(self):
-        self.entities = {
-            slug: _entity(slug, archived_at=NOW if slug == "old" else None)
-            for slug in ("natsume", "yui", "old")
-        }
+        self.entities = {slug: _entity(slug) for slug in ("natsume", "yui")}
         self.notes = {
             "note:a": {"namespace": "team-a", "archived": False},
             "note:b": {"namespace": "team-b", "archived": False},
@@ -83,11 +80,7 @@ class FakeConnection:
     async def fetch(self, query, *args):
         q = " ".join(query.split())
         if ".entities WHERE slug = ANY" in q:
-            return [
-                {"slug": s}
-                for s in args[0]
-                if s in self.entities and not self.entities[s]["archived_at"]
-            ]
+            return [{"slug": s} for s in args[0] if s in self.entities]
         if "LIMIT" in q:
             column = "value_entity" if "value_entity = $1" in q else "entity"
             include_past, scope = args[1], args[2]
@@ -105,11 +98,11 @@ class FakeConnection:
         ])  # fmt: skip
 
 
-def _entity(slug, archived_at=None):
+def _entity(slug):
     return dict(
         slug=slug, kind="thing", name=slug.title(), aliases=[], description="",
         created_by="t", updated_by="t", consent_method="import", consented_at=NOW,
-        created_at=NOW, updated_at=NOW, archived_at=archived_at,
+        created_at=NOW, updated_at=NOW,
     )  # fmt: skip
 
 
@@ -208,7 +201,6 @@ def test_allow_multiple_adds_a_second_row_under_one_key(fake_db):
     ("op", "message"),
     [
         (_add(entity="ghost"), "ghost"),
-        (_add(entity="old"), "old"),
         (_add(attribute="Bad Attr"), "attribute"),
         (_add(note_id=None), "note_id"),
         (_add(note_id="note:gone"), "note:gone"),
@@ -219,11 +211,9 @@ def test_allow_multiple_adds_a_second_row_under_one_key(fake_db):
         (_add(value_text="Alice and Bob"), "one row per element"),
         (_add(value_entity="yui"), "exactly one"),
         (_add(value_text=None), "exactly one"),
-        (_add(value_text=None, value_entity="old"), "old"),
     ],
     ids=[
         "unknown-entity",
-        "archived-entity",
         "bad-attribute",
         "missing-note",
         "archived-note",
@@ -234,7 +224,6 @@ def test_allow_multiple_adds_a_second_row_under_one_key(fake_db):
         "and-value",
         "both-values",
         "no-value",
-        "archived-value-entity",
     ],
 )
 def test_a_refused_add_names_its_reason_and_writes_nothing(fake_db, op, message):
@@ -304,9 +293,8 @@ def test_the_card_covers_every_namespace_and_is_narrowed_by_namespace(fake_db):
     assert ids(_card(query="?namespace=team-b")) == ["job"]
 
 
-def test_an_unknown_slug_is_404_and_an_archived_entity_is_served(fake_db):
+def test_an_unknown_slug_is_404(fake_db):
     assert _card("ghost").status_code == 404
-    assert _card("old").json()["entity"]["archived_at"] is not None
 
 
 # ---- description edits against a stale read ---------------------------------

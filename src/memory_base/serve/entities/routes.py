@@ -84,13 +84,8 @@ def parse_upsert(body: Any) -> tuple[list[dict[str, Any]], str, str, bool]:
 
 
 async def list_route(request: Request) -> JSONResponse:
-    """The registry ordered by slug; archived entities only with include_archived=true."""
-    flag = request.query_params.get("include_archived", "false")
-    if flag not in ("true", "false"):
-        return error("include_archived must be true or false")
-    return JSONResponse(
-        {"entities": [entity_row(row) for row in await store.list_entities(flag == "true")]}
-    )
+    """The registry ordered by slug."""
+    return JSONResponse({"entities": [entity_row(row) for row in await store.list_entities()]})
 
 
 async def upsert_route(request: Request) -> JSONResponse:
@@ -117,18 +112,33 @@ async def upsert_route(request: Request) -> JSONResponse:
     return JSONResponse({"entities": [entity_row(row) for row in rows]})
 
 
-async def archive_route(request: Request) -> JSONResponse:
-    """Archive one active entity; `dry_run` checks without writing."""
+def _expect(value: Any) -> dict[str, int]:
+    counts = ("notes", "facts", "incoming")
+    if (
+        not isinstance(value, dict)
+        or set(value) != set(counts)
+        or not all(type(count) is int for count in value.values())
+    ):
+        raise RequestError(f"expect must be an object of integer counts: {', '.join(counts)}")
+    return value
+
+
+async def delete_route(request: Request) -> JSONResponse:
+    """Delete one entity and return its plan; `dry_run` returns the plan and writes nothing.
+
+    A plan that differs from `expect` is a 409 carrying the current plan."""
     try:
         slug = _slug(request.path_params["slug"])
         fields = object_fields(
-            await request_body(request), {"author", "consent_method"}, {"dry_run"}
+            await request_body(request), {"author", "consent_method"}, {"dry_run", "expect"}
         )
-        author, method, dry_run = _consent(fields)
+        author, _, dry_run = _consent(fields)
+        expect = _expect(fields["expect"]) if "expect" in fields else None
     except RequestError as exc:
         return error(str(exc))
     try:
-        row = await store.archive(slug, author, method, dry_run)
+        return JSONResponse(await store.delete(slug, author, dry_run, expect))
+    except store.PlanChanged as exc:
+        return JSONResponse({"error": str(exc), "plan": exc.plan}, status_code=409)
     except ValueError as exc:
         return error(str(exc))
-    return JSONResponse({"entity": entity_row(row)})

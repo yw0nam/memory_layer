@@ -134,7 +134,7 @@ APPLY = {"add": _add, "replace": _replace, "remove": _remove}
 
 async def _require_active(conn: Any, entity: str, op: dict[str, Any]) -> None:
     value_entity = op.get("value_entity")
-    await entities.require_active(conn, [entity, *([value_entity] if value_entity else [])])
+    await entities.require_registered(conn, [entity, *([value_entity] if value_entity else [])])
 
 
 async def apply(
@@ -149,6 +149,7 @@ async def apply(
         async with db.acquire() as conn:
             await ensure_schema_once(conn)
             async with conn.transaction(isolation="read_committed"):
+                await entities.lock_slugs(conn)
                 await conn.execute(LOCK_SQL)
                 results = []
                 for index, op in enumerate(ops):
