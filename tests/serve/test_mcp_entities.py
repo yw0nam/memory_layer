@@ -24,7 +24,7 @@ REGISTRY = [
         "description": "A friend", "updated_at": "2023-11-14T22:13:20+00:00",
     }
 ]  # fmt: skip
-PLAN = {"note_ids": ["note:a", "note:b"], "facts": 3, "incoming": 1}
+PLAN = {"note_ids": ["note:a", "note:b"], "notes": 2, "facts": 3, "incoming": 1}
 EXPECT = {"notes": 2, "facts": 3, "incoming": 1}
 NEW = {"slug": "yui", "kind": "person", "name": "Yui", "aliases": ["ゆい"]}
 
@@ -144,7 +144,7 @@ def test_an_accepted_delete_dialog_shows_the_plan_and_posts_it_back_as_expect(ba
     assert backend.posts == [
         (
             "/entities/natsume/delete",
-            {"author": "claude-code", "consent_method": "elicitation", "expect": EXPECT},
+            {"author": "claude-code", "expect": EXPECT},
         )
     ]
     assert "delete natsume (Natsume)" in messages[0]
@@ -157,6 +157,7 @@ def test_a_delete_without_elicitation_needs_consent_then_confirms_with_expect(ba
     payload = json.loads(_text(result))
     assert payload["status"] == "needs_consent"
     assert "note:b" in payload["summary"]
+    assert payload["expect"] == EXPECT
     assert backend.posts == []
     bare, _ = _call({**arguments, "confirmed": True})
     assert bare.isError and backend.posts == []
@@ -164,7 +165,7 @@ def test_a_delete_without_elicitation_needs_consent_then_confirms_with_expect(ba
     assert backend.posts == [
         (
             "/entities/natsume/delete",
-            {"author": "claude-code", "consent_method": "conversation", "expect": EXPECT},
+            {"author": "claude-code", "expect": EXPECT},
         )
     ]
 

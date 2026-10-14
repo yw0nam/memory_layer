@@ -15,6 +15,7 @@ from memory_base.core import db
 from memory_base.core.config import EMB_DIM, PG_SCHEMA, db_url
 from memory_base.retrieval.search import metadata_dict
 from memory_base.serve import api
+from memory_base.serve.common.entities import lock_slugs, require_registered
 from memory_base.serve.consolidation import verdicts
 from memory_base.serve.entities import store
 
@@ -116,7 +117,7 @@ def test_delete_unlinks_notes_removes_facts_and_frees_the_names():
                 transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
             ) as client:
                 url = f"/entities/{slug}/delete"
-                body = {"author": "claude-code", "consent_method": "conversation"}
+                body = {"author": "claude-code"}
                 dry = await client.post(url, json={**body, "dry_run": True}, headers=HEADERS)
                 untouched_by_dry = {
                     n: await _note_metadata(conn, n) for n in (active, archived, untouched)
@@ -134,6 +135,7 @@ def test_delete_unlinks_notes_removes_facts_and_frees_the_names():
                     json={
                         "entities": [{"slug": slug, "kind": "thing", "name": f"Kuro {tag}"}],
                         **body,
+                        "consent_method": "conversation",
                     },
                     headers=HEADERS,
                 )
@@ -148,7 +150,7 @@ def test_delete_unlinks_notes_removes_facts_and_frees_the_names():
             await _cleanup(conn, tag)
 
     r = asyncio.run(scenario())
-    plan = {"note_ids": sorted([active, archived]), "facts": 2, "incoming": 1}
+    plan = {"note_ids": sorted([active, archived]), "notes": 2, "facts": 2, "incoming": 1}
     assert r["dry"].status_code == 200 and r["dry"].json() == plan
     assert r["untouched_by_dry"] == r["before"] and r["kept_by_dry"] == 4
     assert r["stale"].status_code == 409
@@ -195,61 +197,45 @@ def test_undo_that_would_restore_a_deleted_slug_is_refused():
             await store.delete(slug, "claude-code")
             with pytest.raises(verdicts.UndoRefused) as refused:
                 await verdicts.undo(action_id, "claude-code")
+            await _entity(conn, slug)
+            with pytest.raises(verdicts.UndoRefused) as reregistered:
+                await verdicts.undo(action_id, "claude-code")
             archived_at = await conn.fetchval(f"SELECT archived_at FROM {NOTES} WHERE id=$1", gone)
-            return refused.value, archived_at
+            return refused.value, reregistered.value, archived_at
         finally:
             await _cleanup(conn, tag)
 
-    refused, archived_at = asyncio.run(scenario())
+    refused, reregistered, archived_at = asyncio.run(scenario())
     assert slug in str(refused)
+    assert "entities changed after the action" in str(reregistered)
     assert archived_at is not None
 
 
-def test_a_note_save_racing_a_delete_leaves_no_dangling_slug():
+def test_a_delete_waits_for_a_write_that_holds_the_slug_and_then_unlinks_it():
     tag = uuid.uuid4().hex[:10]
-    slugs = [f"it-{tag}-r{n}" for n in range(5)]
+    slug, note = f"it-{tag}-x", f"note:default:it{tag}a"
 
     async def scenario():
         conn = await asyncpg.connect(db_url())
+        writer = await asyncpg.connect(db_url())
         try:
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
-            ) as client:
-
-                async def save(slug):
-                    return await client.post(
-                        "/save_memory",
-                        json={
-                            "content": f"integration note {tag} race {slug}",
-                            "author": "claude-code",
-                            "kind": "work",
-                            "tags": ["it"],
-                            "entities": [slug],
-                        },
-                        headers=HEADERS,
-                    )
-
-                async def round_(slug):
-                    await _entity(conn, slug)
-                    return await asyncio.gather(
-                        save(slug), store.delete(slug, "claude-code"), return_exceptions=True
-                    )
-
-                results = [await asyncio.wait_for(round_(slug), 60) for slug in slugs]
-            dangling = await conn.fetchval(
-                f"SELECT count(*) FROM {NOTES} WHERE content_raw LIKE $1"
-                " AND metadata->'entities' ?| $2",
-                f"integration note {tag}%",
-                slugs,
+            await _entity(conn, slug)
+            async with writer.transaction():
+                await lock_slugs(writer)
+                await require_registered(writer, [slug])
+                deleting = asyncio.ensure_future(store.delete(slug, "claude-code"))
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(deleting), 1)
+                await _note(writer, note, tag, {"entities": [slug]})
+            await asyncio.wait_for(deleting, 30)
+            return (
+                await _note_metadata(conn, note),
+                await conn.fetchval(f"SELECT count(*) FROM {ENTITIES} WHERE slug = $1", slug),
             )
-            remaining = await conn.fetchval(f"SELECT count(*) FROM {ENTITIES} WHERE slug = ANY($1)", slugs)  # fmt: skip
-            return results, dangling, remaining
         finally:
+            await writer.close()
             await _cleanup(conn, tag)
 
-    results, dangling, remaining = asyncio.run(scenario())
-    for saved, deleted in results:
-        assert not isinstance(deleted, Exception), deleted
-        assert not isinstance(saved, Exception), saved
-        assert saved.status_code in (200, 400)
-    assert dangling == 0 and remaining == 0
+    metadata, remaining = asyncio.run(scenario())
+    assert "entities" not in metadata
+    assert remaining == 0

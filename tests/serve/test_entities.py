@@ -102,11 +102,8 @@ def _post(*items, author="claude-code", consent_method="conversation", **extra):
     )
 
 
-def _delete(slug="natsume", author="claude-code", consent_method="conversation", **extra):
-    return client.post(
-        f"/entities/{slug}/delete",
-        json={"author": author, "consent_method": consent_method} | extra,
-    )
+def _delete(slug="natsume", author="claude-code", **extra):
+    return client.post(f"/entities/{slug}/delete", json={"author": author} | extra)
 
 
 # ---- create and edit --------------------------------------------------------
@@ -206,7 +203,7 @@ def test_delete_rejects_a_malformed_request_before_touching_the_store(fake_db):
     assert _delete(slug="Bad Slug").status_code == 400
     assert _delete(expect={"notes": 1}).status_code == 400
     assert _delete(expect={"notes": "1", "facts": 0, "incoming": 0}).status_code == 400
-    assert _delete(consent_method="telepathy").status_code == 400
+    assert _delete(consent_method="conversation").status_code == 400
 
 
 # ---- author and consent ------------------------------------------------------
