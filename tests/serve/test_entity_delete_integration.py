@@ -19,6 +19,7 @@ from memory_base.serve.common.entities import lock_slugs, require_registered
 from memory_base.serve.consolidation import verdicts
 from memory_base.serve.entities import store
 from memory_base.serve.notes import curation
+from memory_base.serve.search import access_log
 
 pytestmark = pytest.mark.integration
 
@@ -282,3 +283,48 @@ def test_an_entity_delete_and_a_note_delete_on_the_same_note_do_not_deadlock():
 
     results = asyncio.run(scenario())
     assert not [r for r in results if isinstance(r, Exception)], results
+
+
+def test_an_entity_delete_and_a_search_hit_flush_on_the_same_notes_do_not_deadlock():
+    tag = uuid.uuid4().hex[:10]
+    slug = f"it-{tag}-x"
+    first, second = f"note:default:it{tag}a", f"note:default:it{tag}b"
+
+    async def waiting(conn, count):
+        for _ in range(100):
+            blocked = await conn.fetchval(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
+                " AND wait_event_type = 'Lock'"
+            )
+            if blocked >= count:
+                return
+            await asyncio.sleep(0.05)
+        raise AssertionError("the call never blocked")
+
+    async def scenario():
+        conn = await asyncpg.connect(db_url())
+        holder = await asyncpg.connect(db_url())
+        try:
+            await _entity(conn, slug)
+            # Inserted in reverse id order so the flush's scan locks the later id first.
+            for note in (second, first):
+                await _note(conn, note, tag, {"entities": [slug]})
+            access_log._pending_hits.update({second: (1, time.time()), first: (1, time.time())})
+            tx = holder.transaction()
+            await tx.start()
+            await holder.fetch(f"SELECT 1 FROM {NOTES} WHERE id = $1 FOR UPDATE", first)
+            entity_delete = asyncio.ensure_future(store.delete(slug, "claude-code"))
+            await waiting(conn, 1)
+            flush = asyncio.ensure_future(access_log.flush())
+            await waiting(conn, 2)
+            await tx.rollback()
+            return await asyncio.wait_for(
+                asyncio.gather(entity_delete, flush, return_exceptions=True), 30
+            )
+        finally:
+            await holder.close()
+            await _cleanup(conn, tag)
+
+    results = asyncio.run(scenario())
+    assert not [r for r in results if isinstance(r, Exception)], results
+    assert access_log._pending_hits == {}
