@@ -163,6 +163,7 @@ def test_mcp_server_registers_expected_tools():
         "list_notes",
         "list_memory_duplicates",
         "archive_notes",
+        "link_entities",
         "restore_notes",
         "delete_notes",
         "send_message",
