@@ -1,4 +1,4 @@
-"""REST routes for documents: upload and enqueue, job status, and removal, scoped by the caller's key."""
+"""REST routes for documents: upload and enqueue, job status, and removal."""
 
 from __future__ import annotations
 
