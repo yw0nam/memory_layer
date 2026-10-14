@@ -358,6 +358,10 @@ Hold, list in the report, and never write:
 - a claim whose subject is unclear;
 - a claim an agent makes about the user that is really about the agent (it is a fact of
   the agent's entity);
+- a claim that an entity's description already states; the description is the owner's,
+  and a fact never repeats it;
+- a rule, instruction, or working procedure for an agent or the user; a direction belongs
+  in the description, which changes only with the owner's consent;
 - anything a search hit alone supports.
 
 **Send.** One `POST /admin/facts` per entity, with `dry_run: true` in `dry-run` mode:
