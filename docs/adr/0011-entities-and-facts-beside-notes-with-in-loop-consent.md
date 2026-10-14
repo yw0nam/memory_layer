@@ -4,6 +4,8 @@
 
 Accepted for the entity registry and the consent step; the Facts, Reading, Existing notes, and Surface sections are replaced by ADR-0013
 
+Access statements superseded by ADR-0014.
+
 ## Context
 
 A note is free text. The thing a note is about, and the values it holds, exist only

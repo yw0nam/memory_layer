@@ -4,6 +4,8 @@
 
 Accepted; supersedes ADR-0005; the deferral of the facts part of ADR-0011 is lifted by ADR-0013
 
+Access statements superseded by ADR-0014.
+
 ## Context
 
 A note is what an agent made of a conversation. The agent's reading can be wrong, and the

@@ -9,18 +9,19 @@ document: Claude Code headless, a Hermes cron agent, or another.
 
 ## Setup
 
-1. **Key.** Mint an admin key for the agent (operator, on the server host):
+1. **Key.** Mint a key for the agent (operator, on the server host):
 
    ```
-   (umask 177; uv run python -m memory_base.serve.access.keys new consolidator --admin --author consolidator \
+   (umask 177; uv run python -m memory_base.serve.access.keys new consolidator \
      | tail -n 1 | sed 's/^/export MEMORY_API_KEY=/' >> <env-file>)
    ```
 
    The command prints the plaintext key once, on its last line. Write it straight into the
-   agent's env file (mode 600, as above) and paste it nowhere else. The consolidation routes require an admin
-   key whose authors include `consolidator`; any other key gets 403. The `author` field of
-   every verdict and undo request must be one of the key's authors; use `consolidator`.
-   `keys authors consolidator` prints the key's authors.
+   agent's env file (mode 600, as above) and paste it nowhere else. Any valid key may call the
+   consolidation routes; the server does not restrict who writes facts or applies verdicts.
+   That only this agent does, and that its scheduled run stays in `dry-run` until the owner
+   says otherwise, are rules of this procedure. The `author` field of every verdict, undo,
+   and fact request is the attribution `consolidator`.
 
 2. **Base URL.** The REST API (Docker default `http://localhost:8010`). Every request sends
    the key in the `X-API-Key` header.
@@ -250,7 +251,7 @@ processes no verdict. One request holds 1–200 verdicts; split a larger run.
 | field | type / range | default |
 |---|---|---|
 | `run_id` | string, 1–100 chars | required |
-| `author` | one of the key's authors: `consolidator` | required |
+| `author` | the author slug `consolidator` | required |
 | `model` | string or null; recorded, not checked | null |
 | `dry_run` | boolean | false |
 | `threshold`, `neighbors`, `max_group`, `max_group_chars` | the values the groups were fetched with | as in the groups table |
@@ -431,7 +432,6 @@ the owner asks for it.
 | 409, nothing changed | a `keep` action (nothing to undo) |
 | 409, nothing changed | an archived note is gone, was restored or archived again, or has another `consolidated_into` |
 | 409, nothing changed | a created replacement is gone, archived, superseded by an active note, or a member of a later retire or merge action that is not undone |
-| 403 | `author` is not one of the key's authors |
 
 The action row stays after an undo, and a group with exactly the undone action's members
 is not offered again. The owner, not the agent, can restore an archived note with

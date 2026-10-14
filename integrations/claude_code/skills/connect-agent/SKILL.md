@@ -1,19 +1,20 @@
 ---
 name: connect-agent
-description: "Use when the user wants to connect a new agent to memory-base, change which author slugs a key may act as, or disconnect an agent. Gives each agent its own key and author slug, so each agent has its own entity card. The user runs every step that creates or holds a key."
+description: "Use when the user wants to connect a new agent to memory-base or disconnect an agent. Gives each agent its own key and author slug, so each agent has its own entity card. The user runs every step that creates or holds a key."
 ---
 
 # Connect an agent to memory-base
 
 Each agent has one author slug and one key. The slug names the agent's notes and its
-entity, whose description holds the user's directions to it. The key's authors list holds
-that slug, so the agent can write only its own notes.
+entity, whose description holds the user's directions to it. The key is a credential for
+the network boundary and grants nothing else; the slug is attribution the client declares.
+Each agent holds its own key, so revoking it disconnects that agent alone.
 
 ```
- user: keys new <slug> --author <slug>  ──►  key (authors = {<slug>})  ──►  agent's env file
-                                                                               │
- agent's client config: url + key + author = <slug>  ◄─────────────────────────┘
-   (+ user_entity = <the user's slug>)                                         │
+ user: keys new <label>  ──►  key  ──►  agent's secret store
+                                              │
+ agent's client config: url + key + author = <slug>  ◄─┘
+   (+ user_entity = <the user's slug>)                 │
  session start ──► GET /entities/<slug> ──► "Memory: your directions, <slug> (...)"
                ──► GET /entities/<user_entity> ──► "Memory: the user, <slug> (...)"
  save_memory ──► author = <slug>;  register_entity ──► changes the description, with consent
@@ -29,26 +30,21 @@ that slug, so the agent can write only its own notes.
 ## 1. Pick the slug
 
 The slug matches `^[a-z0-9][a-z0-9-]{0,39}$` and is unique per agent, for example
-`claude-code` or `codex`. `user` and `consolidator` are reserved: `user` is the user's
-import marker, `consolidator` is the consolidation agent.
+`claude-code` or `codex`. The consolidation agent uses `consolidator`.
 
 ## 2. Mint the key (user, on the server host, in the repo)
 
-The user runs the command in their own terminal:
+The label names the client that holds the key; the slug is often the same word. The user
+runs the command in their own terminal:
 
 ```
-uv run python -m memory_base.serve.access.keys new <slug> --author <slug>
+uv run python -m memory_base.serve.access.keys new <label>
 ```
 
 `new` prints the key once, on its last line. For Claude Code the user pastes it into the
 plugin's configuration prompt (enabling the plugin asks for it; later, `/config`, then the
 memory-base rows). The key goes into no file, and the user never pastes it into the chat.
 For Hermes or another client, the user stores it in that client's own secret store.
-
-Add `--admin` only when the agent must read private namespaces that its label does not
-own, such as the user's personal namespace. An admin key can also rewrite any label's
-authors over REST, so with `--admin` the one-slug limit prevents mistakes, not a
-determined agent.
 
 ## 3. Configure the client
 
@@ -69,8 +65,8 @@ Install the client's integration once: the Claude Code plugin as documented in
    description of the agent's entity, and, when a user entity is set, `Memory: the user,
    <user_entity> (...)`. A new agent has no entity yet: the context prints `Memory: your
    directions could not be fetched.` until one is registered.
-3. The user runs `uv run python -m memory_base.serve.access.keys authors <slug>`. It prints
-   `<slug>: <slug>`.
+3. The user runs `uv run python -m memory_base.serve.access.keys list`. The new key shows
+   as `active`.
 
 An agent's directions live in the description of its own entity. The agent changes them
 with `register_entity`, with the user's consent. The description may carry `Remember` and
@@ -79,10 +75,7 @@ with `register_entity`, with the user's consent. The description may carry `Reme
 `Remember: moments we share`; a user's wish such as `Don't remember: my spending` goes
 there too.
 
-## Change or remove an agent
+## Remove an agent
 
-- Show a label's authors: `keys authors <label>`.
-- Replace a label's authors: `keys authors <label> <slug> [<slug>...]`. The command
-  replaces the whole list on every active key of the label.
-- Disconnect an agent: `keys list` shows each key's hash prefix. `keys revoke <prefix>`
-  revokes the key. The agent's notes and entity stay stored.
+`keys list` shows each key's hash prefix. `keys revoke <prefix>` revokes the key. The
+agent's notes and entity stay stored.

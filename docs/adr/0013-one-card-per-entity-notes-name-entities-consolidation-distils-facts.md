@@ -6,6 +6,8 @@ Accepted; supersedes ADR-0009, replaces the profile mechanism of ADR-0010 and th
 Reading, Existing notes, and Surface sections of ADR-0011, and lifts the deferral in
 ADR-0012
 
+Access statements superseded by ADR-0014.
+
 ## Context
 
 Three stores held knowledge about the same subjects. A profile's `user` part held what an

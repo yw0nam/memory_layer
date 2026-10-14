@@ -4,6 +4,8 @@
 
 Accepted; the note content gate that defines the lane is superseded by ADR-0007
 
+Access statements superseded by ADR-0014.
+
 ## Context
 
 The note content gate refuses progress reports, tracker-artefact restatements, and

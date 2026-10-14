@@ -30,7 +30,7 @@
     "author": {
       "type": "string",
       "title": "Author",
-      "description": "The agent's own slug and note author; it must be in the key's author list.",
+      "description": "The agent's own slug and note author; a slug of lowercase letters, digits, and hyphens.",
       "default": "claude-code",
       "required": true
     },
@@ -43,7 +43,7 @@
     "namespace": {
       "type": "string",
       "title": "Namespace",
-      "description": "Where this agent's turns land; empty means the key's home namespace.",
+      "description": "Where this agent's turns land; empty means `default`.",
       "required": false
     }
   }

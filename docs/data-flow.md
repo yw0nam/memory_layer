@@ -110,16 +110,17 @@ stripped content, so a re-save is an idempotent no-op. `session_id` is always th
 own id. `occurred_at` (ISO 8601, not in the future) records when the remembered event
 happened in its own column; `ts_last_active` is always the save time.
 
-Every note records the agent that wrote it in `metadata.author`, drawn from the calling
-key's allowlist in `api_keys.authors`; a key with an empty allowlist cannot save. A note
+Every note records the agent that wrote it in `metadata.author`, the slug the client
+declares; the server checks the slug pattern and grants nothing by it. A write without a
+namespace lands in `default`. A note
 archived by a save or by a targeted archive additionally carries `metadata.archived_by`,
 which a restore removes together with `replaced_by` and `consolidated_into`.
 
 Messages are stored exactly as the renderer produced them — the server never
 summarizes, embeds, or gates them. A send without a scope is a general message
 (`status: "info"`) for one namespace; a send with a portable scope is a handoff
-snapshot (`status: "in_progress"`, `"blocked"`, or `"completed"`), and any sender who
-can access the namespace may publish the next snapshot of a subject. A `repo:` scope
+snapshot (`status: "in_progress"`, `"blocked"`, or `"completed"`), and any sender may
+publish the next snapshot of a subject. A `repo:` scope
 names a remote host, so local paths, localhost, and private/loopback/link-local IP
 literals are refused as not portable. Verification is
 exactly `{command, status, result}` with `passed|failed|not_run`; refs are at most 10
@@ -149,12 +150,8 @@ as loaded, and search hits expose those columns next to the `document_id` handle
 consumer can go from a search hit straight to a SQL query. A same-bytes upsert of a CSV
 whose rows are not yet loaded re-runs the pipeline instead of no-opping.
 
-Every document chunk records its creator: ingestion stamps the authenticated key's label
-into metadata as `created_by`, fixed at first ingest and never rewritten by later
-uploads. Overwriting an existing `document_id` (any mode) and deleting a document are
-allowed only for that creator or an admin key; a document with no `created_by` record is
-admin-only, fail-closed. `DELETE /ingest/documents/{document_id}?namespace=…` removes
-the document's chunks and its `doc_rows` together.
+`DELETE /ingest/documents/{document_id}?namespace=…` (default `default`) removes the
+document's chunks and its `doc_rows` together; an unknown document is 404.
 
 Repo jobs use the same durable jobs table and dispatch one at a time, so interrupted clone,
 pull, remove, and index work is retried after an API restart.
@@ -168,12 +165,7 @@ last-commit time into the recency signal.
 Private repositories authenticate through the git credential store — see
 [Private repositories](configuration.md#private-repositories).
 
-A repo's owner is the key label that first ingested it, recorded in
-`REPO_CACHE/.owners/<name>` after the first successful clone or pull and never
-transferred by later re-ingests. `DELETE /repos/{name}` is restricted to the owner or an
-admin key; a repo with no owner record (ingested before ownership tracking, or never
-successfully ingested) is admin-only to remove. `GET /repos` reports each repo's owner,
-`null` when unrecorded.
+`DELETE /repos/{name}` removes a cached repo and queues a re-index that tears down its rows.
 
 ## Read path — hybrid search (`POST /search`)
 
@@ -263,7 +255,7 @@ POST /tables/query  {"sql": "...", "namespace": "default"}
 
 Rows are jsonb: cast for numbers (`(data->>'col')::numeric`), filter by `document_id` to
 scope one table, or aggregate across every table in the namespace by leaving the filter
-off. Results cap at 1,000 rows (`truncated: true` beyond that — page with `row_index`
+off. Without `namespace` the query covers every namespace. Results cap at 1,000 rows (`truncated: true` beyond that — page with `row_index`
 ranges), responses at 5 MB, statements at 10 s (`408`). Decimal, date, and UUID values
 arrive JSON-normalized.
 
@@ -271,7 +263,7 @@ The SQL author is an LLM, so the lane is fenced at the database, not by string
 inspection. Queries must start with `SELECT`/`WITH` and run on a dedicated pool
 authenticated as `memory_tables_query` — a role with `SELECT` on `memory.doc_rows` and
 nothing else — inside a read-only transaction, single-statement by protocol, with forced
-row-level security pinning each request to its validated namespace. Side-effect
+row-level security pinning a request that names a namespace to it. Side-effect
 functions (`set_config`, `pg_notify`, advisory locks) are revoked, and role-level
 resource limits bound memory and lock waits. Other Postgres errors return `400` with the
 engine's message so the caller can correct its SQL.
@@ -295,10 +287,9 @@ on the lifecycle timestamps (`claimed_at IS NULL AND cancelled_at IS NULL AND
 superseded_at IS NULL AND (expires_at IS NULL OR expires_at > clock_timestamp())`), so
 two concurrent claims are decided by database commit order: exactly one returns the row,
 the other gets 409. There is no
-lease, ack, or re-read. `DELETE /messages/{id}` cancels a pending message — the
-sender's own, or any accessible one for an admin key. Terminal rows are invisible to
-the list and unclaimable; a stale superseded snapshot id gets 409, an unknown or
-out-of-scope id a 404.
+lease, ack, or re-read. `DELETE /messages/{id}` cancels a pending message. Terminal rows are invisible to
+the list and unclaimable; a stale superseded snapshot id gets 409, an unknown id a 404.
+The sending key partitions the retries of an `idempotency_key`; it grants nothing.
 
 ## Lifecycle loop
 
@@ -326,13 +317,11 @@ the cold agent notes when `ids` is omitted; its preview lists them as `notes_to_
 `POST /admin/messages/purge` previews claimed, cancelled, superseded, and expired
 messages as `messages_to_delete`, and its confirm pass deletes them, which also releases
 their idempotency keys. Archiving a note is reversible and deleting a message is not,
-so a member key purges messages only in the namespaces it owns — enough to drain one
-before unregistering it, not enough to touch a shared namespace. An admin key purges
-everywhere. Every mutating admin route previews by default and
+so a purge covers every namespace. Every mutating admin route previews by default and
 acts only with `{"confirm": true}`. The note routes are reachable over MCP as
 `list_memory_duplicates`, `archive_notes`, `restore_notes`, and `delete_notes`; the
 message purge is a REST-only call. `link_entities` (`POST /notes/entities`) changes the
-entity links of existing notes and is open to any writer in scope.
+entity links of existing notes.
 
 Namespace deletion counts messages as content: a namespace with messages — pending or
 terminal — cannot be unregistered until they are removed. `POST /admin/notes/move`
@@ -346,8 +335,7 @@ periodic drives it from outside, e.g. a cron job or an n8n schedule.
 ## Consolidation groups
 
 `GET /admin/consolidate/groups` finds groups of active agent notes that may state the
-same fact or rule, for an agent to judge. It changes no note and calls no model; only an
-admin key whose authors include `consolidator` may call it (403 otherwise). Every query
+same fact or rule, for an agent to judge. It changes no note and calls no model. Every query
 parameter is optional and a bad, repeated, or out-of-range value is a 400:
 
 | parameter | range | default |
@@ -419,15 +407,15 @@ verdict validator policy, and changes whenever either does.
 
 ## Consolidation verdicts
 
-`POST /admin/consolidate/verdicts` applies an agent's judgement of issued groups. It
-takes the same key as the groups route (an admin key with `consolidator` in its authors),
-and the body's `author` must be one of the key's authors (403 otherwise). The server calls
-no model.
+`POST /admin/consolidate/verdicts` applies an agent's judgement of issued groups. The
+body's `author` is an author slug; that only the consolidation agent applies verdicts is a
+rule of the [consolidation procedure](consolidation-procedure.md), not of the server. The
+server calls no model.
 
 | field | type / range | default |
 |---|---|---|
 | `run_id` | string, 1–100 chars | required |
-| `author` | string, one of the key's authors | required |
+| `author` | author slug | required |
 | `model` | string or null; recorded, not checked | null |
 | `dry_run` | boolean | false |
 | `threshold`, `neighbors`, `max_group`, `max_group_chars` | as for the groups route; pass the values the groups were fetched with | as for the groups route |
@@ -526,8 +514,7 @@ inside an identifier (`v2.0` → `v3.1`) pass it.
 
 ## Consolidation undo and actions
 
-`POST /admin/consolidate/undo` takes `{"action_id": int, "author": str}` with the same
-authorization, and runs under the namespace lock with the touched rows locked.
+`POST /admin/consolidate/undo` takes `{"action_id": int, "author": str}` and runs under the namespace lock with the touched rows locked.
 
 | case | response |
 |---|---|
@@ -542,7 +529,7 @@ A reused replacement and a retire's survivors are never checked or changed. An a
 restore of the replacement with no successor does not block the undo. The action row
 stays, so the group is not issued again.
 
-`GET /admin/consolidate/actions` lists actions newest first, with the same authorization.
+`GET /admin/consolidate/actions` lists actions newest first.
 Each query parameter is optional and given at most once: `namespace`, `run_id`, `note_id`
 (matches member, archived, survivor, and replacement ids), and `limit` (1–500, default
 50). The response is `{"actions": [...], "notes": {id: ...}}`: every action column except
@@ -608,7 +595,7 @@ before the REST call:
 |---|---|---|
 | advertises form elicitation | a dialog inside the tool call; accept applies the change, decline or cancel applies nothing; `confirmed` is refused | `elicitation` |
 | no elicitation | the tool returns `{status: "needs_consent", summary}` and writes nothing; the agent asks the user and calls again with `confirmed=true` and the same input | `conversation` |
-| admin key carrying the `user` author | a bulk load of an edited file through `POST /entities` | `import` |
+| a bulk load of an edited file through `POST /entities` | the client states `import` | `import` |
 
 The method is what the client reported, not proof that a person answered. The server
 cannot tell an unattended session from an interactive one; the server instructions tell an
@@ -623,8 +610,7 @@ register_entity(entities, author, confirmed?)
   -> POST /entities | /entities/{slug}/archive   {author, consent_method}
 ```
 
-A request refused by its checks never reaches the user. A write names an `author` that is one of the key's authors; `import` needs the key to be
-admin and to carry `user`.
+A request refused by its checks never reaches the user. A write names an `author`, a slug; `import` is recorded as the client states it.
 
 An edit that changes `description` carries `base_updated_at`, the `updated_at` of the row it
 was written against (the MCP tool takes it from the registry it read). A value that is not
@@ -641,8 +627,8 @@ agent note it was distilled from; null once that note is deleted), `author`, `cr
 indexes on `entity` and `value_entity` cover the current rows. The table is never embedded
 or searched, and the read-only SQL role has no grant on it.
 
-**Write.** `POST /admin/facts {author, ops, dry_run?}` takes an admin key carrying the
-`consolidator` author; `author` is one of the key's authors. `ops` holds 1 to 100 items:
+**Write.** `POST /admin/facts {author, ops, dry_run?}` names the `author` it is
+attributed to; the consolidation procedure, not the server, restricts who writes facts. `ops` holds 1 to 100 items:
 `add {entity, attribute, value_text | value_entity, note_id, allow_multiple?}`,
 `replace {id, attribute?, value_text | value_entity, note_id}`, and `remove {id, note_id}`.
 
@@ -664,8 +650,8 @@ with `status` `written`, `unchanged`, or `planned`.
 **Read.** `GET /entities/{slug}?include_past=&namespace=` returns `{entity, facts,
 incoming}` for any key: `facts` are rows whose `entity` is the slug, `incoming` rows whose
 `value_entity` is the slug, newest first, at most 200 each, current only unless
-`include_past` (a closed row carries `archived_at` and `replaced_by`). Rows are limited to
-the namespaces the key may read, narrowed by `namespace` (403 outside the key's set); an
+`include_past` (a closed row carries `archived_at` and `replaced_by`). Rows cover every
+namespace unless narrowed by `namespace`; an
 unknown slug is 404 and an archived entity is served with its `archived_at`. The MCP tool
 `read_entity` adds `notes`, the 20 newest notes naming the slug from `GET /notes?entity=`,
 to make the card.
@@ -708,8 +694,8 @@ plugin hook ──► POST /turns {id, origin, session_id, role, content, reason
 
 A substring is matched with `ILIKE`, with `%`, `_`, and `\` escaped and the value bound, so a
 Korean word with a particle attached still matches; a `pg_trgm` GIN index on `content`
-serves it. A query holds at least 2 characters. Every read is limited to the namespaces the
-key can read, and a namespace holding turns cannot be deleted. `DELETE
+serves it. A query holds at least 2 characters. Every read covers every namespace unless
+`namespace` narrows it, and a namespace holding turns cannot be deleted. `DELETE
 /admin/sessions/{origin}/{session_id}` removes a session's rows.
 
 The Claude Code plugin's UserPromptSubmit and Stop hooks post the prompt (`user`) and the final
