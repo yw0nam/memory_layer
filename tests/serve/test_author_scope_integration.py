@@ -156,7 +156,7 @@ def test_the_near_duplicate_check_runs_over_the_writers_scope():
         assert accepted.status_code == 200, accepted.text
         assert accepted.json()["stored"] is True
 
-        # A's shared note is in B's scope: the same text is refused as a near-duplicate.
+        # C's shared note is in B's scope: the same text is refused as a near-duplicate.
         refused = _client(B).post(
             "/save_memory",
             json={"content": shared, "kind": "work", "tags": ["test"], "namespace": namespace},
@@ -171,7 +171,7 @@ def test_a_hidden_foreign_supersede_beside_an_own_duplicate_is_refused():
     namespace = f"scope-supersede-{uuid.uuid4().hex[:8]}"
     marker = f"zzzscopesup{uuid.uuid4().hex[:8]}"
     own = f"read scope integration pin {marker}: the deploy runs before dawn"
-    foreign = f"read scope integration pin {marker}: the release ships after lunch"
+    foreign = own
     rewrite = f"read scope integration pin {marker}: the deploy runs before dawn!"
 
     async def seed() -> str:

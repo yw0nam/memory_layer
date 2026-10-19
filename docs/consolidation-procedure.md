@@ -221,7 +221,7 @@ The server treats a merge as follows:
 | merged text | effect |
 |---|---|
 | equal to one member's text after trimming and collapsing whitespace | applied and recorded as a `retire` of the other members into that member; it counts against the cap |
-| identical to an active note that is not a member, of the members' kind and author and with the members' `shared` rule | that note is reused and not changed; the action has `replacement_created` false; a note that differs in author or `shared` makes the verdict `stale` |
+| identical to an active note that is not a member, of the members' kind and author and with the members' `shared` rule | that note is reused and not changed; the action has `replacement_created` false; a note that differs in `shared` makes the verdict `stale` |
 | otherwise | a new note with the members' kind and author, the union of their tags, the latest member `occurred_at`, `shared` only when every member is shared, and the merge time as its saved time |
 
 A `keep` is a verdict too: it records the group so the group is not offered again until a

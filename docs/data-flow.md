@@ -472,18 +472,19 @@ The plan runs these checks in order; the first that fails decides the status.
 |---|---|---|
 | 1 | no action has the `idempotency_key` | `duplicate` with the recorded result when the payload hash matches, else `rejected` |
 | 2 | no action has the `group_key`, and no undone action has exactly these members | `cached` |
-| 3 | `group_key` and the sorted `member_ids` equal a group that the groups procedure builds now from the request's group parameters (no `limit`, no cache filter) | `stale`, with `current_groups`: the current groups that share a member, in the groups-route shape |
-| 4 | retire or merge: fewer than `max_actions` retire and merge actions recorded for this `run_id` and namespace; keep is never capped and never counts | `rejected` (`action cap reached`) |
-| 5 | retire: `retire_ids` non-empty, without repeats, all members, and at least one member left | `rejected` |
-| 6 | merge: every member has one kind; `merged_text` passes the note validation (non-blank, at most 4000 chars) and the credential scan; the token check passes | `rejected` |
-| 7 | every remaining verdict's members share one author | `rejected` with the reason `group mixes authors: a, b` |
+| 3 | every member is an active note | `stale` |
+| 4 | the members share one author | `rejected` with the reason `group mixes authors: a, b` |
+| 5 | `group_key` and the sorted `member_ids` equal a group that the groups procedure builds now from the request's group parameters (no `limit`, no cache filter) | `stale`, with `current_groups`: the current groups that share a member, in the groups-route shape |
+| 6 | retire or merge: fewer than `max_actions` retire and merge actions recorded for this `run_id` and namespace; keep is never capped and never counts | `rejected` (`action cap reached`) |
+| 7 | retire: `retire_ids` non-empty, without repeats, all members, and at least one member left | `rejected` |
+| 8 | merge: every member has one kind; `merged_text` passes the note validation (non-blank, at most 4000 chars) and the credential scan; the token check passes | `rejected` |
 
 A merge then resolves its replacement:
 
 | merged text | effect |
 |---|---|
 | equal to a member's text after stripping and collapsing whitespace runs | a retire of the other members into that member; `reason` says so |
-| hashes to an active agent note with the members' kind and exactly the stripped text, not a member | that note is reused and not changed; a note whose author differs from the members' or whose `shared` differs from the members' shared rule makes the verdict `stale` |
+| hashes to an active agent note with the members' kind and exactly the stripped text, not a member | that note is reused and not changed; a note whose `shared` differs from the members' shared rule makes the verdict `stale` |
 | hashes to an archived note | `rejected`: restore that note instead |
 | hashes to any other existing row | `rejected` |
 | hashes to no row | a new replacement note |

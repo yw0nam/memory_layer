@@ -119,11 +119,8 @@ class MemoryBaseProvider(MemoryProvider):
         self._cards = self._build_cards()
 
     def _build_cards(self) -> str:
-        author = str(self._config.get("author") or "")
-        if not author:
-            return ""
         return self._client.build_cards(
-            author,
+            str(self._config["author"]),
             str(self._config.get("user_entity") or "") or None,
             str(self._config.get("namespace") or "") or None,
         )

@@ -179,8 +179,8 @@ async def search_memory(
 
     `kind` is "personal", "work", or "doc" (document chunks and CSV cards).
 
-    `author` widens or narrows the note hits; document chunks and CSV cards are
-    never filtered.
+    `author` widens or narrows the note hits; document chunks and CSV cards pass
+    through when it is omitted or "all" and drop out when it names a slug.
 
     `since`/`until` bound the search to memory whose event happened in that
     window (its occurred_at, else when it was saved), for

@@ -18,7 +18,7 @@ injected by recency; every prefetched note matched the turn's query at `min_scor
   them, dropping whole lines from the end; the description is never cut. Memory-context
   tags inside a card are defused to `[memory-context]`. A failed or malformed agent card
   prints `Memory: your directions could not be fetched.`; a failed user card prints
-  nothing; no card is fetched when `author` is not configured. `on_session_switch`
+  nothing. `on_session_switch`
   rebuilds both cards, since the user's card can change between sessions.
 - **Every turn** — runs a semantic search over memory (all kinds) with the
   configured `top_k`/`min_score` and returns the hits as prefetched context. The search
