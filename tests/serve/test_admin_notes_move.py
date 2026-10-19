@@ -18,7 +18,7 @@ from memory_base.serve import api
 from memory_base.serve.access import namespaces
 from memory_base.serve.notes import curation
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 # ---- route: delegates and validates ----------------------------------------

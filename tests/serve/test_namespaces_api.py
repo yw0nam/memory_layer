@@ -11,7 +11,7 @@ from starlette.testclient import TestClient
 from memory_base.serve import api
 from memory_base.serve.access import namespaces
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 # ---- POST /namespaces --------------------------------------------------------

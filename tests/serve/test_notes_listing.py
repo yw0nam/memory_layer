@@ -18,7 +18,7 @@ from memory_base.serve import api
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.notes import store
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 AUG_12 = datetime(2026, 8, 12, tzinfo=timezone.utc).timestamp()
 
@@ -49,6 +49,8 @@ def test_list_notes_defaults(monkeypatch):
     assert captured["include_archived"] is False
     assert captured["limit"] == 50
     assert captured["namespaces"] is None  # stubbed identity is admin
+    assert captured["author"] is None
+    assert captured["visible_to"] == "claude-code"
 
 
 def test_list_notes_forwards_every_filter(monkeypatch):
@@ -71,13 +73,29 @@ def test_list_notes_forwards_the_author_filter(monkeypatch):
     response = client.get("/notes?author=natsume")
     assert response.status_code == 200
     assert captured["author"] == "natsume"
+    assert captured["visible_to"] is None
 
 
-def test_list_notes_omitted_author_filter_is_none(monkeypatch):
+def test_list_notes_omitted_author_filter_is_the_default_scope(monkeypatch):
     captured = _capture_list_notes(monkeypatch)
     response = client.get("/notes")
     assert response.status_code == 200
     assert captured["author"] is None
+    assert captured["visible_to"] == "claude-code"
+
+
+def test_list_notes_author_all_covers_every_author(monkeypatch):
+    captured = _capture_list_notes(monkeypatch)
+    response = client.get("/notes?author=all")
+    assert response.status_code == 200
+    assert captured["author"] is None
+    assert captured["visible_to"] is None
+
+
+def test_list_notes_invalid_author_400():
+    response = client.get("/notes?author=Bad")
+    assert response.status_code == 400
+    assert response.json()["error"] == 'author must be an author slug or "all"'
 
 
 def test_list_notes_invalid_limit_400():
@@ -180,6 +198,21 @@ def test_list_notes_maps_rows_to_response_shape(monkeypatch):
             "date": "2026-08-12",
         }
     ]
+
+
+def test_list_notes_reports_shared_only_when_set(monkeypatch):
+    conn = FakeConnection([_row(metadata={"tags": [], "shared": True})])
+    _patch_conn(monkeypatch, conn)
+    [row] = asyncio.run(store.list_notes())
+    assert row["shared"] is True
+
+
+def test_list_notes_forwards_the_visible_to_scope(monkeypatch):
+    conn = FakeConnection([])
+    _patch_conn(monkeypatch, conn)
+    asyncio.run(store.list_notes(visible_to="claude-code"))
+    assert "metadata @> '{\"shared\": true}'::jsonb" in conn.query
+    assert "claude-code" in conn.args
 
 
 def test_list_notes_marks_archived_rows(monkeypatch):
@@ -308,6 +341,14 @@ def test_list_notes_filters_by_author(monkeypatch):
     asyncio.run(store.list_notes(author="natsume"))
     assert "metadata->>'author' = $" in conn.query
     assert "natsume" in conn.args
+
+
+def test_list_notes_scope_clause_is_and_ed_with_the_others(monkeypatch):
+    conn = FakeConnection([])
+    _patch_conn(monkeypatch, conn)
+    asyncio.run(store.list_notes(author="natsume", visible_to="claude-code"))
+    assert "metadata->>'author' = $" in conn.query
+    assert "metadata @> '{\"shared\": true}'::jsonb" in conn.query
 
 
 @pytest.mark.parametrize("limit", [0, 201, "many", True])

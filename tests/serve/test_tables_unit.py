@@ -23,7 +23,7 @@ def _post(body, *, api_key="test-key"):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app),
             base_url="http://testserver",
-            headers={"X-API-Key": api_key},
+            headers={"X-API-Key": api_key, "X-Author": "claude-code"},
         ) as client:
             return await client.post("/tables/query", json=body)
 

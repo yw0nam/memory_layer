@@ -33,7 +33,7 @@ NOW = 1_700_000_000.0
 
 @pytest.fixture()
 def client():
-    with TestClient(api.app, headers={"X-API-Key": "test-key"}) as c:
+    with TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"}) as c:
         yield c
 
 
@@ -152,7 +152,7 @@ def test_search_logs_retrieval_and_bumps_hit_columns_after_flush(client):
     the moment of this search.
     """
     content = "access-log integration pin: zzzaccesslogpin unique retrieval marker"
-    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW, author="natsume")["id"]
     client.portal.call(_delete_note, note_id)
     client.portal.call(_delete_retrieval_log, content)
     try:
@@ -230,7 +230,7 @@ async def _fetch_logged_hit_counts(query_text: str, note_id: str) -> int:
 def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
     """Two searches collapse into one batched bump that /admin/notes reports."""
     content = "access-log integration pin: zzzflushpin buffered counter advance marker"
-    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW, author="natsume")["id"]
     client.portal.call(_delete_note, note_id)
     client.portal.call(_delete_retrieval_log, content)
     try:
@@ -264,7 +264,7 @@ def test_admin_notes_sees_counters_advance_after_a_forced_flush(client):
 @pytest.mark.integration
 def test_save_memory_endpoint_roundtrip_and_dedup(client):
     content = "access-log integration pin: save_memory REST endpoint roundtrip dedup check"
-    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW, author="natsume")["id"]
     client.portal.call(_delete_note, note_id)
     try:
         first = client.post(

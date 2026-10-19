@@ -80,7 +80,7 @@ def test_authenticate_request_returns_the_hash_and_label(monkeypatch):
 
 async def _whoami(request):
     key = request.state.key
-    return JSONResponse({"label": key.label})
+    return JSONResponse({"label": key.label, "author": request.state.author})
 
 
 def _app():
@@ -163,8 +163,57 @@ def test_valid_key_attaches_identity_to_request_state(monkeypatch):
 
     async def run():
         async with _client(monkeypatch, identity) as client:
-            return await client.get("/whoami", headers={"X-API-Key": "good-key"})
+            return await client.get(
+                "/whoami", headers={"X-API-Key": "good-key", "X-Author": "alice"}
+            )
 
     response = asyncio.run(run())
     assert response.status_code == 200
-    assert response.json() == {"label": "alice"}
+    assert response.json() == {"label": "alice", "author": "alice"}
+
+
+def test_missing_author_header_400(monkeypatch):
+    identity = auth.KeyIdentity(key_id="hash", label="alice")
+
+    async def run():
+        async with _client(monkeypatch, identity) as client:
+            return await client.get("/whoami", headers={"X-API-Key": "good-key"})
+
+    response = asyncio.run(run())
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "missing or malformed X-Author header: an author slug is required"
+    }
+
+
+@pytest.mark.parametrize("author", ["", "  ", "Not A Slug", "-lead", "x" * 41, "all"])
+def test_malformed_or_reserved_author_header_400(monkeypatch, author):
+    identity = auth.KeyIdentity(key_id="hash", label="alice")
+
+    async def run():
+        async with _client(monkeypatch, identity) as client:
+            return await client.get(
+                "/whoami", headers={"X-API-Key": "good-key", "X-Author": author}
+            )
+
+    response = asyncio.run(run())
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "missing or malformed X-Author header: an author slug is required"
+    }
+
+
+def test_health_is_exempt_from_the_author_header(monkeypatch):
+    async def unreachable(plaintext_key):
+        raise AssertionError("must not authenticate /health")
+
+    monkeypatch.setattr(auth, "authenticate_request", unreachable)
+
+    async def run():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=_app()), base_url="http://testserver"
+        ) as client:
+            return await client.get("/health")
+
+    response = asyncio.run(run())
+    assert response.status_code == 200

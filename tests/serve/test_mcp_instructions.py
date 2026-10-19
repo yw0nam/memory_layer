@@ -60,3 +60,11 @@ def test_instructions_describe_the_turn_lane():
         assert name in flat
     assert "never a reason to skip saving a note" in flat
     assert "pass session_id and origin" in flat
+
+
+def test_instructions_state_the_header_author_and_the_read_scope():
+    flat = " ".join(SERVER_INSTRUCTIONS.split())
+    assert "X-Author" in flat
+    assert "your own notes and shared notes" in flat
+    assert "shared: true" in flat
+    assert "names its author" not in flat

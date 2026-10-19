@@ -52,7 +52,7 @@ NOW = 1_700_000_000.0
 
 @pytest.fixture()
 def client():
-    with TestClient(api.app, headers={"X-API-Key": "test-key"}) as c:
+    with TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"}) as c:
         yield c
 
 
@@ -71,6 +71,7 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         return {
@@ -84,7 +85,7 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
     monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
-        json={"author": "natsume", "kind": "work", "content": "some distilled content"},
+        json={"kind": "work", "content": "some distilled content"},
     )
     assert response.status_code == 200
     assert set(response.json()) == {"id", "kind", "stored", "superseded", "similar"}
@@ -107,6 +108,7 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         captured["supersedes"] = supersedes
@@ -122,7 +124,6 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
     response = client.post(
         "/save_memory",
         json={
-            "author": "natsume",
             "kind": "work",
             "content": "new content",
             "supersedes": "note:old0000000000",
@@ -147,6 +148,7 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         captured["supersedes"] = supersedes
@@ -159,9 +161,7 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
         }
 
     monkeypatch.setattr(store, "save_note", fake_save_note)
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "kind": "work", "content": "new content"}
-    )
+    response = client.post("/save_memory", json={"kind": "work", "content": "new content"})
     assert response.status_code == 200
     assert captured["supersedes"] is None
     assert response.json()["superseded"] is None
@@ -177,9 +177,7 @@ def test_save_memory_similar_notes_error_409(monkeypatch, client):
         raise SimilarNotesError(similar)
 
     monkeypatch.setattr(store, "save_note", fake_save_note)
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "kind": "work", "content": "new content"}
-    )
+    response = client.post("/save_memory", json={"kind": "work", "content": "new content"})
     assert response.status_code == 409
     body = response.json()
     assert body["error"].startswith("Refused: 1 active note(s)")
@@ -194,7 +192,6 @@ def test_save_memory_non_bool_allow_similar_400(monkeypatch, client):
     response = client.post(
         "/save_memory",
         json={
-            "author": "natsume",
             "kind": "work",
             "content": "new content",
             "allow_similar": "yes",
@@ -218,6 +215,7 @@ def test_save_memory_forwards_allow_similar_to_save_note(monkeypatch, client):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         captured["allow_similar"] = allow_similar
@@ -226,13 +224,11 @@ def test_save_memory_forwards_allow_similar_to_save_note(monkeypatch, client):
     monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
-        json={"author": "natsume", "kind": "work", "content": "new content", "allow_similar": True},
+        json={"kind": "work", "content": "new content", "allow_similar": True},
     )
     assert response.status_code == 200
     assert captured["allow_similar"] is True
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "kind": "work", "content": "new content"}
-    )
+    response = client.post("/save_memory", json={"kind": "work", "content": "new content"})
     assert response.status_code == 200
     assert captured["allow_similar"] is False
 
@@ -328,7 +324,7 @@ def test_supersede_of_the_note_with_identical_content_is_refused_before_embed(
 
     monkeypatch.setattr(store, "embed_text", counting_embed)
     content = "prefer ruff over flake8 for linting"
-    own_id = build_note_row(content, "work", ["test"], NOW)["id"]
+    own_id = build_note_row(content, "work", ["test"], NOW, author="natsume")["id"]
     with pytest.raises(ValueError, match="identical to the note it supersedes"):
         asyncio.run(
             save_note(content, tags=["test"], kind="work", supersedes=own_id, author="natsume")
@@ -435,13 +431,10 @@ def test_mcp_save_memory_posts_supersedes_in_body(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     result = asyncio.run(
-        tools.save_memory(
-            "new content", "natsume", tags=None, supersedes="note:old0000000000", kind="work"
-        )
+        tools.save_memory("new content", tags=None, supersedes="note:old0000000000", kind="work")
     )
     assert captured["json"] == {
         "content": "new content",
-        "author": "natsume",
         "kind": "work",
         "tags": None,
         "entities": None,
@@ -468,10 +461,9 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(tools.save_memory("new content", "natsume", tags=["test"], kind="work"))
+    asyncio.run(tools.save_memory("new content", tags=["test"], kind="work"))
     assert captured["json"] == {
         "content": "new content",
-        "author": "natsume",
         "kind": "work",
         "tags": ["test"],
         "entities": None,
@@ -497,9 +489,7 @@ def test_mcp_save_memory_posts_allow_similar_true_when_passed(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(
-        tools.save_memory("new content", "natsume", tags=["test"], allow_similar=True, kind="work")
-    )
+    asyncio.run(tools.save_memory("new content", tags=["test"], allow_similar=True, kind="work"))
     assert captured["json"]["allow_similar"] is True
 
 
@@ -539,14 +529,14 @@ async def _fetch_similar_ack(note_id: str):
 def test_supersede_archives_old_note_and_stores_new_one(client):
     content_a = f"supersede integration pin A {NOW}: zzzsupersedepin unique marker one"
     content_b = f"supersede integration pin B {NOW}: zzzsupersedepin unique marker two"
-    note_a = build_note_row(content_a, "work", ["test"], NOW)["id"]
-    note_b = build_note_row(content_b, "work", ["test"], NOW)["id"]
+    note_a = build_note_row(content_a, "work", ["test"], NOW, author="natsume")["id"]
+    note_b = build_note_row(content_b, "work", ["test"], NOW, author="natsume")["id"]
     asyncio.run(_delete(note_a))
     asyncio.run(_delete(note_b))
     try:
         response_a = client.post(
             "/save_memory",
-            json={"author": "natsume", "kind": "work", "content": content_a, "tags": ["test"]},
+            json={"kind": "work", "content": content_a, "tags": ["test"]},
         )
         assert response_a.status_code == 200
         assert response_a.json()["id"] == note_a
@@ -554,7 +544,6 @@ def test_supersede_archives_old_note_and_stores_new_one(client):
         response_b = client.post(
             "/save_memory",
             json={
-                "author": "natsume",
                 "kind": "work",
                 "content": content_b,
                 "tags": ["test"],
@@ -576,20 +565,19 @@ def test_supersede_archives_old_note_and_stores_new_one(client):
 def test_supersede_pointer_is_visible_in_notes_listing_and_search(client):
     content_a = f"supersede pointer integration pin A {NOW}: zzzsupersedepin unique marker four"
     content_b = f"supersede pointer integration pin B {NOW}: zzzsupersedepin unique marker five"
-    note_a = build_note_row(content_a, "work", ["test"], NOW)["id"]
-    note_b = build_note_row(content_b, "work", ["test"], NOW)["id"]
+    note_a = build_note_row(content_a, "work", ["test"], NOW, author="natsume")["id"]
+    note_b = build_note_row(content_b, "work", ["test"], NOW, author="natsume")["id"]
     asyncio.run(_delete(note_a))
     asyncio.run(_delete(note_b))
     try:
         response_a = client.post(
             "/save_memory",
-            json={"author": "natsume", "kind": "work", "content": content_a, "tags": ["test"]},
+            json={"kind": "work", "content": content_a, "tags": ["test"]},
         )
         assert response_a.status_code == 200
         response_b = client.post(
             "/save_memory",
             json={
-                "author": "natsume",
                 "kind": "work",
                 "content": content_b,
                 "tags": ["test"],
@@ -625,7 +613,6 @@ def test_supersede_unknown_id_400_over_rest(client):
     response = client.post(
         "/save_memory",
         json={
-            "author": "natsume",
             "kind": "work",
             "content": content,
             "tags": ["test"],
@@ -641,17 +628,17 @@ def test_similar_gate_refuses_then_resolves_by_supersede_or_ack(client):
     marker = f"zzzsimilarpin{int(NOW)}"
     content_b = f"similar-hint integration pin: {marker} a hard-won troubleshooting conclusion"
     content_c = f"similar-hint integration pin: {marker} a hard won troubleshooting conclusion!"
-    note_b = build_note_row(content_b, "work", ["test"], NOW)["id"]
-    note_c = build_note_row(content_c, "work", ["test"], NOW)["id"]
+    note_b = build_note_row(content_b, "work", ["test"], NOW, author="natsume")["id"]
+    note_c = build_note_row(content_c, "work", ["test"], NOW, author="natsume")["id"]
     asyncio.run(_delete(note_b))
     asyncio.run(_delete(note_c))
     try:
-        asyncio.run(save_note(content_b, tags=["test"], kind="work"))
+        asyncio.run(save_note(content_b, tags=["test"], kind="work", author="natsume"))
         time.sleep(0.2)  # let the embedder-backed insert settle before querying similarity
 
         response_c = client.post(
             "/save_memory",
-            json={"author": "natsume", "kind": "work", "content": content_c, "tags": ["test"]},
+            json={"kind": "work", "content": content_c, "tags": ["test"]},
         )
         assert response_c.status_code == 409
         body = response_c.json()
@@ -663,7 +650,6 @@ def test_similar_gate_refuses_then_resolves_by_supersede_or_ack(client):
         response_ack = client.post(
             "/save_memory",
             json={
-                "author": "natsume",
                 "kind": "work",
                 "content": content_c,
                 "tags": ["test"],
@@ -677,7 +663,6 @@ def test_similar_gate_refuses_then_resolves_by_supersede_or_ack(client):
         response_sup = client.post(
             "/save_memory",
             json={
-                "author": "natsume",
                 "kind": "work",
                 "content": content_c,
                 "tags": ["test"],
@@ -707,8 +692,8 @@ async def _archive(note_id: str) -> None:
 def test_supersede_with_content_of_an_archived_note_400_keeps_target_active(client):
     content_a = "Postgres advisory locks are released when the session that took them ends"
     content_b = "the reranker endpoint rejects batches larger than sixty-four passages"
-    note_a = build_note_row(content_a, "work", ["test"], NOW)["id"]
-    note_b = build_note_row(content_b, "work", ["test"], NOW)["id"]
+    note_a = build_note_row(content_a, "work", ["test"], NOW, author="natsume")["id"]
+    note_b = build_note_row(content_b, "work", ["test"], NOW, author="natsume")["id"]
     try:
         asyncio.run(save_note(content_a, tags=["test"], kind="work", author="natsume"))
         asyncio.run(save_note(content_b, tags=["test"], kind="work", author="natsume"))
@@ -717,7 +702,6 @@ def test_supersede_with_content_of_an_archived_note_400_keeps_target_active(clie
         response = client.post(
             "/save_memory",
             json={
-                "author": "natsume",
                 "kind": "work",
                 "content": content_a,
                 "tags": ["test"],

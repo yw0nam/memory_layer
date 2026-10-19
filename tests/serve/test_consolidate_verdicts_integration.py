@@ -65,7 +65,7 @@ SECOND_SUCCESSOR = (
     "checks, and deletes the worktree."
 )
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 async def _query(sql, *args):
@@ -80,21 +80,21 @@ def query(sql, *args):
     return asyncio.run(_query(sql, *args))
 
 
-async def _save(content, namespace, supersedes=None):
+async def _save(content, namespace, supersedes=None, author="claude-code"):
     saved = await save_note(
         content,
         kind="work",
         tags=["rules"],
         namespace=namespace,
-        author="claude-code",
+        author=author,
         supersedes=supersedes,
         allow_similar=supersedes is not None,
     )
     return saved["id"]
 
 
-def save(content, namespace, supersedes=None):
-    return asyncio.run(_save(content, namespace, supersedes))
+def save(content, namespace, supersedes=None, author="claude-code"):
+    return asyncio.run(_save(content, namespace, supersedes, author))
 
 
 @pytest.fixture()
@@ -171,7 +171,6 @@ def verdict(namespace, group, action, key=None, **fields):
 def request_body(*items, run_id="run-1", **top):
     return {
         "run_id": run_id,
-        "author": "consolidator",
         "model": "test-model",
         **PARAMS,
         **top,
@@ -186,9 +185,7 @@ def submit(*items, **top):
 
 
 def undo(action_id):
-    return client.post(
-        "/admin/consolidate/undo", json={"action_id": action_id, "author": "consolidator"}
-    )
+    return client.post("/admin/consolidate/undo", json={"action_id": action_id})
 
 
 def concurrently(*bodies):
@@ -198,7 +195,7 @@ def concurrently(*bodies):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app),
             base_url="http://testserver",
-            headers={"X-API-Key": "test-key"},
+            headers={"X-API-Key": "test-key", "X-Author": "claude-code"},
         ) as http:
             responses = await asyncio.gather(
                 *(http.post("/admin/consolidate/verdicts", json=body) for body in bodies)
@@ -217,7 +214,7 @@ def test_a_dry_run_plans_without_writing(space):
         verdict(ns, group, "retire", retire_ids=sorted(rules)),
         dry_run=True,
     )
-    rid = note_id(ns, MERGED_RULE)
+    rid = note_id(ns, "claude-code", MERGED_RULE)
     assert planned["status"] == "planned"
     assert planned["action_id"] is None
     assert planned["archived_ids"] == sorted(rules)
@@ -233,7 +230,7 @@ def test_a_merge_applies_with_lineage_and_undo_restores_the_members_exactly(spac
     original = {i: note_row(i) for i in rules}
     group = group_of(groups(ns), rules)
     [applied] = submit(verdict(ns, group, "merge", merged_text=f" {MERGED_RULE} "))
-    rid = note_id(ns, MERGED_RULE)
+    rid = note_id(ns, "claude-code", MERGED_RULE)
     assert applied["status"] == "applied", applied
     assert applied["replacement_id"] == rid
 
@@ -250,13 +247,13 @@ def test_a_merge_applies_with_lineage_and_undo_restores_the_members_exactly(spac
     assert replacement["metadata"]["merged_from"] == sorted(rules)
     assert set(replacement["metadata"]["merged_dates"]) == set(rules)
     assert replacement["metadata"]["consolidation_action"] == action["id"]
-    assert replacement["metadata"]["author"] == "consolidator"
+    assert replacement["metadata"]["author"] == "claude-code"
     assert replacement["metadata"]["tags"] == ["rules"]
     for member in rules:
         archived = note_row(member)
         assert archived["archived_at"] == action["applied_at"]
         assert archived["metadata"]["consolidated_into"] == [rid]
-        assert archived["metadata"]["archived_by"] == "consolidator"
+        assert archived["metadata"]["archived_by"] == "claude-code"
 
     section = groups(ns)
     assert not {m["id"] for g in section["groups"] for m in g["members"]} & set(rules)
@@ -281,7 +278,7 @@ def test_a_merge_applies_with_lineage_and_undo_restores_the_members_exactly(spac
     assert replacement["metadata"]["undone_action"] == action["id"]
     [action] = actions(ns)
     assert action["undone_at"] is not None
-    assert action["undone_by"] == "consolidator"
+    assert action["undone_by"] == "claude-code"
 
     section = groups(ns)
     assert section["groups"] == []
@@ -375,9 +372,7 @@ def test_undo_is_refused_after_a_member_was_archived_restored_and_archived(space
     member = rules[0]
     restored = client.post("/admin/restore", json={"ids": [member], "confirm": True})
     assert restored.json() == {"restored": 1}
-    archived = client.post(
-        "/admin/archive", json={"ids": [member], "author": "consolidator", "confirm": True}
-    )
+    archived = client.post("/admin/archive", json={"ids": [member], "confirm": True})
     assert archived.json()["archived"] == 1
     before = rows(ns)
     response = undo(applied["action_id"])

@@ -84,7 +84,7 @@ def use(monkeypatch):
 
 
 def _save(**overrides):
-    fields = {"tags": ["test"], "kind": "work", "namespace": "team-a"}
+    fields = {"tags": ["test"], "kind": "work", "namespace": "team-a", "author": "natsume"}
     fields.update(overrides)
     return asyncio.run(store.save_note("prefer ruff for linting", **fields))
 
@@ -215,6 +215,7 @@ def _notes(**entities):
             id=i,
             kind="work",
             author="claude-code",
+            shared=False,
             saved=1_700_000_000.0,
             occurred_at=None,
             tags=("deploy",),
@@ -238,7 +239,7 @@ def _merge(notes):
         "merged_text": MERGED,
     }
     batch = verdicts.parse_batch(
-        {"run_id": "r", "author": "consolidator", "model": "m", "verdicts": [verdict]}, {NS}
+        {"run_id": "r", "model": "m", "verdicts": [verdict]}, {NS}, "claude-code"
     )
     pairs = [Pair(A, B, 0.80), Pair(A, C, 0.78), Pair(B, C, 0.75)]
     current = verdicts.State(
@@ -258,9 +259,7 @@ def test_group_key_changes_when_a_members_entities_change():
 
 def test_a_merge_gives_the_replacement_the_union_of_the_members_entities():
     batch, verdict, _ = _merge(_notes(a=("kuro",), b=("shiro",), c=("kuro",)))
-    row = verdicts.replacement_row(
-        verdict, batch, _notes(a=("kuro",), b=("shiro",), c=("kuro",)), 0.0
-    )
+    row = verdicts.replacement_row(verdict, _notes(a=("kuro",), b=("shiro",), c=("kuro",)), 0.0)
     assert row["metadata"]["entities"] == ["kuro", "shiro"]
 
 

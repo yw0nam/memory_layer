@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 from memory_base.serve import api
 from memory_base.serve.entities import store
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 NOW = 1_700_000_000.0
 GITHUB_TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
@@ -95,15 +95,16 @@ def _item(slug="natsume", kind="person", name="Natsume", **fields):
     return {"slug": slug, "kind": kind, "name": name, **fields}
 
 
-def _post(*items, author="claude-code", consent_method="conversation", **extra):
+def _post(*items, headers=None, consent_method="conversation", **extra):
     return client.post(
         "/entities",
-        json={"entities": list(items), "author": author, "consent_method": consent_method} | extra,
+        json={"entities": list(items), "consent_method": consent_method} | extra,
+        headers=headers or {},
     )
 
 
-def _delete(slug="natsume", author="claude-code", **extra):
-    return client.post(f"/entities/{slug}/delete", json={"author": author} | extra)
+def _delete(slug="natsume", headers=None, **extra):
+    return client.post(f"/entities/{slug}/delete", json={} | extra, headers=headers or {})
 
 
 # ---- create and edit --------------------------------------------------------
@@ -209,10 +210,11 @@ def test_delete_rejects_a_malformed_request_before_touching_the_store(fake_db):
 # ---- author and consent ------------------------------------------------------
 
 
-def test_a_non_slug_author_is_refused_and_any_slug_is_accepted(fake_db):
-    assert _post(_item(), author="Not A Slug").status_code == 400
-    assert _delete(author="Not A Slug").status_code == 400
-    assert _post(_item(), author="someone-else").status_code == 200
+def test_the_header_author_is_recorded_and_a_body_author_is_refused(fake_db):
+    assert _post(_item(), author="natsume").status_code == 400
+    assert _delete(author="natsume").status_code == 400
+    assert _post(_item(), headers={"X-Author": "someone-else"}).status_code == 200
+    assert fake_db.rows["natsume"]["created_by"] == "someone-else"
 
 
 def test_import_is_recorded_as_the_client_states_it(fake_db):

@@ -19,7 +19,7 @@ from memory_base.serve.consolidation import verdicts
 from memory_base.serve.notes import curation, store
 from memory_base.serve.notes import tools as note_tools
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 A, B, C = "note:work:a", "note:work:b", "note:work:c"
 
 
@@ -153,10 +153,10 @@ def linked(monkeypatch):
 @pytest.mark.parametrize(
     "body",
     [
-        {"ids": [A], "author": "natsume", "add": ["kuro"], "remove": ["kuro"]},
-        {"ids": [A], "author": "natsume"},
-        {"ids": [A], "author": "natsume", "add": ["Bad Slug"]},
-        {"ids": [A], "author": "natsume", "add": ["kuro"], "entities": ["kuro"]},
+        {"ids": [A], "add": ["kuro"], "remove": ["kuro"]},
+        {"ids": [A]},
+        {"ids": [A], "add": ["Bad Slug"]},
+        {"ids": [A], "add": ["kuro"], "entities": ["kuro"]},
     ],
 )
 def test_a_malformed_body_is_refused_before_any_write(linked, body):
@@ -164,15 +164,18 @@ def test_a_malformed_body_is_refused_before_any_write(linked, body):
     assert linked == []
 
 
-def test_the_author_must_be_a_slug(linked):
-    body = {"ids": [A], "author": "Not A Slug", "add": ["kuro"]}
-    assert client.post("/notes/entities", json=body).status_code == 400
+def test_a_body_author_is_refused(linked):
+    body = {"ids": [A], "author": "natsume", "add": ["kuro"]}
+    response = client.post("/notes/entities", json=body)
+    assert response.status_code == 400
+    assert response.json()["error"] == "unknown field: author"
     assert linked == []
 
 
 def test_a_confirmed_call_forwards_the_normalized_delta(linked):
-    body = {"ids": [A], "author": "natsume", "add": [" kuro "], "confirm": True}
-    assert client.post("/notes/entities", json=body).status_code == 200
+    body = {"ids": [A], "add": [" kuro "], "confirm": True}
+    response = client.post("/notes/entities", json=body, headers={"X-Author": "natsume"})
+    assert response.status_code == 200
     assert linked == [([A], ["kuro"], [], "natsume", True)]
 
 
@@ -194,10 +197,10 @@ def test_the_tool_posts_the_delta_and_sends_confirm_only_when_true(monkeypatch):
         ),
     )
     monkeypatch.setenv("MEMORY_API_KEY", "env-key")
-    asyncio.run(note_tools.link_entities([A], "natsume", add=["kuro"]))
-    asyncio.run(note_tools.link_entities([A], "natsume", remove=["kuro"], confirm=True))
-    assert seen[0] == ("/notes/entities", {"ids": [A], "author": "natsume", "add": ["kuro"]})
-    assert seen[1][1] == {"ids": [A], "author": "natsume", "remove": ["kuro"], "confirm": True}
+    asyncio.run(note_tools.link_entities([A], add=["kuro"]))
+    asyncio.run(note_tools.link_entities([A], remove=["kuro"], confirm=True))
+    assert seen[0] == ("/notes/entities", {"ids": [A], "add": ["kuro"]})
+    assert seen[1][1] == {"ids": [A], "remove": ["kuro"], "confirm": True}
 
 
 def test_list_notes_shows_who_set_the_entities_and_when(monkeypatch):

@@ -85,12 +85,13 @@ def _rest():
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=api.app),
         base_url="http://testserver",
-        headers={"X-API-Key": "test-key"},
+        headers={"X-API-Key": "test-key", "X-Author": "claude-code"},
     )
 
 
 def _mcp_through_rest(monkeypatch):
     monkeypatch.setenv("MEMORY_API_KEY", "test-key")
+    monkeypatch.setenv("MEMORY_AUTHOR", "claude-code")
     monkeypatch.setattr(
         rest_client,
         "client",
@@ -131,7 +132,7 @@ def test_save_note_refuses_a_credential_in_a_raw_tag(calls):
 
 
 def _save_memory_body(content, tags):
-    return {"content": content, "author": "claude-code", "kind": "work", "tags": tags}
+    return {"content": content, "kind": "work", "tags": tags}
 
 
 @pytest.mark.parametrize(
@@ -157,7 +158,6 @@ def test_mcp_save_memory_surfaces_the_credential_refusal(monkeypatch, calls):
         asyncio.run(
             tools.save_memory(
                 content=f"the deploy key is {AWS_KEY}",
-                author="claude-code",
                 tags=["deploy"],
                 kind="work",
             )

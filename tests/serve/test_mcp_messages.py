@@ -55,10 +55,11 @@ def _capturing_handler(captured, status=201, body=None):
 # ---- registration -------------------------------------------------------------
 
 
-def test_send_message_schema_requires_subject_result_author():
+def test_send_message_schema_requires_subject_and_result():
     tools = _tools()
     required = set(tools["send_message"].inputSchema["required"])
-    assert {"subject", "result", "author"} <= required
+    assert {"subject", "result"} <= required
+    assert "author" not in tools["send_message"].inputSchema["properties"]
 
 
 def test_claim_and_cancel_take_the_message_id():
@@ -125,7 +126,6 @@ def test_send_message_posts_report_fields(monkeypatch):
         tools.send_message(
             subject="s",
             result="r",
-            author="claude-code",
             status="info",
             next_step=None,
             verification=None,
@@ -141,7 +141,6 @@ def test_send_message_posts_report_fields(monkeypatch):
     assert captured["json"] == {
         "subject": "s",
         "result": "r",
-        "author": "claude-code",
         "status": "info",
     }
     assert payload == row
@@ -154,7 +153,6 @@ def test_send_message_maps_next_step_to_next_and_sends_scope(monkeypatch):
         tools.send_message(
             subject="handoff state",
             result="r",
-            author="claude-code",
             status="in_progress",
             next_step="resume the replay",
             scope="repo:github.com/o/r",
@@ -174,7 +172,6 @@ def test_send_message_forwards_optional_fields(monkeypatch):
         tools.send_message(
             subject="s",
             result="r",
-            author="claude-code",
             verification={"command": "uv run pytest", "status": "passed", "result": "12 green"},
             refs=["https://example.com/a"],
             namespace="team-a",

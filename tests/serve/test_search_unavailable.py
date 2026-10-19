@@ -15,7 +15,7 @@ from memory_base.serve import api
 from memory_base.serve.search import access_log
 from memory_base.serve.search import routes as search_routes
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 @pytest.fixture(autouse=True)

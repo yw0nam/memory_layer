@@ -12,7 +12,7 @@ from starlette.testclient import TestClient
 from memory_base.serve import api
 from memory_base.serve.messages import store
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 ROW = {
     "id": "5f0d9d44-9a9d-4f0e-b7f6-6fa1e2b3c4d5",
@@ -46,7 +46,6 @@ def test_post_message_delegates_and_returns_201_with_public_row(monkeypatch):
             "subject": "Re-seed the staging DB",
             "status": "info",
             "result": "Re-run anything that cached row counts.",
-            "author": "claude-code",
         },
     )
     assert response.status_code == 201
@@ -66,7 +65,6 @@ def test_post_message_unknown_fields_rejected(monkeypatch):
             "subject": "s",
             "status": "info",
             "result": "r",
-            "author": "claude-code",
             "priority": "high",
         },
     )
@@ -74,12 +72,30 @@ def test_post_message_unknown_fields_rejected(monkeypatch):
     assert "priority" in response.json()["error"]
 
 
-def test_post_message_author_must_be_a_slug():
+def test_post_message_takes_the_header_author(monkeypatch):
+    captured = {}
+
+    async def fake_send(key, **kwargs):
+        captured.update(kwargs)
+        return dict(ROW, author="natsume"), False
+
+    monkeypatch.setattr(store, "send_message", fake_send)
     response = client.post(
         "/messages",
-        json={"subject": "s", "status": "info", "result": "r", "author": "Not A Slug"},
+        json={"subject": "s", "status": "info", "result": "r"},
+        headers={"X-Author": "natsume"},
+    )
+    assert response.status_code == 201
+    assert captured["author"] == "natsume"
+
+
+def test_post_message_body_author_is_refused():
+    response = client.post(
+        "/messages",
+        json={"subject": "s", "status": "info", "result": "r", "author": "natsume"},
     )
     assert response.status_code == 400
+    assert "author" in response.json()["error"]
 
 
 def test_post_message_validation_error_400(monkeypatch):
@@ -89,7 +105,7 @@ def test_post_message_validation_error_400(monkeypatch):
     monkeypatch.setattr(store, "send_message", fake_send)
     response = client.post(
         "/messages",
-        json={"subject": "s", "status": "info", "result": "r", "author": "claude-code"},
+        json={"subject": "s", "status": "info", "result": "r"},
     )
     assert response.status_code == 400
 
@@ -110,7 +126,6 @@ def test_post_message_handoff_fields_reach_messages(monkeypatch):
             "result": "r",
             "next": "n",
             "scope": "repo:github.com/o/r",
-            "author": "claude-code",
             "idempotency_key": "run-1",
             "expires_at": "2026-03-01T00:00:00+00:00",
         },
@@ -133,7 +148,6 @@ def test_post_message_idempotency_conflict_409(monkeypatch):
             "subject": "s",
             "status": "info",
             "result": "r",
-            "author": "claude-code",
             "idempotency_key": "run-1",
         },
     )

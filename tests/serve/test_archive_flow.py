@@ -34,7 +34,7 @@ from memory_base.core.schema import ensure_schema
 from memory_base.serve import api
 from memory_base.serve.notes import curation
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 def _random_vec(seed: int) -> str:

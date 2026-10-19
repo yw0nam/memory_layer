@@ -57,18 +57,14 @@ def test_search_transcript_sends_the_query_as_q(captured):
 
 def test_save_memory_sends_the_source_session(captured):
     asyncio.run(
-        note_tools.save_memory(
-            "c", "natsume", tags=["t"], kind="work", session_id="s-1", origin="hermes"
-        )
+        note_tools.save_memory("c", tags=["t"], kind="work", session_id="s-1", origin="hermes")
     )
     assert captured["json"]["source_session"] == {"origin": "hermes", "session_id": "s-1"}
 
 
 def test_save_memory_needs_both_session_id_and_origin(captured):
     with pytest.raises(ValueError, match="both or neither"):
-        asyncio.run(
-            note_tools.save_memory("c", "natsume", tags=["t"], kind="work", origin="hermes")
-        )
+        asyncio.run(note_tools.save_memory("c", tags=["t"], kind="work", origin="hermes"))
     assert captured == {}
 
 
@@ -77,7 +73,9 @@ def test_the_save_route_refuses_an_unknown_origin_in_the_source_session(monkeypa
 
     from memory_base.serve import api
 
-    response = TestClient(api.app, headers={"X-API-Key": "test-key"}).post(
+    response = TestClient(
+        api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"}
+    ).post(
         "/save_memory",
         json={
             "content": "c",

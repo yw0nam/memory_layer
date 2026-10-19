@@ -56,7 +56,7 @@ REFUSAL = (
 )
 
 
-def test_the_prompt_is_the_published_instruction_the_author_and_the_session():
+def test_the_prompt_is_the_published_instruction_and_the_session():
     turns = [
         {"role": "user", "content": "I adopted a cat.", "has_answer": True},
         {"role": "assistant", "content": "Congratulations!"},
@@ -64,14 +64,13 @@ def test_the_prompt_is_the_published_instruction_the_author_and_the_session():
     prompt = mcp_writer.writer_prompt("2023/05/20 (Sat) 02:21", turns, "lme-q")
     assert prompt == (
         f"{mcp_writer.INSTRUCTION}\n"
-        f"{mcp_writer.AUTHOR_LINE}\n"
         "Pass namespace lme-q to every memory tool call that takes one.\n\n"
         "Session date: 2023-05-20T02:21:00\n\n"
         "User: I adopted a cat.\n\n"
         "Assistant: Congratulations!"
     )
     assert "has_answer" not in prompt
-    assert mcp_writer.AUTHOR in mcp_writer.AUTHOR_LINE
+    assert "author" not in prompt
 
 
 def test_the_stream_becomes_a_session_record():
@@ -159,6 +158,7 @@ def test_the_mcp_config_points_only_at_a_loopback_eval_backend(tmp_path):
     assert server["env"] == {
         "MCP_TRANSPORT": "stdio",
         "MEMORY_API_KEY": "the-key",
+        "MEMORY_AUTHOR": "lme-writer",
         "REST_URL": "http://127.0.0.1:18555",
     }
     assert str(tmp_path) in server["args"]
@@ -294,7 +294,6 @@ def test_a_run_records_the_writer_setup_in_its_manifest(monkeypatch, tmp_path):
         "code",
         "writer",
         "instruction",
-        "author_line",
         "concurrency",
         "run_id",
     }

@@ -36,7 +36,7 @@ NOW = 1_700_000_000.0
 KIND_ERROR = "kind must be one of ('personal', 'work')"
 DESCRIPTION_LIMIT = 2048  # a client that shows a tool description or the instructions cuts here
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 # ---- save_note: the kind contract (no DB/network) -----------------------------
@@ -103,7 +103,7 @@ def test_save_note_rejects_a_malformed_kind(monkeypatch, kind):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
     with pytest.raises(ValueError, match=re.escape(KIND_ERROR)):
-        asyncio.run(save_note("distilled content", tags=["test"], kind=kind))
+        asyncio.run(save_note("distilled content", tags=["test"], kind=kind, author="natsume"))
     assert conn.embeds == []
     assert conn.insert_args is None
 
@@ -112,7 +112,7 @@ def test_save_note_rejects_a_malformed_kind(monkeypatch, kind):
 def test_either_kind_is_stored_with_its_label(monkeypatch, kind):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
-    result = asyncio.run(save_note("distilled content", tags=["test"], kind=kind))
+    result = asyncio.run(save_note("distilled content", tags=["test"], kind=kind, author="natsume"))
     assert conn.embeds == ["distilled content"]
     assert result["stored"] is True
     assert result["kind"] == kind
@@ -122,7 +122,7 @@ def test_either_kind_is_stored_with_its_label(monkeypatch, kind):
 
 
 def test_content_errors_win_over_a_missing_kind():
-    response = client.post("/save_memory", json={"author": "natsume", "content": ""})
+    response = client.post("/save_memory", json={"content": ""})
     assert response.status_code == 400
     assert response.json()["error"] == "content must not be empty"
 
@@ -130,7 +130,7 @@ def test_content_errors_win_over_a_missing_kind():
 def test_duplicates_route_rejects_an_unknown_kind(monkeypatch):
     calls = []
 
-    async def fake_find_duplicates(threshold, kind, limit):
+    async def fake_find_duplicates(threshold, kind, limit, **options):
         calls.append(kind)
         return []
 
@@ -170,7 +170,7 @@ def _patch_client(monkeypatch, handler):
 
 def test_save_memory_schema_requires_a_kind_of_two_values():
     schema = _tools()["save_memory"].inputSchema
-    assert {"content", "author", "tags", "kind"} <= set(schema["required"])
+    assert {"content", "tags", "kind"} <= set(schema["required"])
     assert schema["properties"]["kind"]["enum"] == ["personal", "work"]
     assert "track" not in schema["properties"]
     assert schema["properties"]["allow_similar"]["type"] == "boolean"
@@ -183,7 +183,7 @@ def test_save_memory_parameters_carry_their_notes_in_the_schema():
     for name in (
         "kind",
         "tags",
-        "author",
+        "shared",
         "supersedes",
         "allow_similar",
         "occurred_at",
@@ -192,7 +192,7 @@ def test_save_memory_parameters_carry_their_notes_in_the_schema():
         assert properties[name].get("description"), name
     assert "never decides whether the note is stored" in properties["kind"]["description"]
     assert "first tag names the subject" in properties["tags"]["description"]
-    assert "author slug" in properties["author"]["description"]
+    assert "every agent sees" in properties["shared"]["description"]
 
 
 @pytest.mark.parametrize("kind", ["personal", "work"])
@@ -205,13 +205,10 @@ def test_save_memory_posts_the_kind_it_is_given(monkeypatch, kind):
         return httpx.Response(200, json={"id": "note:abc", "kind": kind, "stored": True})
 
     _patch_client(monkeypatch, handler)
-    result = asyncio.run(
-        tools.save_memory("distilled content", "natsume", tags=["infra"], kind=kind)
-    )
+    result = asyncio.run(tools.save_memory("distilled content", tags=["infra"], kind=kind))
     assert captured["path"] == "/save_memory"
     assert captured["json"] == {
         "content": "distilled content",
-        "author": "natsume",
         "kind": kind,
         "tags": ["infra"],
         "entities": None,
@@ -330,11 +327,11 @@ def _marker() -> str:
 @pytest.mark.integration
 def test_cross_kind_duplicate_is_a_no_op_that_keeps_the_first_kind(rest_in_process):
     content = f"note kinds integration pin {_marker()}: identical content through both tools"
-    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW, author="natsume")["id"]
     asyncio.run(_delete(note_id))
     try:
-        first = asyncio.run(tools.save_memory(content, "natsume", tags=["test"], kind="work"))
-        second = asyncio.run(tools.save_memory(content, "natsume", tags=["test"], kind="personal"))
+        first = asyncio.run(tools.save_memory(content, tags=["test"], kind="work"))
+        second = asyncio.run(tools.save_memory(content, tags=["test"], kind="personal"))
         assert first["stored"] is True
         assert second["stored"] is False
         assert second["id"] == first["id"] == note_id
@@ -350,15 +347,16 @@ def test_search_and_listing_filter_by_the_new_kinds():
     marker = _marker()
     personal = f"note kinds filter pin {marker}: the user keeps two cats named Kiwi and Pear"
     work = f"note kinds filter pin {marker}: the nightly job fails when the disk is full"
-    ids = [build_note_row(c, "work", ["test"], NOW)["id"] for c in (personal, work)]
+    ids = [
+        build_note_row(c, "work", ["test"], NOW, author="natsume")["id"] for c in (personal, work)
+    ]
     asyncio.run(_delete(*ids))
     try:
-        with TestClient(api.app, headers={"X-API-Key": "test-key"}) as c:
+        with TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"}) as c:
             for content, kind in ((personal, "personal"), (work, "work")):
                 response = c.post(
                     "/save_memory",
                     json={
-                        "author": "natsume",
                         "content": content,
                         "kind": kind,
                         "tags": [marker],
@@ -389,14 +387,14 @@ def test_cross_kind_supersede_archives_the_other_kinds_note(rest_in_process):
     marker = _marker()
     old = f"note kinds supersede pin {marker}: the deploy window is on Tuesdays"
     new = f"note kinds supersede pin {marker}: the deploy window is on Thursdays (Tuesdays before)"
-    old_id = build_note_row(old, "work", ["test"], NOW)["id"]
-    new_id = build_note_row(new, "work", ["test"], NOW)["id"]
+    old_id = build_note_row(old, "work", ["test"], NOW, author="natsume")["id"]
+    new_id = build_note_row(new, "work", ["test"], NOW, author="natsume")["id"]
     asyncio.run(_delete(old_id, new_id))
     try:
-        saved_old = asyncio.run(tools.save_memory(old, "natsume", tags=["test"], kind="work"))
+        saved_old = asyncio.run(tools.save_memory(old, tags=["test"], kind="work"))
         assert saved_old["id"] == old_id
         saved_new = asyncio.run(
-            tools.save_memory(new, "natsume", tags=["test"], kind="personal", supersedes=old_id)
+            tools.save_memory(new, tags=["test"], kind="personal", supersedes=old_id)
         )
         assert saved_new["id"] == new_id
         assert saved_new["superseded"] == old_id

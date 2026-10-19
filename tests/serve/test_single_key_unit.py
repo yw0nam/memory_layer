@@ -22,20 +22,19 @@ def client(monkeypatch):
         return identity if plaintext_key == "plain-key" else None
 
     monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
-    return TestClient(api.app, headers={"X-API-Key": "plain-key"})
+    return TestClient(api.app, headers={"X-API-Key": "plain-key", "X-Author": "claude-code"})
 
 
 def test_a_plain_key_dry_runs_a_fact_write(client, monkeypatch):
     async def fake_apply(ops, author, dry_run):
-        return [{"op": "add", "dry_run": dry_run}]
+        return [{"op": "add", "dry_run": dry_run, "author": author}]
 
     monkeypatch.setattr(facts_store, "apply", fake_apply)
     op = {"op": "add", "entity": "natsume", "attribute": "city", "value_text": "Busan",
           "note_id": "note:a"}  # fmt: skip
-    response = client.post(
-        "/admin/facts", json={"author": "claude-code", "ops": [op], "dry_run": True}
-    )
+    response = client.post("/admin/facts", json={"ops": [op], "dry_run": True})
     assert response.status_code == 200, response.text
+    assert response.json()["results"][0]["author"] == "claude-code"
 
 
 def test_a_plain_key_lists_consolidation_actions(client, monkeypatch):
@@ -72,6 +71,12 @@ def test_a_request_without_a_valid_key_is_refused(client):
     assert TestClient(api.app, headers={"X-API-Key": "revoked"}).get("/notes").status_code == 401
 
 
+def test_a_request_without_an_author_header_is_refused(client):
+    response = TestClient(api.app, headers={"X-API-Key": "plain-key"}).get("/notes")
+    assert response.status_code == 400
+    assert "X-Author" in response.json()["error"]
+
+
 @pytest.fixture()
 def saved(monkeypatch):
     calls = []
@@ -84,15 +89,21 @@ def saved(monkeypatch):
     return calls
 
 
-@pytest.mark.parametrize("author", ["Bad Author!", "-lead", "x" * 41])
-def test_an_author_that_is_not_a_slug_is_refused(client, saved, author):
-    response = client.post("/save_memory", json={"content": "a note", "author": author})
+@pytest.mark.parametrize("author", ["Bad Author!", "-lead", "x" * 41, "all"])
+def test_an_author_header_that_is_not_a_slug_is_refused(client, saved, author):
+    response = client.post(
+        "/save_memory",
+        json={"content": "a note"},
+        headers={"X-Author": author},
+    )
     assert response.status_code == 400
     assert saved == []
 
 
 def test_any_author_slug_is_accepted_and_a_write_lands_in_default(client, saved):
-    response = client.post("/save_memory", json={"content": "a note", "author": "new-agent"})
+    response = client.post(
+        "/save_memory", json={"content": "a note"}, headers={"X-Author": "new-agent"}
+    )
     assert response.status_code == 200, response.text
     assert saved[0]["author"] == "new-agent"
     assert saved[0]["namespace"] == "default"

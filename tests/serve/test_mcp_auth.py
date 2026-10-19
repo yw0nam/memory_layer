@@ -94,14 +94,47 @@ def test_api_key_absent_everywhere_is_none(monkeypatch):
     assert rest_client.api_key(None) is None
 
 
+def test_author_from_request_header():
+    ctx = FakeCtx(headers={"X-Author": "natsume"})
+    assert rest_client.author(ctx) == "natsume"
+
+
+def test_author_no_ctx_falls_back_to_env(monkeypatch):
+    monkeypatch.setenv("MEMORY_AUTHOR", "from-env")
+    assert rest_client.author(None) == "from-env"
+
+
+def test_author_absent_everywhere_is_none(monkeypatch):
+    monkeypatch.delenv("MEMORY_AUTHOR", raising=False)
+    assert rest_client.author(None) is None
+
+
 def test_auth_headers_omits_key_when_absent(monkeypatch):
     monkeypatch.delenv("MEMORY_API_KEY", raising=False)
+    monkeypatch.delenv("MEMORY_AUTHOR", raising=False)
     assert rest_client.auth_headers(None) == {}
 
 
 def test_auth_headers_includes_key_when_present():
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
     assert rest_client.auth_headers(ctx) == {"x-api-key": "secret"}
+
+
+def test_auth_headers_forwards_both_headers():
+    ctx = FakeCtx(headers={"X-API-Key": "secret", "X-Author": "natsume"})
+    assert rest_client.auth_headers(ctx) == {"x-api-key": "secret", "x-author": "natsume"}
+
+
+def test_auth_headers_omits_a_missing_author(monkeypatch):
+    monkeypatch.delenv("MEMORY_AUTHOR", raising=False)
+    ctx = FakeCtx(headers={"X-API-Key": "secret"})
+    assert rest_client.auth_headers(ctx) == {"x-api-key": "secret"}
+
+
+def test_auth_headers_falls_back_to_the_env_author_for_stdio(monkeypatch):
+    monkeypatch.setenv("MEMORY_API_KEY", "from-env")
+    monkeypatch.setenv("MEMORY_AUTHOR", "natsume")
+    assert rest_client.auth_headers(None) == {"x-api-key": "from-env", "x-author": "natsume"}
 
 
 # ---- every REST call forwards the resolved header ---------------------------
@@ -138,7 +171,7 @@ def test_save_tool_forwards_api_key_header(monkeypatch):
 
     _patch_client(monkeypatch, handler)
     ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(tools.save_memory("content", "natsume", tags=["test"], kind="work", ctx=ctx))
+    asyncio.run(tools.save_memory("content", tags=["test"], kind="work", ctx=ctx))
     assert captured["header"] == "secret"
 
 
@@ -256,7 +289,7 @@ def test_save_memory_omitted_namespace_sends_no_namespace_key(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(tools.save_memory("content", "natsume", tags=["test"], kind="work"))
+    asyncio.run(tools.save_memory("content", tags=["test"], kind="work"))
     assert "namespace" not in captured["json"]
 
 
@@ -277,9 +310,7 @@ def test_save_memory_explicit_namespace_forwarded(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(
-        tools.save_memory("content", "natsume", tags=["test"], namespace="team-a", kind="work")
-    )
+    asyncio.run(tools.save_memory("content", tags=["test"], namespace="team-a", kind="work"))
     assert captured["json"]["namespace"] == "team-a"
 
 
@@ -336,7 +367,7 @@ def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
     [
         pytest.param(lambda: search_tools.search_memory(query="q"), id="search"),
         pytest.param(
-            lambda: tools.save_memory("content", "natsume", tags=["test"], kind="work"),
+            lambda: tools.save_memory("content", tags=["test"], kind="work"),
             id="save-memory",
         ),
         pytest.param(lambda: table_tools.query_table("SELECT 1"), id="query-table"),

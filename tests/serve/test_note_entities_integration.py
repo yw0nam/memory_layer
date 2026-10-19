@@ -17,7 +17,7 @@ from memory_base.serve import api
 
 pytestmark = pytest.mark.integration
 
-HEADERS = {"X-API-Key": "test-key"}
+HEADERS = {"X-API-Key": "test-key", "X-Author": "claude-code"}
 
 
 def test_a_note_names_an_entity_and_the_entity_filter_returns_only_that_note():
@@ -118,7 +118,7 @@ def test_link_entities_previews_then_writes_only_changed_notes():
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
             ) as client:
-                body = {"ids": ids, "author": "claude-code", "add": [slug], "remove": [other]}
+                body = {"ids": ids, "add": [slug], "remove": [other]}
 
                 async def listed():
                     rows = (await client.get(f"/notes?entity={slug}", headers=HEADERS)).json()
