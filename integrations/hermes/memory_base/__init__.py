@@ -12,8 +12,8 @@ Config via config.yaml (memory.memory_base):
   api_key            — API key value, takes precedence over api_key_env (optional)
   namespace          — where this agent's turns land (default: `default`)
   api_key_env        — env var holding the API key (default: MEMORY_BASE_API_KEY)
-  author             — this agent's own author slug (no default;
-                       absent, no card is fetched)
+  author             — the author slug this profile writes under and reads by default;
+                       sent as the X-Author header (no default; absent, no card is fetched)
   user_entity        — slug of the user's entity; its card is delivered too (optional)
 """
 
@@ -102,6 +102,7 @@ class MemoryBaseProvider(MemoryProvider):
         return client.MemoryBaseClient(
             url=self._url(),
             api_key=self._api_key(),
+            author=str(self._config.get("author") or ""),
             timeout=float(self._config.get("timeout", _DEFAULT_TIMEOUT)),
             top_k=int(self._config.get("top_k", _DEFAULT_TOP_K)),
             min_score=float(self._config.get("min_score", _DEFAULT_MIN_SCORE)),
@@ -215,7 +216,10 @@ class MemoryBaseProvider(MemoryProvider):
             },
             {
                 "key": "author",
-                "description": "This agent's own slug and note author (an author slug of the key)",
+                "description": (
+                    "The author slug this profile writes under and reads by default; "
+                    "sent as the X-Author header"
+                ),
                 "required": True,
             },
             {

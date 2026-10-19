@@ -1,6 +1,9 @@
 """Pure REST client for the memory-base API's ``/search``, ``GET /entities/{slug}`` and
 ``POST /turns`` routes.
 
+Every request carries the ``X-API-Key`` and ``X-Author`` headers; the author is the
+slug this client writes under and reads notes by default.
+
 No Hermes imports — importable and testable standalone (stdlib + httpx only).
 Search and card calls swallow errors and return an empty result instead of
 raising, since they run inside a Hermes session and must never block or crash a
@@ -56,17 +59,18 @@ class Refused(Exception):
 
 @dataclass
 class MemoryBaseClient:
-    """Talks to a memory-base deployment's REST API over X-API-Key auth."""
+    """Talks to a memory-base deployment's REST API over X-API-Key and X-Author auth."""
 
     url: str
     api_key: str
+    author: str
     timeout: float = 5.0
     top_k: int = 5
     min_score: float = 0.25
     transport: httpx.BaseTransport | None = None
 
     def _headers(self) -> dict[str, str]:
-        return {"X-API-Key": self.api_key}
+        return {"X-API-Key": self.api_key, "X-Author": self.author}
 
     def _post(self, path: str, body: dict[str, Any]) -> Any:
         try:
@@ -167,7 +171,9 @@ class MemoryBaseClient:
         for hit in self.search(cleaned):
             if not hit.get("text"):
                 continue
-            line = f"- [{hit.get('date', '')}] {_FENCE_TAG.sub('[memory-context]', hit['text'])}"
+            author = hit.get("author")
+            shown = f" ({author})" if author and author != self.author else ""
+            line = f"- [{hit.get('date', '')}]{shown} {_FENCE_TAG.sub('[memory-context]', hit['text'])}"
             size = len(line) + (1 if lines else 0)
             if used + size > limit:
                 continue

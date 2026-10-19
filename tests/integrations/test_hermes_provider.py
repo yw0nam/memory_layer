@@ -341,7 +341,7 @@ def test_the_config_schema_names_the_setup_fields(plugin):
     author = schema[2]
     assert author["required"] is True
     assert author["description"] == (
-        "The author slug this profile writes under and reads by default; sent as the X-Author header."
+        "The author slug this profile writes under and reads by default; sent as the X-Author header"
     )
 
 
