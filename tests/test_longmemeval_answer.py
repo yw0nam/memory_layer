@@ -161,8 +161,11 @@ def test_each_run_reads_and_writes_its_own_files(tmp_path):
 def test_the_model_client_requires_the_zai_provider():
     with pytest.raises(RuntimeError):
         answer.ChatModel.from_env({"OPENAI_API_KEY": "k"}, model="m")
-    client = answer.ChatModel.from_env({"ZAI_API_KEY": "k"}, model="glm-5.3-flash")
+    client = answer.ChatModel.from_env(
+        {"OPENCODE_API_KEY": "g", "ZAI_API_KEY": "k"}, model="glm-5.3-flash"
+    )
     assert client.model == "glm-5.3-flash"
+    assert str(client.client.base_url).startswith("https://api.z.ai/")
 
 
 def test_the_stage_manifest_records_the_code_revision_from_the_start_of_the_run(

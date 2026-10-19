@@ -178,8 +178,11 @@ def test_prompt_carries_the_session_date_and_text():
 def test_the_extractor_requires_the_zai_provider():
     with pytest.raises(RuntimeError):
         extract.OpenAIExtractor.from_env({"OPENAI_API_KEY": "k"}, model="m")
-    client = extract.OpenAIExtractor.from_env({"ZAI_API_KEY": "k"}, model="glm-5.3-flash")
+    client = extract.OpenAIExtractor.from_env(
+        {"OPENCODE_API_KEY": "g", "ZAI_API_KEY": "k"}, model="glm-5.3-flash"
+    )
     assert client.model == "glm-5.3-flash"
+    assert str(client.client.base_url).startswith("https://api.z.ai/")
 
 
 def revisions_captured_in_order(monkeypatch):
