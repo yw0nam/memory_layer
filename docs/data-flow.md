@@ -204,9 +204,11 @@ Private repositories authenticate through the git credential store — see
 
 Memory hits (notes, document chunks, CSV cards) carry the row's `id`, `kind`, and
 `tags`, and `entities` (empty when the note names none), plus `supersedes` for a note that replaced one and `shared: true` on a shared
-note. Note hits come from the caller's default read scope — the calling author's own notes
-plus the shared notes — unless the request's `author` names a slug or `all`; document
-chunks and CSV cards are not notes and are never author-filtered. `GET /notes` rows carry the same `entities`. `?entity=<slug>` narrows to notes whose `metadata.entities` holds the slug, beside the `kind`, `tags`, and `namespace` filters. `date` is
+note. Omitted, `author` returns the caller's default read scope — the calling author's own
+notes plus the shared notes; `all` searches every author; a slug returns only that
+author's notes. Document chunks and CSV cards are not notes: they have no author, so they
+pass an omitted or `all` read and drop out of a slug read, which filters every row on the
+author. `GET /notes` rows carry the same `entities`. `?entity=<slug>` narrows to notes whose `metadata.entities` holds the slug, beside the `kind`, `tags`, and `namespace` filters. `date` is
 the note's `occurred_at` when recorded, else `ts_last_active`. `since`/`until` bound the
 same event time, `COALESCE(occurred_at, ts_last_active)`, so an episode is found by the
 day it happened; recency voting and decay read `ts_last_active` alone. Memory hits carry their stored text whole; each is
@@ -316,8 +318,9 @@ The sending key partitions the retries of an `idempotency_key`; it grants nothin
           excluded from search ◄───┴───► include_archived=true brings it back
 ```
 
-`GET /admin/duplicates` lists near-duplicate agent-note pairs by cosine with each side's author,
-within the caller's default read scope,
+`GET /admin/duplicates` lists near-duplicate agent-note pairs by cosine with each side's author —
+`threshold` (default 0.75) and the three-way `author` (omitted: the caller's default
+scope; `all`: every author; a slug: that author),
 `GET /admin/notes` lists old agent notes, and `POST /admin/restore` clears `archived_at`
 and `metadata.archived_by`, `replaced_by`, and `consolidated_into`. `POST /admin/archive` archives the agent notes named by `ids`, or,
 when `ids` is omitted, the cold agent notes the `author` query parameter selects (the
@@ -361,7 +364,7 @@ parameter is optional and a bad, repeated, or out-of-range value is a 400:
 | `max_group_chars` | ≥ 500 | 12000 |
 | `limit` | 1–1000, groups returned per namespace | 200 |
 
-Omitted, `author` groups the header author's own notes and shared notes; a slug groups
+Omitted, `author` groups exactly the header author's notes; a slug groups
 exactly that author's notes; `all` groups every author present in the namespace, one
 author per group.
 
@@ -393,16 +396,13 @@ so an undone group stays out after `PROCEDURE_VERSION` changes. Judged groups ar
 before `limit` applies. A pair whose combined text
 exceeds `max_group_chars` is not grouped. Each note left out appears once in `deferred`
 with the first reason recorded for it while packing — `over max_group_chars` or
-`over max_group` — else `no clique` (its partners joined other groups); a note whose
-metadata carries no valid author is never grouped and is deferred with the reason
-`no author`, still reachable through `author: "all"` listings and id-addressed
-operations. Groups are
+`over max_group` — else `no clique` (its partners joined other groups). Groups are
 ordered by their highest edge score, then smallest member id; members by save time, then
 id; deferred notes by id.
 
 ```
 {
-  "params": {"namespace": [...], "threshold", "neighbors", "max_group", "max_group_chars", "limit"},
+  "params": {"namespace": [...], "author": slug or "all", "threshold", "neighbors", "max_group", "max_group_chars", "limit"},
   "procedure_version": "1",
   "namespaces": {
     "<ns>": {
@@ -476,6 +476,7 @@ The plan runs these checks in order; the first that fails decides the status.
 | 4 | retire or merge: fewer than `max_actions` retire and merge actions recorded for this `run_id` and namespace; keep is never capped and never counts | `rejected` (`action cap reached`) |
 | 5 | retire: `retire_ids` non-empty, without repeats, all members, and at least one member left | `rejected` |
 | 6 | merge: every member has one kind; `merged_text` passes the note validation (non-blank, at most 4000 chars) and the credential scan; the token check passes | `rejected` |
+| 7 | every remaining verdict's members share one author | `rejected` with the reason `group mixes authors: a, b` |
 
 A merge then resolves its replacement:
 

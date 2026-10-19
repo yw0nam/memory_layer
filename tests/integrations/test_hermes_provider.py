@@ -67,6 +67,14 @@ def test_the_client_is_built_with_the_configured_author(plugin, monkeypatch):
     assert plugin.MemoryBaseProvider()._build_client().author == "natsume"
 
 
+def test_the_provider_is_unavailable_without_an_author(plugin, monkeypatch):
+    config = {"url": "http://memory-base.local", "api_key": "k"}
+    monkeypatch.setattr(plugin, "_load_plugin_config", lambda: config)
+    assert plugin.MemoryBaseProvider().is_available() is False
+    config["author"] = "natsume"
+    assert plugin.MemoryBaseProvider().is_available() is True
+
+
 SESSION_LINE = (
     "Session: hermes {session} (pass it as session_id with origin hermes "
     "when a note is distilled from this session)"

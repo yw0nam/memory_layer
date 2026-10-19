@@ -53,4 +53,6 @@ say so. Do not edit either file.
 ## 4. How to change values
 
 The plugin's rows in `/config` change the URLs, the author, the user entity, and the namespace; the key is
-held in the secure store, never in a file. Changes apply to the next session.
+held in the secure store, never in a file. The author option is sent as the `X-Author`
+header on every hook and MCP request and is the default read scope: reads return that
+author's own notes and the shared notes. Changes apply to the next session.
