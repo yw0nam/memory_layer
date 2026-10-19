@@ -119,9 +119,7 @@ class OpenAIExtractor:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str], *, model: str) -> OpenAIExtractor:
-        provider = llm.resolve_llm_provider(env)
-        if provider.name != "zai":
-            raise RuntimeError(f"the extractor needs the zai provider, not {provider.name}")
+        provider = llm.zai_provider(env)
         return cls(AsyncOpenAI(base_url=provider.base_url, api_key=provider.api_key), model)
 
     async def complete(self, messages: list[dict[str, str]]) -> tuple[str, int, int]:

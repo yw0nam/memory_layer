@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import json
 import os
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -14,9 +16,18 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 _DEFAULT_ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
+_OPENCODE_BASE_URL = "https://opencode.ai/inference/go/openai/v1"
 
 # First non-empty key wins; empty base_url means the SDK default.
 _KEYED_PROVIDERS = (
+    (
+        "OPENCODE_API_KEY",
+        "opencode",
+        "OPENCODE_MODEL",
+        "deepseek-v4.1-flash",
+        None,
+        _OPENCODE_BASE_URL,
+    ),
     ("ZAI_API_KEY", "zai", "ZAI_MODEL", "glm-5.3-flash", "ZAI_BASE_URL", _DEFAULT_ZAI_BASE_URL),
     ("OPENAI_API_KEY", "openai", "OPENAI_MODEL", "gpt-5.6-luna", None, None),
     ("CLAUDE_API_KEY", "claude", "CLAUDE_MODEL", "claude-haiku-4-5", None, None),
@@ -27,25 +38,35 @@ _KEYED_PROVIDERS = (
 class LlmProvider:
     """The chat backend selected from .env keys; vLLM is the no-key case."""
 
-    name: Literal["zai", "openai", "claude", "vllm"]
+    name: Literal["opencode", "zai", "openai", "claude", "vllm"]
     model: str
     base_url: str | None
     api_key: str | None
 
 
+def _keyed_provider(env: Mapping[str, str], spec: tuple) -> LlmProvider:
+    key_var, name, model_var, default_model, base_url_var, default_base_url = spec
+    base_url = (base_url_var and env.get(base_url_var)) or default_base_url
+    return LlmProvider(
+        name=name,
+        model=env.get(model_var) or default_model,
+        base_url=base_url,
+        api_key=env[key_var],
+    )
+
+
+def zai_provider(env: Mapping[str, str]) -> LlmProvider:
+    """Build the z.ai provider from its own keys, whatever other keys are set."""
+    if not env.get("ZAI_API_KEY"):
+        raise RuntimeError("ZAI_API_KEY is not set; define it in .env")
+    return _keyed_provider(env, next(spec for spec in _KEYED_PROVIDERS if spec[1] == "zai"))
+
+
 def resolve_llm_provider(env: Mapping[str, str]) -> LlmProvider:
     """Pick the provider from the first non-empty API key, else the vLLM endpoint."""
-    for key_var, name, model_var, default_model, base_url_var, default_base_url in _KEYED_PROVIDERS:
-        if env.get(key_var):
-            base_url = None
-            if base_url_var:
-                base_url = env.get(base_url_var) or default_base_url
-            return LlmProvider(
-                name=name,
-                model=env.get(model_var) or default_model,
-                base_url=base_url,
-                api_key=env[key_var],
-            )
+    for spec in _KEYED_PROVIDERS:
+        if env.get(spec[0]):
+            return _keyed_provider(env, spec)
     missing = [name for name in ("VLLM_URL", "VLLM_MODEL") if not env.get(name)]
     if missing:
         raise RuntimeError(
@@ -58,7 +79,15 @@ _selected_logged = False
 
 
 def _openai_client(provider: LlmProvider) -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=provider.base_url, api_key=provider.api_key or "EMPTY")
+    headers = None
+    if provider.name == "opencode":
+        headers = {
+            "User-Agent": f"memory-base/{importlib.metadata.version('memory-base')}",
+            "x-opencode-session": uuid.uuid4().hex,
+        }
+    return AsyncOpenAI(
+        base_url=provider.base_url, api_key=provider.api_key or "EMPTY", default_headers=headers
+    )
 
 
 def _anthropic_client(provider: LlmProvider) -> anthropic.AsyncAnthropic:

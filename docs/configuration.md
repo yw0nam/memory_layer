@@ -4,9 +4,9 @@
 
 | variable | purpose |
 |---|---|
-| `ZAI_API_KEY`, `OPENAI_API_KEY`, `CLAUDE_API_KEY` | chat API keys; the first non-empty one in the order zai → openai → claude selects the chat provider |
+| `OPENCODE_API_KEY`, `ZAI_API_KEY`, `OPENAI_API_KEY`, `CLAUDE_API_KEY` | chat API keys; the first non-empty one in the order opencode → zai → openai → claude selects the chat provider |
 | `ZAI_BASE_URL` | z.ai OpenAI-compatible chat endpoint (default `https://api.z.ai/api/coding/paas/v4`) |
-| `ZAI_MODEL`, `OPENAI_MODEL`, `CLAUDE_MODEL` | chat model names (defaults `glm-5.3-flash` / `gpt-5.6-luna` / `claude-haiku-4-5`) |
+| `OPENCODE_MODEL`, `ZAI_MODEL`, `OPENAI_MODEL`, `CLAUDE_MODEL` | chat model names (defaults `deepseek-v4.1-flash` / `glm-5.3-flash` / `gpt-5.6-luna` / `claude-haiku-4-5`); `OPENCODE_MODEL` must be an OpenCode Go model served on the OpenAI-compatible chat-completions endpoint, fixed at `https://opencode.ai/inference/go/openai/v1` |
 | `VLLM_URL`, `VLLM_MODEL` | vLLM chat endpoint used when no API key is set; required only in that case |
 | `EMB_URL`, `RERANK_URL` | vLLM OpenAI-compatible endpoints for embedding and rerank |
 | `EMB_MODEL`, `RERANK_MODEL` | embedding and rerank model names |
