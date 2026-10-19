@@ -30,7 +30,7 @@
     "author": {
       "type": "string",
       "title": "Author",
-      "description": "The agent's own slug and note author; a slug of lowercase letters, digits, and hyphens.",
+      "description": "The author slug this agent writes under and reads by default; sent as the X-Author header on every request.",
       "default": "claude-code",
       "required": true
     },

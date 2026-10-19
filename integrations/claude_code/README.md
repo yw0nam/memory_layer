@@ -18,7 +18,7 @@ Enabling the plugin asks for its options. Change them later in `/config`.
 | REST URL | the REST API the hooks call | `http://127.0.0.1:8010` |
 | MCP URL | the MCP server (streamable HTTP) | `http://localhost:8765/mcp` |
 | API key | this agent's key, sent as `X-API-Key`; held in the secure store | none |
-| Author | the agent's own slug and note author; its card is delivered at session start | `claude-code` |
+| Author | the author slug this agent writes under and reads by default; sent as the `X-Author` header; its card is delivered at session start | `claude-code` |
 | User entity | slug of the user's entity; its card is delivered at session start | none |
 | Namespace | where this agent's turns land; empty means `default` | none |
 
@@ -31,11 +31,13 @@ The `connect-agent` skill walks through minting a key for an agent.
 | SessionStart hook | `hooks/session_start.py` | start, resume, clear, compaction | prints one `<memory-context>` fence: the author's card, the user's card when `User entity` is set, a `Session: claude_code <id>` line, the repo's pending handoffs; records the connection in `status.json` |
 | UserPromptSubmit hook | `hooks/prompt_submit.py` | every prompt | appends the prompt to the turn lane (not `/` or `!` prompts); searches notes and prints fresh, relevant hits |
 | Stop hook | `hooks/stop.py` | end of each turn | appends the final answer to the turn lane |
-| MCP server | `.mcp.json` | session | the memory tools, with the key from the plugin option |
+| MCP server | `.mcp.json` | session | the memory tools, with the key and author from the plugin options as the `X-API-Key` and `X-Author` headers |
 | `/memory-base:init` | `skills/init` | on demand | reports `status.json` and flags old hand-installed entries |
 | `/memory-base:connect-agent` | `skills/connect-agent` | on demand | connects, changes, or disconnects an agent |
 
-The search spans every namespace. Hooks are stdlib Python, fail open (exit 0),
+The search spans every namespace and sends no `author` filter, so it returns this agent's
+own notes and the shared notes; a note line names its author only when another agent
+wrote it. Hooks are stdlib Python, fail open (exit 0),
 and run synchronously.
 
 ## Turn capture

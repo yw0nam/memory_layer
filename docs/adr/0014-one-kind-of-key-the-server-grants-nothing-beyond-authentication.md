@@ -6,7 +6,8 @@ Accepted; supersedes the access statements of ADR-0002 ("the namespace is the ac
 boundary"), ADR-0011 (an import made with the user's own key), ADR-0012 (a private
 namespace keeps a conversation from other keys), and ADR-0013 (facts written only by an
 admin key carrying the `consolidator` author; facts and notes scoped to the namespaces the
-key may read)
+key may read). The sentence "Nothing in the store is hidden from another agent" is
+superseded by [ADR-0015](0015-author-declared-by-the-client-header-and-default-read-scope.md)
 
 ## Context
 

@@ -81,6 +81,18 @@ _Avoid_: codebase, project, source
 A registered label that partitions memories for filtering; nothing in it is private.
 _Avoid_: tenant, workspace, bucket, collection
 
+**Author**:
+The slug a client declares in the `X-Author` header: the attribution of everything the
+client writes and the default scope of its note reads — a note read returns that author's
+own notes and the shared notes unless the read names an author. Shape is checked; it
+grants nothing beyond that.
+_Avoid_: agent id, profile name, owner
+
+**Shared**:
+A note flag, set at creation, that puts the note in every author's default read scope; the
+note stays attributed to the writer.
+_Avoid_: public, global
+
 **Tag**:
 An uploader- or author-supplied label on a chunk, used to narrow retrieval. Not a boundary.
 _Avoid_: label, category, topic
