@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 from typing import Any
 
@@ -26,18 +25,13 @@ DAY_SECONDS = 86400.0
 DUPLICATE_NEIGHBORS = 5
 
 
-def _scoped_row(row: Any) -> dict:
-    """A lifecycle row carrying its author, and `shared` only when the flag is set."""
+def _with_shared(row: Any) -> dict:
+    """A lifecycle row reporting `shared` only when the flag is set."""
     out = dict(row)
     if not out.pop("shared", False):
         return out
     out["shared"] = True
     return out
-
-
-def _shift_placeholders(clause: str, offset: int) -> str:
-    """Move every `$n` placeholder in `clause` by `offset`."""
-    return re.sub(r"\$(\d+)", lambda match: f"${int(match.group(1)) + offset}", clause)
 
 
 async def list_old_notes(
@@ -52,7 +46,7 @@ async def list_old_notes(
             f"""
             SELECT id, content_raw AS text, ts_last_active, hit_count, last_hit_at,
                    metadata->>'author' AS author,
-                   coalesce((metadata->>'shared')::boolean, false) AS shared
+                   metadata @> '{{"shared": true}}'::jsonb AS shared
             FROM "{PG_SCHEMA}".memory_chunks
             WHERE source_type = 'agent_note' AND {predicates}
               AND ts_last_active
@@ -62,7 +56,7 @@ async def list_old_notes(
             older_than_days,
             *filter_args,
         )
-        return [_scoped_row(row) for row in rows]
+        return [_with_shared(row) for row in rows]
 
 
 async def notes_by_ids(ids: list[str]) -> list[dict]:
@@ -170,25 +164,24 @@ async def find_duplicates(
 
     Both sides of a pair are inside the caller's scope.
     """
-    outer, outer_args = history_predicates(
+    outer_sql, outer_args = history_predicates(
         include_archived=False,
         kind=None,
         tags=None,
         alias="a",
         author=author,
         visible_to=visible_to,
+        start=3,
     )
-    inner, inner_args = history_predicates(
+    inner_sql, inner_args = history_predicates(
         include_archived=False,
         kind=None,
         tags=None,
         alias="candidate",
         author=author,
         visible_to=visible_to,
+        start=3 + len(outer_args),
     )
-    # $1 threshold, $2 kind, and $3 limit come first; each clause follows them.
-    outer_sql = _shift_placeholders(outer, 2)
-    inner_sql = _shift_placeholders(inner, 2 + len(outer_args))
     args = [threshold, kind, limit, *outer_args, *inner_args]
     async with db.acquire() as conn:
         rows = await conn.fetch(
@@ -268,10 +261,13 @@ async def archive_candidates(
 ) -> list[dict]:
     """Return active agent notes matching the configured cold-tier rule, within scope."""
     predicates, filter_args = history_predicates(
-        include_archived=False, kind=None, tags=None, author=author, visible_to=visible_to
+        include_archived=False,
+        kind=None,
+        tags=None,
+        author=author,
+        visible_to=visible_to,
+        start=3,
     )
-    # $1 now, $2 COLD_AGE_DAYS, and $3 COLD_UNHIT_DAYS come before the filter args.
-    predicates = _shift_placeholders(predicates, 2)
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -279,7 +275,7 @@ async def archive_candidates(
                    ($1 - ts_last_active) / {DAY_SECONDS} AS age_days,
                    hit_count, last_hit_at,
                    metadata->>'author' AS author,
-                   coalesce((metadata->>'shared')::boolean, false) AS shared
+                   metadata @> '{{"shared": true}}'::jsonb AS shared
             FROM "{PG_SCHEMA}".memory_chunks
             WHERE source_type = 'agent_note' AND {predicates}
               AND ts_last_active < $1 - $2::double precision * {DAY_SECONDS}
@@ -292,32 +288,23 @@ async def archive_candidates(
             COLD_UNHIT_DAYS,
             *filter_args,
         )
-        return [_scoped_row(row) for row in rows]
+        return [_with_shared(row) for row in rows]
 
 
-async def archive_rows(
-    ids: list[str],
-    now: float,
-    archived_by: str | None = None,
-) -> int:
-    """Archive active agent notes matching the supplied identifiers."""
-    stamp = (
-        ", metadata = metadata || jsonb_build_object('archived_by', $3::text)"
-        if archived_by is not None
-        else ""
-    )
-    extra = [archived_by] if archived_by is not None else []
+async def archive_rows(ids: list[str], now: float, archived_by: str) -> int:
+    """Archive active agent notes matching the supplied identifiers, stamping the archiver."""
     async with db.acquire() as conn, conn.transaction():
         await lock_slugs(conn)
         status = await conn.execute(
             f"""
             UPDATE "{PG_SCHEMA}".memory_chunks
-            SET archived_at = $2{stamp}
+            SET archived_at = $2,
+                metadata = metadata || jsonb_build_object('archived_by', $3::text)
             WHERE source_type = 'agent_note' AND id = ANY($1::text[]) AND archived_at IS NULL
             """,
             ids,
             now,
-            *extra,
+            archived_by,
         )
         return int(status.rsplit(" ", 1)[-1])
 

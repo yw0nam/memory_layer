@@ -8,6 +8,7 @@ from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from memory_base.serve.common import rest_client
+from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION
 
 
 async def _search(
@@ -151,10 +152,7 @@ async def search_memory(
     min_score: float | None = None,
     author: Annotated[
         str | None,
-        Field(
-            description='Omitted: your own notes and shared notes. "all": every agent\'s notes. '
-            "A slug: that agent's notes only."
-        ),
+        Field(description=AUTHOR_SCOPE_DESCRIPTION),
     ] = None,
     budget_tokens: int | None = None,
     ctx: Context | None = None,
@@ -181,9 +179,8 @@ async def search_memory(
 
     `kind` is "personal", "work", or "doc" (document chunks and CSV cards).
 
-    Note hits are your own and shared notes; `search_memory` widens the scope with
-    `author`: Omitted: your own notes and shared notes. "all": every agent's notes.
-    A slug: that agent's notes only.
+    `author` widens or narrows the note hits; document chunks and CSV cards are
+    never filtered.
 
     `since`/`until` bound the search to memory whose event happened in that
     window (its occurred_at, else when it was saved), for

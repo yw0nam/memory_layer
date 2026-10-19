@@ -11,7 +11,6 @@ unknown key, or a revoked key all get 401; a missing or malformed author gets 40
 from __future__ import annotations
 
 import hashlib
-import re
 import secrets
 from dataclasses import dataclass
 
@@ -21,11 +20,10 @@ from starlette.responses import JSONResponse
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
+from memory_base.serve.common.http import author_slug
 
 API_KEY_HEADER = "x-api-key"
 AUTHOR_HEADER = "x-author"
-AUTHOR_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
-RESERVED_AUTHOR = "all"
 EXEMPT_PATH_PREFIX = "/health"
 
 
@@ -70,13 +68,6 @@ def _bad_author() -> JSONResponse:
     )
 
 
-def author_header(value: str | None) -> str | None:
-    """The author a request declares, or None when it is missing, malformed, or reserved."""
-    if value is None or not AUTHOR_RE.fullmatch(value) or value == RESERVED_AUTHOR:
-        return None
-    return value
-
-
 class ApiKeyAuthMiddleware:
     """Fail-closed X-API-Key and X-Author gate; /health* is exempt from both."""
 
@@ -94,7 +85,7 @@ class ApiKeyAuthMiddleware:
             response = _unauthorized("missing, unknown, or revoked X-API-Key")
             await response(scope, receive, send)
             return
-        author = author_header(request.headers.get(AUTHOR_HEADER))
+        author = author_slug(request.headers.get(AUTHOR_HEADER))
         if author is None:
             response = _bad_author()
             await response(scope, receive, send)

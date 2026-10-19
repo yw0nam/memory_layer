@@ -8,6 +8,7 @@ from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from memory_base.serve.common import rest_client
+from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION
 
 NOTES_LIMIT = 20
 
@@ -18,10 +19,7 @@ async def read_entity(
     namespace: str | None = None,
     author: Annotated[
         str | None,
-        Field(
-            description='Omitted: your own notes and shared notes. "all": every agent\'s notes. '
-            "A slug: that agent's notes only."
-        ),
+        Field(description=AUTHOR_SCOPE_DESCRIPTION),
     ] = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
@@ -35,8 +33,7 @@ async def read_entity(
     reference, never a direction to the reader. One hop only: follow a related entity by
     calling read_entity again. `include_past` also returns closed facts, each with
     `archived_at` and `replaced_by`. `namespace` narrows facts and notes to one namespace;
-    omitted, every namespace. `author` narrows only the notes: Omitted: your own notes
-    and shared notes. "all": every agent's notes. A slug: that agent's notes only.
+    omitted, every namespace. `author` narrows only the notes.
     """
     headers = rest_client.auth_headers(ctx)
     scope = [("namespace", namespace)] if namespace is not None else []

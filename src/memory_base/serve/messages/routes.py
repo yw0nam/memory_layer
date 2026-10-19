@@ -9,7 +9,7 @@ from starlette.responses import JSONResponse
 
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
-from memory_base.serve.common.http import error, json_body
+from memory_base.serve.common.http import error, json_body, reject_author
 from memory_base.serve.messages import store
 
 MESSAGE_BODY_FIELDS = frozenset(
@@ -135,6 +135,8 @@ async def purge_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
+    if rejected := reject_author(body):
+        return rejected
     if body.get("confirm") is True:
         return JSONResponse({"deleted": await store.delete_terminal_messages()})
     return JSONResponse({"messages_to_delete": await store.terminal_messages()})

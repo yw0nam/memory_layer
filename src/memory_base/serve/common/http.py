@@ -2,15 +2,33 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from memory_base.serve.access.auth import AUTHOR_RE, RESERVED_AUTHOR
-
 TEXT_LIMIT = 2000
+AUTHOR_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+RESERVED_AUTHOR = "all"
+AUTHOR_BODY_ERROR = "author comes from the X-Author header"
+AUTHOR_SCOPE_DESCRIPTION = (
+    'Omitted: your own notes and shared notes. "all": every agent\'s notes. '
+    "A slug: that agent's notes only."
+)
+
+
+def author_slug(value: Any) -> str | None:
+    """The author slug a value names; None when it is missing, malformed, or reserved."""
+    if not isinstance(value, str) or value == RESERVED_AUTHOR or not AUTHOR_RE.fullmatch(value):
+        return None
+    return value
+
+
+def reject_author(body: Any) -> JSONResponse | None:
+    """The 400 a permissive write body carrying `author` gets, else None."""
+    return error(AUTHOR_BODY_ERROR) if isinstance(body, dict) and "author" in body else None
 
 
 async def json_body(request: Request) -> dict[str, Any]:
@@ -60,9 +78,9 @@ def note_scope(request_author: str, requested: str | None) -> tuple[str | None, 
         return None, request_author
     if requested == RESERVED_AUTHOR:
         return None, None
-    if not AUTHOR_RE.fullmatch(requested):
+    if (slug := author_slug(requested)) is None:
         raise RequestError('author must be an author slug or "all"')
-    return requested, None
+    return slug, None
 
 
 def stripped(value: Any, name: str) -> str:

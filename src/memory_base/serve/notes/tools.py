@@ -8,6 +8,7 @@ from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from memory_base.serve.common import rest_client
+from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION
 
 
 async def list_notes(
@@ -20,10 +21,7 @@ async def list_notes(
     namespace: str | None = None,
     author: Annotated[
         str | None,
-        Field(
-            description='Omitted: your own notes and shared notes. "all": every agent\'s notes. '
-            "A slug: that agent's notes only."
-        ),
+        Field(description=AUTHOR_SCOPE_DESCRIPTION),
     ] = None,
     limit: int | None = None,
     ctx: Context | None = None,
@@ -45,8 +43,7 @@ async def list_notes(
     (from list_entities) and narrows to notes naming it. `kind` is "personal" or
     "work". `since`/`until` are ISO 8601 dates or datetimes (a bare date
     covers that whole day; naive values are read as UTC). `include_archived`
-    adds superseded notes, marked "archived": true. `author`: Omitted: your own notes
-    and shared notes. "all": every agent's notes. A slug: that agent's notes only.
+    adds superseded notes, marked "archived": true. `author` narrows the listing.
     `namespace` narrows to one namespace; omitted, it covers every namespace.
     """
     params: list[tuple[str, str]] = [("tags", tag) for tag in tags or []]
@@ -193,19 +190,14 @@ async def list_memory_duplicates(
     limit: int | None = None,
     author: Annotated[
         str | None,
-        Field(
-            description='Omitted: your own notes and shared notes. "all": every agent\'s notes. '
-            "A slug: that agent's notes only."
-        ),
+        Field(description=AUTHOR_SCOPE_DESCRIPTION),
     ] = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """List active note pairs whose meaning nearly coincides.
 
     Read-only. Each pair carries both notes' id, kind, author, and text plus
-    their cosine score, over every namespace. Both sides of a pair are inside your
-    read scope: `author`: Omitted: your own notes and shared notes. "all": every
-    agent's notes. A slug: that agent's notes only.
+    their cosine score, over every namespace; both sides are inside your read scope.
     Read both sides before acting: merge them into one note with `save_memory` with
     `supersedes`, or drop one with `archive_notes`. `threshold` (default 0.75), `kind`, and
     `limit` (default 50) narrow the scan; `kind` is "personal" or "work". Pairs at 0.80 and

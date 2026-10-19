@@ -52,6 +52,8 @@ TOP_K_FLOORS = (0.0, 0.25, 0.4, 0.6)
 BUDGETS = (800, 1500, 2500, 4000)
 BUDGET_FLOORS = (0.0, 0.25, 0.4)
 PATHS = ("search", "claude-code", "hermes")
+# The sweep's own author: hits by any other author render with their name, as a client does.
+SWEEP_AUTHOR = "read-sweep"
 INTENTS = ("off_topic", "memory")
 # Every API hit date renders as YYYY-MM-DD, so a fixed date gives the clients' exact lengths.
 DATE_PLACEHOLDER = "2000-01-01"
@@ -143,8 +145,8 @@ def _hermes_client():
 
 def _client_block(path: str, api_hits: list[dict[str, Any]]) -> str:
     if path == "claude-code":
-        return _prefetch_hook().build_context_block(api_hits)
-    client = _hermes_client().MemoryBaseClient(url="", api_key="", author="")
+        return _prefetch_hook().build_context_block(api_hits, SWEEP_AUTHOR)
+    client = _hermes_client().MemoryBaseClient(url="", api_key="", author=SWEEP_AUTHOR)
     client.search = lambda query: api_hits
     return client.build_prefetch("sweep")
 
