@@ -83,20 +83,20 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 |---|---|---|
 | `GET` | `/health` | liveness — `200 {status}` whenever the process serves HTTP; reaches nothing outside it, and backs the container healthcheck |
 | `GET` | `/health/services` | dependency health — `{status, checks:{db, embedding, rerank, llm}}`; `503` when db, embedding, or rerank is down |
-| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `namespaces`, `since`/`until`, `include_archived`; without `budget_tokens` the reranked results are capped at 10 before `top_k` applies |
-| `POST` | `/save_memory` | store a distilled note — `content`, the required `author` and `tags`, the optional `entities` (at most ten registered entity slugs; 400 on a malformed slug, an unknown one, or more than ten), the required `kind` (`personal` or `work`, a label for search and listing), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); no chat model judges the note; refused with 409 when a near-identical active note exists unless `supersedes` names it or `allow_similar` is set, and before embedding when the content or a tag carries a credential (the error names the credential type only) |
-| `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `entity` (a slug), `kind` (`personal` or `work`), `author`, `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
-| `POST` | `/notes/entities` | add or remove entity slugs on 1–200 existing active notes — `ids`, `author` (an author slug), `add` (registered entity slugs), `remove` (slugs, any state), `confirm`; each note's set becomes (current ∪ `add`) − `remove`, at most ten; 400 naming the ids when any is not an active note or would exceed ten; without `confirm` returns `{notes: [{id, before, after, changed}]}` and writes nothing; a changed note records `entities_set_by` and `entities_set_at` |
+| `POST` | `/search` | hybrid search — `query`, `source` (`all`\|`code`\|`memory`), `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `repo`, `namespaces`, `since`/`until`, `include_archived`; without `budget_tokens` the reranked results are capped at 10 before `top_k` applies; note hits are the calling author's own and shared notes unless `author` names a slug or `all` (document chunks and CSV cards are not notes and are never author-filtered) |
+| `POST` | `/save_memory` | store a distilled note, attributed to the `X-Author` header — `content`, the required `tags`, the optional `entities` (at most ten registered entity slugs; 400 on a malformed slug, an unknown one, or more than ten), the required `kind` (`personal` or `work`, a label for search and listing), the optional `shared` (a note every author's default read scope returns; set at creation only), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); no chat model judges the note; refused with 409 when a near-identical active note in the caller's default scope exists unless `supersedes` names it or `allow_similar` is set, and before embedding when the content or a tag carries a credential (the error names the credential type only) |
+| `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `entity` (a slug), `kind` (`personal` or `work`), `author` (omitted: the caller's own and shared notes; `all`: every author; a slug: that author), `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
+| `POST` | `/notes/entities` | add or remove entity slugs on 1–200 existing active notes — `ids`, `add` (registered entity slugs), `remove` (slugs, any state), `confirm`; each note's set becomes (current ∪ `add`) − `remove`, at most ten; 400 naming the ids when any is not an active note or would exceed ten; without `confirm` returns `{notes: [{id, before, after, changed}]}` and writes nothing; a changed note records `entities_set_by` (the header author) and `entities_set_at` |
 | `GET` | `/entities` | the entity registry ordered by slug; see [data flow](docs/data-flow.md#entity-registry) |
-| `POST` | `/entities` | create or edit 1–50 entities in one batch — `entities` (`slug`, and `kind`, `name`, `aliases`, `description` on a create), `author` (an author slug), `dry_run` (run every check, write nothing), `consent_method` (`elicitation`\|`conversation`\|`import`, recorded as the client states it); 409 `{error, holder, value}` when a slug, name, or alias is held by another entity |
-| `POST` | `/entities/{slug}/delete` | delete an entity: unlink it from every note and delete its facts and the facts pointing at it — `author`, `dry_run` (returns the plan `{note_ids, notes, facts, incoming}` and writes nothing), `expect` (`{notes, facts, incoming}` counts of the preview; a changed plan is 409); its slug, name, and aliases become free |
+| `POST` | `/entities` | create or edit 1–50 entities in one batch — `entities` (`slug`, and `kind`, `name`, `aliases`, `description` on a create), `dry_run` (run every check, write nothing), `consent_method` (`elicitation`\|`conversation`\|`import`, recorded as the client states it); the change is attributed to the `X-Author` header; 409 `{error, holder, value}` when a slug, name, or alias is held by another entity |
+| `POST` | `/entities/{slug}/delete` | delete an entity: unlink it from every note and delete its facts and the facts pointing at it — `dry_run` (returns the plan `{note_ids, notes, facts, incoming}` and writes nothing), `expect` (`{notes, facts, incoming}` counts of the preview; a changed plan is 409); its slug, name, and aliases become free |
 | `GET` | `/entities/{slug}` | an entity's card — `{entity, facts, incoming}`; `include_past` (`true`\|`false`, default `false`) adds closed facts, `namespace` (repeatable) narrows to those namespaces; 404 for an unknown slug; see [data flow](docs/data-flow.md#facts-and-cards) |
-| `POST` | `/admin/facts` | apply 1–100 fact ops (`add`, `replace`, `remove`) all or nothing — `author`, `ops`, `dry_run`; 400 names the refused op |
+| `POST` | `/admin/facts` | apply 1–100 fact ops (`add`, `replace`, `remove`) all or nothing — `ops`, `dry_run`; the batch is attributed to the `X-Author` header; 400 names the refused op |
 | `POST` | `/turns` | append one verbatim turn — `id` (client-chosen UUID), `origin` (`claude_code`\|`hermes`), `session_id`, `role` (`user`\|`assistant`), `content` (at most 64,000 characters), optional `reasoning`, `repo` (`repo:<host>/<path>`), `namespace`; returns `{id, seq, stored}`; a replay with the same payload returns the stored `seq` with `stored: false`, the same `id` with a different payload is 409, a credential is refused, and a session's namespace is fixed by its first turn |
 | `GET` | `/sessions` | sessions newest first — `since`, `until`, `origin`, `repo`, repeated `namespace`, `limit` (default 50, max 200); each `{origin, session_id, namespace, repo, started_at, last_at, turns, title}` |
 | `GET` | `/sessions/{origin}/{session_id}` | a session's turns in `seq` order — `offset` (a seq), `limit`, and `contains` (case-insensitive substring of at least 2 characters: the matching turns and one neighbour each side, matches marked `match: true`); cut by `limit` or 40,000 characters with `next_offset`; see [data flow](docs/data-flow.md#turn-lane) |
 | `GET` | `/turns/search` | turns whose content holds the literal substring `q` (at least 2 characters), newest first, each with a 300-character window — `since`, `until`, `origin`, `repo`, repeated `namespace`, `limit` |
-| `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, `author`, optional `idempotency_key` and `expires_at`; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
+| `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, optional `idempotency_key` and `expires_at`; attributed to the `X-Author` header; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (normalized match), `limit` (default 50, max 100) |
 | `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown id a 404 |
 | `DELETE` | `/messages/{id}` | cancel a pending message |
@@ -112,15 +112,15 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/namespaces` | register a namespace — `name` (`^[a-z0-9_-]{1,64}$`) |
 | `GET` | `/namespaces` | list the registered namespaces |
 | `DELETE` | `/namespaces/{name}` | unregister a namespace with no notes, chunks, table rows, messages, or turns; the reserved `default` namespace cannot be deleted |
-| `GET` | `/admin/notes` | active agent notes older than `older_than_days` |
+| `GET` | `/admin/notes` | active agent notes older than `older_than_days`, in the caller's default read scope unless `author` names a slug or `all` |
 | `POST` | `/admin/notes/delete` | preview, or delete with `confirm` |
 | `POST` | `/admin/notes/move` | move agent notes into another registered namespace — `ids`, `namespace`; returns `{moved, skipped}`, rewriting each moved note's id to `note:<target>:<hash>`; an id already present in the target, or naming no agent note, is skipped |
-| `GET` | `/admin/duplicates` | near-duplicate agent-note pairs above `threshold` (default 0.75) |
-| `GET` | `/admin/consolidate/groups` | groups of active agent notes that may state the same thing, for an agent to judge; a pair either note lists in `similar_ack` is ignored and counted; a group with a recorded verdict, or with exactly the members of an undone action, is left out and counted `cached`; changes no note — `namespace` (repeatable, default every registered namespace), `threshold` (0 < x ≤ 1, default 0.72), `neighbors` (1–50, default 5), `max_group` (2–20, default 6), `max_group_chars` (≥ 500, default 12000), `limit` (groups per namespace, 1–1000, default 200); see [data flow](docs/data-flow.md#consolidation-groups) |
-| `POST` | `/admin/consolidate/verdicts` | apply an agent's `keep` / `retire` / `merge` verdicts on issued groups, each alone in one transaction under a per-namespace lock — `author` (an author slug), `run_id`, `model`, `dry_run` (plan only, no write), the groups call's `threshold` / `neighbors` / `max_group` / `max_group_chars`, `max_actions` (retire and merge per run and namespace, 1–500, default 20), 1–200 `verdicts`; a schema violation refuses the whole request with 400; each result is `applied`, `planned`, `cached`, `duplicate`, `stale` (with the current groups), `rejected`, or `failed` (an embedder or database error rolled that verdict back; retry it with the same idempotency key); a merge text must pass a two-direction token check (numbers, dates, backticked spans, names) that a changed sentence-initial name, a negation, a caseless-script name, or a version inside an identifier (`v2.0`) passes; see [data flow](docs/data-flow.md#consolidation-verdicts) |
-| `POST` | `/admin/consolidate/undo` | reverse one action — `action_id`, `author`; restores the notes it archived with their prior metadata and archives a replacement it created; 409 with nothing changed when a later change touched them or for a keep, 404 for an unknown id, the recorded result when already undone; see [data flow](docs/data-flow.md#consolidation-undo-and-actions) |
+| `GET` | `/admin/duplicates` | near-duplicate agent-note pairs above `threshold` (default 0.75) within the caller's default read scope, each side with its author |
+| `GET` | `/admin/consolidate/groups` | groups of active agent notes that may state the same thing, for an agent to judge; a pair either note lists in `similar_ack` is ignored and counted; a group with a recorded verdict, or with exactly the members of an undone action, is left out and counted `cached`; changes no note — `namespace` (repeatable, default every registered namespace), `author` (omitted: the calling author's own and shared notes; a slug: that author; `all`: every author present, one author per group — groups never mix authors), `threshold` (0 < x ≤ 1, default 0.72), `neighbors` (1–50, default 5), `max_group` (2–20, default 6), `max_group_chars` (≥ 500, default 12000), `limit` (groups per namespace, 1–1000, default 200); see [data flow](docs/data-flow.md#consolidation-groups) |
+| `POST` | `/admin/consolidate/verdicts` | apply an agent's `keep` / `retire` / `merge` verdicts on issued groups, each alone in one transaction under a per-namespace lock, attributed to the `X-Author` header — `run_id`, `model`, `dry_run` (plan only, no write), the groups call's `threshold` / `neighbors` / `max_group` / `max_group_chars`, `max_actions` (retire and merge per run and namespace, 1–500, default 20), 1–200 `verdicts`; a schema violation refuses the whole request with 400; a merged note carries the members' author, and an existing note is reused as replacement only under the members' author and `shared` rule; each result is `applied`, `planned`, `cached`, `duplicate`, `stale` (with the current groups), `rejected`, or `failed` (an embedder or database error rolled that verdict back; retry it with the same idempotency key); a merge text must pass a two-direction token check (numbers, dates, backticked spans, names) that a changed sentence-initial name, a negation, a caseless-script name, or a version inside an identifier (`v2.0`) passes; see [data flow](docs/data-flow.md#consolidation-verdicts) |
+| `POST` | `/admin/consolidate/undo` | reverse one action — `action_id`; the undo records the header author as `undone_by`; restores the notes it archived with their prior metadata and archives a replacement it created; 409 with nothing changed when a later change touched them or for a keep, 404 for an unknown id, the recorded result when already undone; see [data flow](docs/data-flow.md#consolidation-undo-and-actions) |
 | `GET` | `/admin/consolidate/actions` | consolidation actions newest first with the full text and lineage of every note they name — `namespace`, `run_id`, `note_id`, `limit` (1–500, default 50) |
-| `POST` | `/admin/archive` | preview cold agent notes (`notes_to_archive`), then archive them with `confirm`; `ids` selects agent notes and requires an `author`, stamped on every row archived; an id that is not an active note makes the whole call a 400 that lists them as `missing` |
+| `POST` | `/admin/archive` | preview cold agent notes (`notes_to_archive`), then archive them with `confirm`; `ids` selects agent notes, and the header author is stamped on every row archived; without `ids` the preview selects by the `author` query param within the caller's default read scope; an id that is not an active note makes the whole call a 400 that lists them as `missing` |
 | `DELETE` | `/admin/sessions/{origin}/{session_id}` | hard-delete every turn of a session; returns `{deleted}` |
 | `POST` | `/admin/messages/purge` | preview claimed, cancelled, superseded, and expired messages (`messages_to_delete`), then delete them with `confirm` (`deleted`); deletion is permanent and releases their idempotency keys |
 | `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author and the `replaced_by` and `consolidated_into` lineage |
@@ -147,7 +147,7 @@ or `ts_last_active` when none is recorded: a bare date covers that whole day, an
 values are read as UTC.
 
 A memory hit carries the stored row's `id` (the note id `supersedes` takes), `kind`, and
-`tags`; a note saved with `supersedes` carries the archived note's id as `supersedes`,
+`tags`, and `shared: true` when the note is shared; a note saved with `supersedes` carries the archived note's id as `supersedes`,
 in hits and in `GET /notes` rows; a supersede save whose content matches an active note
 archives the target without recording a pointer on the active note. The archived note
 records the id of the note that replaced it as `replaced_by`. `GET /notes` rows also carry the lineage
@@ -176,14 +176,18 @@ so `search` and `search_code` do not offer them; `repo` on `search_code` alone;
 `budget_tokens` on `search` and `search_memory`, which returns hits in rerank order up to
 a token budget instead of `top_k` hits above `min_score`.
 `list_notes` reads notes by filters alone — no query, no embedding call — for
-deterministic reads like every note carrying one subject tag or a time window. `author` filters
-`search_memory` and `list_notes` to one agent's notes.
+deterministic reads like every note carrying one subject tag or a time window. The
+`author` argument of `search_memory`, `list_notes`, and `read_entity` is three-way:
+omitted returns the caller's own notes and shared notes, `all` every agent's notes, a slug
+that agent's notes only. `search` takes no author: its note hits are the caller's own and
+shared notes, and `search_memory` widens.
 
 Curation runs over the same tools: `list_memory_duplicates` reads near-duplicate agent-note pairs
-with both sides' authors, and `archive_notes` (`ids` and `author` required),
+with both sides' authors within the caller's default scope, and `archive_notes` (`ids`
+required; archived rows are stamped with the header author),
 `restore_notes`, and `delete_notes` preview by default and act only with `confirm`.
 Archiving is restorable and records its author; deleting is permanent and records
-nothing. `link_entities` (`ids`, `author`, `add`, `remove`) adds or removes entity slugs on
+nothing. `link_entities` (`ids`, `add`, `remove`) adds or removes entity slugs on
 existing notes without changing their content, id, or dates; it previews by default and
 writes only with `confirm`.
 
@@ -247,7 +251,9 @@ documents, a metrics CSV, and source repositories into the three lanes.
 
 Every route except `/health` and `/health/services` requires an `X-API-Key` header
 (`ApiKeyAuthMiddleware` in `serve/access/auth.py`); a missing, unknown, or revoked key gets a
-fail-closed `401`.
+fail-closed `401`. The same routes require an `X-Author` header: the author slug the
+client declares, matching `^[a-z0-9][a-z0-9-]{0,39}$`; a missing, malformed, or reserved
+(`all`) value gets a 400.
 
 A key is a credential for the network boundary and grants nothing else: any valid key may
 call every route, and every key is equal. Each client holds its own key, so one host or
@@ -266,19 +272,21 @@ uv run python -m memory_base.serve.access.keys revoke <key-hash-prefix>
 `revoke` takes an 8+ character prefix of the stored hash, as shown by `list`, and
 revokes every active key matching it.
 
-Every saved note, archive, link, message, and fact names its `author`, a slug matching
-`^[a-z0-9][a-z0-9-]{0,39}$` that the client declares in its configuration. The server
-records it and grants nothing by it. A namespace is a registered label for filtering:
+Every write — saved note, archive, link, message, fact, consolidation action — is
+attributed to the `X-Author` header's author. A note read returns the caller's own notes
+and the notes marked `shared` unless it names an `author`
+([ADR-0015](docs/adr/0015-author-declared-by-the-client-header-and-default-read-scope.md)).
+A namespace is a registered label for filtering:
 a write without `namespace` lands in `default`, a read without a namespace filter covers
 every namespace, and nothing in a namespace is private.
 
-Each agent gets its own key and author slug. The `connect-agent` skill
+Each agent gets its own key and author slug, sent as the `X-Author` header. The `connect-agent` skill
 ([integrations/claude_code/skills/connect-agent/SKILL.md](integrations/claude_code/skills/connect-agent/SKILL.md))
 walks through connecting and disconnecting an agent.
 
-The MCP server needs the same header: over streamable HTTP it forwards the caller's own
-`X-API-Key`, and over stdio (no inbound HTTP request to read one from) it reads the
-`MEMORY_API_KEY` environment variable instead.
+The MCP server needs the same headers: over streamable HTTP it forwards the caller's own
+`X-API-Key` and `X-Author`, and over stdio (no inbound HTTP request to read them from) it
+reads the `MEMORY_API_KEY` and `MEMORY_AUTHOR` environment variables instead.
 
 ## Configuration
 

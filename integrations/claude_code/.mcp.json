@@ -3,7 +3,10 @@
     "memory-base": {
       "type": "http",
       "url": "${user_config.mcp_url}",
-      "headers": { "X-API-Key": "${user_config.api_key}" }
+      "headers": {
+        "X-API-Key": "${user_config.api_key}",
+        "X-Author": "${user_config.author}"
+      }
     }
   }
 }

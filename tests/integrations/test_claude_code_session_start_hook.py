@@ -452,6 +452,7 @@ def test_main_prints_the_cards_and_handoffs_and_never_claims(monkeypatch, capsys
 
     assert all(r.get_method() == "GET" and r.data is None for r in requests)
     assert all(r.get_header("X-api-key") == "key" for r in requests)
+    assert all(r.get_header("X-author") == "claude-code" for r in requests)
     urls = [r.full_url for r in requests]
     assert "http://memory.test/entities/claude-code?namespace=work" in urls
     assert "http://memory.test/entities/yw0nam?namespace=work" in urls

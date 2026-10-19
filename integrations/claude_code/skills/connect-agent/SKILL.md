@@ -5,19 +5,22 @@ description: "Use when the user wants to connect a new agent to memory-base or d
 
 # Connect an agent to memory-base
 
-Each agent has one author slug and one key. The slug names the agent's notes and its
-entity, whose description holds the user's directions to it. The key is a credential for
-the network boundary and grants nothing else; the slug is attribution the client declares.
-Each agent holds its own key, so revoking it disconnects that agent alone.
+Each agent has one author slug and one key. The slug is sent as the `X-Author` header on
+every request: it names the agent's notes and its entity, whose description holds the
+user's directions to it, and it is the agent's default read scope — its reads return its
+own notes and the shared notes. The key is a credential for
+the network boundary and grants nothing else. Each agent holds its own key, so revoking it
+disconnects that agent alone.
 
 ```
  user: keys new <label>  ──►  key  ──►  agent's secret store
                                               │
  agent's client config: url + key + author = <slug>  ◄─┘
    (+ user_entity = <the user's slug>)                 │
+ every request ──► X-API-Key + X-Author: <slug>
  session start ──► GET /entities/<slug> ──► "Memory: your directions, <slug> (...)"
                ──► GET /entities/<user_entity> ──► "Memory: the user, <slug> (...)"
- save_memory ──► author = <slug>;  register_entity ──► changes the description, with consent
+ save_memory ──► stored under <slug>;  register_entity ──► changes the description, with consent
 ```
 
 ## Rules
@@ -30,7 +33,7 @@ Each agent holds its own key, so revoking it disconnects that agent alone.
 ## 1. Pick the slug
 
 The slug matches `^[a-z0-9][a-z0-9-]{0,39}$` and is unique per agent, for example
-`claude-code` or `codex`. The consolidation agent uses `consolidator`.
+`claude-code` or `codex`.
 
 ## 2. Mint the key (user, on the server host, in the repo)
 
@@ -51,8 +54,8 @@ For Hermes or another client, the user stores it in that client's own secret sto
 | client | env file (step 2) | author and user entity | MCP server |
 |---|---|---|---|
 | Claude Code | the plugin's API key option, held in the secure store | the plugin's Author option (default `claude-code`) and User entity option, changed in `/config` | provided by the plugin |
-| Hermes | `$HERMES_HOME/.env` | `memory.memory_base.author: <slug>` and `memory.memory_base.user_entity: <slug>` in `$HERMES_HOME/config.yaml` | an `mcp_servers` entry with the header `X-API-Key` set to the same key |
-| other MCP client | the client's own secret store | the client's session-start hook, if any | the MCP url with the header `X-API-Key` |
+| Hermes | `$HERMES_HOME/.env` | `memory.memory_base.author: <slug>` and `memory.memory_base.user_entity: <slug>` in `$HERMES_HOME/config.yaml` | an `mcp_servers` entry with the headers `X-API-Key` and `X-Author` set to the same key and slug |
+| other MCP client | the client's own secret store | the client's session-start hook, if any | the MCP url with the `X-API-Key` and `X-Author` headers |
 
 Install the client's integration once: the Claude Code plugin as documented in
 `integrations/claude_code/README.md`, the Hermes provider as documented in
