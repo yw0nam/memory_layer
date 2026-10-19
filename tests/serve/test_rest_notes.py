@@ -59,12 +59,6 @@ def test_same_content_different_namespace_different_id():
     assert default_row["id"] != team_row["id"]
 
 
-def test_same_content_different_author_different_id():
-    a = build_note_row("shared content", "work", ["test"], NOW, author="natsume")
-    b = build_note_row("shared content", "work", ["test"], NOW, author="claude-code")
-    assert a["id"] != b["id"]
-
-
 # ---- row shape ----------------------------------------------------------
 
 

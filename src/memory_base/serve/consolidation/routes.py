@@ -8,7 +8,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.serve.access import namespaces
-from memory_base.serve.common.http import error, json_body, note_scope
+from memory_base.serve.common.http import RESERVED_AUTHOR, error, json_body, note_scope
 from memory_base.serve.consolidation import groups, verdicts
 
 
@@ -73,7 +73,7 @@ async def groups_route(request: Request) -> JSONResponse:
         )
         requested_author = request.query_params.get("author")
         author, visible_to = note_scope(request.state.author, requested_author)
-        author = author or visible_to or groups.ALL_AUTHORS
+        author = author or visible_to or RESERVED_AUTHOR
     except ValueError as exc:
         return error(str(exc))
     requested = request.query_params.getlist("namespace")
@@ -121,7 +121,6 @@ async def verdicts_route(request: Request) -> JSONResponse:
     registered = {row["name"] for row in await namespaces.list_namespaces()}
     try:
         batch = verdicts.parse_batch(body, registered, request.state.author)
-        await verdicts.validate_authors(batch)
     except verdicts.RequestError as exc:
         return error(str(exc))
     return JSONResponse({"results": await verdicts.process_batch(batch)})

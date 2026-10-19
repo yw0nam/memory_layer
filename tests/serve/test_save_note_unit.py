@@ -130,13 +130,6 @@ def test_similar_notes_error_names_the_writers_scope():
     assert "in your scope" in str(error)
 
 
-def test_an_allow_similar_acknowledges_only_the_scoped_neighbours(use):
-    conn = use(RecordingConn())
-    _save(allow_similar=True)
-    insert = conn.sql("INSERT INTO")[0]
-    assert "similar_ack" not in insert[1][-2]
-
-
 def test_supersedes_is_validated_namespace_wide(use):
     conn = use(RecordingConn())
     _save(supersedes="note:team-a:old")

@@ -19,6 +19,7 @@ from memory_base.retrieval.search import (
     normalize_tags,
     normalize_time_range,
     parse_time_bound,
+    visible_clause,
 )
 from memory_base.serve.access import namespaces
 from memory_base.serve.common.entities import SLUG_RE, lock_slugs, require_registered
@@ -246,8 +247,7 @@ async def save_note(
                       AND namespace = $4
                       AND id <> $2
                       AND 1 - (embedding <=> $1::halfvec) > $3
-                      AND (metadata->>'author' = $5
-                           OR metadata @> '{{"shared": true}}'::jsonb)
+                      AND {visible_clause("", 5)}
                     ORDER BY score DESC
                     LIMIT 3
                     """,

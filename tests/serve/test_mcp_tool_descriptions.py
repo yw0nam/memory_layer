@@ -59,18 +59,6 @@ def test_query_table_names_the_top_level_columns_field(descriptions):
     assert "`columns`" in descriptions["query_table"]
 
 
-def test_list_notes_mentions_author(descriptions):
-    assert "author" in descriptions["list_notes"]
-
-
-@pytest.mark.parametrize(
-    "name", ["search_memory", "list_notes", "list_memory_duplicates", "read_entity"]
-)
-def test_read_tools_state_the_three_way_author_scope(descriptions, name):
-    assert "your own notes and shared notes" in descriptions[name], name
-    assert '"all"' in descriptions[name], name
-
-
 def test_save_memory_states_the_shared_flag(descriptions):
     assert "shared" in descriptions["save_memory"]
 

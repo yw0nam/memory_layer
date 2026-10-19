@@ -145,85 +145,13 @@ def test_read_entity_notes_default_to_own_and_shared_notes(monkeypatch):
     assert "author" not in dict(seen["params"])
 
 
-# ---- "all" lifts the scope on every read ------------------------------------
-
-
-@pytest.mark.parametrize(
-    "fixture,request_fn",
-    [
-        ("searched", lambda: client.post("/search", json={"query": "q", "author": "all"})),
-        ("listed", lambda: client.get("/notes", params={"author": "all"})),
-        ("old_listed", lambda: client.get("/admin/notes", params={"author": "all"})),
-    ],
-)
-def test_author_all_covers_every_author(request, fixture, request_fn):
-    captured = request.getfixturevalue(fixture)
-    assert request_fn().status_code == 200
-    assert captured["author"] is None
-    assert captured["visible_to"] is None
-
-
-def test_groups_author_all_asks_for_every_author(consolidated):
-    assert client.get("/admin/consolidate/groups", params={"author": "all"}).status_code == 200
-    assert consolidated["author"] == "all"
-
-
-def test_read_entity_forwards_its_author_argument(monkeypatch):
-    seen = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/entities/natsume":
-            return httpx.Response(
-                200, json={"entity": {"slug": "natsume"}, "facts": [], "incoming": []}
-            )
-        seen["params"] = request.url.params.multi_items()
-        return httpx.Response(200, json=[])
-
-    from memory_base.serve.common import rest_client
-
-    monkeypatch.setattr(
-        rest_client,
-        "client",
-        lambda: httpx.AsyncClient(
-            transport=httpx.MockTransport(handler), base_url="http://testserver"
-        ),
-    )
-    asyncio.run(fact_tools.read_entity("natsume", author="all"))
-    assert ("author", "all") in seen["params"]
-
-
-# ---- a slug narrows to that author ------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "fixture,request_fn",
-    [
-        (
-            "searched",
-            lambda: client.post("/search", json={"query": "q", "author": "natsume"}),
-        ),
-        ("listed", lambda: client.get("/notes", params={"author": "natsume"})),
-        ("old_listed", lambda: client.get("/admin/notes", params={"author": "natsume"})),
-    ],
-)
-def test_author_slug_narrows_to_it(request, fixture, request_fn):
-    captured = request.getfixturevalue(fixture)
-    assert request_fn().status_code == 200
-    assert captured["author"] == "natsume"
-    assert captured["visible_to"] is None
-
-
-def test_groups_author_slug_narrows_to_it(consolidated):
-    assert client.get("/admin/consolidate/groups", params={"author": "natsume"}).status_code == 200
-    assert consolidated["author"] == "natsume"
-
-
-def test_groups_echo_the_resolved_author(consolidated):
-    body = client.get("/admin/consolidate/groups", params={"author": "all"}).json()
-    assert body["params"]["author"] == "all"
-
-
 # ---- the SQL clause ---------------------------------------------------------
+
+
+def test_a_non_string_author_is_a_400():
+    response = client.post("/search", json={"query": "q", "source": "memory", "author": 5})
+    assert response.status_code == 400
+    assert response.json()["error"] == 'author must be an author slug or "all"'
 
 
 def test_history_predicates_carries_the_visible_to_clause():

@@ -382,7 +382,7 @@ def test_a_merge_differing_only_in_case_is_not_a_retire():
 
 def test_a_merge_reuses_an_identical_active_note():
     rid = replacement_id()
-    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False, "claude-code", False)
+    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False, False)
     assert plan("merge", {"replacement": existing}, merged_text=MERGED) == verdicts.Plan(
         "merge", (A, B, C), (rid,), rid, False, None
     )
@@ -397,16 +397,14 @@ def test_a_merge_reuses_an_identical_active_note():
     ],
 )
 def test_a_merge_onto_a_different_active_row_is_rejected(source_type, kind, text):
-    existing = verdicts.Existing(
-        replacement_id(), source_type, kind, text, False, "claude-code", False
-    )
+    existing = verdicts.Existing(replacement_id(), source_type, kind, text, False, False)
     result = plan("merge", {"replacement": existing}, merged_text=MERGED)
     assert result["status"] == "rejected"
 
 
 def test_a_merge_identical_to_an_archived_note_is_rejected():
     rid = replacement_id()
-    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, True, "claude-code", False)
+    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, True, False)
     result = plan("merge", {"replacement": existing}, merged_text=MERGED)
     assert result["status"] == "rejected"
     assert f"identical to archived note {rid}; restore it instead" in result["reason"]
@@ -695,7 +693,7 @@ def test_a_terminal_result_under_the_lock_is_returned_as_is(flow):
 
 def test_a_plan_that_changed_since_the_preflight_is_stale(flow):
     rid = replacement_id()
-    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False, "claude-code", False)
+    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False, False)
     flow["states"].extend([state(replacement=existing), state()])
     batch, _ = parsed("merge", merged_text=MERGED)
     [result] = _run(batch)
@@ -800,10 +798,37 @@ class StateConn:
             return self.undone
         if "group_key = $1" in query:
             return False
+        if "count(*)" in query:
+            return 0
         raise AssertionError(query)
 
     async def fetch(self, query, *args):
         raise AssertionError("a cached group needs no discovery")
+
+
+class LoadConn(StateConn):
+    """Answers load_state's reads with one author's member rows, recording the pair query."""
+
+    def __init__(self, author):
+        super().__init__(undone=False)
+        self.author = author
+
+    async def fetch(self, query, *args):
+        self.calls.append((" ".join(query.split()), args))
+        if "id = ANY" in query:
+            return [
+                {"id": member, "metadata": json.dumps({"author": self.author})}
+                for member in args[0]
+            ]
+        return []
+
+
+def test_load_state_recomputes_groups_with_the_members_author():
+    batch, verdict = parsed()
+    conn = LoadConn("natsume")
+    asyncio.run(verdicts.load_state(conn, verdict, batch))
+    [pair_query] = [c for c in conn.calls if "<=>" in c[0]]
+    assert pair_query[1][1] == "natsume"
 
 
 def test_a_member_set_equal_to_an_undone_actions_is_cached():
@@ -973,11 +998,7 @@ def route(monkeypatch):
         calls.append(batch)
         return [{**APPLIED, "group_key": v.group_key} for v in batch.verdicts]
 
-    async def fake_validate_authors(batch):
-        return None
-
     monkeypatch.setattr(namespaces, "list_namespaces", fake_list_namespaces)
-    monkeypatch.setattr(verdicts, "validate_authors", fake_validate_authors)
     monkeypatch.setattr(verdicts, "process_batch", fake_process_batch)
     return calls
 
@@ -1069,78 +1090,21 @@ def test_a_merged_note_is_shared_only_when_every_member_is(no_owning_helpers):
     assert "shared" not in metadata
 
 
-def test_an_existing_replacement_under_another_author_is_not_reused():
-    rid = replacement_id()
-    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False, "someone-else", False)
-    result = plan("merge", {"replacement": existing}, merged_text=MERGED)
-    assert result["status"] == "stale"
-    assert "different author or shared" in result["reason"]
-
-
 def test_an_existing_replacement_with_another_shared_flag_is_not_reused():
     rid = replacement_id()
-    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False, "claude-code", True)
+    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False, True)
     result = plan("merge", {"replacement": existing}, merged_text=MERGED)
     assert result["status"] == "stale"
-    assert "different author or shared" in result["reason"]
+    assert "different shared flag" in result["reason"]
 
 
-class AuthorConn:
-    """Answers the recorded lookup and the member rows validate_authors reads."""
-
-    def __init__(self, authors, recorded=None):
-        self.authors = authors
-        self.recorded = recorded
-        self.calls: list[tuple[str, tuple]] = []
-
-    async def fetchrow(self, query, *args):
-        self.calls.append((" ".join(query.split()), args))
-        return self.recorded
-
-    async def fetch(self, query, *args):
-        self.calls.append((" ".join(query.split()), args))
-        return [
-            {"id": member, "metadata": json.dumps({"author": author})}
-            for member, author in zip(sorted(args[0]), self.authors, strict=True)
-        ]
+def test_a_group_whose_members_mix_authors_is_rejected():
+    mixed = {**NOTES, B: note(B, author="natsume")}
+    result = plan("keep", {"notes": mixed})
+    assert result["status"] == "rejected"
+    assert result["reason"] == "group mixes authors: claude-code, natsume"
 
 
-def _author_fixture(monkeypatch, conn):
-    from contextlib import asynccontextmanager
-
-    @asynccontextmanager
-    async def acquire(timeout=None):
-        yield conn
-
-    monkeypatch.setattr(verdicts.db, "acquire", acquire)
-
-
-def test_validate_authors_refuses_a_mixed_group(monkeypatch):
-    batch, _ = parsed()
-    conn = AuthorConn(["claude-code", "natsume", "claude-code"])
-    _author_fixture(monkeypatch, conn)
-    with pytest.raises(verdicts.RequestError, match="mixes authors: claude-code, natsume"):
-        asyncio.run(verdicts.validate_authors(batch))
-
-
-def test_validate_authors_skips_a_recorded_verdict(monkeypatch):
-    batch, verdict = parsed()
-    conn = AuthorConn(
-        ["claude-code", "natsume", "claude-code"],
-        recorded={"payload_hash": verdicts.payload_hash(verdict, batch), "result": "{}"},
-    )
-    _author_fixture(monkeypatch, conn)
-    asyncio.run(verdicts.validate_authors(batch))
-    assert not [call for call in conn.calls if "ANY" in call[0]]
-
-
-def test_validate_authors_skips_a_verdict_with_missing_members(monkeypatch):
-    batch, verdict = parsed()
-    conn = AuthorConn([])
-    _author_fixture(monkeypatch, conn)
-    conn.fetch = lambda query, *args: _empty()
-    asyncio.run(verdicts.validate_authors(batch))
-
-
-async def _empty():
-    return []
+def test_a_member_absent_from_the_active_notes_is_stale():
+    result = plan("keep", {"notes": {A: NOTES[A], C: NOTES[C]}, "pairs": []})
+    assert result["status"] == "stale"

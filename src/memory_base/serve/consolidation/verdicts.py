@@ -230,7 +230,6 @@ class Existing:
     kind: str
     text: str
     archived: bool
-    author: str | None
     shared: bool
 
 
@@ -537,8 +536,8 @@ def merged_entities(members: Iterable[Note]) -> list[str]:
     return sorted({slug for n in members for slug in n.entities})
 
 
-def members_author(members: list[Note]) -> str | None:
-    """The one author every member carries; the batch refused a mixed group earlier."""
+def members_author(members: list[Note]) -> str:
+    """The one author every member carries; a mixed group is rejected before this."""
     return members[0].author
 
 
@@ -635,13 +634,11 @@ def _plan_merge(
         return _result(
             verdict, "rejected", f"note {replacement_id} exists with a different kind or text"
         )
-    if existing.author != row["metadata"].get("author") or existing.shared != members_shared(
-        [notes[i] for i in members]
-    ):
+    if existing.shared != members_shared([notes[i] for i in members]):
         return _result(
             verdict,
             "stale",
-            f"note {replacement_id} exists with a different author or shared flag",
+            f"note {replacement_id} exists with a different shared flag",
         )
     return Plan("merge", members, (replacement_id,), replacement_id, False, None)
 
@@ -654,6 +651,17 @@ def plan_verdict(verdict: Verdict, batch: Batch, state: State) -> Plan | dict[st
         return _result(verdict, "rejected", REUSED_KEY)
     if state.cached is not None:
         return _result(verdict, "cached", state.cached)
+    members = tuple(sorted(verdict.member_ids))
+    if any(member not in state.notes for member in members):
+        return _result(
+            verdict,
+            "stale",
+            "group_key matches no current group",
+            current_groups=_current_groups(verdict, batch, state),
+        )
+    authors = sorted({state.notes[member].author for member in members})
+    if len(authors) > 1:
+        return _result(verdict, "rejected", f"group mixes authors: {', '.join(authors)}")
     p = batch.params
     current, _ = build_groups(state.pairs, state.notes, p.threshold, p.max_group, p.max_group_chars)
     issued = next(
@@ -665,7 +673,6 @@ def plan_verdict(verdict: Verdict, batch: Batch, state: State) -> Plan | dict[st
         ),
         None,
     )
-    members = tuple(sorted(verdict.member_ids))
     if issued is None or issued.members != members:
         reason = (
             "group_key matches no current group"
@@ -699,8 +706,7 @@ def _merged_id(verdict: Verdict, notes: dict[str, Note]) -> str | None:
     members = [notes[i] for i in sorted(verdict.member_ids) if i in notes]
     if len(members) != len(set(verdict.member_ids)):
         return None
-    author = members_author(members)
-    return None if author is None else note_id(verdict.namespace, author, text)
+    return note_id(verdict.namespace, members_author(members), text)
 
 
 async def load_state(conn: Any, verdict: Verdict, batch: Batch) -> State:
@@ -714,8 +720,22 @@ async def load_state(conn: Any, verdict: Verdict, batch: Batch) -> State:
         cached = "group matches the members of an undone action"
     if recorded is not None or cached is not None:
         return State(recorded, cached, [], {}, 0, None)
+    members = await conn.fetch(MEMBERS_SQL, sorted(verdict.member_ids))
+    authors = sorted(
+        {
+            author
+            for member in members
+            if isinstance(author := _metadata(member["metadata"]).get("author"), str)
+        }
+    )
+    one_author = len(authors) == 1 and len(members) == len(set(verdict.member_ids))
+    note_author = authors[0] if one_author else None
     pairs, notes = await groups.read_pairs(
-        conn, verdict.namespace, None, batch.params.threshold, batch.params.neighbors
+        conn,
+        verdict.namespace,
+        note_author,
+        batch.params.threshold,
+        batch.params.neighbors,
     )
     used = await conn.fetchval(USED_ACTIONS_SQL, batch.run_id, verdict.namespace)
     replacement = None
@@ -730,7 +750,6 @@ async def load_state(conn: Any, verdict: Verdict, batch: Batch) -> State:
                 found["chunk_kind"],
                 found["content_raw"],
                 found["archived_at"] is not None,
-                metadata.get("author"),
                 metadata.get("shared") is True,
             )
     return State(None, None, pairs, notes, used, replacement)
@@ -858,26 +877,6 @@ async def process_verdict(verdict: Verdict, batch: Batch) -> dict[str, Any]:
             if getattr(exc, "constraint_name", None) != IDEMPOTENCY_CONSTRAINT:
                 raise
             return await _idempotency_conflict(conn, verdict, batch)
-
-
-async def validate_authors(batch: Batch) -> None:
-    """Refuse a batch holding a group whose members do not share one author.
-
-    A recorded verdict is skipped: its idempotency handling comes first and does not need
-    the members. A verdict whose members are missing is skipped too: it is stale.
-    """
-    async with db.acquire() as conn:
-        for verdict in batch.verdicts:
-            if await conn.fetchrow(RECORDED_SQL, verdict.idempotency_key) is not None:
-                continue
-            rows = await conn.fetch(MEMBERS_SQL, sorted(verdict.member_ids))
-            if len(rows) != len(set(verdict.member_ids)):
-                continue
-            authors = sorted(
-                {_metadata(row["metadata"]).get("author") or "no author" for row in rows}
-            )
-            if len(authors) > 1:
-                raise RequestError(f"group {verdict.group_key} mixes authors: {', '.join(authors)}")
 
 
 async def process_batch(batch: Batch) -> list[dict[str, Any]]:

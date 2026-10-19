@@ -16,11 +16,10 @@ from memory_base.serve.common.http import (
     json_body,
     note_scope,
     object_fields,
+    reject_author,
 )
 from memory_base.serve.common.origins import ORIGINS
 from memory_base.serve.notes import curation, store
-
-AUTHOR_BODY_ERROR = "author comes from the X-Author header"
 
 
 def _ids(body: dict[str, Any]) -> list[str] | None:
@@ -28,10 +27,6 @@ def _ids(body: dict[str, Any]) -> list[str] | None:
     if not isinstance(ids, list) or not ids or any(not isinstance(item, str) for item in ids):
         return None
     return ids
-
-
-def _reject_body_author(body: dict[str, Any]) -> JSONResponse | None:
-    return error(AUTHOR_BODY_ERROR) if "author" in body else None
 
 
 def _source_session(body: dict[str, Any]) -> dict[str, str] | None:
@@ -56,7 +51,7 @@ async def save_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
-    if rejected := _reject_body_author(body):
+    if rejected := reject_author(body):
         return rejected
 
     namespace = body.get("namespace", DEFAULT_NAMESPACE)
@@ -134,6 +129,9 @@ async def old_notes_route(request: Request) -> JSONResponse:
     """List active agent notes older than a requested age."""
     try:
         older_than_days = int(request.query_params.get("older_than_days", "90"))
+    except ValueError:
+        return error("older_than_days must be an integer")
+    try:
         author, visible_to = note_scope(request.state.author, request.query_params.get("author"))
     except ValueError as exc:
         return error(str(exc))
@@ -147,7 +145,7 @@ async def delete_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
-    if rejected := _reject_body_author(body):
+    if rejected := reject_author(body):
         return rejected
     ids = _ids(body)
     if ids is None:
@@ -167,7 +165,7 @@ async def move_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
-    if rejected := _reject_body_author(body):
+    if rejected := reject_author(body):
         return rejected
     ids = _ids(body)
     if ids is None:
@@ -193,6 +191,9 @@ async def duplicates_route(request: Request) -> JSONResponse:
         return error(f"kind must be one of {store.NOTE_KINDS}")
     try:
         limit = int(request.query_params.get("limit", "50"))
+    except ValueError:
+        return error("limit must be an integer")
+    try:
         author, visible_to = note_scope(request.state.author, request.query_params.get("author"))
     except ValueError as exc:
         return error(str(exc))
@@ -208,7 +209,7 @@ async def archive_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
-    if rejected := _reject_body_author(body):
+    if rejected := reject_author(body):
         return rejected
     ids = None
     if "ids" in body:
@@ -253,7 +254,7 @@ async def restore_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
-    if rejected := _reject_body_author(body):
+    if rejected := reject_author(body):
         return rejected
     ids = _ids(body)
     if ids is None:

@@ -12,8 +12,7 @@ from typing import Any
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.retrieval.search import metadata_dict
-from memory_base.serve.access.auth import AUTHOR_RE
-from memory_base.serve.common.http import iso
+from memory_base.serve.common.http import RESERVED_AUTHOR, iso
 
 PROCEDURE_VERSION = "2"
 DEFAULT_THRESHOLD = 0.72
@@ -21,7 +20,6 @@ DEFAULT_NEIGHBORS = 5
 DEFAULT_MAX_GROUP = 6
 DEFAULT_MAX_GROUP_CHARS = 12000
 DEFAULT_LIMIT = 200
-ALL_AUTHORS = "all"
 # The threshold lies in (MIN_THRESHOLD, MAX_THRESHOLD]; every other bound is inclusive.
 MIN_THRESHOLD = 0.0
 MAX_THRESHOLD = 1.0
@@ -44,6 +42,7 @@ WITH active AS MATERIALIZED (
   SELECT id, embedding, metadata->>'author' AS author
   FROM "{PG_SCHEMA}".memory_chunks
   WHERE source_type = 'agent_note' AND archived_at IS NULL AND namespace = $1
+    AND jsonb_typeof(metadata->'author') = 'string'
     AND ($2::text IS NULL OR metadata->>'author' = $2)
 )
 SELECT a.id AS a_id, near.id AS b_id, 1 - near.distance AS score
@@ -62,6 +61,7 @@ NOTES_SQL = f"""
 SELECT id, chunk_kind AS kind, ts_last_active, occurred_at, content_raw AS text, metadata
 FROM "{PG_SCHEMA}".memory_chunks
 WHERE source_type = 'agent_note' AND archived_at IS NULL AND namespace = $1
+  AND jsonb_typeof(metadata->'author') = 'string'
   AND ($2::text IS NULL OR metadata->>'author' = $2)
 """
 
@@ -69,6 +69,7 @@ AUTHORS_SQL = f"""
 SELECT DISTINCT metadata->>'author' AS author
 FROM "{PG_SCHEMA}".memory_chunks
 WHERE source_type = 'agent_note' AND archived_at IS NULL AND namespace = $1
+  AND jsonb_typeof(metadata->'author') = 'string'
 """
 
 JUDGED_SQL = f"""
@@ -82,7 +83,7 @@ WHERE namespace = $1
 class Note:
     id: str
     kind: str
-    author: str | None
+    author: str
     shared: bool
     saved: float
     occurred_at: float | None
@@ -127,7 +128,7 @@ def note_from_row(row: Any) -> Note:
     return Note(
         id=row["id"],
         kind=row["kind"],
-        author=metadata.get("author"),
+        author=metadata["author"],
         shared=metadata.get("shared") is True,
         saved=row["ts_last_active"],
         occurred_at=row["occurred_at"],
@@ -161,14 +162,10 @@ async def read_pairs(
     return pairs, notes
 
 
-def valid_author(value: Any) -> bool:
-    return isinstance(value, str) and bool(AUTHOR_RE.fullmatch(value))
-
-
 async def read_authors(conn: Any, namespace: str) -> list[str]:
-    """The distinct valid author slugs among one namespace's active notes."""
+    """The distinct authors among one namespace's active notes."""
     rows = await conn.fetch(AUTHORS_SQL, namespace)
-    return sorted({row["author"] for row in rows if valid_author(row["author"])})
+    return sorted({row["author"] for row in rows})
 
 
 async def read_snapshots(
@@ -188,7 +185,7 @@ async def read_snapshots(
                     await conn.execute(statement)
                 pairs: list[Pair] = []
                 notes: dict[str, Note] = {}
-                if author == ALL_AUTHORS:
+                if author == RESERVED_AUTHOR:
                     notes = {
                         row["id"]: note_from_row(row)
                         for row in await conn.fetch(NOTES_SQL, namespace, None)
@@ -353,15 +350,6 @@ def group_entry(namespace: str, group: Group, notes: dict[str, Note]) -> dict[st
     }
 
 
-def unattributed(notes: dict[str, Note]) -> list[Deferred]:
-    """Notes with no valid author: never grouped, listed as deferred."""
-    return [
-        Deferred(note_id, "no author")
-        for note_id, note in sorted(notes.items())
-        if not valid_author(note.author)
-    ]
-
-
 def namespace_report(
     namespace: str,
     snapshot: Snapshot,
@@ -390,9 +378,6 @@ def namespace_report(
         "acknowledged": acknowledged_pairs(snapshot.pairs, notes),
         "cached": len(entries) - len(fresh),
         "groups": fresh[:limit],
-        "deferred": [
-            {"id": d.id, "reason": d.reason}
-            for d in sorted({*deferred, *unattributed(notes)}, key=lambda d: d.id)
-        ],
+        "deferred": [{"id": d.id, "reason": d.reason} for d in deferred],
         "truncated": len(fresh) > limit,
     }

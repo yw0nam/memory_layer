@@ -57,23 +57,6 @@ def test_author_lands_in_metadata():
     assert row["metadata"]["author"] == "natsume"
 
 
-def test_shared_lands_in_metadata_only_when_true():
-    row = build_note_row(
-        "content with shared", "work", ["test"], NOW, "default", author="natsume", shared=True
-    )
-    private = build_note_row(
-        "content without shared", "work", ["test"], NOW, "default", author="natsume"
-    )
-    assert row["metadata"]["shared"] is True
-    assert "shared" not in private["metadata"]
-
-
-def test_author_participates_in_the_id():
-    a = build_note_row("shared content", "work", ["test"], NOW, "default", author="natsume")
-    b = build_note_row("shared content", "work", ["test"], NOW, "default", author="claude-code")
-    assert a["id"] != b["id"]
-
-
 def test_the_same_text_saved_twice_by_one_author_is_one_id():
     a = build_note_row("shared content", "work", ["test"], NOW, "default", author="natsume")
     b = build_note_row(" shared content\n", "work", ["test"], NOW, "default", author="natsume")

@@ -715,22 +715,3 @@ def test_read_snapshots_builds_every_authors_groups_in_all_mode(monkeypatch):
     asyncio.run(groups.read_snapshots(["default"], "all", 0.7, 5))
     authors = [args[1] for query, args in conn.fetched if "<=>" in query]
     assert authors == ["claude-code", "natsume"]
-
-
-def test_a_note_without_an_author_is_deferred_and_never_grouped():
-    notes = {
-        "note:a": note("note:a", "same", author=None),
-        "note:b": note("note:b", "same", author=None),
-    }
-    groups_, deferred = groups.build_groups([], notes, 0.72, 6, 12000)
-    assert groups_ == []
-    assert deferred == []
-
-    snapshot = groups.Snapshot([], notes, frozenset(), frozenset())
-    report = groups.namespace_report(
-        "default", snapshot, threshold=0.72, max_group=6, max_group_chars=12000, limit=200
-    )
-    assert report["deferred"] == [
-        {"id": "note:a", "reason": "no author"},
-        {"id": "note:b", "reason": "no author"},
-    ]
