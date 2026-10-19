@@ -27,7 +27,6 @@ def test_a_note_names_an_entity_and_the_entity_filter_returns_only_that_note():
     def save(text, entities):
         return {
             "content": f"integration note {tag} {text}",
-            "author": "claude-code",
             "kind": "work",
             "tags": ["it"],
             "entities": entities,
@@ -112,7 +111,7 @@ def test_link_entities_previews_then_writes_only_changed_notes():
                 f"integration note {tag} {note_id}",
                 "[" + ",".join(["0"] * EMB_DIM) + "]",
                 now,
-                json.dumps({"author": "hermes", "entities": entities} if entities else {}),
+                json.dumps({"author": "claude-code", "entities": entities}),
             )
         try:
             async with httpx.AsyncClient(

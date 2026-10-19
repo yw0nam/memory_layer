@@ -327,7 +327,7 @@ def _marker() -> str:
 @pytest.mark.integration
 def test_cross_kind_duplicate_is_a_no_op_that_keeps_the_first_kind(rest_in_process):
     content = f"note kinds integration pin {_marker()}: identical content through both tools"
-    note_id = build_note_row(content, "work", ["test"], NOW, author="natsume")["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW, author="claude-code")["id"]
     asyncio.run(_delete(note_id))
     try:
         first = asyncio.run(tools.save_memory(content, tags=["test"], kind="work"))
@@ -348,7 +348,8 @@ def test_search_and_listing_filter_by_the_new_kinds():
     personal = f"note kinds filter pin {marker}: the user keeps two cats named Kiwi and Pear"
     work = f"note kinds filter pin {marker}: the nightly job fails when the disk is full"
     ids = [
-        build_note_row(c, "work", ["test"], NOW, author="natsume")["id"] for c in (personal, work)
+        build_note_row(c, "work", ["test"], NOW, author="claude-code")["id"]
+        for c in (personal, work)
     ]
     asyncio.run(_delete(*ids))
     try:
@@ -387,8 +388,8 @@ def test_cross_kind_supersede_archives_the_other_kinds_note(rest_in_process):
     marker = _marker()
     old = f"note kinds supersede pin {marker}: the deploy window is on Tuesdays"
     new = f"note kinds supersede pin {marker}: the deploy window is on Thursdays (Tuesdays before)"
-    old_id = build_note_row(old, "work", ["test"], NOW, author="natsume")["id"]
-    new_id = build_note_row(new, "work", ["test"], NOW, author="natsume")["id"]
+    old_id = build_note_row(old, "work", ["test"], NOW, author="claude-code")["id"]
+    new_id = build_note_row(new, "work", ["test"], NOW, author="claude-code")["id"]
     asyncio.run(_delete(old_id, new_id))
     try:
         saved_old = asyncio.run(tools.save_memory(old, tags=["test"], kind="work"))

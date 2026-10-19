@@ -697,8 +697,8 @@ def test_read_pairs_filters_the_candidates_to_one_author(monkeypatch):
     asyncio.run(groups.read_pairs(conn, "default", "natsume", 0.7, 5))
     pair_query, pair_args = next(f for f in conn.fetched if "<=>" in f[0])
     note_query, note_args = next(f for f in conn.fetched if "<=>" not in f[0])
-    assert "metadata->>'author' = $4" in pair_query
-    assert pair_args == ("default", 5, 0.7, "natsume")
+    assert "metadata->>'author' = $2" in pair_query
+    assert pair_args == ("default", "natsume", 5, 0.7)
     assert "metadata->>'author' = $2" in note_query
     assert note_args == ("default", "natsume")
 
@@ -713,7 +713,7 @@ def test_read_snapshots_builds_every_authors_groups_in_all_mode(monkeypatch):
 
     monkeypatch.setattr(groups.db, "acquire", acquire)
     asyncio.run(groups.read_snapshots(["default"], "all", 0.7, 5))
-    authors = [args[3] for query, args in conn.fetched if "<=>" in query]
+    authors = [args[1] for query, args in conn.fetched if "<=>" in query]
     assert authors == ["claude-code", "natsume"]
 
 

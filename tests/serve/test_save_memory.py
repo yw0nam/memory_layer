@@ -10,6 +10,7 @@ row they insert so reruns stay stable.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -163,14 +164,15 @@ def test_saved_note_found_by_search(rest_in_process):
 @pytest.mark.integration
 def test_save_memory_stores_the_header_author_and_shared_flag(rest_in_process):
     content = "save_memory integration: the header author and the shared flag land on the row"
-    note_id = build_note_row(content, "work", ["test"], NOW, author="natsume")["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW, author="claude-code")["id"]
     asyncio.run(_delete(note_id))
     try:
         result = asyncio.run(save_memory(content, tags=["test"], kind="work", shared=True))
         assert result["id"] == note_id
         row = asyncio.run(_fetchrow(note_id))
-        assert row["metadata"]["author"] == "claude-code"
-        assert row["metadata"]["shared"] is True
+        metadata = json.loads(row["metadata"])
+        assert metadata["author"] == "claude-code"
+        assert metadata["shared"] is True
     finally:
         asyncio.run(_delete(note_id))
 

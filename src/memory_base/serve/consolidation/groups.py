@@ -44,7 +44,7 @@ WITH active AS MATERIALIZED (
   SELECT id, embedding, metadata->>'author' AS author
   FROM "{PG_SCHEMA}".memory_chunks
   WHERE source_type = 'agent_note' AND archived_at IS NULL AND namespace = $1
-    AND ($4::text IS NULL OR metadata->>'author' = $4)
+    AND ($2::text IS NULL OR metadata->>'author' = $2)
 )
 SELECT a.id AS a_id, near.id AS b_id, 1 - near.distance AS score
 FROM active AS a
@@ -53,9 +53,9 @@ CROSS JOIN LATERAL (
   FROM active AS b
   WHERE b.id <> a.id AND b.author = a.author
   ORDER BY distance, b.id
-  LIMIT $2
+  LIMIT $3
 ) AS near
-WHERE 1 - near.distance >= $3
+WHERE 1 - near.distance >= $4
 """
 
 NOTES_SQL = f"""
@@ -148,7 +148,7 @@ async def read_pairs(
     None, pairs never mix authors. The caller owns the transaction and has applied
     EXACT_SEARCH_SETTINGS in it.
     """
-    rows = await conn.fetch(PAIRS_SQL, namespace, neighbors, threshold, author)
+    rows = await conn.fetch(PAIRS_SQL, namespace, author, neighbors, threshold)
     notes = {
         row["id"]: note_from_row(row) for row in await conn.fetch(NOTES_SQL, namespace, author)
     }

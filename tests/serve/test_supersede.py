@@ -529,8 +529,8 @@ async def _fetch_similar_ack(note_id: str):
 def test_supersede_archives_old_note_and_stores_new_one(client):
     content_a = f"supersede integration pin A {NOW}: zzzsupersedepin unique marker one"
     content_b = f"supersede integration pin B {NOW}: zzzsupersedepin unique marker two"
-    note_a = build_note_row(content_a, "work", ["test"], NOW, author="natsume")["id"]
-    note_b = build_note_row(content_b, "work", ["test"], NOW, author="natsume")["id"]
+    note_a = build_note_row(content_a, "work", ["test"], NOW, author="claude-code")["id"]
+    note_b = build_note_row(content_b, "work", ["test"], NOW, author="claude-code")["id"]
     asyncio.run(_delete(note_a))
     asyncio.run(_delete(note_b))
     try:
@@ -565,8 +565,8 @@ def test_supersede_archives_old_note_and_stores_new_one(client):
 def test_supersede_pointer_is_visible_in_notes_listing_and_search(client):
     content_a = f"supersede pointer integration pin A {NOW}: zzzsupersedepin unique marker four"
     content_b = f"supersede pointer integration pin B {NOW}: zzzsupersedepin unique marker five"
-    note_a = build_note_row(content_a, "work", ["test"], NOW, author="natsume")["id"]
-    note_b = build_note_row(content_b, "work", ["test"], NOW, author="natsume")["id"]
+    note_a = build_note_row(content_a, "work", ["test"], NOW, author="claude-code")["id"]
+    note_b = build_note_row(content_b, "work", ["test"], NOW, author="claude-code")["id"]
     asyncio.run(_delete(note_a))
     asyncio.run(_delete(note_b))
     try:
@@ -628,12 +628,12 @@ def test_similar_gate_refuses_then_resolves_by_supersede_or_ack(client):
     marker = f"zzzsimilarpin{int(NOW)}"
     content_b = f"similar-hint integration pin: {marker} a hard-won troubleshooting conclusion"
     content_c = f"similar-hint integration pin: {marker} a hard won troubleshooting conclusion!"
-    note_b = build_note_row(content_b, "work", ["test"], NOW, author="natsume")["id"]
-    note_c = build_note_row(content_c, "work", ["test"], NOW, author="natsume")["id"]
+    note_b = build_note_row(content_b, "work", ["test"], NOW, author="claude-code")["id"]
+    note_c = build_note_row(content_c, "work", ["test"], NOW, author="claude-code")["id"]
     asyncio.run(_delete(note_b))
     asyncio.run(_delete(note_c))
     try:
-        asyncio.run(save_note(content_b, tags=["test"], kind="work", author="natsume"))
+        asyncio.run(save_note(content_b, tags=["test"], kind="work", author="claude-code"))
         time.sleep(0.2)  # let the embedder-backed insert settle before querying similarity
 
         response_c = client.post(
@@ -692,11 +692,11 @@ async def _archive(note_id: str) -> None:
 def test_supersede_with_content_of_an_archived_note_400_keeps_target_active(client):
     content_a = "Postgres advisory locks are released when the session that took them ends"
     content_b = "the reranker endpoint rejects batches larger than sixty-four passages"
-    note_a = build_note_row(content_a, "work", ["test"], NOW, author="natsume")["id"]
-    note_b = build_note_row(content_b, "work", ["test"], NOW, author="natsume")["id"]
+    note_a = build_note_row(content_a, "work", ["test"], NOW, author="claude-code")["id"]
+    note_b = build_note_row(content_b, "work", ["test"], NOW, author="claude-code")["id"]
     try:
-        asyncio.run(save_note(content_a, tags=["test"], kind="work", author="natsume"))
-        asyncio.run(save_note(content_b, tags=["test"], kind="work", author="natsume"))
+        asyncio.run(save_note(content_a, tags=["test"], kind="work", author="claude-code"))
+        asyncio.run(save_note(content_b, tags=["test"], kind="work", author="claude-code"))
         asyncio.run(_archive(note_a))
 
         response = client.post(
