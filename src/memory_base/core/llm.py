@@ -9,28 +9,44 @@ import os
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 import anthropic
 from loguru import logger
 from openai import AsyncOpenAI
 
-_DEFAULT_ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
-_OPENCODE_BASE_URL = "https://opencode.ai/inference/go/openai/v1"
 
-# First non-empty key wins; empty base_url means the SDK default.
+class _KeyedSpec(NamedTuple):
+    key_var: str
+    name: Literal["opencode", "zai", "openai", "claude"]
+    model_var: str
+    default_model: str
+    base_url_var: str | None
+    default_base_url: str | None
+
+
+_ZAI = _KeyedSpec(
+    "ZAI_API_KEY",
+    "zai",
+    "ZAI_MODEL",
+    "glm-5.3-flash",
+    "ZAI_BASE_URL",
+    "https://api.z.ai/api/coding/paas/v4",
+)
+
+# First non-empty key wins; no base URL means the SDK default.
 _KEYED_PROVIDERS = (
-    (
+    _KeyedSpec(
         "OPENCODE_API_KEY",
         "opencode",
         "OPENCODE_MODEL",
         "deepseek-v4.1-flash",
         None,
-        _OPENCODE_BASE_URL,
+        "https://opencode.ai/inference/go/openai/v1",
     ),
-    ("ZAI_API_KEY", "zai", "ZAI_MODEL", "glm-5.3-flash", "ZAI_BASE_URL", _DEFAULT_ZAI_BASE_URL),
-    ("OPENAI_API_KEY", "openai", "OPENAI_MODEL", "gpt-5.6-luna", None, None),
-    ("CLAUDE_API_KEY", "claude", "CLAUDE_MODEL", "claude-haiku-4-5", None, None),
+    _ZAI,
+    _KeyedSpec("OPENAI_API_KEY", "openai", "OPENAI_MODEL", "gpt-5.6-luna", None, None),
+    _KeyedSpec("CLAUDE_API_KEY", "claude", "CLAUDE_MODEL", "claude-haiku-4-5", None, None),
 )
 
 
@@ -44,28 +60,26 @@ class LlmProvider:
     api_key: str | None
 
 
-def _keyed_provider(env: Mapping[str, str], spec: tuple) -> LlmProvider:
-    key_var, name, model_var, default_model, base_url_var, default_base_url = spec
-    base_url = (base_url_var and env.get(base_url_var)) or default_base_url
+def _keyed_provider(env: Mapping[str, str], spec: _KeyedSpec) -> LlmProvider:
     return LlmProvider(
-        name=name,
-        model=env.get(model_var) or default_model,
-        base_url=base_url,
-        api_key=env[key_var],
+        name=spec.name,
+        model=env.get(spec.model_var) or spec.default_model,
+        base_url=(spec.base_url_var and env.get(spec.base_url_var)) or spec.default_base_url,
+        api_key=env[spec.key_var],
     )
 
 
 def zai_provider(env: Mapping[str, str]) -> LlmProvider:
     """Build the z.ai provider from its own keys, whatever other keys are set."""
-    if not env.get("ZAI_API_KEY"):
+    if not env.get(_ZAI.key_var):
         raise RuntimeError("ZAI_API_KEY is not set; define it in .env")
-    return _keyed_provider(env, next(spec for spec in _KEYED_PROVIDERS if spec[1] == "zai"))
+    return _keyed_provider(env, _ZAI)
 
 
 def resolve_llm_provider(env: Mapping[str, str]) -> LlmProvider:
     """Pick the provider from the first non-empty API key, else the vLLM endpoint."""
     for spec in _KEYED_PROVIDERS:
-        if env.get(spec[0]):
+        if env.get(spec.key_var):
             return _keyed_provider(env, spec)
     missing = [name for name in ("VLLM_URL", "VLLM_MODEL") if not env.get(name)]
     if missing:
