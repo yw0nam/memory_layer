@@ -87,7 +87,7 @@ def no_chat_provider(monkeypatch):
         calls.append(provider.name)
         raise ConnectionError("no chat provider")
 
-    for name in ("ZAI_API_KEY", "OPENAI_API_KEY", "CLAUDE_API_KEY"):
+    for name in ("OPENCODE_API_KEY", "ZAI_API_KEY", "OPENAI_API_KEY", "CLAUDE_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("VLLM_URL", "http://127.0.0.1:9")
     monkeypatch.setenv("VLLM_MODEL", "none")

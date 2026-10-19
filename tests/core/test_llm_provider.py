@@ -12,6 +12,8 @@ import pytest
 from memory_base.core import llm
 
 _ENV_VARS = (
+    "OPENCODE_API_KEY",
+    "OPENCODE_MODEL",
     "ZAI_API_KEY",
     "OPENAI_API_KEY",
     "CLAUDE_API_KEY",
@@ -35,6 +37,10 @@ def _vllm() -> llm.LlmProvider:
 @pytest.mark.parametrize(
     "env, expected",
     [
+        (
+            _env(OPENCODE_API_KEY="g", ZAI_API_KEY="z", OPENAI_API_KEY="o", CLAUDE_API_KEY="c"),
+            "opencode",
+        ),
         (_env(ZAI_API_KEY="z", OPENAI_API_KEY="o", CLAUDE_API_KEY="c"), "zai"),
         (_env(OPENAI_API_KEY="o", CLAUDE_API_KEY="c"), "openai"),
         (_env(CLAUDE_API_KEY="c"), "claude"),
@@ -48,6 +54,12 @@ def test_first_non_empty_key_selects_the_provider(env, expected):
 @pytest.mark.parametrize(
     "key_var, name, model, base_url",
     [
+        (
+            "OPENCODE_API_KEY",
+            "opencode",
+            "deepseek-v4.1-flash",
+            "https://opencode.ai/inference/go/openai/v1",
+        ),
         ("ZAI_API_KEY", "zai", "glm-5.3-flash", "https://api.z.ai/api/coding/paas/v4"),
         ("OPENAI_API_KEY", "openai", "gpt-5.6-luna", None),
         ("CLAUDE_API_KEY", "claude", "claude-haiku-4-5", None),
@@ -189,6 +201,12 @@ def test_chat_json_enforces_the_caller_timeout(monkeypatch):
             llm.LlmProvider(name="zai", model="glm-5.3-flash", api_key="k", base_url="https://z"),
             {"thinking": {"type": "disabled"}},
         ),
+        (
+            llm.LlmProvider(
+                name="opencode", model="deepseek-v4.1-flash", api_key="k", base_url="https://o"
+            ),
+            None,
+        ),
         (_vllm(), None),
     ],
 )
@@ -202,3 +220,22 @@ def test_openai_compatible_branch_disables_glm_thinking_only_on_zai(
     asyncio.run(llm.chat_json([{"role": "user", "content": "hi"}], {"type": "object"}, timeout=5))
 
     assert completions.kwargs["extra_body"] == expected
+
+
+def test_only_the_opencode_client_identifies_itself_with_a_session_per_client():
+    provider = llm.LlmProvider(name="opencode", model="m", api_key="k", base_url="https://o")
+    first, second = llm._openai_client(provider), llm._openai_client(provider)
+
+    assert first.default_headers["User-Agent"].startswith("memory-base/")
+    assert first.default_headers["x-opencode-session"]
+    assert (
+        first.default_headers["x-opencode-session"] != second.default_headers["x-opencode-session"]
+    )
+    assert "x-opencode-session" not in llm._openai_client(_vllm()).default_headers
+
+
+def test_zai_provider_ignores_other_keys_and_requires_its_own():
+    provider = llm.zai_provider(_env(OPENCODE_API_KEY="g", ZAI_API_KEY="z"))
+    assert (provider.name, provider.api_key) == ("zai", "z")
+    with pytest.raises(RuntimeError, match="ZAI_API_KEY"):
+        llm.zai_provider(_env(OPENCODE_API_KEY="g"))

@@ -69,9 +69,7 @@ class ChatModel:
     def from_env(
         cls, env: Mapping[str, str], *, model: str, system_prompt: str | None = None
     ) -> ChatModel:
-        provider = llm.resolve_llm_provider(env)
-        if provider.name != "zai":
-            raise RuntimeError(f"answering needs the zai provider, not {provider.name}")
+        provider = llm.zai_provider(env)
         client = AsyncOpenAI(base_url=provider.base_url, api_key=provider.api_key)
         return cls(client, model, system_prompt=system_prompt)
 
