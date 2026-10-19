@@ -87,6 +87,7 @@ def data_dir() -> Path:
 
 def _request(cfg: Config, req: urllib.request.Request, timeout: float):
     req.add_header("X-API-Key", cfg.api_key)
+    req.add_header("X-Author", cfg.author)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())

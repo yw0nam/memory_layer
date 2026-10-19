@@ -12,6 +12,7 @@ from memory_base.core.config import SERVICE_TIMEOUT_SECONDS
 
 REST_URL = os.environ.get("REST_URL", "http://localhost:8010")
 API_KEY_HEADER = "x-api-key"
+AUTHOR_HEADER = "x-author"
 
 
 class BackendError(ValueError):
@@ -67,19 +68,28 @@ async def call(method: str, path: str, **kwargs: Any) -> Any:
 
 def api_key(ctx: Context | None) -> str | None:
     """The caller's API key: the request's X-API-Key header, or MEMORY_API_KEY for stdio."""
+    return _request_header(ctx, API_KEY_HEADER) or os.environ.get("MEMORY_API_KEY")
+
+
+def author(ctx: Context | None) -> str | None:
+    """The caller's author: the request's X-Author header, or MEMORY_AUTHOR for stdio."""
+    return _request_header(ctx, AUTHOR_HEADER) or os.environ.get("MEMORY_AUTHOR")
+
+
+def _request_header(ctx: Context | None, name: str) -> str | None:
     request = None
     if ctx is not None:
         try:
             request = ctx.request_context.request
         except ValueError:
             request = None
-    if request is not None:
-        header = request.headers.get(API_KEY_HEADER)
-        if header:
-            return header
-    return os.environ.get("MEMORY_API_KEY")
+    return request.headers.get(name) if request is not None else None
 
 
 def auth_headers(ctx: Context | None) -> dict[str, str]:
-    key = api_key(ctx)
-    return {API_KEY_HEADER: key} if key else {}
+    headers = {}
+    if key := api_key(ctx):
+        headers[API_KEY_HEADER] = key
+    if who := author(ctx):
+        headers[AUTHOR_HEADER] = who
+    return headers

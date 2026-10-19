@@ -85,12 +85,12 @@ def _accept(approve=True):
 
 
 def test_an_accepted_dialog_writes_with_the_elicitation_method(backend):
-    result, messages = _call({"entities": [NEW], "author": "claude-code"}, _accept())
+    result, messages = _call({"entities": [NEW]}, _accept())
     assert not result.isError
     assert backend.posts == [
         (
             "/entities",
-            {"entities": [NEW], "author": "claude-code", "consent_method": "elicitation"},
+            {"entities": [NEW], "consent_method": "elicitation"},
         )
     ]
     assert "create yui (person): Yui; aliases: ゆい" in messages[0]
@@ -102,23 +102,21 @@ def test_an_accepted_dialog_writes_with_the_elicitation_method(backend):
     ids=["approve-false", "decline", "cancel"],
 )
 def test_a_refused_dialog_writes_nothing(backend, answer):
-    result, _ = _call({"entities": [NEW], "author": "claude-code"}, answer)
+    result, _ = _call({"entities": [NEW]}, answer)
     assert result.isError
     assert "consent" in _text(result)
     assert backend.posts == []
 
 
 def test_confirmed_on_an_eliciting_client_is_refused(backend):
-    result, messages = _call(
-        {"entities": [NEW], "author": "claude-code", "confirmed": True}, _accept()
-    )
+    result, messages = _call({"entities": [NEW], "confirmed": True}, _accept())
     assert result.isError
     assert "without confirmed" in _text(result)
     assert backend.posts == [] and messages == []
 
 
 def test_a_client_without_elicitation_gets_needs_consent_then_confirms(backend):
-    arguments = {"entities": [NEW], "author": "claude-code"}
+    arguments = {"entities": [NEW]}
     result, _ = _call(arguments)
     payload = json.loads(_text(result))
     assert payload["status"] == "needs_consent"
@@ -130,21 +128,19 @@ def test_a_client_without_elicitation_gets_needs_consent_then_confirms(backend):
 
 def test_the_summary_of_an_edit_shows_old_and_new(backend):
     edit = {"slug": "natsume", "name": "Natsume K", "aliases": ["Nat", "Natchan"]}
-    result, _ = _call({"entities": [edit], "author": "claude-code"})
+    result, _ = _call({"entities": [edit]})
     summary = json.loads(_text(result))["summary"]
     assert "edit natsume: name: Natsume -> Natsume K" in summary
     assert "aliases: Nat -> Nat, Natchan" in summary
 
 
 def test_an_accepted_delete_dialog_shows_the_plan_and_posts_it_back_as_expect(backend):
-    result, messages = _call(
-        {"entities": [{"slug": "natsume"}], "author": "claude-code", "delete": True}, _accept()
-    )
+    result, messages = _call({"entities": [{"slug": "natsume"}], "delete": True}, _accept())
     assert not result.isError
     assert backend.posts == [
         (
             "/entities/natsume/delete",
-            {"author": "claude-code", "expect": EXPECT},
+            {"expect": EXPECT},
         )
     ]
     assert "delete natsume (Natsume)" in messages[0]
@@ -152,7 +148,7 @@ def test_an_accepted_delete_dialog_shows_the_plan_and_posts_it_back_as_expect(ba
 
 
 def test_a_delete_without_elicitation_needs_consent_then_confirms_with_expect(backend):
-    arguments = {"entities": [{"slug": "natsume"}], "author": "claude-code", "delete": True}
+    arguments = {"entities": [{"slug": "natsume"}], "delete": True}
     result, _ = _call(arguments)
     payload = json.loads(_text(result))
     assert payload["status"] == "needs_consent"
@@ -165,7 +161,7 @@ def test_a_delete_without_elicitation_needs_consent_then_confirms_with_expect(ba
     assert backend.posts == [
         (
             "/entities/natsume/delete",
-            {"author": "claude-code", "expect": EXPECT},
+            {"expect": EXPECT},
         )
     ]
 
@@ -176,14 +172,14 @@ def test_a_delete_without_elicitation_needs_consent_then_confirms_with_expect(ba
     ids=["two-items", "edit-fields"],
 )
 def test_delete_takes_exactly_one_slug(backend, entities):
-    result, _ = _call({"entities": entities, "author": "claude-code", "delete": True}, _accept())
+    result, _ = _call({"entities": entities, "delete": True}, _accept())
     assert result.isError
     assert backend.posts == []
 
 
 def test_a_refused_create_never_reaches_the_user(backend):
     backend.refusal = "'yui' is already held by entity 'yui-1'; reuse it"
-    result, messages = _call({"entities": [NEW], "author": "claude-code"}, _accept())
+    result, messages = _call({"entities": [NEW]}, _accept())
     assert result.isError
     assert "already held" in _text(result)
     assert messages == [] and backend.posts == []
@@ -191,14 +187,14 @@ def test_a_refused_create_never_reaches_the_user(backend):
 
 def test_an_edit_that_changes_nothing_asks_no_consent(backend):
     same = {"slug": "natsume", "name": "Natsume"}
-    result, messages = _call({"entities": [same], "author": "claude-code"}, _accept())
+    result, messages = _call({"entities": [same]}, _accept())
     assert json.loads(_text(result)) == {"status": "unchanged"}
     assert messages == [] and backend.posts == [] and backend.dry_runs == []
 
 
 def test_a_description_edit_carries_the_updated_at_of_the_registry_it_read(backend):
     edit = {"slug": "natsume", "description": "A close friend"}
-    _call({"entities": [edit], "author": "claude-code"}, _accept())
+    _call({"entities": [edit]}, _accept())
     stamped = {**edit, "base_updated_at": "2023-11-14T22:13:20+00:00"}
     assert backend.dry_runs[0]["entities"] == [stamped]
     assert backend.posts[0][1]["entities"] == [stamped]
@@ -240,3 +236,30 @@ def test_read_entity_composes_the_card_and_the_notes_naming_the_entity(monkeypat
         "/notes",
         [("entity", "natsume"), ("limit", "20"), ("namespace", "team-a")],
     ) in calls
+
+
+def test_read_entity_forwards_the_author_argument(monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append((request.url.path, sorted(request.url.params.multi_items())))
+        if request.url.path == "/notes":
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            200, json={"entity": {"slug": "natsume"}, "facts": [], "incoming": []}
+        )
+
+    monkeypatch.setattr(
+        rest_client,
+        "client",
+        lambda: httpx.AsyncClient(
+            base_url=rest_client.REST_URL, transport=httpx.MockTransport(handler)
+        ),
+    )
+
+    async def run():
+        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as c:
+            return await c.call_tool("read_entity", {"slug": "natsume", "author": "all"})
+
+    asyncio.run(run())
+    assert ("/notes", [("author", "all"), ("entity", "natsume"), ("limit", "20")]) in calls

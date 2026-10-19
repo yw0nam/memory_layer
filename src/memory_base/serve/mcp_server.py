@@ -4,10 +4,10 @@ Transport is stdio by default (local dev); set MCP_TRANSPORT=sse|streamable-http
 to serve over HTTP instead (e.g. in Docker). MCP_HOST/MCP_PORT control the
 bind address (defaults 0.0.0.0:8765).
 
-Every REST call carries an X-API-Key: over streamable HTTP it is read from
-the incoming MCP request's own X-API-Key header and forwarded verbatim; over
-stdio (no HTTP request to read from) it comes from the MEMORY_API_KEY
-environment variable.
+Every REST call carries the X-API-Key and X-Author headers: over streamable HTTP
+they are read from the incoming MCP request's own headers and forwarded verbatim;
+over stdio (no HTTP request to read from) they come from the MEMORY_API_KEY and
+MEMORY_AUTHOR environment variables.
 
 Claude Code reaches the server through the memory-base plugin's `.mcp.json` (streamable
 HTTP, X-API-Key from the plugin's configuration); stdio stays for local runs with
@@ -65,7 +65,8 @@ a note and never decides whether it is stored. The server stores a note once it 
 the validation, credential, and near-duplicate checks, so what is worth keeping is your
 call. Before saving, search_memory the same subject; when the new note replaces one,
 supersede it rather than adding a note that contradicts it, and if other active notes
-state the same stale value, archive them with archive_notes."""
+state the same stale value, archive them with archive_notes. `shared: true` saves a note
+every agent sees."""
 
 _ENTITY_REGISTRY = """\
 Entities are a registry of the people, projects, and things the user has consented to.
@@ -105,13 +106,15 @@ and origin so the note names its source."""
 
 _SERVER_INSTRUCTIONS_CLOSING = """\
 A namespace is a label for filtering, and a write without one lands in `default`; a read
-without a namespace covers every namespace, and no namespace is private. A note's first
-tag names its subject, usually the repository or domain it belongs to, so that a later
-search can narrow to it.
+without a namespace covers every namespace, and no namespace is private. The author is the
+X-Author header your client sends: writes are attributed to it, and reads return your own
+notes and shared notes unless `author` says otherwise ("all" for every agent, a slug for
+one). A note's first tag names its subject, usually the repository or domain it belongs
+to, so that a later search can narrow to it.
 
 Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly
 coincides; read both sides, then either merge them into one note with save_memory
-(supersedes=...) or drop one with archive_notes. Every write and archive names its author. delete_notes is for rows that
+(supersedes=...) or drop one with archive_notes. delete_notes is for rows that
 must never resurface; archiving is otherwise always preferred."""
 
 SERVER_INSTRUCTIONS = "\n\n".join(

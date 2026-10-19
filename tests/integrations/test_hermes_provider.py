@@ -61,6 +61,20 @@ def test_the_default_client_is_built_with_the_benchmarked_prefetch_floor(plugin,
     assert client.top_k == 5
 
 
+def test_the_client_is_built_with_the_configured_author(plugin, monkeypatch):
+    config = {"url": "http://memory-base.local", "api_key": "k", "author": "natsume"}
+    monkeypatch.setattr(plugin, "_load_plugin_config", lambda: config)
+    assert plugin.MemoryBaseProvider()._build_client().author == "natsume"
+
+
+def test_the_provider_is_unavailable_without_an_author(plugin, monkeypatch):
+    config = {"url": "http://memory-base.local", "api_key": "k"}
+    monkeypatch.setattr(plugin, "_load_plugin_config", lambda: config)
+    assert plugin.MemoryBaseProvider().is_available() is False
+    config["author"] = "natsume"
+    assert plugin.MemoryBaseProvider().is_available() is True
+
+
 SESSION_LINE = (
     "Session: hermes {session} (pass it as session_id with origin hermes "
     "when a note is distilled from this session)"
@@ -150,15 +164,6 @@ def test_system_prompt_block_delivers_both_cards_rebuilt_on_each_session(plugin,
     assert SESSION_LINE.format(session="session-2") in provider.system_prompt_block()
 
 
-def test_no_card_is_fetched_without_a_configured_author(plugin, monkeypatch):
-    def handler(request):
-        raise AssertionError(f"no request expected: {request.url}")
-
-    provider = _provider(plugin, monkeypatch, httpx.MockTransport(handler), author=None)
-    provider.initialize("session-1")
-    assert provider.system_prompt_block() == SESSION_LINE.format(session="session-1")
-
-
 def test_a_failed_agent_card_says_so_before_the_session_line(plugin, monkeypatch):
     provider = _provider(plugin, monkeypatch, None, url="http://127.0.0.1:9")
     provider.initialize("session-1")
@@ -183,6 +188,8 @@ class Server:
         self.transport = httpx.MockTransport(self.handle)
 
     def handle(self, request):
+        if request.method == "GET":
+            return httpx.Response(404, json={"error": "no card"})
         if self.down:
             raise httpx.ConnectError("down")
         if self.status != 200:
@@ -192,7 +199,12 @@ class Server:
 
 
 def _capturing(plugin, monkeypatch, server, namespace="personal", **initialize):
-    config = {"url": "http://memory-base.local", "api_key": "k", "namespace": namespace}
+    config = {
+        "url": "http://memory-base.local",
+        "api_key": "k",
+        "author": "natsume",
+        "namespace": namespace,
+    }
     monkeypatch.setattr(plugin, "_load_plugin_config", lambda: config)
     provider = plugin.MemoryBaseProvider()
     build = provider._build_client
@@ -332,6 +344,11 @@ def test_the_config_schema_names_the_setup_fields(plugin):
     ]
     key = schema[1]
     assert key["secret"] is True and key["env_var"] == "MEMORY_BASE_API_KEY"
+    author = schema[2]
+    assert author["required"] is True
+    assert author["description"] == (
+        "The author slug this profile writes under and reads by default; sent as the X-Author header"
+    )
 
 
 def test_save_config_writes_the_non_secret_values_and_never_the_key(plugin):

@@ -12,7 +12,6 @@ from memory_base.serve.common.consent import CONSENT_METHODS
 from memory_base.serve.common.entities import SLUG_RE, entity_row
 from memory_base.serve.common.http import (
     RequestError,
-    author_slug,
     bounded_text,
     error,
     object_fields,
@@ -70,18 +69,17 @@ def _dry_run(fields: dict[str, Any]) -> bool:
     return dry_run
 
 
-def _consent(fields: dict[str, Any]) -> tuple[str, str, bool]:
-    author, method = fields["author"], fields["consent_method"]
+def _consent(fields: dict[str, Any]) -> tuple[str, bool]:
+    method = fields["consent_method"]
     dry_run = _dry_run(fields)
-    author_slug(author)
     if method not in CONSENT_METHODS:
         raise RequestError(f"consent_method must be one of {CONSENT_METHODS}")
-    return author, method, dry_run
+    return method, dry_run
 
 
-def parse_upsert(body: Any) -> tuple[list[dict[str, Any]], str, str, bool]:
-    """`{entities, author, consent_method, dry_run?}` → (items, author, method, dry_run)."""
-    fields = object_fields(body, {"entities", "author", "consent_method"}, {"dry_run"})
+def parse_upsert(body: Any) -> tuple[list[dict[str, Any]], str, bool]:
+    """`{entities, consent_method, dry_run?}` → (items, method, dry_run)."""
+    fields = object_fields(body, {"entities", "consent_method"}, {"dry_run"})
     items = fields["entities"]
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_ITEMS:
         raise RequestError(f"entities must be a list of 1 to {MAX_ITEMS} items")
@@ -99,11 +97,11 @@ async def upsert_route(request: Request) -> JSONResponse:
     A description edit against a stale `base_updated_at` is also a 409. With `dry_run`, every
     check runs and nothing is written."""
     try:
-        items, author, method, dry_run = parse_upsert(await request_body(request))
+        items, method, dry_run = parse_upsert(await request_body(request))
     except RequestError as exc:
         return error(str(exc))
     try:
-        rows = await store.upsert(items, author, method, dry_run)
+        rows = await store.upsert(items, request.state.author, method, dry_run)
     except store.Stale as exc:
         return JSONResponse(
             {"error": "stale", "slug": exc.slug, "updated_at": exc.updated_at}, status_code=409
@@ -135,15 +133,13 @@ async def delete_route(request: Request) -> JSONResponse:
     A plan that differs from `expect` is a 409 carrying the current plan."""
     try:
         slug = _slug(request.path_params["slug"])
-        fields = object_fields(await request_body(request), {"author"}, {"dry_run", "expect"})
-        author = fields["author"]
-        author_slug(author)
+        fields = object_fields(await request_body(request), set(), {"dry_run", "expect"})
         dry_run = _dry_run(fields)
         expect = _expect(fields["expect"]) if "expect" in fields else None
     except RequestError as exc:
         return error(str(exc))
     try:
-        return JSONResponse(await store.delete(slug, author, dry_run, expect))
+        return JSONResponse(await store.delete(slug, request.state.author, dry_run, expect))
     except store.PlanChanged as exc:
         return JSONResponse({"error": str(exc), "plan": exc.plan}, status_code=409)
     except ValueError as exc:

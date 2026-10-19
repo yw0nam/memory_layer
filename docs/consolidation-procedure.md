@@ -1,18 +1,20 @@
 # Consolidation procedure
 
-Active agent notes accumulate restatements of one fact or rule. A scheduled agent judges
-groups of such notes that the server issues; the server validates each verdict
-deterministically, applies it in one transaction, records it, and can undo it. The server
+Active agent notes accumulate restatements of one fact or rule. Each agent consolidates
+its own notes: a scheduled agent judges groups of such notes that the server issues from
+the author the request declares, and groups never mix authors; the server validates each
+verdict deterministically, applies it in one transaction, records it, and can undo it. The server
 calls no chat model ([ADR-0008](adr/0008-consolidation-judged-by-an-agent-applied-by-the-server.md)).
 Any agent that can run HTTP requests and spawn a second, separate context can follow this
 document: Claude Code headless, a Hermes cron agent, or another.
 
 ## Setup
 
-1. **Key.** Mint a key for the agent (operator, on the server host):
+1. **Key and author.** Mint a key for the agent (operator, on the server host) and pick
+   its author slug:
 
    ```
-   (umask 177; uv run python -m memory_base.serve.access.keys new consolidator \
+   (umask 177; uv run python -m memory_base.serve.access.keys new <label> \
      | tail -n 1 | sed 's/^/export MEMORY_API_KEY=/' >> <env-file>)
    ```
 
@@ -20,15 +22,15 @@ document: Claude Code headless, a Hermes cron agent, or another.
    agent's env file (mode 600, as above) and paste it nowhere else. Any valid key may call the
    consolidation routes; the server does not restrict who writes facts or applies verdicts.
    That only this agent does, and that its scheduled run stays in `dry-run` until the owner
-   says otherwise, are rules of this procedure. The `author` field of every verdict, undo,
-   and fact request is the attribution `consolidator`.
+   says otherwise, are rules of this procedure. Every request carries the agent's author in
+   the `X-Author` header; the agent consolidates and attributes to that author.
 
 2. **Base URL.** The REST API (Docker default `http://localhost:8010`). Every request sends
-   the key in the `X-API-Key` header.
+   the key in the `X-API-Key` header and the author in the `X-Author` header.
 
-3. **Secrets.** The agent reads the base URL and key from its environment (`REST_URL`,
-   `MEMORY_API_KEY`, the names the MCP server uses) or from an env file the operator
-   provides, which also exports `REST_URL`. Never put the key in a prompt, a note, a run log, or a command echoed to a
+3. **Secrets.** The agent reads the base URL, key, and author from its environment
+   (`REST_URL`, `MEMORY_API_KEY`, `MEMORY_AUTHOR`, the names the MCP server uses) or from
+   an env file the operator provides, which also exports `REST_URL`. Never put the key in a prompt, a note, a run log, or a command echoed to a
    log. Expand the variables in the shell instead of printing them.
 
 4. **Report delivery.** Ask the owner once how they want to receive run reports. The
@@ -59,7 +61,8 @@ The start instruction of the owner's cron prompt must allow the routes the agent
 consolidation routes, `GET /entities`, `GET /entities/{slug}`, `GET /notes`, `POST /search`,
 and `POST /admin/facts`. The prompt is the owner's and lives outside the repository.
 
-`<agent-command>`, `<env-file>` (it exports `REST_URL` and `MEMORY_API_KEY`), `<lock-file>`,
+`<agent-command>`, `<env-file>` (it exports `REST_URL`, `MEMORY_API_KEY`, and
+`MEMORY_AUTHOR`), `<lock-file>`,
 and `<path>` belong to the operator's platform; the repository ships no scheduler configuration.
 
 ## First runs
@@ -99,13 +102,18 @@ always pass the operator's namespaces explicitly, one `namespace` parameter each
 | parameter | range | default |
 |---|---|---|
 | `namespace` | repeatable, registered | every registered namespace |
+| `author` | an author slug, or `all` | the header author's notes |
 | `threshold` | 0 < x ≤ 1 | 0.72 |
 | `neighbors` | 1–50 | 5 |
 | `max_group` | 2–20 | 6 |
 | `max_group_chars` | ≥ 500 | 12000 |
 | `limit` | 1–1000 groups per namespace | 200 |
 
-The response holds `params`, `procedure_version`, and, per namespace, `active_notes`,
+Omitted, `author` groups exactly the header author's notes; a slug groups
+exactly that author's notes; `all` groups every author present in the namespace, one
+author per group — groups never mix authors. The response holds `params` (echoing the
+resolved `author`, a slug or `all`),
+`procedure_version`, and, per namespace, `active_notes`,
 `pairs`, `acknowledged`, `cached`, `groups`, `deferred`, and `truncated`. A group has `key`,
 `min_score`, `max_score`, and `members`; a member has `id`, `kind` (`personal` or `work`),
 `author`, `saved`, `occurred_at`, `tags`, `supersedes`, and `text`. Judged groups are
@@ -213,8 +221,8 @@ The server treats a merge as follows:
 | merged text | effect |
 |---|---|
 | equal to one member's text after trimming and collapsing whitespace | applied and recorded as a `retire` of the other members into that member; it counts against the cap |
-| identical to an active note of the members' kind that is not a member | that note is reused and not changed; the action has `replacement_created` false |
-| otherwise | a new note with the members' kind, the union of their tags, the latest member `occurred_at`, the request's `author`, and the merge time as its saved time |
+| identical to an active note that is not a member, of the members' kind and author and with the members' `shared` rule | that note is reused and not changed; the action has `replacement_created` false; a note that differs in `shared` makes the verdict `stale` |
+| otherwise | a new note with the members' kind and author, the union of their tags, the latest member `occurred_at`, `shared` only when every member is shared, and the merge time as its saved time |
 
 A `keep` is a verdict too: it records the group so the group is not offered again until a
 member changes. Send a verdict for every group the run judged, except the groups left for
@@ -246,12 +254,12 @@ rejected.
 
 `POST /admin/consolidate/verdicts`. A schema violation (unknown field, wrong type, a
 `retire_ids` on a merge, an unregistered namespace) refuses the whole request with 400 and
-processes no verdict. One request holds 1–200 verdicts; split a larger run.
+processes no verdict. One request holds 1–200 verdicts; split a larger run. The batch and
+every action it writes are attributed to the request's `X-Author` header.
 
 | field | type / range | default |
 |---|---|---|
 | `run_id` | string, 1–100 chars | required |
-| `author` | the author slug `consolidator` | required |
 | `model` | string or null; recorded, not checked | null |
 | `dry_run` | boolean | false |
 | `threshold`, `neighbors`, `max_group`, `max_group_chars` | the values the groups were fetched with | as in the groups table |
@@ -270,7 +278,7 @@ processes no verdict. One request holds 1–200 verdicts; split a larger run.
 | `reason` | 1–1000 chars; one sentence on why |
 
 ```
-{"run_id": "consolidate-2026-10-03", "author": "consolidator", "model": "<model name>",
+{"run_id": "consolidate-2026-10-03", "model": "<model name>",
  "dry_run": true, "threshold": 0.72, "neighbors": 5, "max_group": 6, "max_group_chars": 12000,
  "max_actions": 20,
  "verdicts": [{"namespace": "<ns>", "group_key": "<key>", "idempotency_key": "<run_id>:<key>",
@@ -293,7 +301,7 @@ The response is `{"results": [...]}`; a result has `group_key`, `status`, `reaso
 | `cached` | the group has a recorded verdict, or matches the members of an undone action | nothing |
 | `duplicate` | the idempotency key and payload match a recorded verdict; the recorded result is returned | nothing |
 | `stale` | `group_key` or `member_ids` match no group issued now, or the notes changed during the apply; `current_groups` lists the current groups sharing a member | judge those groups again once in this run as in step 2 (two judgments), verify any merge as in step 3, and submit with new group keys and idempotency keys; a second `stale` is logged |
-| `rejected` | a check failed; `reason` says which (reused idempotency key with another payload, `action cap reached`, a retire or merge rule, a token-check `drops …` or `adds …`, a credential, a replacement that exists archived) | log the reason; a merge rejected by the token check or a merge rule takes the one correction of step 3 and is sent again under the same idempotency key (the server records no rejected verdict); every other rejection is logged only |
+| `rejected` | a check failed; `reason` says which (reused idempotency key with another payload, `action cap reached`, a retire or merge rule, `group mixes authors: a, b`, a token-check `drops …` or `adds …`, a credential, a replacement that exists archived) | log the reason; a merge rejected by the token check or a merge rule takes the one correction of step 3 and is sent again under the same idempotency key (the server records no rejected verdict); every other rejection is logged only |
 | `failed` | an embedder or database error rolled this verdict back | retry once with the same idempotency key and the same payload; if it fails again, log it |
 
 The agent calls only the consolidation routes (groups, verdicts, actions, undo) and, for
@@ -340,8 +348,8 @@ last run".
 |---|---|
 | `GET /entities` | the entities; each has `slug`, `kind`, `name`, `aliases`, `description` |
 | `GET /entities/{slug}` | the card: `{entity, facts, incoming}`; `facts` are the current rows of the entity, `incoming` the current rows whose `value_entity` is the slug |
-| `GET /notes?entity=<slug>&limit=200` | every active note naming the entity (the card's own note list is capped lower) |
-| `POST /search` `{"query": "<name or alias>", "source": "memory", "top_k": 10}` | candidates; once for the name and once per alias |
+| `GET /notes?entity=<slug>&limit=200` | every visible active note naming the entity (the agent's own and shared notes, the default read scope; the card's own note list is capped lower) |
+| `POST /search` `{"query": "<name or alias>", "source": "memory", "top_k": 10}` | candidates; once for the name and once per alias; the same default scope |
 
 A search hit is a candidate for the agent's judgment, never a link. The agent links nothing
 and edits no note.
@@ -367,7 +375,7 @@ Hold, list in the report, and never write:
 **Send.** One `POST /admin/facts` per entity, with `dry_run: true` in `dry-run` mode:
 
 ```
-{"author": "consolidator", "dry_run": true,
+{"dry_run": true,
  "ops": [{"op": "add", "entity": "<slug>", "attribute": "works_at", "value_entity": "<slug>", "note_id": "<id>"},
          {"op": "replace", "id": "<fact id>", "value_text": "<text>", "note_id": "<id>"},
          {"op": "remove", "id": "<fact id>", "note_id": "<id>"}]}
@@ -424,9 +432,10 @@ timestamp), `occurred_at`, `archived`, and the lineage fields it has (`supersede
 `merged_dates`, `consolidation_action`, `archived_by`, `undone_action`). A deleted note is
 absent from `notes`.
 
-`POST /admin/consolidate/undo` with `{"action_id": <int>, "author": "consolidator"}`
+`POST /admin/consolidate/undo` with `{"action_id": <int>}`
 reverses exactly one action: it makes each archived note active again with its metadata
-from before the action and archives a replacement that the action created. Run it when
+from before the action and archives a replacement that the action created; the undo is
+recorded with the request's `X-Author` as `undone_by`. Run it when
 the owner asks for it.
 
 | response | case |
@@ -456,8 +465,9 @@ reverses an action.
   numbered-list markers are not tokens. Step 3 covers what the check cannot.
 - Each namespace takes at most `max_actions` retire and merge actions per `run_id`
   (default 20, maximum 500). `keep` is not capped.
-- Discovery compares every active agent note of a namespace with every other one by exact
-  search. Its cost grows with the square of the active notes in the namespace, and it
+- Discovery compares every active agent note of the requested author in a namespace with
+  every other one by exact
+  search. Its cost grows with the square of the active notes in the scope, and it
   runs once for the groups call and again for each verdict that is not `duplicate` or
   `cached` (twice for an applied verdict). Send only judged groups, and use a long timeout.
 - The agent's judgment is the only check of meaning on a fact. The server checks shape,

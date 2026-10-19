@@ -7,6 +7,7 @@ stubbed.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import random
@@ -28,7 +29,7 @@ from memory_base.serve.consolidation.groups import (
     group_key,
 )
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 def note(note_id, text="x" * 10, **fields):
@@ -36,6 +37,7 @@ def note(note_id, text="x" * 10, **fields):
         "id": note_id,
         "kind": "work",
         "author": "claude-code",
+        "shared": False,
         "saved": 1_700_000_000.0,
         "occurred_at": None,
         "tags": ("rules",),
@@ -339,10 +341,11 @@ class FakeTransaction:
 
 
 class FakeConnection:
-    def __init__(self, pair_rows, note_rows, action_rows=()):
+    def __init__(self, pair_rows, note_rows, action_rows=(), authors=("claude-code",)):
         self.pair_rows = pair_rows
         self.note_rows = note_rows
         self.action_rows = list(action_rows)
+        self.authors = list(authors)
         self.transactions = []
         self.executed = []
         self.fetched = []
@@ -360,6 +363,8 @@ class FakeConnection:
         self.fetched.append((query, args))
         if "consolidation_actions" in query:
             return self.action_rows
+        if "DISTINCT" in query and "metadata->>'author'" in query:
+            return [{"author": a} for a in self.authors]
         return self.pair_rows if "<=>" in query else self.note_rows
 
 
@@ -432,6 +437,7 @@ def test_route_resolves_defaults_and_every_registered_namespace(fake_db):
     body = response.json()
     assert body["params"] == {
         "namespace": ["default", "work"],
+        "author": "claude-code",
         "threshold": 0.72,
         "neighbors": 5,
         "max_group": 6,
@@ -472,7 +478,7 @@ def test_route_reads_one_exact_snapshot_per_namespace(fake_db):
     assert "SET LOCAL enable_bitmapscan = off" in fake_db.executed
     pair_query, pair_args = next(f for f in fake_db.fetched if "<=>" in f[0])
     assert "source_type = 'agent_note'" in pair_query
-    assert set(pair_args) >= {"work", 0.8, 7}
+    assert set(pair_args) >= {"work", "claude-code", 0.8, 7}
 
 
 def test_route_response_shape_and_member_ordering(fake_db):
@@ -672,3 +678,40 @@ def test_route_skips_the_member_set_of_an_undone_action_across_procedure_version
         ["note:default:a", "note:default:b"],
         ["note:default:e", "note:default:f"],
     ]
+
+
+# ---- the author boundary ----------------------------------------------------
+
+
+def test_the_pair_query_never_joins_two_authors():
+    query = " ".join(groups.PAIRS_SQL.split())
+    lateral_at = query.index("CROSS JOIN LATERAL")
+    lateral = query[lateral_at:]
+    assert "b.author = a.author" in lateral
+    assert lateral.index("b.author = a.author") < lateral.index("LIMIT")
+
+
+def test_read_pairs_filters_the_candidates_to_one_author(monkeypatch):
+    conn = FakeConnection([], [])
+    conn.transactions.append({})
+    asyncio.run(groups.read_pairs(conn, "default", "natsume", 0.7, 5))
+    pair_query, pair_args = next(f for f in conn.fetched if "<=>" in f[0])
+    note_query, note_args = next(f for f in conn.fetched if "<=>" not in f[0])
+    assert "metadata->>'author' = $2" in pair_query
+    assert pair_args == ("default", "natsume", 5, 0.7)
+    assert "metadata->>'author' = $2" in note_query
+    assert note_args == ("default", "natsume")
+
+
+def test_read_snapshots_builds_every_authors_groups_in_all_mode(monkeypatch):
+    conn = FakeConnection([], [])
+    conn.authors = ["claude-code", "natsume"]
+
+    @asynccontextmanager
+    async def acquire(timeout=None):
+        yield conn
+
+    monkeypatch.setattr(groups.db, "acquire", acquire)
+    asyncio.run(groups.read_snapshots(["default"], "all", 0.7, 5))
+    authors = [args[1] for query, args in conn.fetched if "<=>" in query]
+    assert authors == ["claude-code", "natsume"]

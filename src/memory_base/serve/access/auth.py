@@ -1,9 +1,11 @@
-"""API-key authentication.
+"""The two request headers: the API key and the author slug.
 
-Every REST request (except /health*) must carry a valid ``X-API-Key`` header;
-ApiKeyAuthMiddleware looks it up (by sha256 hash) and attaches a KeyIdentity
-to ``request.state.key``. A key grants nothing beyond passing this gate.
-Fail-closed: no key, an unknown key, or a revoked key all get 401.
+Every REST request (except /health*) must carry a valid ``X-API-Key`` header and an
+``X-Author`` header holding an author slug. ApiKeyAuthMiddleware looks the key up (by
+sha256 hash), attaches a KeyIdentity to ``request.state.key``, and puts the author on
+``request.state.author``. A key grants nothing beyond passing this gate; the author
+attributes writes and is the default scope of note reads. Fail-closed: no key, an
+unknown key, or a revoked key all get 401; a missing or malformed author gets 400.
 """
 
 from __future__ import annotations
@@ -18,8 +20,10 @@ from starlette.responses import JSONResponse
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
+from memory_base.serve.common.http import author_slug
 
 API_KEY_HEADER = "x-api-key"
+AUTHOR_HEADER = "x-author"
 EXEMPT_PATH_PREFIX = "/health"
 
 
@@ -57,8 +61,15 @@ def _unauthorized(message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=401)
 
 
+def _bad_author() -> JSONResponse:
+    return JSONResponse(
+        {"error": "missing or malformed X-Author header: an author slug is required"},
+        status_code=400,
+    )
+
+
 class ApiKeyAuthMiddleware:
-    """Fail-closed X-API-Key gate; /health* is exempt from authentication."""
+    """Fail-closed X-API-Key and X-Author gate; /health* is exempt from both."""
 
     def __init__(self, app) -> None:
         self.app = app
@@ -74,5 +85,11 @@ class ApiKeyAuthMiddleware:
             response = _unauthorized("missing, unknown, or revoked X-API-Key")
             await response(scope, receive, send)
             return
+        author = author_slug(request.headers.get(AUTHOR_HEADER))
+        if author is None:
+            response = _bad_author()
+            await response(scope, receive, send)
+            return
         request.state.key = identity
+        request.state.author = author
         await self.app(scope, receive, send)

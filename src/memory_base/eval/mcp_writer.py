@@ -57,7 +57,6 @@ INSTRUCTION = (
     "is worth remembering for future conversations with this user, save it with your memory "
     "tools; otherwise do nothing."
 )
-AUTHOR_LINE = f"Your author name for the memory tools is {AUTHOR}."
 NAMESPACE_LINE = "Pass namespace {namespace} to every memory tool call that takes one."
 SERVER_NAME = "memory-base"
 TOOL_PREFIX = f"mcp__{SERVER_NAME}__"
@@ -73,9 +72,9 @@ QUESTIONS_FILE = "writer-questions.jsonl"
 
 
 def writer_prompt(date: str, turns: Sequence[dict[str, Any]], namespace: str) -> str:
-    """The published instruction, the author and namespace lines, the session date, and the transcript."""
+    """The published instruction, the namespace line, the session date, and the transcript."""
     transcript = "\n\n".join(f"{t['role'].capitalize()}: {t['content']}" for t in turns)
-    lines = f"{AUTHOR_LINE}\n{NAMESPACE_LINE.format(namespace=namespace)}"
+    lines = NAMESPACE_LINE.format(namespace=namespace)
     return f"{INSTRUCTION}\n{lines}\n\nSession date: {iso_datetime(date)}\n\n{transcript}"
 
 
@@ -201,6 +200,7 @@ def mcp_config(repo_root: Path, api_key: str, rest_url: str) -> dict[str, Any]:
                 "env": {
                     "MCP_TRANSPORT": "stdio",
                     "MEMORY_API_KEY": api_key,
+                    "MEMORY_AUTHOR": AUTHOR,
                     "REST_URL": rest_url,
                 },
             }
@@ -432,7 +432,6 @@ def run(args: argparse.Namespace) -> None:
         "code": code_revision(),
         "writer": {"harness": "claude-code", "model": args.model, "author": AUTHOR},
         "instruction": INSTRUCTION,
-        "author_line": AUTHOR_LINE,
         "concurrency": args.concurrency,
         "run_id": secrets.token_hex(4),
     }

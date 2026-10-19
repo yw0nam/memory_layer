@@ -353,7 +353,7 @@ def test_fifty_sequential_uploads_are_durably_accepted_and_reach_terminal(monkey
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app),
             base_url="http://testserver",
-            headers={"X-API-Key": "key"},
+            headers={"X-API-Key": "key", "X-Author": "claude-code"},
         ) as client:
             for index in range(50):
                 response = await client.post(

@@ -21,7 +21,7 @@ from memory_base.serve.consolidation import verdicts
 from memory_base.serve.consolidation.groups import Note, Pair, group_key
 from memory_base.serve.notes import curation, store
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 NS = "work"
 A, B, C, D = "note:work:a", "note:work:b", "note:work:c", "note:work:d"
@@ -39,6 +39,7 @@ def note(note_id, text=None, **fields):
         "id": note_id,
         "kind": "work",
         "author": "claude-code",
+        "shared": False,
         "saved": 1_700_000_000.0,
         "occurred_at": None,
         "tags": ("deploy",),
@@ -70,14 +71,14 @@ def item(action="keep", **fields):
 
 
 def body(*items, **top):
-    out = {"run_id": "run-1", "author": "consolidator", "model": "test-model"}
+    out = {"run_id": "run-1", "model": "test-model"}
     out.update(top)
     out["verdicts"] = list(items) or [item()]
     return out
 
 
 def parsed(action="keep", top=None, **fields):
-    batch = verdicts.parse_batch(body(item(action, **fields), **(top or {})), {NS})
+    batch = verdicts.parse_batch(body(item(action, **fields), **(top or {})), {NS}, "claude-code")
     return batch, batch.verdicts[0]
 
 
@@ -100,7 +101,7 @@ def plan(action="keep", state_over=None, top=None, **fields):
 
 
 def replacement_id(text=MERGED):
-    return store.note_id(NS, text)
+    return store.note_id(NS, "claude-code", text)
 
 
 # ---- body schema ------------------------------------------------------------
@@ -109,7 +110,7 @@ def replacement_id(text=MERGED):
 def test_parse_batch_resolves_defaults():
     batch, verdict = parsed()
     assert batch.run_id == "run-1"
-    assert batch.author == "consolidator"
+    assert batch.author == "claude-code"
     assert batch.model == "test-model"
     assert batch.dry_run is False
     assert batch.params == verdicts.Params(0.72, 5, 6, 12000)
@@ -120,17 +121,16 @@ def test_parse_batch_resolves_defaults():
 
 
 def test_model_may_be_null_or_absent():
-    assert verdicts.parse_batch(body(model=None), {NS}).model is None
+    assert verdicts.parse_batch(body(model=None), {NS}, "claude-code").model is None
     raw = body()
     del raw["model"]
-    assert verdicts.parse_batch(raw, {NS}).model is None
+    assert verdicts.parse_batch(raw, {NS}, "claude-code").model is None
 
 
 BAD_BODIES = [
     body(extra=1),
     body(run_id=""),
     body(run_id="r" * 101),
-    body(author=""),
     body(model=5),
     body(dry_run="yes"),
     body(threshold=0),
@@ -173,7 +173,7 @@ BAD_BODIES = [
 @pytest.mark.parametrize("raw", BAD_BODIES)
 def test_parse_batch_rejects_a_bad_body(raw):
     with pytest.raises(verdicts.RequestError):
-        verdicts.parse_batch(raw, {NS})
+        verdicts.parse_batch(raw, {NS}, "claude-code")
 
 
 def test_payload_hash_covers_the_item_run_author_model_and_group_params():
@@ -182,7 +182,6 @@ def test_payload_hash_covers_the_item_run_author_model_and_group_params():
     assert digest == verdicts.payload_hash(*reversed(parsed()))
     for top in (
         {"run_id": "run-2"},
-        {"author": "other"},
         {"model": "other"},
         {"threshold": 0.8},
         {"neighbors": 6},
@@ -383,7 +382,7 @@ def test_a_merge_differing_only_in_case_is_not_a_retire():
 
 def test_a_merge_reuses_an_identical_active_note():
     rid = replacement_id()
-    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False)
+    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False, False)
     assert plan("merge", {"replacement": existing}, merged_text=MERGED) == verdicts.Plan(
         "merge", (A, B, C), (rid,), rid, False, None
     )
@@ -398,14 +397,14 @@ def test_a_merge_reuses_an_identical_active_note():
     ],
 )
 def test_a_merge_onto_a_different_active_row_is_rejected(source_type, kind, text):
-    existing = verdicts.Existing(replacement_id(), source_type, kind, text, False)
+    existing = verdicts.Existing(replacement_id(), source_type, kind, text, False, False)
     result = plan("merge", {"replacement": existing}, merged_text=MERGED)
     assert result["status"] == "rejected"
 
 
 def test_a_merge_identical_to_an_archived_note_is_rejected():
     rid = replacement_id()
-    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, True)
+    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, True, False)
     result = plan("merge", {"replacement": existing}, merged_text=MERGED)
     assert result["status"] == "rejected"
     assert f"identical to archived note {rid}; restore it instead" in result["reason"]
@@ -694,7 +693,7 @@ def test_a_terminal_result_under_the_lock_is_returned_as_is(flow):
 
 def test_a_plan_that_changed_since_the_preflight_is_stale(flow):
     rid = replacement_id()
-    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False)
+    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False, False)
     flow["states"].extend([state(replacement=existing), state()])
     batch, _ = parsed("merge", merged_text=MERGED)
     [result] = _run(batch)
@@ -706,7 +705,7 @@ def test_each_verdict_is_processed_alone(flow):
     changed = {**NOTES, B: note(B, "Weekday deploys start at 05:00.")}
     flow["states"].extend([state(notes=changed), state(), state()])
     raw = body(item("keep"), item("retire", idempotency_key="k-2", retire_ids=[A]))
-    results = _run(verdicts.parse_batch(raw, {NS}))
+    results = _run(verdicts.parse_batch(raw, {NS}, "claude-code"))
     assert [r["status"] for r in results] == ["stale", "applied"]
 
 
@@ -714,7 +713,7 @@ def test_a_rolled_back_verdict_returns_its_result_and_the_batch_continues(flow):
     stale = {**APPLIED, "status": "stale", "action_id": None}
     flow["box"]["apply_error"] = verdicts.Rollback(stale)
     raw = body(item("keep"), item("keep", idempotency_key="k-2"))
-    results = _run(verdicts.parse_batch(raw, {NS}))
+    results = _run(verdicts.parse_batch(raw, {NS}, "claude-code"))
     assert results == [stale, stale]
 
 
@@ -750,7 +749,7 @@ def test_a_failing_embedder_fails_only_its_verdict(flow, monkeypatch):
         item("merge", idempotency_key="k-2", merged_text=MERGED),
         item("merge", idempotency_key="k-3", merged_text=MERGED),
     )
-    results = _run(verdicts.parse_batch(raw, {NS}))
+    results = _run(verdicts.parse_batch(raw, {NS}, "claude-code"))
     assert [r["status"] for r in results] == ["applied", "failed", "applied"]
     failed = results[1]
     assert failed["reason"] == "TimeoutError: embedding endpoint timed out"
@@ -762,14 +761,14 @@ def test_a_failing_embedder_fails_only_its_verdict(flow, monkeypatch):
 def test_a_failing_transaction_fails_only_its_verdict(flow):
     flow["box"]["apply_error"] = asyncpg.exceptions.DeadlockDetectedError("deadlock detected")
     raw = body(item("keep", idempotency_key="k-1"))
-    [result] = _run(verdicts.parse_batch(raw, {NS}))
+    [result] = _run(verdicts.parse_batch(raw, {NS}, "claude-code"))
     assert result["status"] == "failed"
     assert result["reason"] == "DeadlockDetectedError: deadlock detected"
 
 
 def test_a_long_failure_message_is_cut_short(flow):
     flow["box"]["apply_error"] = RuntimeError("x" * 5000)
-    [result] = _run(verdicts.parse_batch(body(item("keep")), {NS}))
+    [result] = _run(verdicts.parse_batch(body(item("keep")), {NS}, "claude-code"))
     assert result["status"] == "failed"
     assert len(result["reason"]) <= verdicts.MAX_FAILURE_CHARS
 
@@ -777,7 +776,7 @@ def test_a_long_failure_message_is_cut_short(flow):
 def test_a_group_key_conflict_is_a_failure_not_a_cache_hit(flow):
     flow["box"]["apply_error"] = _unique("consolidation_actions_group_key_key")
     flow["box"]["committed"] = None
-    [result] = _run(verdicts.parse_batch(body(item("keep")), {NS}))
+    [result] = _run(verdicts.parse_batch(body(item("keep")), {NS}, "claude-code"))
     assert result["status"] == "failed"
     assert result["reason"].startswith("UniqueViolationError")
 
@@ -799,10 +798,37 @@ class StateConn:
             return self.undone
         if "group_key = $1" in query:
             return False
+        if "count(*)" in query:
+            return 0
         raise AssertionError(query)
 
     async def fetch(self, query, *args):
         raise AssertionError("a cached group needs no discovery")
+
+
+class LoadConn(StateConn):
+    """Answers load_state's reads with one author's member rows, recording the pair query."""
+
+    def __init__(self, author):
+        super().__init__(undone=False)
+        self.author = author
+
+    async def fetch(self, query, *args):
+        self.calls.append((" ".join(query.split()), args))
+        if "id = ANY" in query:
+            return [
+                {"id": member, "metadata": json.dumps({"author": self.author})}
+                for member in args[0]
+            ]
+        return []
+
+
+def test_load_state_recomputes_groups_with_the_members_author():
+    batch, verdict = parsed()
+    conn = LoadConn("natsume")
+    asyncio.run(verdicts.load_state(conn, verdict, batch))
+    [pair_query] = [c for c in conn.calls if "<=>" in c[0]]
+    assert pair_query[1][1] == "natsume"
 
 
 def test_a_member_set_equal_to_an_undone_actions_is_cached():
@@ -914,7 +940,7 @@ def test_apply_plan_writes_the_replacement_archives_members_and_records_the_acti
     assert 1_695_000_000.0 in args
     metadata = next(json.loads(a) for a in args if isinstance(a, str) and a.startswith("{"))
     assert metadata["tags"] == ["deploy", "ops", "schedule"]
-    assert metadata["author"] == "consolidator"
+    assert metadata["author"] == "claude-code"
     assert metadata["merged_from"] == [A, B, C]
     assert metadata["consolidation_action"] == 7
     assert metadata["merged_dates"][A] == {
@@ -925,7 +951,7 @@ def test_apply_plan_writes_the_replacement_archives_members_and_records_the_acti
 
     [archive] = conn.find("SET archived_at")
     ids, applied_at, author, into = archive[2]
-    assert (ids, author, json.loads(into)) == ([A, B, C], "consolidator", [rid])
+    assert (ids, author, json.loads(into)) == ([A, B, C], "claude-code", [rid])
 
     [action] = conn.find("INSERT INTO")[-1:]
     values = action[2]
@@ -1003,3 +1029,82 @@ def test_route_returns_one_result_per_verdict(monkeypatch, route):
     assert response.json() == {"results": [APPLIED, APPLIED]}
     [batch] = route
     assert [v.idempotency_key for v in batch.verdicts] == ["k-1", "k-2"]
+
+
+# ---- the author boundary ----------------------------------------------------
+
+
+def test_a_merge_note_carries_the_members_author_and_the_action_the_header_author(
+    no_owning_helpers,
+):
+    batch, verdict, loaded, planned, rows, members = _merge_inputs()
+    batch = verdicts.Batch(
+        run_id=batch.run_id,
+        author="natsume",
+        model=batch.model,
+        dry_run=batch.dry_run,
+        params=batch.params,
+        max_actions=batch.max_actions,
+        verdicts=batch.verdicts,
+    )
+    conn = RecordingConn()
+    asyncio.run(verdicts.apply_plan(conn, verdict, batch, planned, loaded, rows, "[0.1]"))
+    [insert] = conn.find("RETURNING id")
+    metadata = next(json.loads(a) for a in insert[2] if isinstance(a, str) and a.startswith("{"))
+    assert metadata["author"] == "claude-code"
+    [archive] = conn.find("SET archived_at")
+    assert archive[2][2] == "natsume"
+    [action] = conn.find("INSERT INTO")[-1:]
+    assert "natsume" in action[2]
+
+
+def test_a_merged_note_is_shared_only_when_every_member_is(no_owning_helpers):
+    members = {
+        A: note(A, shared=True),
+        B: note(B, shared=True),
+        C: note(C, shared=True),
+    }
+    batch, verdict = parsed("merge", merged_text=MERGED, group_key=group_key(NS, members.values()))
+    loaded = state(notes=members)
+    planned = verdicts.plan_verdict(verdict, batch, loaded)
+    rows = {
+        i: {"id": i, "metadata": json.dumps({"tags": [], "author": "claude-code"})} for i in members
+    }
+    conn = RecordingConn()
+    asyncio.run(verdicts.apply_plan(conn, verdict, batch, planned, loaded, rows, "[0.1]"))
+    [insert] = conn.find("RETURNING id")
+    metadata = next(json.loads(a) for a in insert[2] if isinstance(a, str) and a.startswith("{"))
+    assert metadata["shared"] is True
+
+    mixed = {**members, C: note(C, shared=False)}
+    batch, verdict = parsed("merge", merged_text=MERGED, group_key=group_key(NS, mixed.values()))
+    loaded = state(notes=mixed)
+    planned = verdicts.plan_verdict(verdict, batch, loaded)
+    rows = {
+        i: {"id": i, "metadata": json.dumps({"tags": [], "author": "claude-code"})} for i in mixed
+    }
+    conn = RecordingConn()
+    asyncio.run(verdicts.apply_plan(conn, verdict, batch, planned, loaded, rows, "[0.1]"))
+    [insert] = conn.find("RETURNING id")
+    metadata = next(json.loads(a) for a in insert[2] if isinstance(a, str) and a.startswith("{"))
+    assert "shared" not in metadata
+
+
+def test_an_existing_replacement_with_another_shared_flag_is_not_reused():
+    rid = replacement_id()
+    existing = verdicts.Existing(rid, "agent_note", "work", MERGED, False, True)
+    result = plan("merge", {"replacement": existing}, merged_text=MERGED)
+    assert result["status"] == "stale"
+    assert "different shared flag" in result["reason"]
+
+
+def test_a_group_whose_members_mix_authors_is_rejected():
+    mixed = {**NOTES, B: note(B, author="natsume")}
+    result = plan("keep", {"notes": mixed})
+    assert result["status"] == "rejected"
+    assert result["reason"] == "group mixes authors: claude-code, natsume"
+
+
+def test_a_member_absent_from_the_active_notes_is_stale():
+    result = plan("keep", {"notes": {A: NOTES[A], C: NOTES[C]}, "pairs": []})
+    assert result["status"] == "stale"

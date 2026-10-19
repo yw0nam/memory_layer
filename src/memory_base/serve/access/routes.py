@@ -6,7 +6,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.serve.access import namespaces
-from memory_base.serve.common.http import error, json_body
+from memory_base.serve.common.http import error, json_body, reject_author
 
 
 async def namespaces_create_route(request: Request) -> JSONResponse:
@@ -15,6 +15,8 @@ async def namespaces_create_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
+    if rejected := reject_author(body):
+        return rejected
     try:
         result = await namespaces.create_namespace(body.get("name"))
     except namespaces.NamespaceExistsError as exc:

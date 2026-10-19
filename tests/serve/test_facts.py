@@ -16,7 +16,7 @@ from starlette.testclient import TestClient
 from memory_base.serve import api
 from memory_base.serve.facts import store
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 NOW = 1_700_000_000.0
 GITHUB_TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
@@ -131,8 +131,8 @@ def _add(**fields):
     } | fields  # fmt: skip
 
 
-def _post(*ops, author="consolidator", **extra):
-    return client.post("/admin/facts", json={"author": author, "ops": list(ops)} | extra)
+def _post(*ops, headers=None, **extra):
+    return client.post("/admin/facts", json={"ops": list(ops)} | extra, headers=headers or {})
 
 
 def _card(slug="natsume", query=""):
@@ -275,10 +275,16 @@ def test_a_dry_run_returns_the_planned_rows_and_writes_nothing(fake_db):
 # ---- author -----------------------------------------------------------------
 
 
-def test_any_author_slug_may_write_and_a_non_slug_is_refused(fake_db):
-    assert _post(_add(), author="claude-code").status_code == 200
-    assert _post(_add(attribute="job", value_text="Chef"), author="Not A Slug").status_code == 400
-    assert [fact["author"] for fact in fake_db.facts] == ["claude-code"]
+def test_the_header_author_is_recorded(fake_db):
+    assert _post(_add(), headers={"X-Author": "natsume"}).status_code == 200
+    assert [fact["author"] for fact in fake_db.facts] == ["natsume"]
+
+
+def test_a_body_author_is_refused(fake_db):
+    response = _post(_add(), author="natsume")
+    assert response.status_code == 400
+    assert response.json()["error"] == "unknown field: author"
+    assert fake_db.facts == []
 
 
 # ---- the card ---------------------------------------------------------------
@@ -328,8 +334,8 @@ def _edit(monkeypatch, fake_db, item, **extra):
     monkeypatch.setattr(entity_store, "ensure_schema_once", noop)
     return client.post(
         "/entities",
-        json={"entities": [item], "author": "claude-code", "consent_method": "conversation"}
-        | extra,
+        json={"entities": [item], "consent_method": "conversation"} | extra,
+        headers={"X-Author": "claude-code"},
     )
 
 

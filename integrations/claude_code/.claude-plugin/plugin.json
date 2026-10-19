@@ -1,6 +1,6 @@
 {
   "name": "memory-base",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Memory Base for Claude Code: the agent's and the user's cards and the repo's handoffs at session start, relevant notes on every prompt, and the verbatim turn record kept beside them.",
   "author": { "name": "yw0nam" },
   "license": "MIT",
@@ -30,7 +30,7 @@
     "author": {
       "type": "string",
       "title": "Author",
-      "description": "The agent's own slug and note author; a slug of lowercase letters, digits, and hyphens.",
+      "description": "The author slug this agent writes under and reads by default; sent as the X-Author header on every request.",
       "default": "claude-code",
       "required": true
     },

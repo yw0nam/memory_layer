@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import Context
+from pydantic import Field
 
 from memory_base.serve.common import rest_client
+from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION
 
 
 async def _search(
@@ -64,6 +66,8 @@ async def search_all(
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Search both code and memory for the given query.
+
+    Note hits are your own and shared notes; use search_memory to widen the scope.
 
     Use this when you don't know or don't need to restrict whether the
     answer lives in the codebase or in stored memory
@@ -146,7 +150,10 @@ async def search_memory(
     since: str | None = None,
     until: str | None = None,
     min_score: float | None = None,
-    author: str | None = None,
+    author: Annotated[
+        str | None,
+        Field(description=AUTHOR_SCOPE_DESCRIPTION),
+    ] = None,
     budget_tokens: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
@@ -172,8 +179,8 @@ async def search_memory(
 
     `kind` is "personal", "work", or "doc" (document chunks and CSV cards).
 
-    `author` narrows the search to notes saved by one agent's author slug,
-    e.g. claude-code.
+    `author` widens or narrows the note hits; document chunks and CSV cards pass
+    through when it is omitted or "all" and drop out when it names a slug.
 
     `since`/`until` bound the search to memory whose event happened in that
     window (its occurred_at, else when it was saved), for

@@ -12,7 +12,7 @@ from typing import Any
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.retrieval.search import metadata_dict
-from memory_base.serve.common.http import iso
+from memory_base.serve.common.http import RESERVED_AUTHOR, iso
 
 PROCEDURE_VERSION = "2"
 DEFAULT_THRESHOLD = 0.72
@@ -39,25 +39,37 @@ EXACT_SEARCH_SETTINGS = (
 
 PAIRS_SQL = f"""
 WITH active AS MATERIALIZED (
-  SELECT id, embedding FROM "{PG_SCHEMA}".memory_chunks
+  SELECT id, embedding, metadata->>'author' AS author
+  FROM "{PG_SCHEMA}".memory_chunks
   WHERE source_type = 'agent_note' AND archived_at IS NULL AND namespace = $1
+    AND jsonb_typeof(metadata->'author') = 'string'
+    AND ($2::text IS NULL OR metadata->>'author' = $2)
 )
 SELECT a.id AS a_id, near.id AS b_id, 1 - near.distance AS score
 FROM active AS a
 CROSS JOIN LATERAL (
   SELECT b.id, b.embedding <=> a.embedding AS distance
   FROM active AS b
-  WHERE b.id <> a.id
+  WHERE b.id <> a.id AND b.author = a.author
   ORDER BY distance, b.id
-  LIMIT $2
+  LIMIT $3
 ) AS near
-WHERE 1 - near.distance >= $3
+WHERE 1 - near.distance >= $4
 """
 
 NOTES_SQL = f"""
 SELECT id, chunk_kind AS kind, ts_last_active, occurred_at, content_raw AS text, metadata
 FROM "{PG_SCHEMA}".memory_chunks
 WHERE source_type = 'agent_note' AND archived_at IS NULL AND namespace = $1
+  AND jsonb_typeof(metadata->'author') = 'string'
+  AND ($2::text IS NULL OR metadata->>'author' = $2)
+"""
+
+AUTHORS_SQL = f"""
+SELECT DISTINCT metadata->>'author' AS author
+FROM "{PG_SCHEMA}".memory_chunks
+WHERE source_type = 'agent_note' AND archived_at IS NULL AND namespace = $1
+  AND jsonb_typeof(metadata->'author') = 'string'
 """
 
 JUDGED_SQL = f"""
@@ -71,7 +83,8 @@ WHERE namespace = $1
 class Note:
     id: str
     kind: str
-    author: str | None
+    author: str
+    shared: bool
     saved: float
     occurred_at: float | None
     tags: tuple[str, ...]
@@ -115,7 +128,8 @@ def note_from_row(row: Any) -> Note:
     return Note(
         id=row["id"],
         kind=row["kind"],
-        author=metadata.get("author"),
+        author=metadata["author"],
+        shared=metadata.get("shared") is True,
         saved=row["ts_last_active"],
         occurred_at=row["occurred_at"],
         tags=tuple(metadata.get("tags") or ()),
@@ -127,15 +141,18 @@ def note_from_row(row: Any) -> Note:
 
 
 async def read_pairs(
-    conn: Any, namespace: str, threshold: float, neighbors: int
+    conn: Any, namespace: str, author: str | None, threshold: float, neighbors: int
 ) -> tuple[list[Pair], dict[str, Note]]:
     """Exact nearest-neighbour pairs among one namespace's active agent notes.
 
-    Returns the pairs at or above `threshold` and every active note in the namespace.
-    The caller owns the transaction and has applied EXACT_SEARCH_SETTINGS in it.
+    With `author` set, only that author's notes pair, and only those are returned. With
+    None, pairs never mix authors. The caller owns the transaction and has applied
+    EXACT_SEARCH_SETTINGS in it.
     """
-    rows = await conn.fetch(PAIRS_SQL, namespace, neighbors, threshold)
-    notes = {row["id"]: note_from_row(row) for row in await conn.fetch(NOTES_SQL, namespace)}
+    rows = await conn.fetch(PAIRS_SQL, namespace, author, neighbors, threshold)
+    notes = {
+        row["id"]: note_from_row(row) for row in await conn.fetch(NOTES_SQL, namespace, author)
+    }
     best: dict[tuple[str, str], float] = {}
     for row in rows:
         ends = (min(row["a_id"], row["b_id"]), max(row["a_id"], row["b_id"]))
@@ -145,12 +162,20 @@ async def read_pairs(
     return pairs, notes
 
 
+async def read_authors(conn: Any, namespace: str) -> list[str]:
+    """The distinct authors among one namespace's active notes."""
+    rows = await conn.fetch(AUTHORS_SQL, namespace)
+    return sorted({row["author"] for row in rows})
+
+
 async def read_snapshots(
-    namespaces: list[str], threshold: float, neighbors: int
+    namespaces: list[str], author: str, threshold: float, neighbors: int
 ) -> dict[str, Snapshot]:
     """Each namespace's pairs, notes, and judged groups, one repeatable-read snapshot each.
 
-    Read on one connection that is released before the caller builds the response.
+    `author` is a slug, or "all" to build groups for every author present, still one
+    author per group. Read on one connection that is released before the caller builds
+    the response.
     """
     snapshots: dict[str, Snapshot] = {}
     async with db.acquire() as conn:
@@ -158,7 +183,22 @@ async def read_snapshots(
             async with conn.transaction(isolation="repeatable_read", readonly=True):
                 for statement in EXACT_SEARCH_SETTINGS:
                     await conn.execute(statement)
-                pairs, notes = await read_pairs(conn, namespace, threshold, neighbors)
+                pairs: list[Pair] = []
+                notes: dict[str, Note] = {}
+                if author == RESERVED_AUTHOR:
+                    notes = {
+                        row["id"]: note_from_row(row)
+                        for row in await conn.fetch(NOTES_SQL, namespace, None)
+                    }
+                    authors = await read_authors(conn, namespace)
+                else:
+                    authors = [author]
+                for slug in authors:
+                    found_pairs, found_notes = await read_pairs(
+                        conn, namespace, slug, threshold, neighbors
+                    )
+                    pairs += found_pairs
+                    notes.update(found_notes)
                 judged = await conn.fetch(JUDGED_SQL, namespace)
             snapshots[namespace] = Snapshot(
                 pairs,

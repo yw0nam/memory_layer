@@ -11,6 +11,24 @@ from starlette.responses import JSONResponse
 
 TEXT_LIMIT = 2000
 AUTHOR_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+RESERVED_AUTHOR = "all"
+AUTHOR_BODY_ERROR = "author comes from the X-Author header"
+AUTHOR_SCOPE_DESCRIPTION = (
+    'Omitted: your own notes and shared notes. "all": every agent\'s notes. '
+    "A slug: that agent's notes only."
+)
+
+
+def author_slug(value: Any) -> str | None:
+    """The author slug a value names; None when it is missing, malformed, or reserved."""
+    if not isinstance(value, str) or value == RESERVED_AUTHOR or not AUTHOR_RE.fullmatch(value):
+        return None
+    return value
+
+
+def reject_author(body: Any) -> JSONResponse | None:
+    """The 400 a permissive write body carrying `author` gets, else None."""
+    return error(AUTHOR_BODY_ERROR) if isinstance(body, dict) and "author" in body else None
 
 
 async def json_body(request: Request) -> dict[str, Any]:
@@ -50,11 +68,19 @@ def object_fields(
     return body
 
 
-def author_slug(value: Any) -> str:
-    """The author a client declares; attribution only, so a slug is all that is checked."""
-    if not isinstance(value, str) or not AUTHOR_RE.fullmatch(value):
-        raise RequestError("author must be an author slug")
-    return value
+def note_scope(request_author: str, requested: str | None) -> tuple[str | None, str | None]:
+    """Resolve a note read's author filter into (author_exact, visible_to).
+
+    Omitted means the caller's own notes plus shared ones; "all" covers every author;
+    a slug means exactly that author.
+    """
+    if requested is None:
+        return None, request_author
+    if requested == RESERVED_AUTHOR:
+        return None, None
+    if (slug := author_slug(requested)) is None:
+        raise RequestError('author must be an author slug or "all"')
+    return slug, None
 
 
 def stripped(value: Any, name: str) -> str:

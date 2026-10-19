@@ -25,7 +25,7 @@ from memory_base.serve.search import access_log
 from memory_base.serve.search import routes as search_routes
 from memory_base.serve.notes import store
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 def _hit(
@@ -264,7 +264,7 @@ def test_search_malformed_namespaces_400():
 def test_search_returns_hit_to_dict_shape(monkeypatch):
     hits = [_hit(source="code", ref="a.py:L1-L2", text="x", rrf=0.5, rerank_score=0.9)]
 
-    async def fake_search(query, source="all", include_archived=False):
+    async def fake_search(query, source="all", include_archived=False, **options):
         return hits
 
     monkeypatch.setattr(search_routes, "search", fake_search)
@@ -278,7 +278,7 @@ def test_search_returns_hit_to_dict_shape(monkeypatch):
 def test_search_defaults_source_to_all(monkeypatch):
     captured = {}
 
-    async def fake_search(query, source="all", include_archived=False):
+    async def fake_search(query, source="all", include_archived=False, **options):
         captured["query"] = query
         captured["source"] = source
         return []
@@ -293,7 +293,7 @@ def test_search_defaults_source_to_all(monkeypatch):
 def test_search_passes_requested_source_through(monkeypatch):
     captured = {}
 
-    async def fake_search(query, source="all", include_archived=False):
+    async def fake_search(query, source="all", include_archived=False, **options):
         captured["source"] = source
         return []
 
@@ -306,7 +306,7 @@ def test_search_passes_requested_source_through(monkeypatch):
 def test_search_default_top_k_is_10(monkeypatch):
     hits = [_hit(ref=f"f{i}.py:L1-L2", rrf=float(i)) for i in range(15)]
 
-    async def fake_search(query, source="all", include_archived=False):
+    async def fake_search(query, source="all", include_archived=False, **options):
         return hits
 
     monkeypatch.setattr(search_routes, "search", fake_search)
@@ -318,7 +318,7 @@ def test_search_default_top_k_is_10(monkeypatch):
 def test_search_respects_custom_top_k(monkeypatch):
     hits = [_hit(ref=f"f{i}.py:L1-L2", rrf=float(i)) for i in range(5)]
 
-    async def fake_search(query, source="all", include_archived=False):
+    async def fake_search(query, source="all", include_archived=False, **options):
         return hits
 
     monkeypatch.setattr(search_routes, "search", fake_search)
@@ -373,25 +373,19 @@ def test_search_malformed_json_400():
 
 
 def test_save_memory_empty_content_400():
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "content": "", "kind": "work"}
-    )
+    response = client.post("/save_memory", json={"content": "", "kind": "work"})
     assert response.status_code == 400
     assert response.json()["error"] == "content must not be empty"
 
 
 def test_save_memory_oversized_content_400():
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "content": "x" * 4001, "kind": "work"}
-    )
+    response = client.post("/save_memory", json={"content": "x" * 4001, "kind": "work"})
     assert response.status_code == 400
     assert response.json()["error"] == "content exceeds 4000 chars"
 
 
 def test_save_memory_bad_kind_400():
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "content": "valid content", "kind": "reminder"}
-    )
+    response = client.post("/save_memory", json={"content": "valid content", "kind": "reminder"})
     assert response.status_code == 400
     assert response.json()["error"] == "kind must be one of ('personal', 'work')"
 
@@ -400,16 +394,14 @@ def test_save_memory_bad_kind_400():
 def test_save_memory_malformed_tags_400(tags):
     response = client.post(
         "/save_memory",
-        json={"author": "natsume", "content": "valid content", "kind": "work", "tags": tags},
+        json={"content": "valid content", "kind": "work", "tags": tags},
     )
     assert response.status_code == 400
     assert response.json()["error"] == "tags must be a non-empty list of strings"
 
 
 def test_save_memory_missing_tags_400():
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "content": "valid content", "kind": "work"}
-    )
+    response = client.post("/save_memory", json={"content": "valid content", "kind": "work"})
     assert response.status_code == 400
     assert response.json()["error"] == "tags must be a non-empty list of strings"
 
@@ -428,6 +420,7 @@ def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         captured["content"] = content
@@ -443,9 +436,7 @@ def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
         }
 
     monkeypatch.setattr(store, "save_note", fake_save_note)
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "content": "distilled note text", "kind": "work"}
-    )
+    response = client.post("/save_memory", json={"content": "distilled note text", "kind": "work"})
     assert response.status_code == 200
     assert response.json() == {
         "id": "note:deadbeefdeadbeef",
@@ -484,15 +475,14 @@ def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
     monkeypatch.setattr(store, "save_note", fake_save_note)
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "content": "distilled note text", "kind": "work"}
-    )
+    response = client.post("/save_memory", json={"content": "distilled note text", "kind": "work"})
     assert response.status_code == 200
     assert captured["namespace"] == "default"
 
@@ -511,6 +501,7 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         captured["namespace"] = namespace
@@ -520,7 +511,6 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
     response = client.post(
         "/save_memory",
         json={
-            "author": "natsume",
             "content": "distilled note text",
             "kind": "work",
             "namespace": "team-a",
@@ -542,6 +532,7 @@ def test_save_memory_unregistered_namespace_400(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         raise ValueError(f"unregistered namespace: {namespace}")
@@ -550,7 +541,6 @@ def test_save_memory_unregistered_namespace_400(monkeypatch):
     response = client.post(
         "/save_memory",
         json={
-            "author": "natsume",
             "content": "distilled note text",
             "kind": "work",
             "namespace": "ghost",
@@ -565,7 +555,6 @@ def test_save_memory_malformed_namespace_400(namespace):
     response = client.post(
         "/save_memory",
         json={
-            "author": "natsume",
             "content": "distilled note text",
             "kind": "work",
             "namespace": namespace,

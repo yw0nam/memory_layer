@@ -53,7 +53,7 @@ def tag(monkeypatch):
 
 
 def _api(key="test-key"):
-    return TestClient(api.app, headers={"X-API-Key": key})
+    return TestClient(api.app, headers={"X-API-Key": key, "X-Author": "claude-code"})
 
 
 def _post(client, session, content, **overrides):

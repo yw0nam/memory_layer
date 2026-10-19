@@ -337,23 +337,26 @@ def test_list_memory_duplicates_omits_unset_params(monkeypatch):
     assert captured["params"] == []
 
 
-def test_archive_notes_posts_ids_and_author(monkeypatch):
+def test_archive_notes_posts_ids_and_the_auth_headers(monkeypatch):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["method"] = request.method
         captured["path"] = request.url.path
         captured["json"] = json.loads(request.content)
-        captured["header"] = request.headers.get("x-api-key")
+        captured["key"] = request.headers.get("x-api-key")
+        captured["author"] = request.headers.get("x-author")
         return httpx.Response(200, json={"rows": []})
 
     _patch_client(monkeypatch, handler)
     monkeypatch.setenv("MEMORY_API_KEY", "env-key")
-    asyncio.run(note_tools.archive_notes(["note:a"], "natsume"))
+    monkeypatch.setenv("MEMORY_AUTHOR", "natsume")
+    asyncio.run(note_tools.archive_notes(["note:a"]))
     assert captured["method"] == "POST"
     assert captured["path"] == "/admin/archive"
-    assert captured["json"] == {"ids": ["note:a"], "author": "natsume"}
-    assert captured["header"] == "env-key"
+    assert captured["json"] == {"ids": ["note:a"]}
+    assert captured["key"] == "env-key"
+    assert captured["author"] == "natsume"
 
 
 def test_archive_notes_sends_confirm_only_when_true(monkeypatch):
@@ -364,7 +367,7 @@ def test_archive_notes_sends_confirm_only_when_true(monkeypatch):
         return httpx.Response(200, json={"archived": 1})
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(note_tools.archive_notes(["note:a"], "natsume", confirm=True))
+    asyncio.run(note_tools.archive_notes(["note:a"], confirm=True))
     assert captured["json"]["confirm"] is True
 
 

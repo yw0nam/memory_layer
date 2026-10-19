@@ -23,7 +23,7 @@ from memory_base.serve.search import access_log
 
 pytestmark = pytest.mark.integration
 
-HEADERS = {"X-API-Key": "test-key"}
+HEADERS = {"X-API-Key": "test-key", "X-Author": "claude-code"}
 ZERO = "[" + ",".join(["0"] * EMB_DIM) + "]"
 NOTES = f'"{PG_SCHEMA}".memory_chunks'
 FACTS = f'"{PG_SCHEMA}".facts'
@@ -119,7 +119,7 @@ def test_delete_unlinks_notes_removes_facts_and_frees_the_names():
                 transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
             ) as client:
                 url = f"/entities/{slug}/delete"
-                body = {"author": "claude-code"}
+                body = {}
                 dry = await client.post(url, json={**body, "dry_run": True}, headers=HEADERS)
                 untouched_by_dry = {
                     n: await _note_metadata(conn, n) for n in (active, archived, untouched)

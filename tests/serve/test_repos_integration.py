@@ -88,7 +88,7 @@ def _get(path):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app),
             base_url="http://testserver",
-            headers={"X-API-Key": "test-key"},
+            headers={"X-API-Key": "test-key", "X-Author": "claude-code"},
         ) as client:
             return await client.get(path)
 
@@ -100,7 +100,7 @@ def _delete(path):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app),
             base_url="http://testserver",
-            headers={"X-API-Key": "test-key"},
+            headers={"X-API-Key": "test-key", "X-Author": "claude-code"},
         ) as client:
             return await client.delete(path)
 

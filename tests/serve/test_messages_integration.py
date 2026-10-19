@@ -28,7 +28,7 @@ from memory_base.serve.notes import store as note_store
 
 pytestmark = pytest.mark.integration
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 IDENTITY = auth.KeyIdentity(key_id="test-key-hash", label="test")
 
@@ -65,11 +65,11 @@ def _second_client(monkeypatch, label):
         return identity if plaintext_key == "second-key" else None
 
     monkeypatch.setattr(auth, "authenticate_request", fake_authenticate_request)
-    return TestClient(api.app, headers={"X-API-Key": "second-key"})
+    return TestClient(api.app, headers={"X-API-Key": "second-key", "X-Author": "claude-code"})
 
 
 def _send(subject, status="info", result="r", **overrides):
-    body = {"subject": subject, "status": status, "result": result, "author": "claude-code"}
+    body = {"subject": subject, "status": status, "result": result}
     body.update(overrides)
     return client.post("/messages", json=body)
 
@@ -81,7 +81,6 @@ def _send_handoff(subject, status="in_progress", **overrides):
         "result": "state of the work",
         "next": "carry on here",
         "scope": "repo:github.com/o/r",
-        "author": "claude-code",
     }
     body.update(overrides)
     return client.post("/messages", json=body)
@@ -524,7 +523,6 @@ def test_a_second_sender_can_publish_next_snapshot(monkeypatch):
                 "result": "waiting on CI",
                 "next": "retry after green",
                 "scope": "repo:github.com/o/r",
-                "author": "claude-code",
                 "namespace": namespace,
             },
         )
@@ -640,7 +638,6 @@ def test_idempotency_replays_conflicts_and_releases_on_delete():
         "subject": f"{marker} idempotent",
         "status": "info",
         "result": "same intent",
-        "author": "claude-code",
         "idempotency_key": f"run-{marker}",
     }
     try:
@@ -682,7 +679,6 @@ def test_namespace_deletion_waits_for_messages(monkeypatch):
                 "subject": subject,
                 "status": "info",
                 "result": "r",
-                "author": "claude-code",
                 "namespace": namespace,
             },
         )

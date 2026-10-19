@@ -17,7 +17,7 @@ from memory_base.serve import api
 
 pytestmark = pytest.mark.integration
 
-HEADERS = {"X-API-Key": "test-key"}
+HEADERS = {"X-API-Key": "test-key", "X-Author": "claude-code"}
 
 
 def test_a_note_names_an_entity_and_the_entity_filter_returns_only_that_note():
@@ -27,7 +27,6 @@ def test_a_note_names_an_entity_and_the_entity_filter_returns_only_that_note():
     def save(text, entities):
         return {
             "content": f"integration note {tag} {text}",
-            "author": "claude-code",
             "kind": "work",
             "tags": ["it"],
             "entities": entities,
@@ -112,13 +111,13 @@ def test_link_entities_previews_then_writes_only_changed_notes():
                 f"integration note {tag} {note_id}",
                 "[" + ",".join(["0"] * EMB_DIM) + "]",
                 now,
-                json.dumps({"author": "hermes", "entities": entities} if entities else {}),
+                json.dumps({"author": "claude-code", "entities": entities}),
             )
         try:
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=api.app), base_url="http://testserver"
             ) as client:
-                body = {"ids": ids, "author": "claude-code", "add": [slug], "remove": [other]}
+                body = {"ids": ids, "add": [slug], "remove": [other]}
 
                 async def listed():
                     rows = (await client.get(f"/notes?entity={slug}", headers=HEADERS)).json()

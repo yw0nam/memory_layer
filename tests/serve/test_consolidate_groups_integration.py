@@ -46,16 +46,16 @@ UNRELATED = (
     "The user's cat is named Mochi and likes salmon treats.",
 )
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
-async def _save(content, namespace, allow_similar=False):
+async def _save(content, namespace, allow_similar=False, author="claude-code"):
     saved = await save_note(
         content,
         kind="work",
         tags=["rules"],
         namespace=namespace,
-        author="claude-code",
+        author=author,
         allow_similar=allow_similar,
     )
     return saved["id"]
@@ -165,7 +165,9 @@ def test_pair_search_never_uses_the_embedding_index(seeded):
             async with conn.transaction(isolation="repeatable_read", readonly=True):
                 for statement in groups.EXACT_SEARCH_SETTINGS:
                     await conn.execute(statement)
-                rows = await conn.fetch("EXPLAIN " + groups.PAIRS_SQL, seeded["main"], 5, THRESHOLD)
+                rows = await conn.fetch(
+                    "EXPLAIN " + groups.PAIRS_SQL, seeded["main"], "claude-code", 5, THRESHOLD
+                )
             return "\n".join(row[0] for row in rows)
         finally:
             await conn.close()
@@ -191,3 +193,102 @@ def test_an_acknowledged_pair_is_counted_not_grouped():
         assert body["pairs"] == 1
     finally:
         asyncio.run(_drop(name))
+
+
+def test_groups_never_mix_two_authors_and_all_builds_one_set_per_author():
+    name = f"consolidate-authors-{uuid.uuid4().hex[:8]}"
+
+    async def seed():
+        await namespaces.create_namespace(name)
+        mine = [await _save(text, name, author="claude-code") for text in RULES]
+        theirs = [await _save(text, name, author="natsume") for text in RULES]
+        return mine, theirs
+
+    try:
+        mine, theirs = asyncio.run(seed())
+        own = _fetch(name, threshold=THRESHOLD)["namespaces"][name]
+        assert {m["id"] for g in own["groups"] for m in g["members"]} == set(mine)
+        assert not {m["id"] for g in own["groups"] for m in g["members"]} & set(theirs)
+
+        every = _fetch(name, threshold=THRESHOLD, author="all")["namespaces"][name]
+        grouped = [{m["id"] for m in g["members"]} for g in every["groups"]]
+        assert set(mine) in grouped
+        assert set(theirs) in grouped
+        for group in every["groups"]:
+            assert len({m["author"] for m in group["members"]}) == 1
+
+        body = _fetch(name, threshold=THRESHOLD, author="all")
+        assert body["params"]["author"] == "all"
+        named = _fetch(name, threshold=THRESHOLD, author="natsume")["namespaces"][name]
+        assert {m["id"] for g in named["groups"] for m in g["members"]} == set(theirs)
+    finally:
+        asyncio.run(_drop(name))
+
+
+def test_a_merge_keeps_the_members_author_and_the_action_the_header_author():
+    name = f"consolidate-merge-{uuid.uuid4().hex[:8]}"
+
+    async def seed():
+        await namespaces.create_namespace(name)
+        return [await _save(text, name, author="natsume") for text in RULES]
+
+    try:
+        rules = asyncio.run(seed())
+        section = _fetch(name, threshold=THRESHOLD, author="all")["namespaces"][name]
+        [group] = section["groups"]
+        merged = "Coding tasks go to subagents in their own git worktrees, and the main session only reviews their output."
+        body = {
+            "run_id": "run-merge",
+            "model": "test-model",
+            "threshold": THRESHOLD,
+            "verdicts": [
+                {
+                    "namespace": name,
+                    "group_key": group["key"],
+                    "idempotency_key": uuid.uuid4().hex,
+                    "member_ids": sorted(m["id"] for m in group["members"]),
+                    "action": "merge",
+                    "merged_text": merged,
+                    "reason": "the notes state one delegation rule",
+                }
+            ],
+        }
+        response = client.post(
+            "/admin/consolidate/verdicts", json=body, headers={"X-Author": "claude-code"}
+        )
+        assert response.status_code == 200, response.text
+        [result] = response.json()["results"]
+        assert result["status"] == "applied", result
+        conn = asyncio.run(_query_rows(name))
+        replacement = next(r for r in conn if r["id"] == result["replacement_id"])
+        assert replacement["metadata"]["author"] == "natsume"
+        assert "shared" not in replacement["metadata"]
+        actions = asyncio.run(_query_actions(name))
+        [action] = actions
+        assert action["author"] == "claude-code"
+        assert action["member_ids"] == sorted(rules)
+    finally:
+        asyncio.run(_drop(name))
+
+
+async def _query_rows(namespace):
+    conn = await asyncpg.connect(db_url())
+    try:
+        rows = await conn.fetch(
+            f'SELECT id, metadata FROM "{PG_SCHEMA}".memory_chunks WHERE namespace = $1',
+            namespace,
+        )
+        return [{"id": row["id"], "metadata": json.loads(row["metadata"])} for row in rows]
+    finally:
+        await conn.close()
+
+
+async def _query_actions(namespace):
+    conn = await asyncpg.connect(db_url())
+    try:
+        return await conn.fetch(
+            f'SELECT * FROM "{PG_SCHEMA}".consolidation_actions WHERE namespace = $1',
+            namespace,
+        )
+    finally:
+        await conn.close()

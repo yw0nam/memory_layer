@@ -181,7 +181,7 @@ def test_listing_forwards_its_filters(monkeypatch):
         return []
 
     monkeypatch.setattr(job_store, "list_document_jobs", fake_list)
-    client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+    client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
     assert client.get("/ingest/jobs?origin=manual&status=failed").json() == {"jobs": []}
     assert client.get("/ingest/jobs").json() == {"jobs": []}
     assert calls == [("manual", "failed"), (None, None)]

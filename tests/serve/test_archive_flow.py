@@ -34,7 +34,7 @@ from memory_base.core.schema import ensure_schema
 from memory_base.serve import api
 from memory_base.serve.notes import curation
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 def _random_vec(seed: int) -> str:
@@ -63,6 +63,7 @@ async def _seed_row(
     last_hit_at: float | None = None,
     chunk_kind: str = "work",
     source_type: str = "agent_note",
+    author: str = "claude-code",
 ) -> None:
     await conn.execute(
         f"""
@@ -71,7 +72,7 @@ async def _seed_row(
            distilled, embedding, ts_last_active, metadata,
            hit_count, last_hit_at)
         VALUES ($1,$7,'save_memory',$6,$1,$2,$2,$3::halfvec,$4,
-                '{{}}'::jsonb, 0, $5)
+                jsonb_build_object('author', $8::text), 0, $5)
         ON CONFLICT (id) DO NOTHING
         """,
         row_id,
@@ -81,6 +82,7 @@ async def _seed_row(
         last_hit_at,
         chunk_kind,
         source_type,
+        author,
     )
 
 
@@ -432,7 +434,7 @@ def test_archive_by_ids_refuses_a_document_chunk_like_an_unknown_id():
     asyncio.run(_delete_rows(seeded_ids))
     asyncio.run(_seed())
     try:
-        body = {"ids": [note_id, doc_id], "author": "claude-code"}
+        body = {"ids": [note_id, doc_id]}
         unknown = client.post("/admin/archive", json={**body, "ids": [note_id, f"missing-{token}"]})
         assert unknown.status_code == 400
         assert unknown.json()["missing"] == [f"missing-{token}"]
@@ -443,9 +445,7 @@ def test_archive_by_ids_refuses_a_document_chunk_like_an_unknown_id():
         assert asyncio.run(_archived_at(note_id)) is None
         assert asyncio.run(_archived_at(doc_id)) is None
 
-        only_note = client.post(
-            "/admin/archive", json={"ids": [note_id], "author": "claude-code", "confirm": True}
-        )
+        only_note = client.post("/admin/archive", json={"ids": [note_id], "confirm": True})
         assert only_note.json()["archived"] == 1
         assert asyncio.run(_archived_at(note_id)) is not None
     finally:

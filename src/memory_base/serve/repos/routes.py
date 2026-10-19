@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.serve.common import job_store
-from memory_base.serve.common.http import error, json_body
+from memory_base.serve.common.http import error, json_body, reject_author
 from memory_base.serve.repos import cache
 
 
@@ -42,6 +42,8 @@ async def ingest_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}", 400)
+    if rejected := reject_author(body):
+        return rejected
     try:
         url = cache.validate_repo_url(body.get("url"))
         name = cache.derive_repo_name(url, body.get("name"))

@@ -26,6 +26,7 @@ def _client(handler, **kwargs):
     return MemoryBaseClient(
         url="http://memory-base.local",
         api_key="secret-key",
+        author="natsume",
         transport=httpx.MockTransport(handler),
         **kwargs,
     )
@@ -81,19 +82,35 @@ def test_search_posts_query_source_top_k_min_score():
     }
 
 
-# ---- auth header --------------------------------------------------------------
+# ---- auth headers -------------------------------------------------------------
 
 
-def test_auth_header_sent_on_every_request():
+def test_auth_headers_sent_on_every_request():
     seen = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request.headers.get("x-api-key"))
+        seen.append((request.headers.get("x-api-key"), request.headers.get("x-author")))
         return httpx.Response(200, json=[])
 
     client = _client(handler)
     client.search("q")
-    assert seen == ["secret-key"]
+    assert seen == [("secret-key", "natsume")]
+
+
+def test_post_turn_carries_both_headers():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(
+            {
+                "x-api-key": request.headers.get("x-api-key"),
+                "x-author": request.headers.get("x-author"),
+            }
+        )
+        return httpx.Response(200, json={"seq": 1})
+
+    _client(handler).post_turn("hermes", "s1", "user", "hi")
+    assert seen == {"x-api-key": "secret-key", "x-author": "natsume"}
 
 
 # ---- build_prefetch ------------------------------------------------------------
@@ -121,6 +138,46 @@ def test_build_prefetch_leads_with_the_retrieved_data_header():
 
     result = _client(handler).build_prefetch("q")
     assert result.splitlines() == [MEMORY_CONTEXT_HEADER, "- [2026-08-19] first hit"]
+
+
+def test_build_prefetch_shows_a_foreign_author():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[{"date": "2026-08-19", "author": "perlica", "text": "first hit"}],
+        )
+
+    result = _client(handler).build_prefetch("q")
+    assert "- [2026-08-19] (perlica) first hit" in result
+
+
+def test_build_prefetch_hides_the_readers_own_author():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[{"date": "2026-08-19", "author": "natsume", "text": "first hit"}],
+        )
+
+    result = _client(handler).build_prefetch("q")
+    assert "- [2026-08-19] first hit" in result
+    assert "(natsume)" not in result
+
+
+def test_build_prefetch_keeps_the_plain_line_for_a_hit_without_an_author():
+    """Document chunks and CSV cards carry no author."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {"date": "2026-08-19", "text": "a document chunk"},
+                {"date": "2026-08-18", "author": "", "text": "an empty author"},
+            ],
+        )
+
+    result = _client(handler).build_prefetch("q")
+    assert "- [2026-08-19] a document chunk" in result
+    assert "- [2026-08-18] an empty author" in result
 
 
 def test_build_prefetch_leaves_the_fence_to_the_hermes_host():

@@ -105,13 +105,16 @@ names that row. The save is refused with HTTP
 400 when it would leave no active note — the content is identical to the note it names,
 or to an archived note, which `restore_notes` brings back instead.
 
-A note's id is `note:<namespace>:<sha256(content)[:16]>`, the hash taken over its
-stripped content, so a re-save is an idempotent no-op. `session_id` is always the note's
+A note's id is `note:<namespace>:<sha256(author + "\n" + content)[:16]>`, the hash taken
+over the author and the stripped content, so a re-save is an idempotent no-op and two
+authors saving the same text store two notes. `session_id` is always the note's
 own id. `occurred_at` (ISO 8601, not in the future) records when the remembered event
 happened in its own column; `ts_last_active` is always the save time.
 
-Every note records the agent that wrote it in `metadata.author`, the slug the client
-declares; the server checks the slug pattern and grants nothing by it. A write without a
+Every note records the agent that wrote it in `metadata.author`, the slug the request's
+`X-Author` header declared; the server checks the slug pattern and grants nothing by it.
+A note saved with `shared: true` carries `metadata.shared` and is in every author's
+default read scope; the flag is set at creation only. A write without a
 namespace lands in `default`. A note
 archived by a save or by a targeted archive additionally carries `metadata.archived_by`,
 which a restore removes together with `replaced_by` and `consolidated_into`.
@@ -200,7 +203,12 @@ Private repositories authenticate through the git credential store — see
 ```
 
 Memory hits (notes, document chunks, CSV cards) carry the row's `id`, `kind`, and
-`tags`, and `entities` (empty when the note names none), plus `supersedes` for a note that replaced one. `GET /notes` rows carry the same `entities`. `?entity=<slug>` narrows to notes whose `metadata.entities` holds the slug, beside the `kind`, `tags`, and `namespace` filters. `date` is
+`tags`, and `entities` (empty when the note names none), plus `supersedes` for a note that replaced one and `shared: true` on a shared
+note. Omitted, `author` returns the caller's default read scope — the calling author's own
+notes plus the shared notes; `all` searches every author; a slug returns only that
+author's notes. Document chunks and CSV cards are not notes: they have no author, so they
+pass an omitted or `all` read and drop out of a slug read, which filters every row on the
+author. `GET /notes` rows carry the same `entities`. `?entity=<slug>` narrows to notes whose `metadata.entities` holds the slug, beside the `kind`, `tags`, and `namespace` filters. `date` is
 the note's `occurred_at` when recorded, else `ts_last_active`. `since`/`until` bound the
 same event time, `COALESCE(occurred_at, ts_last_active)`, so an episode is found by the
 day it happened; recency voting and decay read `ts_last_active` alone. Memory hits carry their stored text whole; each is
@@ -310,10 +318,14 @@ The sending key partitions the retries of an `idempotency_key`; it grants nothin
           excluded from search ◄───┴───► include_archived=true brings it back
 ```
 
-`GET /admin/duplicates` lists near-duplicate agent-note pairs by cosine with each side's author,
+`GET /admin/duplicates` lists near-duplicate agent-note pairs by cosine with each side's author —
+`threshold` (default 0.75) and the three-way `author` (omitted: the caller's default
+scope; `all`: every author; a slug: that author),
 `GET /admin/notes` lists old agent notes, and `POST /admin/restore` clears `archived_at`
-and `metadata.archived_by`, `replaced_by`, and `consolidated_into`. `POST /admin/archive` archives the agent notes named by `ids`, or
-the cold agent notes when `ids` is omitted; its preview lists them as `notes_to_archive`.
+and `metadata.archived_by`, `replaced_by`, and `consolidated_into`. `POST /admin/archive` archives the agent notes named by `ids`, or,
+when `ids` is omitted, the cold agent notes the `author` query parameter selects (the
+caller's default scope, a slug, or `all`); the header author is stamped on every row
+archived; its preview lists them as `notes_to_archive`.
 `POST /admin/messages/purge` previews claimed, cancelled, superseded, and expired
 messages as `messages_to_delete`, and its confirm pass deletes them, which also releases
 their idempotency keys. Archiving a note is reversible and deleting a message is not,
@@ -338,17 +350,23 @@ periodic drives it from outside, e.g. a cron job or an n8n schedule.
 ## Consolidation groups
 
 `GET /admin/consolidate/groups` finds groups of active agent notes that may state the
-same fact or rule, for an agent to judge. It changes no note and calls no model. Every query
+same fact or rule, for an agent to judge. It changes no note and calls no model. Groups
+never mix authors: a pair is formed only between notes of one author. Every query
 parameter is optional and a bad, repeated, or out-of-range value is a 400:
 
 | parameter | range | default |
 |---|---|---|
 | `namespace` | repeatable; each a registered namespace | every registered namespace |
+| `author` | an author slug, or `all` | the header author's notes |
 | `threshold` | 0 < x ≤ 1 | 0.72 |
 | `neighbors` | 1–50 | 5 |
 | `max_group` | 2–20 | 6 |
 | `max_group_chars` | ≥ 500 | 12000 |
 | `limit` | 1–1000, groups returned per namespace | 200 |
+
+Omitted, `author` groups exactly the header author's notes; a slug groups
+exactly that author's notes; `all` groups every author present in the namespace, one
+author per group.
 
 ```
  per namespace, one read-only REPEATABLE READ snapshot
@@ -384,7 +402,7 @@ id; deferred notes by id.
 
 ```
 {
-  "params": {"namespace": [...], "threshold", "neighbors", "max_group", "max_group_chars", "limit"},
+  "params": {"namespace": [...], "author": slug or "all", "threshold", "neighbors", "max_group", "max_group_chars", "limit"},
   "procedure_version": "1",
   "namespaces": {
     "<ns>": {
@@ -411,14 +429,14 @@ verdict validator policy, and changes whenever either does.
 ## Consolidation verdicts
 
 `POST /admin/consolidate/verdicts` applies an agent's judgement of issued groups. The
-body's `author` is an author slug; that only the consolidation agent applies verdicts is a
-rule of the [consolidation procedure](consolidation-procedure.md), not of the server. The
+batch and every action it writes are attributed to the request's `X-Author` header; that
+only the scheduled agents apply verdicts is a rule of the
+[consolidation procedure](consolidation-procedure.md), not of the server. The
 server calls no model.
 
 | field | type / range | default |
 |---|---|---|
 | `run_id` | string, 1–100 chars | required |
-| `author` | author slug | required |
 | `model` | string or null; recorded, not checked | null |
 | `dry_run` | boolean | false |
 | `threshold`, `neighbors`, `max_group`, `max_group_chars` | as for the groups route; pass the values the groups were fetched with | as for the groups route |
@@ -454,32 +472,36 @@ The plan runs these checks in order; the first that fails decides the status.
 |---|---|---|
 | 1 | no action has the `idempotency_key` | `duplicate` with the recorded result when the payload hash matches, else `rejected` |
 | 2 | no action has the `group_key`, and no undone action has exactly these members | `cached` |
-| 3 | `group_key` and the sorted `member_ids` equal a group that the groups procedure builds now from the request's group parameters (no `limit`, no cache filter) | `stale`, with `current_groups`: the current groups that share a member, in the groups-route shape |
-| 4 | retire or merge: fewer than `max_actions` retire and merge actions recorded for this `run_id` and namespace; keep is never capped and never counts | `rejected` (`action cap reached`) |
-| 5 | retire: `retire_ids` non-empty, without repeats, all members, and at least one member left | `rejected` |
-| 6 | merge: every member has one kind; `merged_text` passes the note validation (non-blank, at most 4000 chars) and the credential scan; the token check passes | `rejected` |
+| 3 | every member is an active note | `stale` |
+| 4 | the members share one author | `rejected` with the reason `group mixes authors: a, b` |
+| 5 | `group_key` and the sorted `member_ids` equal a group that the groups procedure builds now from the request's group parameters (no `limit`, no cache filter) | `stale`, with `current_groups`: the current groups that share a member, in the groups-route shape |
+| 6 | retire or merge: fewer than `max_actions` retire and merge actions recorded for this `run_id` and namespace; keep is never capped and never counts | `rejected` (`action cap reached`) |
+| 7 | retire: `retire_ids` non-empty, without repeats, all members, and at least one member left | `rejected` |
+| 8 | merge: every member has one kind; `merged_text` passes the note validation (non-blank, at most 4000 chars) and the credential scan; the token check passes | `rejected` |
 
 A merge then resolves its replacement:
 
 | merged text | effect |
 |---|---|
 | equal to a member's text after stripping and collapsing whitespace runs | a retire of the other members into that member; `reason` says so |
-| hashes to an active agent note with the members' kind and exactly the stripped text, not a member | that note is reused and not changed |
+| hashes to an active agent note with the members' kind and exactly the stripped text, not a member | that note is reused and not changed; a note whose `shared` differs from the members' shared rule makes the verdict `stale` |
 | hashes to an archived note | `rejected`: restore that note instead |
 | hashes to any other existing row | `rejected` |
 | hashes to no row | a new replacement note |
 
-The payload hash is the sha256 of the verdict as submitted plus `run_id`, `author`,
+The payload hash is the sha256 of the verdict as submitted plus `run_id`, the request's
+author (the `X-Author` header value),
 `model`, and the four group parameters; `dry_run` and `max_actions` are outside it, so a
 dry run and the apply of one verdict share an idempotency key.
 
 An applied verdict writes, in one transaction: a new replacement through the note insert
 (`ON CONFLICT (id) DO NOTHING`; a conflict rolls the verdict back as `stale`) with the
 members' kind, the sorted union of their tags, the sorted union of their `entities` (a union above ten refuses the verdict as `rejected`), the latest member `occurred_at`, the
-request's `author`, the apply time as its save time, and `merged_from`, `merged_dates`
+members' author, `shared` only when every member is shared, the apply time as its save time, and `merged_from`, `merged_dates`
 (`{id: {"saved", "occurred_at"}}`), and `consolidation_action` in its metadata; each
-archived member gets `archived_at` = the apply time, `archived_by`, and
+archived member gets `archived_at` = the apply time, `archived_by` (the header author), and
 `consolidated_into` (the survivors, or the replacement); and the action row, with the
+header author as its author and the
 archived members' metadata from before the change. A reused replacement and the survivors
 of a retire are not changed. A keep writes the action row only.
 
@@ -517,7 +539,7 @@ inside an identifier (`v2.0` → `v3.1`) pass it.
 
 ## Consolidation undo and actions
 
-`POST /admin/consolidate/undo` takes `{"action_id": int, "author": str}` and runs under the namespace lock with the touched rows locked.
+`POST /admin/consolidate/undo` takes `{"action_id": int}` and runs under the namespace lock with the touched rows locked.
 
 | case | response |
 |---|---|
@@ -591,7 +613,7 @@ checked over the registry as it would be after the batch; a clash is refused wit
 A write runs under the registry advisory lock, held exclusive, so concurrent writes cannot both take a name. A name,
 alias, or description carrying a credential is refused.
 
-**Delete.** `POST /entities/{slug}/delete {author, dry_run?, expect?}` runs in one
+**Delete.** `POST /entities/{slug}/delete {dry_run?, expect?}` runs in one
 transaction under the exclusive registry lock:
 
 | step | effect |
@@ -628,15 +650,16 @@ cannot tell an unattended session from an interactive one; the server instructio
 agent without a user present never to pass `confirmed` and to leave a message instead.
 
 ```
-register_entity(entities, author, confirmed?, delete?, expect?)
+register_entity(entities, confirmed?, delete?, expect?)
   -> GET /entities                 (summary: create / edit old -> new / delete with its plan;
                                     an edit that changes nothing returns `unchanged`)
   -> POST ... dry_run=true         every check runs, nothing is written; a refusal ends here
   -> consent.obtain(prompt)        elicitation dialog | needs_consent | confirmed
-  -> POST /entities {author, consent_method} | /entities/{slug}/delete {author, expect?}
+  -> POST /entities {consent_method} | /entities/{slug}/delete {expect?}
 ```
 
-A request refused by its checks never reaches the user. A write names an `author`, a slug; `import` is recorded as the client states it.
+A request refused by its checks never reaches the user. A write is attributed to the
+request's `X-Author` author; `import` is recorded as the client states it.
 
 An edit that changes `description` carries `base_updated_at`, the `updated_at` of the row it
 was written against (the MCP tool takes it from the registry it read). A value that is not
@@ -653,8 +676,9 @@ agent note it was distilled from; null once that note is deleted), `author`, `cr
 indexes on `entity` and `value_entity` cover the current rows. The table is never embedded
 or searched, and the read-only SQL role has no grant on it.
 
-**Write.** `POST /admin/facts {author, ops, dry_run?}` names the `author` it is
-attributed to; the consolidation procedure, not the server, restricts who writes facts. `ops` holds 1 to 100 items:
+**Write.** `POST /admin/facts {ops, dry_run?}` is
+attributed to the request's `X-Author`; the consolidation procedure, not the server,
+restricts who writes facts. `ops` holds 1 to 100 items:
 `add {entity, attribute, value_text | value_entity, note_id, allow_multiple?}`,
 `replace {id, attribute?, value_text | value_entity, note_id}`, and `remove {id, note_id}`.
 
@@ -679,7 +703,8 @@ incoming}` for any key: `facts` are rows whose `entity` is the slug, `incoming` 
 `include_past` (a closed row carries `archived_at` and `replaced_by`). Rows cover every
 namespace unless narrowed by `namespace`; an
 unknown slug is 404. The MCP tool
-`read_entity` adds `notes`, the 20 newest notes naming the slug from `GET /notes?entity=`,
+`read_entity` adds `notes`, the 20 newest notes naming the slug from `GET /notes?entity=`
+(the caller's default read scope),
 to make the card.
 
 **Deletion.** `delete_notes` archives the current facts that cite a deleted note and clears
@@ -746,7 +771,7 @@ in its metadata; `list_notes` and search hits return it.
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
 | `ts_last_active` | save time; recency ranking and decay, and `since`/`until` when `occurred_at` is null |
 | `occurred_at` | when the remembered event happened; a hit's `date` and the `since`/`until` bound |
-| `metadata` | jsonb: `tags`, `entities`, `author`, `archived_by`, `supersedes`, `source_session`, `replaced_by`, `similar_ack`, `consolidated_into`, `merged_from`, `merged_dates`, `consolidation_action`, `undone_action`, `heading_path`, `content_hash`, `search_ref`, `columns`, … |
+| `metadata` | jsonb: `tags`, `entities`, `author`, `shared`, `archived_by`, `supersedes`, `source_session`, `replaced_by`, `similar_ack`, `consolidated_into`, `merged_from`, `merged_dates`, `consolidation_action`, `undone_action`, `heading_path`, `content_hash`, `search_ref`, `columns`, … |
 | `hit_count`, `last_hit_at`, `archived_at` | lifecycle counters |
 
 `memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,

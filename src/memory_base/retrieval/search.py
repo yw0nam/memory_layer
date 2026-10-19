@@ -214,6 +214,19 @@ def validate_search_options(
     return kind, normalized_tags, normalized_repo, since_ts, until_ts
 
 
+def visible_clause(alias: str, index: int) -> str:
+    """The clause hiding another author's private notes, `$index` being the reader.
+
+    Non-note sources (document chunks, CSV cards) stay visible.
+    """
+    prefix = f"{alias}." if alias else ""
+    return (
+        f"({prefix}source_type <> 'agent_note' "
+        f"OR {prefix}metadata->>'author' = ${index} "
+        f"OR {prefix}metadata @> '{{\"shared\": true}}'::jsonb)"
+    )
+
+
 def history_predicates(
     *,
     include_archived: bool,
@@ -225,10 +238,15 @@ def history_predicates(
     since: float | None = None,
     until: float | None = None,
     author: str | None = None,
+    visible_to: str | None = None,
+    start: int = 1,
 ) -> tuple[str, list[Any]]:
-    """Filter clauses over memory_chunks; placeholders start at $2, $1 being the caller's.
+    """Filter clauses over memory_chunks; placeholders start after `$start`.
 
+    `start` is the index of the caller's last already-bound argument ($1 by default).
     since/until bound when the remembered event happened, falling back to the save time.
+    `visible_to` limits agent notes to that author's own and shared ones; other sources
+    are not notes and stay visible.
     """
     prefix = f"{alias}." if alias else ""
     event_time = f"COALESCE({prefix}occurred_at, {prefix}ts_last_active)"
@@ -238,25 +256,28 @@ def history_predicates(
         clauses.append(f"{prefix}archived_at IS NULL")
     if kind is not None:
         args.append(kind)
-        clauses.append(f"{prefix}chunk_kind = ${len(args) + 1}")
+        clauses.append(f"{prefix}chunk_kind = ${start + len(args)}")
     if tags is not None:
         args.append(tags)
-        clauses.append(f"{prefix}metadata->'tags' ?| ${len(args) + 1}::text[]")
+        clauses.append(f"{prefix}metadata->'tags' ?| ${start + len(args)}::text[]")
     if entity is not None:
         args.append(entity)
-        clauses.append(f"{prefix}metadata->'entities' ? ${len(args) + 1}")
+        clauses.append(f"{prefix}metadata->'entities' ? ${start + len(args)}")
     if namespaces:
         args.append(namespaces)
-        clauses.append(f"{prefix}namespace = ANY(${len(args) + 1}::text[])")
+        clauses.append(f"{prefix}namespace = ANY(${start + len(args)}::text[])")
     if since is not None:
         args.append(since)
-        clauses.append(f"{event_time} >= ${len(args) + 1}")
+        clauses.append(f"{event_time} >= ${start + len(args)}")
     if until is not None:
         args.append(until)
-        clauses.append(f"{event_time} < ${len(args) + 1}")
+        clauses.append(f"{event_time} < ${start + len(args)}")
     if author is not None:
         args.append(author)
-        clauses.append(f"{prefix}metadata->>'author' = ${len(args) + 1}")
+        clauses.append(f"{prefix}metadata->>'author' = ${start + len(args)}")
+    if visible_to is not None:
+        args.append(visible_to)
+        clauses.append(visible_clause(alias, start + len(args)))
     return " AND ".join(clauses) or "true", args
 
 
@@ -334,6 +355,7 @@ async def _search_memory(
     since: float | None = None,
     until: float | None = None,
     author: str | None = None,
+    visible_to: str | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
     schema = PG_SCHEMA if schema is None else schema
@@ -347,6 +369,7 @@ async def _search_memory(
         since=since,
         until=until,
         author=author,
+        visible_to=visible_to,
     )
     columns = (
         "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
@@ -388,6 +411,7 @@ async def _search_memory(
             "tags": metadata.get("tags", []),
             "entities": metadata.get("entities", []),
             "author": metadata.get("author"),
+            "shared": metadata.get("shared") is True,
             "supersedes": metadata.get("supersedes"),
             "source_session": metadata.get("source_session"),
             "namespace": r["namespace"],
@@ -535,6 +559,7 @@ async def search(
     until: str | None = None,
     min_score: float | None = None,
     author: str | None = None,
+    visible_to: str | None = None,
     budget_tokens: int | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
@@ -567,6 +592,7 @@ async def search(
                 since=since_ts,
                 until=until_ts,
                 author=author,
+                visible_to=visible_to,
                 schema=schema,
             )
         hits = _dedup_cap(hits)

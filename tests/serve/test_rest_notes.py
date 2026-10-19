@@ -20,34 +20,42 @@ from memory_base.serve.notes.store import build_note_row, save_note
 NOW = 1_700_000_000.0
 ID_RE = re.compile(r"^note:default:[0-9a-f]{16}$")
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 # ---- id scheme --------------------------------------------------------
 
 
 def test_different_content_different_id():
-    a = build_note_row("prefer ruff for linting", "work", ["test"], NOW)
-    b = build_note_row("prefer black for formatting", "work", ["test"], NOW)
+    a = build_note_row("prefer ruff for linting", "work", ["test"], NOW, author="natsume")
+    b = build_note_row("prefer black for formatting", "work", ["test"], NOW, author="natsume")
     assert a["id"] != b["id"]
 
 
-def test_id_is_the_namespace_and_sha256_of_the_stripped_content():
-    digest = hashlib.sha256(b"prefer ruff for linting").hexdigest()[:16]
-    row = build_note_row("  prefer ruff for linting\n", "work", ["test"], NOW, "team-a")
+def test_id_is_the_namespace_and_sha256_of_the_author_and_stripped_content():
+    digest = hashlib.sha256(b"natsume\nprefer ruff for linting").hexdigest()[:16]
+    row = build_note_row(
+        "  prefer ruff for linting\n", "work", ["test"], NOW, "team-a", author="natsume"
+    )
     assert row["id"] == f"note:team-a:{digest}"
 
 
 def test_default_namespace_id_is_namespace_qualified_like_every_other():
-    omitted = build_note_row("distilled content", "work", ["test"], NOW)
-    explicit_default = build_note_row("distilled content", "work", ["test"], NOW, "default")
+    omitted = build_note_row("distilled content", "work", ["test"], NOW, author="natsume")
+    explicit_default = build_note_row(
+        "distilled content", "work", ["test"], NOW, "default", author="natsume"
+    )
     assert omitted["id"] == explicit_default["id"]
     assert ID_RE.match(omitted["id"])
 
 
 def test_same_content_different_namespace_different_id():
-    default_row = build_note_row("distilled content", "work", ["test"], NOW, "default")
-    team_row = build_note_row("distilled content", "work", ["test"], NOW, "team-a")
+    default_row = build_note_row(
+        "distilled content", "work", ["test"], NOW, "default", author="natsume"
+    )
+    team_row = build_note_row(
+        "distilled content", "work", ["test"], NOW, "team-a", author="natsume"
+    )
     assert default_row["id"] != team_row["id"]
 
 
@@ -55,7 +63,7 @@ def test_same_content_different_namespace_different_id():
 
 
 def test_row_shape_exact_keys_no_embedding():
-    row = build_note_row("distilled memory content", "work", ["test"], NOW)
+    row = build_note_row("distilled memory content", "work", ["test"], NOW, author="natsume")
     assert set(row) == {
         "id",
         "source_type",
@@ -73,7 +81,7 @@ def test_row_shape_exact_keys_no_embedding():
 
 def test_row_field_values():
     content = "the burst gate uses a weighted signal sum"
-    row = build_note_row(content, "work", ["test"], NOW)
+    row = build_note_row(content, "work", ["test"], NOW, author="natsume")
     assert row["source_type"] == "agent_note"
     assert row["source_ref"] == "save_memory"
     assert row["kind"] == "work"
@@ -84,11 +92,18 @@ def test_row_field_values():
 
 
 def test_tags_land_in_metadata():
-    row = build_note_row("content with tags", "work", ["infra", "db"], NOW)
-    assert row["metadata"] == {"tags": ["infra", "db"]}
+    row = build_note_row("content with tags", "work", ["infra", "db"], NOW, author="natsume")
+    assert row["metadata"] == {"tags": ["infra", "db"], "author": "natsume"}
 
 
-# ---- REST: author is required and a slug ------------------------------
+def test_shared_lands_in_metadata_only_when_true():
+    shared = build_note_row("shared content", "work", ["test"], NOW, author="natsume", shared=True)
+    private = build_note_row("private content", "work", ["test"], NOW, author="natsume")
+    assert shared["metadata"]["shared"] is True
+    assert "shared" not in private["metadata"]
+
+
+# ---- REST: the author comes from the X-Author header ------------------
 
 
 async def _fake_save_note(
@@ -101,6 +116,7 @@ async def _fake_save_note(
     occurred_at=None,
     author=None,
     allow_similar=False,
+    shared=False,
 ):
     return {
         "id": "note:aaaaaaaaaaaaaaaa",
@@ -112,18 +128,7 @@ async def _fake_save_note(
     }
 
 
-@pytest.mark.parametrize("author", [None, "   ", "Not A Slug"])
-def test_save_memory_missing_or_malformed_author_400(monkeypatch, author):
-    monkeypatch.setattr(store, "save_note", _fake_save_note)
-    body = {"content": "distilled note text", "kind": "work"}
-    if author is not None:
-        body["author"] = author
-    response = client.post("/save_memory", json=body)
-    assert response.status_code == 400
-    assert response.json()["error"] == "author must be an author slug"
-
-
-def test_save_memory_forwards_the_author_to_save_note(monkeypatch):
+def test_save_memory_forwards_the_header_author_to_save_note(monkeypatch):
     captured = {}
 
     async def fake_save_note(content, **kwargs):
@@ -137,12 +142,65 @@ def test_save_memory_forwards_the_author_to_save_note(monkeypatch):
         }
 
     monkeypatch.setattr(store, "save_note", fake_save_note)
-    response = client.post(
-        "/save_memory",
-        json={"author": "claude-code", "content": "distilled note text", "kind": "work"},
-    )
+    response = client.post("/save_memory", json={"content": "distilled note text", "kind": "work"})
     assert response.status_code == 200
     assert captured["author"] == "claude-code"
+
+
+def test_save_memory_body_author_is_refused(monkeypatch):
+    async def fake_save_note(content, **kwargs):
+        raise AssertionError("a body author must be refused before any save")
+
+    monkeypatch.setattr(store, "save_note", fake_save_note)
+    response = client.post(
+        "/save_memory",
+        json={"author": "natsume", "content": "distilled note text", "kind": "work"},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "author comes from the X-Author header"
+
+
+def test_save_memory_forwards_shared(monkeypatch):
+    captured = {}
+
+    async def fake_save_note(content, **kwargs):
+        captured.update(kwargs)
+        return {"id": "note:x", "kind": "work", "stored": True, "superseded": None, "similar": []}
+
+    monkeypatch.setattr(store, "save_note", fake_save_note)
+    assert (
+        client.post(
+            "/save_memory", json={"content": "distilled note text", "kind": "work", "shared": True}
+        ).status_code
+        == 200
+    )
+    assert captured["shared"] is True
+
+
+def test_save_memory_shared_defaults_to_false(monkeypatch):
+    captured = {}
+
+    async def fake_save_note(content, **kwargs):
+        captured.update(kwargs)
+        return {"id": "note:x", "kind": "work", "stored": True, "superseded": None, "similar": []}
+
+    monkeypatch.setattr(store, "save_note", fake_save_note)
+    assert (
+        client.post(
+            "/save_memory", json={"content": "distilled note text", "kind": "work"}
+        ).status_code
+        == 200
+    )
+    assert captured["shared"] is False
+
+
+@pytest.mark.parametrize("shared", ["yes", 1, None])
+def test_save_memory_non_boolean_shared_400(shared):
+    response = client.post(
+        "/save_memory", json={"content": "distilled note text", "kind": "work", "shared": shared}
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "shared must be a boolean"
 
 
 # ---- save_note namespace gating (no DB/network) ----------------------------
@@ -206,14 +264,22 @@ def test_save_note_rejects_unregistered_namespace(monkeypatch):
     conn = FakeConnection(registered=False)
     _patch_note_deps(monkeypatch, conn)
     with pytest.raises(ValueError, match="unregistered namespace"):
-        asyncio.run(save_note("distilled content", tags=["test"], kind="work", namespace="ghost"))
+        asyncio.run(
+            save_note(
+                "distilled content", tags=["test"], kind="work", namespace="ghost", author="natsume"
+            )
+        )
     assert conn.insert_args is None
 
 
 def test_save_note_stamps_namespace_column_on_insert(monkeypatch):
     conn = FakeConnection(registered=True)
     _patch_note_deps(monkeypatch, conn)
-    asyncio.run(save_note("distilled content", tags=["test"], kind="work", namespace="team-a"))
+    asyncio.run(
+        save_note(
+            "distilled content", tags=["test"], kind="work", namespace="team-a", author="natsume"
+        )
+    )
     assert conn.insert_args is not None
     assert "team-a" in conn.insert_args
 
@@ -221,5 +287,5 @@ def test_save_note_stamps_namespace_column_on_insert(monkeypatch):
 def test_save_note_defaults_to_default_namespace(monkeypatch):
     conn = FakeConnection(registered=True)
     _patch_note_deps(monkeypatch, conn)
-    asyncio.run(save_note("distilled content", tags=["test"], kind="work"))
+    asyncio.run(save_note("distilled content", tags=["test"], kind="work", author="natsume"))
     assert "default" in conn.insert_args

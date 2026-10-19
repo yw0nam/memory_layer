@@ -21,7 +21,7 @@ def _post(path, **kwargs):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app),
             base_url="http://testserver",
-            headers={"X-API-Key": "test-key"},
+            headers={"X-API-Key": "test-key", "X-Author": "claude-code"},
         ) as client:
             return await client.post(path, **kwargs)
 
@@ -33,7 +33,7 @@ def _delete(path):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api.app),
             base_url="http://testserver",
-            headers={"X-API-Key": "test-key"},
+            headers={"X-API-Key": "test-key", "X-Author": "claude-code"},
         ) as client:
             return await client.delete(path)
 

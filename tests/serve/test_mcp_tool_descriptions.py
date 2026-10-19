@@ -22,6 +22,28 @@ def descriptions() -> dict[str, str]:
     return asyncio.run(_run())
 
 
+@pytest.fixture(scope="module")
+def schemas() -> dict[str, dict]:
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    async def _run():
+        async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
+            result = await client.list_tools()
+            return {tool.name: tool.inputSchema for tool in result.tools}
+
+    return asyncio.run(_run())
+
+
+@pytest.mark.parametrize(
+    "name", ["search_memory", "list_notes", "list_memory_duplicates", "read_entity"]
+)
+def test_the_author_argument_states_the_three_way_scope(schemas, name):
+    assert schemas[name]["properties"]["author"]["description"] == (
+        'Omitted: your own notes and shared notes. "all": every agent\'s notes. '
+        "A slug: that agent's notes only."
+    )
+
+
 def test_search_tools_state_the_rerank_cap_on_top_k(descriptions):
     for name in ("search", "search_code", "search_memory"):
         assert f"at most {RERANK_TOP}" in descriptions[name], name
@@ -37,8 +59,12 @@ def test_query_table_names_the_top_level_columns_field(descriptions):
     assert "`columns`" in descriptions["query_table"]
 
 
-def test_list_notes_mentions_author(descriptions):
-    assert "author" in descriptions["list_notes"]
+def test_save_memory_states_the_shared_flag(descriptions):
+    assert "shared" in descriptions["save_memory"]
+
+
+def test_search_states_note_hits_are_own_and_shared(descriptions):
+    assert "your own and shared notes" in descriptions["search"]
 
 
 def test_remove_document_states_it_deletes_the_table_rows(descriptions):

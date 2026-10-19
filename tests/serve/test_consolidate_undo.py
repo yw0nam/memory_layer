@@ -16,7 +16,7 @@ from starlette.testclient import TestClient
 from memory_base.serve import api
 from memory_base.serve.consolidation import verdicts
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 NS = "work"
 A, B, C = "note:work:a", "note:work:b", "note:work:c"
@@ -50,7 +50,7 @@ def action_row(**over):
 
 
 def archived(note_id, into=(R,), at=APPLIED_AT):
-    metadata = {**PRIOR[note_id], "archived_by": "consolidator", "consolidated_into": list(into)}
+    metadata = {**PRIOR[note_id], "archived_by": "claude-code", "consolidated_into": list(into)}
     return {"id": note_id, "archived_at": at, "metadata": json.dumps(metadata)}
 
 
@@ -181,7 +181,7 @@ class UndoConn:
         return [c for c in self.calls if c[0] == "execute" and "UPDATE" in c[1]]
 
 
-def _undo(monkeypatch, conn, author="consolidator"):
+def _undo(monkeypatch, conn, author="claude-code"):
     @asynccontextmanager
     async def acquire(timeout=None):
         yield conn
@@ -200,7 +200,7 @@ def test_undo_restores_prior_metadata_exactly_and_archives_the_created_replaceme
     assert result["action_id"] == 5
     assert result["restored_ids"] == [A, B, C]
     assert result["archived_ids"] == [R]
-    assert result["undone_by"] == "consolidator"
+    assert result["undone_by"] == "claude-code"
     assert result["undone_at"].endswith("+00:00")
     lock = next(c for c in conn.calls if c[0] == "execute" and c[2])
     assert "pg_advisory_xact_lock" in lock[1] and lock[2] == (NS,)
@@ -210,7 +210,7 @@ def test_undo_restores_prior_metadata_exactly_and_archives_the_created_replaceme
     assert {c[2][0]: json.loads(c[2][1]) for c in restores} == PRIOR
     assert json.loads(next(c for c in restores if c[2][0] == A)[2][1])["entities"] == ["kuro"]
     [archive] = [c for c in conn.writes() if "'undone_action'" in c[1]]
-    assert archive[2][0] == R and "consolidator" in archive[2] and 5 in archive[2]
+    assert archive[2][0] == R and "claude-code" in archive[2] and 5 in archive[2]
     [record] = [c for c in conn.writes() if "consolidation_actions" in c[1]]
     assert json.loads(next(a for a in record[2] if isinstance(a, str) and a.startswith("{"))) == (
         result
@@ -300,11 +300,10 @@ def undo_calls(monkeypatch):
 @pytest.mark.parametrize(
     "raw",
     [
-        {"author": "consolidator"},
-        {"action_id": True, "author": "consolidator"},
-        {"action_id": 0, "author": "consolidator"},
-        {"action_id": 5, "author": ""},
-        {"action_id": 5, "author": "consolidator", "confirm": True},
+        {},
+        {"action_id": True},
+        {"action_id": 0},
+        {"action_id": 5, "confirm": True},
     ],
 )
 def test_undo_route_rejects_a_bad_body(monkeypatch, undo_calls, raw):
@@ -319,20 +318,16 @@ def test_undo_route_rejects_a_bad_body(monkeypatch, undo_calls, raw):
 )
 def test_undo_route_maps_errors(monkeypatch, undo_calls, error, status):
     undo_calls[1]["raise"] = error
-    response = client.post(
-        "/admin/consolidate/undo", json={"action_id": 5, "author": "consolidator"}
-    )
+    response = client.post("/admin/consolidate/undo", json={"action_id": 5})
     assert response.status_code == status
     assert response.json() == {"error": str(error)}
 
 
 def test_undo_route_returns_the_undo_result(monkeypatch, undo_calls):
-    response = client.post(
-        "/admin/consolidate/undo", json={"action_id": 5, "author": "consolidator"}
-    )
+    response = client.post("/admin/consolidate/undo", json={"action_id": 5})
     assert response.status_code == 200
     assert response.json() == {"action_id": 5}
-    assert undo_calls[0] == [(5, "consolidator")]
+    assert undo_calls[0] == [(5, "claude-code")]
 
 
 @pytest.fixture()
@@ -394,7 +389,7 @@ class ListingConn:
 def test_list_actions_returns_actions_newest_first_with_the_notes_they_reference(monkeypatch):
     stored = action_row(
         payload_hash="f" * 64, idempotency_key="k-1", run_id="run-1", group_key="g" * 64,
-        author="consolidator", model="m", reason="same rule",
+        author="claude-code", model="m", reason="same rule",
         result=json.dumps({"status": "applied"}),
     )  # fmt: skip
     note_rows = [
@@ -407,7 +402,7 @@ def test_list_actions_returns_actions_newest_first_with_the_notes_they_reference
                     "author": "claude-code",
                     "tags": ["deploy"],
                     "consolidated_into": [R],
-                    "archived_by": "consolidator",
+                    "archived_by": "claude-code",
                     "similar_ack": [B],
                 }
             ),  # fmt: skip
@@ -421,7 +416,7 @@ def test_list_actions_returns_actions_newest_first_with_the_notes_they_reference
             "text": "merged",
             "metadata": json.dumps(
                 {
-                    "author": "consolidator",
+                    "author": "claude-code",
                     "tags": ["deploy"],
                     "merged_from": [A, B, C],
                     "consolidation_action": 5,
@@ -465,7 +460,7 @@ def test_list_actions_returns_actions_newest_first_with_the_notes_they_reference
         "occurred_at": None,
         "archived": True,
         "consolidated_into": [R],
-        "archived_by": "consolidator",
+        "archived_by": "claude-code",
     }
     assert out["notes"][R]["merged_from"] == [A, B, C]
     assert out["notes"][R]["consolidation_action"] == 5

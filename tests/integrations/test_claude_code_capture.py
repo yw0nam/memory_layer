@@ -221,6 +221,15 @@ def test_hooks_and_mcp_reference_only_the_plugin_root_and_user_config():
             "CLAUDE_PLUGIN_ROOT",
             "user_config.mcp_url",
             "user_config.api_key",
+            "user_config.author",
         }
     events = json.loads((PLUGIN / "hooks/hooks.json").read_text())["hooks"]
     assert set(events) == {"SessionStart", "UserPromptSubmit", "Stop"}
+
+
+def test_the_mcp_server_config_sends_the_key_and_the_author_headers():
+    servers = json.loads((PLUGIN / ".mcp.json").read_text())["mcpServers"]
+    assert servers["memory-base"]["headers"] == {
+        "X-API-Key": "${user_config.api_key}",
+        "X-Author": "${user_config.author}",
+    }

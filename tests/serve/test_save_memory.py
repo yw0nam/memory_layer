@@ -10,6 +10,7 @@ row they insert so reruns stay stable.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -30,7 +31,7 @@ NOW = 1_700_000_000.0
 @pytest.mark.parametrize("missing_tags", [None, [], ["", "  "]])
 def test_missing_tags_rejected(missing_tags):
     with pytest.raises(ValueError, match="tags must be a non-empty list of strings"):
-        build_note_row("content without tags", "work", missing_tags, NOW)
+        build_note_row("content without tags", "work", missing_tags, NOW, author="natsume")
 
 
 def test_tags_are_normalized_and_deduplicated():
@@ -39,23 +40,26 @@ def test_tags_are_normalized_and_deduplicated():
         "work",
         [" Infrastructure ", "DATABASE", "infrastructure", "  "],
         NOW,
+        author="natsume",
     )
-    assert row["metadata"] == {"tags": ["infrastructure", "database"]}
+    assert row["metadata"] == {"tags": ["infrastructure", "database"], "author": "natsume"}
+
+
+def test_build_note_row_requires_an_author():
+    with pytest.raises(TypeError, match="author"):
+        build_note_row("content without an author", "work", ["test"], NOW)
 
 
 def test_author_lands_in_metadata():
-    row = build_note_row("content with an author", "work", ["test"], NOW, "default", "natsume")
+    row = build_note_row(
+        "content with an author", "work", ["test"], NOW, "default", author="natsume"
+    )
     assert row["metadata"]["author"] == "natsume"
 
 
-def test_author_omitted_leaves_no_author_in_metadata():
-    row = build_note_row("content without an author", "work", ["test"], NOW)
-    assert "author" not in row["metadata"]
-
-
-def test_author_does_not_participate_in_the_id():
-    a = build_note_row("shared content", "work", ["test"], NOW, "default", "natsume")
-    b = build_note_row("shared content", "work", ["test"], NOW, "default", "claude-code")
+def test_the_same_text_saved_twice_by_one_author_is_one_id():
+    a = build_note_row("shared content", "work", ["test"], NOW, "default", author="natsume")
+    b = build_note_row(" shared content\n", "work", ["test"], NOW, "default", author="natsume")
     assert a["id"] == b["id"]
 
 
@@ -93,10 +97,10 @@ async def _count(note_id: str) -> int:
 @pytest.mark.integration
 def test_save_memory_stores_row_in_db(rest_in_process):
     content = "save_memory integration: notes are stored without LLM distillation"
-    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW, author="claude-code")["id"]
     asyncio.run(_delete(note_id))
     try:
-        result = asyncio.run(save_memory(content, "natsume", tags=["pytest"], kind="work"))
+        result = asyncio.run(save_memory(content, tags=["pytest"], kind="work"))
         assert result["id"] == note_id
         assert result["stored"] is True
 
@@ -115,11 +119,11 @@ def test_save_memory_stores_row_in_db(rest_in_process):
 @pytest.mark.integration
 def test_save_memory_duplicate_is_noop(rest_in_process):
     content = "save_memory integration: re-saving identical content is idempotent"
-    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW, author="claude-code")["id"]
     asyncio.run(_delete(note_id))
     try:
-        first = asyncio.run(save_memory(content, "natsume", tags=["test"], kind="work"))
-        second = asyncio.run(save_memory(content, "natsume", tags=["test"], kind="work"))
+        first = asyncio.run(save_memory(content, tags=["test"], kind="work"))
+        second = asyncio.run(save_memory(content, tags=["test"], kind="work"))
         assert first["stored"] is True
         assert second["stored"] is False
         assert asyncio.run(_count(note_id)) == 1
@@ -130,10 +134,10 @@ def test_save_memory_duplicate_is_noop(rest_in_process):
 @pytest.mark.integration
 def test_saved_note_found_by_search(rest_in_process):
     content = "save_memory integration: pgvector halfvec powers hybrid retrieval search"
-    note_id = build_note_row(content, "work", ["test"], NOW)["id"]
+    note_id = build_note_row(content, "work", ["test"], NOW, author="claude-code")["id"]
     asyncio.run(_delete(note_id))
     try:
-        asyncio.run(save_memory(content, "natsume", tags=["test"], kind="work"))
+        asyncio.run(save_memory(content, tags=["test"], kind="work"))
         hits = asyncio.run(search(content, source="memory", rerank=False))
         assert any(h.meta.get("id") == note_id for h in hits)
     finally:
@@ -141,22 +145,64 @@ def test_saved_note_found_by_search(rest_in_process):
 
 
 @pytest.mark.integration
+def test_save_memory_stores_the_header_author_and_shared_flag(rest_in_process):
+    content = "save_memory integration: the header author and the shared flag land on the row"
+    note_id = build_note_row(content, "work", ["test"], NOW, author="claude-code")["id"]
+    asyncio.run(_delete(note_id))
+    try:
+        result = asyncio.run(save_memory(content, tags=["test"], kind="work", shared=True))
+        assert result["id"] == note_id
+        row = asyncio.run(_fetchrow(note_id))
+        metadata = json.loads(row["metadata"])
+        assert metadata["author"] == "claude-code"
+        assert metadata["shared"] is True
+    finally:
+        asyncio.run(_delete(note_id))
+
+
+@pytest.mark.integration
+def test_the_same_text_from_two_authors_are_two_notes(rest_in_process):
+    content = "save_memory integration: two personas saving one sentence"
+    mine = build_note_row(content, "work", ["test"], NOW, author="natsume")["id"]
+    theirs = build_note_row(content, "work", ["test"], NOW, author="claude-code")["id"]
+    assert mine != theirs
+    asyncio.run(_delete(mine))
+    asyncio.run(_delete(theirs))
+    try:
+        asyncio.run(save_memory(content, tags=["test"], kind="work"))
+        asyncio.run(save_note(content, tags=["test"], kind="work", author="natsume"))
+        assert asyncio.run(_count(mine)) == 1
+        assert asyncio.run(_count(theirs)) == 1
+    finally:
+        asyncio.run(_delete(mine))
+        asyncio.run(_delete(theirs))
+
+
+@pytest.mark.integration
 def test_same_content_two_namespaces_are_independent_rows():
     """Regression: identical content saved into two namespaces must not collide
     on id and silently no-op the second namespace's save (issue #81 review)."""
     content = "namespace independence regression: zzz_ns_dedup_marker unique text"
-    default_id = build_note_row(content, "work", ["test"], NOW, "default")["id"]
-    team_id = build_note_row(content, "work", ["test"], NOW, "team-ns-dedup-test")["id"]
+    default_id = build_note_row(content, "work", ["test"], NOW, "default", author="claude-code")[
+        "id"
+    ]
+    team_id = build_note_row(
+        content, "work", ["test"], NOW, "team-ns-dedup-test", author="claude-code"
+    )["id"]
     assert default_id != team_id
 
     async def scenario():
         await namespaces.create_namespace("team-ns-dedup-test")
         try:
             result_default = await save_note(
-                content, tags=["test"], kind="work", namespace="default"
+                content, tags=["test"], kind="work", namespace="default", author="claude-code"
             )
             result_team = await save_note(
-                content, tags=["test"], kind="work", namespace="team-ns-dedup-test"
+                content,
+                tags=["test"],
+                kind="work",
+                namespace="team-ns-dedup-test",
+                author="claude-code",
             )
             assert result_default["stored"] is True
             assert result_team["stored"] is True

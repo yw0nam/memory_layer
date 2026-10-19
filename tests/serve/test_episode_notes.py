@@ -24,20 +24,22 @@ from memory_base.serve.notes.store import build_note_row, save_note
 
 NOW = 1_700_000_000.0  # 2023-11-14T22:13:20Z
 
-client = TestClient(api.app, headers={"X-API-Key": "test-key"})
+client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
 # ---- pure: personal is a valid kind -----------------------------------------
 
 
 def test_personal_kind_accepted():
-    row = build_note_row("met alice for lunch and discussed the roadmap", "personal", ["test"], NOW)
+    row = build_note_row(
+        "met alice for lunch and discussed the roadmap", "personal", ["test"], NOW, author="natsume"
+    )
     assert row["kind"] == "personal"
 
 
 def test_unknown_kind_still_rejected():
     with pytest.raises(ValueError, match="kind must be one of"):
-        build_note_row("valid content", "reminder", None, NOW)
+        build_note_row("valid content", "reminder", None, NOW, author="natsume")
 
 
 # ---- save_note occurred_at gating (no DB/network) --------------------------
@@ -97,7 +99,13 @@ def test_occurred_at_is_stored_apart_from_the_save_time(monkeypatch):
     _patch_note_deps(monkeypatch, conn)
     monkeypatch.setattr(store.time, "time", lambda: NOW)
     asyncio.run(
-        save_note("distilled content", tags=["test"], kind="personal", occurred_at="2020-01-01")
+        save_note(
+            "distilled content",
+            tags=["test"],
+            kind="personal",
+            occurred_at="2020-01-01",
+            author="natsume",
+        )
     )
     expected = datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp()
     assert conn.insert_args[8] == NOW
@@ -108,7 +116,7 @@ def test_occurred_at_omitted_stores_none(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
     monkeypatch.setattr(store.time, "time", lambda: NOW)
-    asyncio.run(save_note("distilled content", tags=["test"], kind="personal"))
+    asyncio.run(save_note("distilled content", tags=["test"], kind="personal", author="natsume"))
     assert conn.insert_args[11] is None
 
 
@@ -116,7 +124,7 @@ def test_occurred_at_omitted_uses_current_time(monkeypatch):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
     monkeypatch.setattr(store.time, "time", lambda: NOW)
-    asyncio.run(save_note("distilled content", tags=["test"], kind="personal"))
+    asyncio.run(save_note("distilled content", tags=["test"], kind="personal", author="natsume"))
     assert conn.insert_args[8] == NOW
 
 
@@ -126,7 +134,13 @@ def test_occurred_at_malformed_rejected(monkeypatch):
     monkeypatch.setattr(store.time, "time", lambda: NOW)
     with pytest.raises(ValueError):
         asyncio.run(
-            save_note("distilled content", tags=["test"], kind="personal", occurred_at="not-a-date")
+            save_note(
+                "distilled content",
+                tags=["test"],
+                kind="personal",
+                occurred_at="not-a-date",
+                author="natsume",
+            )
         )
     assert conn.insert_args is None
 
@@ -137,7 +151,13 @@ def test_occurred_at_in_future_rejected(monkeypatch):
     monkeypatch.setattr(store.time, "time", lambda: NOW)
     with pytest.raises(ValueError, match="future"):
         asyncio.run(
-            save_note("distilled content", tags=["test"], kind="personal", occurred_at="2024-01-01")
+            save_note(
+                "distilled content",
+                tags=["test"],
+                kind="personal",
+                occurred_at="2024-01-01",
+                author="natsume",
+            )
         )
     assert conn.insert_args is None
 
@@ -147,9 +167,15 @@ def test_occurred_at_does_not_change_content_hash_id(monkeypatch):
     _patch_note_deps(monkeypatch, conn)
     monkeypatch.setattr(store.time, "time", lambda: NOW)
     content = "backfilled episode: shipped the search fix"
-    plain_id = build_note_row(content, "personal", ["test"], NOW)["id"]
+    plain_id = build_note_row(content, "personal", ["test"], NOW, author="natsume")["id"]
     result = asyncio.run(
-        save_note(content, tags=["test"], kind="personal", occurred_at="2020-01-01")
+        save_note(
+            content,
+            tags=["test"],
+            kind="personal",
+            occurred_at="2020-01-01",
+            author="natsume",
+        )
     )
     assert result["id"] == plain_id
 
@@ -171,6 +197,7 @@ def test_save_memory_forwards_occurred_at_to_save_note(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         captured["occurred_at"] = occurred_at
@@ -180,7 +207,6 @@ def test_save_memory_forwards_occurred_at_to_save_note(monkeypatch):
     response = client.post(
         "/save_memory",
         json={
-            "author": "natsume",
             "content": "distilled text",
             "kind": "personal",
             "occurred_at": "2023-06-01",
@@ -204,15 +230,14 @@ def test_save_memory_omitted_occurred_at_forwards_none(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         captured["occurred_at"] = occurred_at
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
 
     monkeypatch.setattr(store, "save_note", fake_save_note)
-    response = client.post(
-        "/save_memory", json={"author": "natsume", "content": "distilled text", "kind": "personal"}
-    )
+    response = client.post("/save_memory", json={"content": "distilled text", "kind": "personal"})
     assert response.status_code == 200
     assert captured["occurred_at"] is None
 
@@ -221,7 +246,6 @@ def test_save_memory_null_occurred_at_400():
     response = client.post(
         "/save_memory",
         json={
-            "author": "natsume",
             "content": "distilled text",
             "kind": "personal",
             "occurred_at": None,
@@ -243,6 +267,7 @@ def test_save_memory_malformed_occurred_at_400(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         raise ValueError(f"invalid ISO 8601 timestamp: {occurred_at!r}")
@@ -251,7 +276,6 @@ def test_save_memory_malformed_occurred_at_400(monkeypatch):
     response = client.post(
         "/save_memory",
         json={
-            "author": "natsume",
             "content": "distilled text",
             "kind": "personal",
             "occurred_at": "nonsense",
@@ -273,6 +297,7 @@ def test_save_memory_future_occurred_at_400(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         raise ValueError("occurred_at must not be in the future")
@@ -281,7 +306,6 @@ def test_save_memory_future_occurred_at_400(monkeypatch):
     response = client.post(
         "/save_memory",
         json={
-            "author": "natsume",
             "content": "distilled text",
             "kind": "personal",
             "occurred_at": "2999-01-01",
@@ -305,6 +329,7 @@ def test_save_memory_personal_kind_delegates_to_save_note(monkeypatch):
         occurred_at=None,
         author=None,
         allow_similar=False,
+        shared=False,
         source_session=None,
     ):
         captured["kind"] = kind
@@ -313,7 +338,7 @@ def test_save_memory_personal_kind_delegates_to_save_note(monkeypatch):
     monkeypatch.setattr(store, "save_note", fake_save_note)
     response = client.post(
         "/save_memory",
-        json={"author": "natsume", "content": "caught up with the team today", "kind": "personal"},
+        json={"content": "caught up with the team today", "kind": "personal"},
     )
     assert response.status_code == 200
     assert captured["kind"] == "personal"
@@ -354,7 +379,6 @@ def test_mcp_save_memory_posts_occurred_at_in_body(monkeypatch):
     asyncio.run(
         save_memory(
             "caught up with the team today",
-            "natsume",
             tags=["test"],
             occurred_at="2023-06-01",
             kind="personal",
@@ -381,5 +405,5 @@ def test_mcp_save_memory_omits_occurred_at_when_not_given(monkeypatch):
         )
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(save_memory("plain note", "natsume", tags=["test"], kind="personal"))
+    asyncio.run(save_memory("plain note", tags=["test"], kind="personal"))
     assert "occurred_at" not in captured["json"]

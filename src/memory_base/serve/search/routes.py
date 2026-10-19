@@ -15,6 +15,7 @@ from memory_base.retrieval.search import search
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.common.http import error
 from memory_base.serve.common.http import json_body
+from memory_base.serve.common.http import note_scope
 from memory_base.serve.notes.store import note_date
 from memory_base.serve.search import access_log
 
@@ -58,6 +59,8 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         out["archived"] = True
     if hit.meta.get("author"):
         out["author"] = hit.meta["author"]
+    if hit.meta.get("shared"):
+        out["shared"] = True
     if hit.meta.get("supersedes") is not None:
         out["supersedes"] = hit.meta["supersedes"]
     if hit.meta.get("source_session") is not None:
@@ -115,9 +118,10 @@ async def search_route(request: Request) -> JSONResponse:
     if "until" in body and body["until"] is None:
         return error("until must be an ISO 8601 date or datetime string")
     if "author" in body and body["author"] is None:
-        return error("author must be a non-empty string")
+        return error('author must be an author slug or "all"')
     try:
         requested_namespaces = normalize_namespaces(body.get("namespaces"))
+        author, visible_to = note_scope(request.state.author, body.get("author"))
         options: dict[str, Any] = {
             "source": source,
             "include_archived": include_archived,
@@ -134,8 +138,10 @@ async def search_route(request: Request) -> JSONResponse:
             options["until"] = body["until"]
         if "min_score" in body:
             options["min_score"] = body["min_score"]
-        if "author" in body:
-            options["author"] = body["author"]
+        if author is not None:
+            options["author"] = author
+        if visible_to is not None:
+            options["visible_to"] = visible_to
         if budget_tokens is not None:
             options["budget_tokens"] = budget_tokens
         if requested_namespaces is not None:

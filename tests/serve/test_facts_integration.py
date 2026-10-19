@@ -16,7 +16,7 @@ from memory_base.serve import api
 
 pytestmark = pytest.mark.integration
 
-HEADERS = {"X-API-Key": "test-key"}
+HEADERS = {"X-API-Key": "test-key", "X-Author": "claude-code"}
 
 
 def test_facts_are_written_read_from_both_sides_replaced_and_archived_with_their_note(
@@ -55,7 +55,7 @@ def test_facts_are_written_read_from_both_sides_replaced_and_archived_with_their
                 async def write(*ops):
                     response = await client.post(
                         "/admin/facts",
-                        json={"author": "consolidator", "ops": list(ops)},
+                        json={"ops": list(ops)},
                         headers=HEADERS,
                     )
                     assert response.status_code == 200, response.text

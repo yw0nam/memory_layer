@@ -61,7 +61,6 @@ async def list_entities(ctx: Context | None = None) -> dict[str, Any]:
 
 async def register_entity(
     entities: list[dict[str, Any]],
-    author: str,
     confirmed: bool = False,
     delete: bool = False,
     expect: dict[str, int] | None = None,
@@ -86,21 +85,20 @@ async def register_entity(
     The user is an entity of kind person; a project entity carries its repository origin
     among its aliases. For a person the description says who they are; for an agent it holds
     the user's standing directions to that agent, including its `Remember` and `Don't
-    remember` lines, and only the agent's own description governs it. `author` is your
-    declared author slug.
+    remember` lines, and only the agent's own description governs it.
     """
     headers = rest_client.auth_headers(ctx)
     current = await rest_client.call("GET", "/entities", headers=headers)
     registry = {row["slug"]: row for row in current["entities"]}
     if delete:
-        return await _delete(entities, author, confirmed, expect, registry, headers, ctx)
+        return await _delete(entities, confirmed, expect, registry, headers, ctx)
     entities = [_based(item, registry.get(item["slug"])) for item in entities]
     pairs = [(item, _line(item, registry.get(item["slug"]))) for item in entities]
     entities = [item for item, line in pairs if line is not None]
     if not entities:
         return {"status": "unchanged"}
     summary = "\n".join(line for _, line in pairs if line is not None)
-    body = {"author": author, "entities": entities}
+    body = {"entities": entities}
     await rest_client.call(
         "POST",
         "/entities",
@@ -117,7 +115,6 @@ async def register_entity(
 
 async def _delete(
     entities: list[dict[str, Any]],
-    author: str,
     confirmed: bool,
     expect: dict[str, int] | None,
     registry: dict[str, dict[str, Any]],
@@ -131,13 +128,11 @@ async def _delete(
         raise ValueError("a confirmed delete needs expect, the counts of the summary")
     slug = entities[0]["slug"]
     path = f"/entities/{slug}/delete"
-    plan = await rest_client.call(
-        "POST", path, json={"author": author, "dry_run": True}, headers=headers
-    )
+    plan = await rest_client.call("POST", path, json={"dry_run": True}, headers=headers)
     counts = {key: plan[key] for key in ("notes", "facts", "incoming")}
     summary = _delete_summary(slug, registry[slug]["name"], plan)
     result = await consent.obtain(ctx, f"{PROMPT_HEADER}\n{summary}", confirmed)
     if isinstance(result, consent.NeedsConsent):
         return {"status": "needs_consent", "summary": summary, "expect": counts}
-    body = {"author": author, "expect": counts if result.method == "elicitation" else expect}
+    body = {"expect": counts if result.method == "elicitation" else expect}
     return await rest_client.call("POST", path, json=body, headers=headers)

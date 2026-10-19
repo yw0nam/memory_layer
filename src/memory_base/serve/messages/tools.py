@@ -21,7 +21,6 @@ def _message_uuid(message_id: Any) -> str:
 async def send_message(
     subject: str,
     result: str,
-    author: str,
     status: str = "info",
     next_step: str | None = None,
     verification: dict[str, str] | None = None,
@@ -46,7 +45,7 @@ async def send_message(
     `verification`, when given, is exactly {command, status, result} with
     status "passed", "failed", or "not_run". `refs` holds at most 10 absolute
     https URLs; localhost, private/loopback IP literals, and file URLs are
-    rejected. `author` is your author slug.
+    rejected.
     `idempotency_key` (max 128 chars) replays an identical send instead of
     duplicating it. `expires_at` is an ISO 8601 datetime at most 30 days out;
     without it a general message expires after the server's configured default
@@ -56,7 +55,6 @@ async def send_message(
     body: dict[str, Any] = {
         "subject": subject,
         "result": result,
-        "author": author,
         "status": status,
     }
     if next_step is not None:

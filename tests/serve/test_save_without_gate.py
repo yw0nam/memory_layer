@@ -101,7 +101,9 @@ def no_chat_provider(monkeypatch):
 def test_a_note_is_stored_with_no_chat_model_call(monkeypatch, no_chat_provider, kind):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
-    result = asyncio.run(save_note("migrated the parser today", tags=["test"], kind=kind))
+    result = asyncio.run(
+        save_note("migrated the parser today", tags=["test"], kind=kind, author="natsume")
+    )
     assert result["stored"] is True
     assert conn.embeds == ["migrated the parser today"]
     assert conn.insert_args is not None

@@ -12,8 +12,9 @@ Config via config.yaml (memory.memory_base):
   api_key            — API key value, takes precedence over api_key_env (optional)
   namespace          — where this agent's turns land (default: `default`)
   api_key_env        — env var holding the API key (default: MEMORY_BASE_API_KEY)
-  author             — this agent's own author slug (no default;
-                       absent, no card is fetched)
+  author             — the author slug this profile writes under and reads by default;
+                       sent as the X-Author header (required, no default;
+                       absent, the provider is unavailable and no card is fetched)
   user_entity        — slug of the user's entity; its card is delivered too (optional)
 """
 
@@ -96,12 +97,13 @@ class MemoryBaseProvider(MemoryProvider):
 
     def is_available(self) -> bool:
         """Config presence only — no network I/O."""
-        return bool(self._url() and self._api_key())
+        return bool(self._url() and self._api_key() and self._config.get("author"))
 
     def _build_client(self) -> client.MemoryBaseClient:
         return client.MemoryBaseClient(
             url=self._url(),
             api_key=self._api_key(),
+            author=str(self._config.get("author") or ""),
             timeout=float(self._config.get("timeout", _DEFAULT_TIMEOUT)),
             top_k=int(self._config.get("top_k", _DEFAULT_TOP_K)),
             min_score=float(self._config.get("min_score", _DEFAULT_MIN_SCORE)),
@@ -117,11 +119,8 @@ class MemoryBaseProvider(MemoryProvider):
         self._cards = self._build_cards()
 
     def _build_cards(self) -> str:
-        author = str(self._config.get("author") or "")
-        if not author:
-            return ""
         return self._client.build_cards(
-            author,
+            str(self._config["author"]),
             str(self._config.get("user_entity") or "") or None,
             str(self._config.get("namespace") or "") or None,
         )
@@ -215,7 +214,10 @@ class MemoryBaseProvider(MemoryProvider):
             },
             {
                 "key": "author",
-                "description": "This agent's own slug and note author (an author slug of the key)",
+                "description": (
+                    "The author slug this profile writes under and reads by default; "
+                    "sent as the X-Author header"
+                ),
                 "required": True,
             },
             {

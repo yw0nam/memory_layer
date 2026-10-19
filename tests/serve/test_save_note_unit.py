@@ -82,7 +82,7 @@ def use(monkeypatch):
 
 
 def _save(**overrides):
-    fields = {"tags": ["test"], "kind": "work", "namespace": "team-a"}
+    fields = {"tags": ["test"], "kind": "work", "namespace": "team-a", "author": "claude-code"}
     fields.update(overrides)
     return asyncio.run(store.save_note("prefer ruff for linting", **fields))
 
@@ -108,9 +108,30 @@ def test_save_note_into_an_unregistered_namespace_writes_nothing(use):
 
 def test_a_supersede_records_the_replacement_on_the_replaced_note(use):
     conn = use(RecordingConn())
-    result = _save(supersedes="note:team-a:old", author="claude-code")
+    result = _save(supersedes="note:team-a:old")
     [archive] = conn.sql("SET archived_at")
     assert "'replaced_by'" in archive[0] and "'archived_by'" in archive[0]
     assert result["id"] in archive[1]
     assert "note:team-a:old" in archive[1]
     assert archive[2] >= 1
+
+
+def test_the_near_duplicate_scope_is_the_writers_own_and_shared_notes(use):
+    conn = use(RecordingConn())
+    _save()
+    [neighbours] = conn.sql("1 - (embedding <=>")
+    assert "metadata->>'author' = $" in neighbours[0]
+    assert "metadata @> '{\"shared\": true}'::jsonb" in neighbours[0]
+    assert neighbours[0].index("metadata @>") < neighbours[0].index("LIMIT 3")
+
+
+def test_similar_notes_error_names_the_writers_scope():
+    error = store.SimilarNotesError([{"id": "note:a", "score": 0.9, "text": "t"}])
+    assert "in your scope" in str(error)
+
+
+def test_supersedes_is_validated_namespace_wide(use):
+    conn = use(RecordingConn())
+    _save(supersedes="note:team-a:old")
+    [lookup] = conn.sql("source_type = 'agent_note' AND namespace")
+    assert lookup[1] == ("note:team-a:old", "team-a")

@@ -23,7 +23,7 @@ from memory_base.core.config import PG_SCHEMA, VllmEmbedder, embed_text
 from memory_base.core.schema import ensure_schema_once
 from memory_base.core.secrets import find_secret
 from memory_base.serve.common import entities as registry
-from memory_base.serve.common.http import RequestError, author_slug, iso
+from memory_base.serve.common.http import RequestError, iso
 from memory_base.serve.consolidation import groups
 from memory_base.serve.consolidation.groups import Note, Pair, build_groups, group_entry, group_key
 from memory_base.serve.notes.store import (
@@ -50,7 +50,6 @@ ACTIONS = ("keep", "retire", "merge")
 BATCH_FIELDS = frozenset(
     {
         "run_id",
-        "author",
         "model",
         "dry_run",
         "threshold",
@@ -73,7 +72,7 @@ VERDICT_FIELDS = frozenset(
         "reason",
     }
 )
-UNDO_FIELDS = frozenset({"action_id", "author"})
+UNDO_FIELDS = frozenset({"action_id"})
 IDEMPOTENCY_CONSTRAINT = "consolidation_actions_idempotency_key_key"
 REUSED_KEY = "idempotency key reused with a different payload"
 JUDGED = "group already judged"
@@ -101,8 +100,9 @@ SELECT count(*) FROM {_TABLE}
 WHERE run_id = $1 AND namespace = $2 AND action IN ('retire', 'merge')
 """
 EXISTING_SQL = f"""
-SELECT id, source_type, chunk_kind, content_raw, archived_at FROM {_NOTES} WHERE id = $1
+SELECT id, source_type, chunk_kind, content_raw, archived_at, metadata FROM {_NOTES} WHERE id = $1
 """
+MEMBERS_SQL = f"SELECT id, metadata FROM {_NOTES} WHERE id = ANY($1::text[])"
 NEXT_ACTION_ID_SQL = f"SELECT nextval(pg_get_serial_sequence('{_TABLE}', 'id'))"
 ARCHIVE_MEMBERS_SQL = f"""
 UPDATE {_NOTES}
@@ -230,6 +230,7 @@ class Existing:
     kind: str
     text: str
     archived: bool
+    shared: bool
 
 
 @dataclass(frozen=True)
@@ -374,7 +375,7 @@ def _verdict(item: Any, index: int, registered: set[str]) -> Verdict:
     )
 
 
-def parse_batch(body: Any, registered: set[str]) -> Batch:
+def parse_batch(body: Any, registered: set[str], author: str) -> Batch:
     """Validate a verdict request strictly; any violation refuses the whole request."""
     if not isinstance(body, dict):
         raise RequestError("JSON body must be an object")
@@ -390,7 +391,7 @@ def parse_batch(body: Any, registered: set[str]) -> Batch:
         raise RequestError(f"verdicts must be a list of 1 to {MAX_VERDICTS} objects")
     return Batch(
         run_id=_text(body.get("run_id"), "run_id", MAX_RUN_ID_CHARS),
-        author=author_slug(body.get("author")),
+        author=author,
         model=model,
         dry_run=dry_run,
         params=_params(body),
@@ -401,15 +402,15 @@ def parse_batch(body: Any, registered: set[str]) -> Batch:
     )
 
 
-def parse_undo(body: Any) -> tuple[int, str]:
-    """Validate an undo request: `{"action_id": int, "author": str}`."""
+def parse_undo(body: Any) -> int:
+    """Validate an undo request: `{"action_id": int}`."""
     if not isinstance(body, dict):
         raise RequestError("JSON body must be an object")
     _unknown(body, UNDO_FIELDS, "the request")
     action_id = body.get("action_id")
     if isinstance(action_id, bool) or not isinstance(action_id, int) or action_id < 1:
         raise RequestError("action_id must be a positive integer")
-    return action_id, author_slug(body.get("author"))
+    return action_id
 
 
 def payload_hash(verdict: Verdict, batch: Batch) -> str:
@@ -535,10 +536,18 @@ def merged_entities(members: Iterable[Note]) -> list[str]:
     return sorted({slug for n in members for slug in n.entities})
 
 
-def replacement_row(
-    verdict: Verdict, batch: Batch, notes: dict[str, Note], now: float
-) -> dict[str, Any]:
-    """The merged note: the members' kind, tags' and entities' unions, and latest event date."""
+def members_author(members: list[Note]) -> str:
+    """The one author every member carries; a mixed group is rejected before this."""
+    return members[0].author
+
+
+def members_shared(members: list[Note]) -> bool:
+    """A merged note is shared only when every member is."""
+    return all(member.shared for member in members)
+
+
+def replacement_row(verdict: Verdict, notes: dict[str, Note], now: float) -> dict[str, Any]:
+    """The merged note: the members' author, kind, tags' and entities' unions, and latest date."""
     members = [notes[i] for i in sorted(verdict.member_ids)]
     occurred = [n.occurred_at for n in members if n.occurred_at is not None]
     return build_note_row(
@@ -547,9 +556,10 @@ def replacement_row(
         sorted({tag for n in members for tag in n.tags}),
         now,
         verdict.namespace,
-        batch.author,
+        author=members_author(members),
         occurred_at=max(occurred) if occurred else None,
         entities=merged_entities(members),
+        shared=members_shared(members),
     )
 
 
@@ -585,7 +595,7 @@ def _plan_merge(
             f"merged note would name {len(entities)} entities; at most {MAX_NOTE_ENTITIES}",
         )
     try:
-        row = replacement_row(verdict, batch, notes, 0.0)
+        row = replacement_row(verdict, notes, 0.0)
     except ValueError as exc:
         return _result(verdict, "rejected", f"merged_text: {exc}")
     secret = find_secret(text)
@@ -624,6 +634,12 @@ def _plan_merge(
         return _result(
             verdict, "rejected", f"note {replacement_id} exists with a different kind or text"
         )
+    if existing.shared != members_shared([notes[i] for i in members]):
+        return _result(
+            verdict,
+            "stale",
+            f"note {replacement_id} exists with a different shared flag",
+        )
     return Plan("merge", members, (replacement_id,), replacement_id, False, None)
 
 
@@ -635,6 +651,17 @@ def plan_verdict(verdict: Verdict, batch: Batch, state: State) -> Plan | dict[st
         return _result(verdict, "rejected", REUSED_KEY)
     if state.cached is not None:
         return _result(verdict, "cached", state.cached)
+    members = tuple(sorted(verdict.member_ids))
+    if any(member not in state.notes for member in members):
+        return _result(
+            verdict,
+            "stale",
+            "group_key matches no current group",
+            current_groups=_current_groups(verdict, batch, state),
+        )
+    authors = sorted({state.notes[member].author for member in members})
+    if len(authors) > 1:
+        return _result(verdict, "rejected", f"group mixes authors: {', '.join(authors)}")
     p = batch.params
     current, _ = build_groups(state.pairs, state.notes, p.threshold, p.max_group, p.max_group_chars)
     issued = next(
@@ -646,7 +673,6 @@ def plan_verdict(verdict: Verdict, batch: Batch, state: State) -> Plan | dict[st
         ),
         None,
     )
-    members = tuple(sorted(verdict.member_ids))
     if issued is None or issued.members != members:
         reason = (
             "group_key matches no current group"
@@ -673,9 +699,14 @@ async def _exact_search(conn: Any) -> None:
         await conn.execute(statement)
 
 
-def _merged_id(verdict: Verdict) -> str | None:
+def _merged_id(verdict: Verdict, notes: dict[str, Note]) -> str | None:
     text = verdict.merged_text or ""
-    return note_id(verdict.namespace, text) if verdict.action == "merge" and text.strip() else None
+    if verdict.action != "merge" or not text.strip():
+        return None
+    members = [notes[i] for i in sorted(verdict.member_ids) if i in notes]
+    if len(members) != len(set(verdict.member_ids)):
+        return None
+    return note_id(verdict.namespace, members_author(members), text)
 
 
 async def load_state(conn: Any, verdict: Verdict, batch: Batch) -> State:
@@ -689,21 +720,37 @@ async def load_state(conn: Any, verdict: Verdict, batch: Batch) -> State:
         cached = "group matches the members of an undone action"
     if recorded is not None or cached is not None:
         return State(recorded, cached, [], {}, 0, None)
+    members = await conn.fetch(MEMBERS_SQL, sorted(verdict.member_ids))
+    authors = sorted(
+        {
+            author
+            for member in members
+            if isinstance(author := _metadata(member["metadata"]).get("author"), str)
+        }
+    )
+    one_author = len(authors) == 1 and len(members) == len(set(verdict.member_ids))
+    note_author = authors[0] if one_author else None
     pairs, notes = await groups.read_pairs(
-        conn, verdict.namespace, batch.params.threshold, batch.params.neighbors
+        conn,
+        verdict.namespace,
+        note_author,
+        batch.params.threshold,
+        batch.params.neighbors,
     )
     used = await conn.fetchval(USED_ACTIONS_SQL, batch.run_id, verdict.namespace)
     replacement = None
-    merged_id = _merged_id(verdict)
+    merged_id = _merged_id(verdict, notes)
     if merged_id is not None:
         found = await conn.fetchrow(EXISTING_SQL, merged_id)
         if found is not None:
+            metadata = _metadata(found["metadata"])
             replacement = Existing(
                 found["id"],
                 found["source_type"],
                 found["chunk_kind"],
                 found["content_raw"],
                 found["archived_at"] is not None,
+                metadata.get("shared") is True,
             )
     return State(None, None, pairs, notes, used, replacement)
 
@@ -734,7 +781,7 @@ async def apply_plan(
     if plan.replacement_created:
         if embedding is None:
             raise ValueError("a created replacement needs its embedding")
-        row = replacement_row(verdict, batch, state.notes, now)
+        row = replacement_row(verdict, state.notes, now)
         row["metadata"]["merged_from"] = members
         row["metadata"]["merged_dates"] = {
             i: {"saved": iso(state.notes[i].saved), "occurred_at": iso(state.notes[i].occurred_at)}
@@ -803,7 +850,7 @@ async def process_verdict(verdict: Verdict, batch: Batch) -> dict[str, Any]:
     if preflight.replacement_created:
         embedding = await embed_text(VllmEmbedder(), (verdict.merged_text or "").strip())
     lock_ids = set(verdict.member_ids)
-    if (merged_id := _merged_id(verdict)) is not None:
+    if (merged_id := _merged_id(verdict, state.notes)) is not None:
         lock_ids.add(merged_id)
     async with db.acquire() as conn:
         try:

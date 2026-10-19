@@ -8,6 +8,7 @@ from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from memory_base.serve.common import rest_client
+from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION
 
 
 async def list_notes(
@@ -18,7 +19,10 @@ async def list_notes(
     until: str | None = None,
     include_archived: bool = False,
     namespace: str | None = None,
-    author: str | None = None,
+    author: Annotated[
+        str | None,
+        Field(description=AUTHOR_SCOPE_DESCRIPTION),
+    ] = None,
     limit: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
@@ -39,9 +43,8 @@ async def list_notes(
     (from list_entities) and narrows to notes naming it. `kind` is "personal" or
     "work". `since`/`until` are ISO 8601 dates or datetimes (a bare date
     covers that whole day; naive values are read as UTC). `include_archived`
-    adds superseded notes, marked "archived": true. `author` narrows to notes
-    saved by one agent. `namespace` narrows to one namespace; omitted, it covers
-    every namespace.
+    adds superseded notes, marked "archived": true. `author` narrows the listing.
+    `namespace` narrows to one namespace; omitted, it covers every namespace.
     """
     params: list[tuple[str, str]] = [("tags", tag) for tag in tags or []]
     if entity is not None:
@@ -70,7 +73,6 @@ async def list_notes(
 
 async def save_memory(
     content: str,
-    author: Annotated[str, Field(description="The saving agent's author slug.")],
     tags: Annotated[
         list[str],
         Field(
@@ -100,6 +102,13 @@ async def save_memory(
         Field(
             description="True only when a near-identical active note records a genuinely "
             "different fact."
+        ),
+    ] = False,
+    shared: Annotated[
+        bool,
+        Field(
+            description="True makes the note every agent sees in its default read scope; "
+            "you stay its author."
         ),
     ] = False,
     namespace: Annotated[str | None, Field(description="Defaults to `default`.")] = None,
@@ -147,16 +156,18 @@ async def save_memory(
     at most 10). A preference the user authorizes as a direction to you is a change to your
     description, not a note; otherwise it is descriptive knowledge and belongs here.
     A note that already exists gets its entities from link_entities, not from a second save.
+    `shared: true` puts the note in every agent's default read scope; you stay its author.
     """
     body: dict[str, Any] = {
         "content": content,
-        "author": author,
         "kind": kind,
         "tags": tags,
         "entities": entities,
         "supersedes": supersedes,
         "allow_similar": allow_similar,
     }
+    if shared:
+        body["shared"] = True
     if namespace is not None:
         body["namespace"] = namespace
     if occurred_at is not None:
@@ -177,12 +188,16 @@ async def list_memory_duplicates(
     threshold: float | None = None,
     kind: str | None = None,
     limit: int | None = None,
+    author: Annotated[
+        str | None,
+        Field(description=AUTHOR_SCOPE_DESCRIPTION),
+    ] = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """List active note pairs whose meaning nearly coincides.
 
     Read-only. Each pair carries both notes' id, kind, author, and text plus
-    their cosine score, over every namespace.
+    their cosine score, over every namespace; both sides are inside your read scope.
     Read both sides before acting: merge them into one note with `save_memory` with
     `supersedes`, or drop one with `archive_notes`. `threshold` (default 0.75), `kind`, and
     `limit` (default 50) narrow the scan; `kind` is "personal" or "work". Pairs at 0.80 and
@@ -196,6 +211,8 @@ async def list_memory_duplicates(
         params.append(("kind", kind))
     if limit is not None:
         params.append(("limit", str(limit)))
+    if author is not None:
+        params.append(("author", author))
     return await rest_client.call(
         "GET",
         "/admin/duplicates",
@@ -206,17 +223,15 @@ async def list_memory_duplicates(
 
 async def archive_notes(
     ids: list[str],
-    author: str,
     confirm: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Archive the named notes, recording `author` as the agent that archived them.
+    """Archive the named notes, recording you as the agent that archived them.
 
     Without `confirm` this previews the rows instead of changing them. Archived
-    notes leave search results and prefetch but stay restorable with
-    `restore_notes`; `author` is your author slug.
+    notes leave search results and prefetch but stay restorable with `restore_notes`.
     """
-    body: dict[str, Any] = {"ids": ids, "author": author}
+    body: dict[str, Any] = {"ids": ids}
     if confirm:
         body["confirm"] = True
     return await rest_client.call(
@@ -272,22 +287,21 @@ async def delete_notes(
 
 async def link_entities(
     ids: list[str],
-    author: str,
     add: list[str] | None = None,
     remove: list[str] | None = None,
     confirm: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Add or remove entity slugs on existing notes, recording `author` as the editor.
+    """Add or remove entity slugs on existing notes, recording you as the editor.
 
     Each note's slugs become (its current slugs + `add`) - `remove`, the same change for
     every id (1 to 200 active notes, at most 10 slugs each).
     `add` slugs must be registered entities (list_entities); `remove` slugs only unlink the
     note and never delete the entity or its facts. Content, id, and dates do not change.
     Without `confirm` this returns each note's before and after and writes nothing; any
-    refused id refuses the whole call. `author` is your author slug.
+    refused id refuses the whole call.
     """
-    body: dict[str, Any] = {"ids": ids, "author": author}
+    body: dict[str, Any] = {"ids": ids}
     if add:
         body["add"] = add
     if remove:
