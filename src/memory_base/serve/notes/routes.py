@@ -12,13 +12,15 @@ from memory_base.retrieval.search import normalize_namespaces
 from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 from memory_base.serve.common.http import (
     RequestError,
-    author_slug,
     error,
     json_body,
+    note_scope,
     object_fields,
 )
 from memory_base.serve.common.origins import ORIGINS
 from memory_base.serve.notes import curation, store
+
+AUTHOR_BODY_ERROR = "author comes from the X-Author header"
 
 
 def _ids(body: dict[str, Any]) -> list[str] | None:
@@ -26,6 +28,10 @@ def _ids(body: dict[str, Any]) -> list[str] | None:
     if not isinstance(ids, list) or not ids or any(not isinstance(item, str) for item in ids):
         return None
     return ids
+
+
+def _reject_body_author(body: dict[str, Any]) -> JSONResponse | None:
+    return error(AUTHOR_BODY_ERROR) if "author" in body else None
 
 
 def _source_session(body: dict[str, Any]) -> dict[str, str] | None:
@@ -50,6 +56,8 @@ async def save_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
+    if rejected := _reject_body_author(body):
+        return rejected
 
     namespace = body.get("namespace", DEFAULT_NAMESPACE)
     if not isinstance(namespace, str) or not namespace.strip():
@@ -57,13 +65,15 @@ async def save_route(request: Request) -> JSONResponse:
     if "occurred_at" in body and body["occurred_at"] is None:
         return error("occurred_at must be an ISO 8601 date or datetime string")
     try:
-        author = author_slug(body.get("author"))
         source_session = _source_session(body)
     except ValueError as exc:
         return error(str(exc))
     allow_similar = body.get("allow_similar", False)
     if not isinstance(allow_similar, bool):
         return error("allow_similar must be a boolean")
+    shared = body.get("shared", False)
+    if not isinstance(shared, bool):
+        return error("shared must be a boolean")
     try:
         result = await store.save_note(
             body.get("content", ""),
@@ -73,8 +83,9 @@ async def save_route(request: Request) -> JSONResponse:
             supersedes=body.get("supersedes"),
             namespace=namespace,
             occurred_at=body.get("occurred_at"),
-            author=author,
+            author=request.state.author,
             allow_similar=allow_similar,
+            shared=shared,
             source_session=source_session,
         )
     except store.SimilarNotesError as exc:
@@ -98,6 +109,7 @@ async def list_route(request: Request) -> JSONResponse:
         return error("include_archived must be true or false")
     try:
         requested_namespaces = normalize_namespaces(params.getlist("namespace") or None)
+        author, visible_to = note_scope(request.state.author, params.get("author"))
     except ValueError as exc:
         return error(str(exc))
     try:
@@ -109,7 +121,8 @@ async def list_route(request: Request) -> JSONResponse:
             include_archived=include_archived == "true",
             since=params.get("since"),
             until=params.get("until"),
-            author=params.get("author") or None,
+            author=author,
+            visible_to=visible_to,
             limit=limit,
         )
     except ValueError as exc:
@@ -121,9 +134,10 @@ async def old_notes_route(request: Request) -> JSONResponse:
     """List active agent notes older than a requested age."""
     try:
         older_than_days = int(request.query_params.get("older_than_days", "90"))
-    except ValueError:
-        return error("older_than_days must be an integer")
-    rows = await curation.list_old_notes(older_than_days)
+        author, visible_to = note_scope(request.state.author, request.query_params.get("author"))
+    except ValueError as exc:
+        return error(str(exc))
+    rows = await curation.list_old_notes(older_than_days, author=author, visible_to=visible_to)
     return JSONResponse(rows)
 
 
@@ -133,6 +147,8 @@ async def delete_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
+    if rejected := _reject_body_author(body):
+        return rejected
     ids = _ids(body)
     if ids is None:
         return error("ids must be a non-empty list")
@@ -151,6 +167,8 @@ async def move_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
+    if rejected := _reject_body_author(body):
+        return rejected
     ids = _ids(body)
     if ids is None:
         return error("ids must be a non-empty list")
@@ -175,31 +193,28 @@ async def duplicates_route(request: Request) -> JSONResponse:
         return error(f"kind must be one of {store.NOTE_KINDS}")
     try:
         limit = int(request.query_params.get("limit", "50"))
-    except ValueError:
-        return error("limit must be an integer")
-    pairs = await curation.find_duplicates(threshold, kind, limit)
+        author, visible_to = note_scope(request.state.author, request.query_params.get("author"))
+    except ValueError as exc:
+        return error(str(exc))
+    pairs = await curation.find_duplicates(
+        threshold, kind, limit, author=author, visible_to=visible_to
+    )
     return JSONResponse({"pairs": pairs})
 
 
 async def archive_route(request: Request) -> JSONResponse:
-    """Preview or archive the agent notes named by ids, or the cold ones."""
+    """Preview or archive the agent notes named by ids, or the cold ones in scope."""
     try:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
+    if rejected := _reject_body_author(body):
+        return rejected
     ids = None
     if "ids" in body:
         ids = _ids(body)
         if ids is None:
             return error("ids must be a non-empty list")
-    author = body.get("author")
-    if ids is not None and author is None:
-        return error("author is required")
-    if author is not None:
-        try:
-            author = author_slug(author)
-        except RequestError as exc:
-            return error(str(exc))
     now = time.time()
     if ids is not None:
         rows = await curation.rows_by_ids(ids, notes_only=True)
@@ -216,13 +231,17 @@ async def archive_route(request: Request) -> JSONResponse:
                 status_code=400,
             )
         if body.get("confirm") is True:
-            archived = await curation.archive_rows(ids, now, archived_by=author)
+            archived = await curation.archive_rows(ids, now, archived_by=request.state.author)
             return JSONResponse({"archived": archived})
         return JSONResponse({"notes_to_archive": rows})
-    candidates = await curation.archive_candidates(now)
+    try:
+        author, visible_to = note_scope(request.state.author, request.query_params.get("author"))
+    except ValueError as exc:
+        return error(str(exc))
+    candidates = await curation.archive_candidates(now, author=author, visible_to=visible_to)
     if body.get("confirm") is True:
         archived = await curation.archive_rows(
-            [row["id"] for row in candidates], now, archived_by=author
+            [row["id"] for row in candidates], now, archived_by=request.state.author
         )
         return JSONResponse({"archived": archived})
     return JSONResponse({"notes_to_archive": candidates})
@@ -234,6 +253,8 @@ async def restore_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
+    if rejected := _reject_body_author(body):
+        return rejected
     ids = _ids(body)
     if ids is None:
         return error("ids must be a non-empty list")
@@ -250,13 +271,10 @@ MAX_LINK_IDS = 200
 async def link_entities_route(request: Request) -> JSONResponse:
     """Preview or apply one add/remove delta of entity slugs to existing notes."""
     try:
-        body = object_fields(
-            await json_body(request), {"ids", "author"}, {"add", "remove", "confirm"}
-        )
+        body = object_fields(await json_body(request), {"ids"}, {"add", "remove", "confirm"})
         ids = _ids(body)
         if ids is None or len(ids) > MAX_LINK_IDS or len(set(ids)) != len(ids):
             raise RequestError(f"ids must hold 1 to {MAX_LINK_IDS} unique note ids")
-        author = author_slug(body["author"])
         confirm = body.get("confirm", False)
         if not isinstance(confirm, bool):
             raise RequestError("confirm must be a boolean")
@@ -269,7 +287,7 @@ async def link_entities_route(request: Request) -> JSONResponse:
     except (RequestError, ValueError) as exc:
         return error(str(exc))
     try:
-        result = await curation.link_entities(ids, add, remove, author, confirm)
+        result = await curation.link_entities(ids, add, remove, request.state.author, confirm)
     except curation.LinkRefused as exc:
         return JSONResponse({"error": str(exc), "ids": exc.ids}, status_code=400)
     except ValueError as exc:

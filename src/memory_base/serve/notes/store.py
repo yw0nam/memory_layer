@@ -58,7 +58,7 @@ class SimilarNotesError(ValueError):
         self.similar = similar
         listing = "\n".join(f"  {s['id']} ({s['score']:.2f}): {s['text'][:300]}" for s in similar)
         super().__init__(
-            f"Refused: {len(similar)} active note(s) in this namespace say nearly the same thing. "
+            f"Refused: {len(similar)} active note(s) in your scope say nearly the same thing. "
             "Read them. If this note replaces one, call again with supersedes=<id> so the old one "
             "is archived. Only if it records a genuinely different fact, call again with "
             f"allow_similar=true.\n{listing}"
@@ -90,9 +90,10 @@ def normalize_entities(entities: Any) -> list[str]:
     return slugs
 
 
-def note_id(namespace: str, content: str) -> str:
-    """`note:{namespace}:{sha256(content)[:16]}` over the stripped content."""
-    return f"note:{namespace}:{hashlib.sha256(content.strip().encode()).hexdigest()[:16]}"
+def note_id(namespace: str, author: str, content: str) -> str:
+    """`note:{namespace}:{sha256(author + newline + stripped content)[:16]}`."""
+    digest = hashlib.sha256(f"{author}\n{content.strip()}".encode()).hexdigest()[:16]
+    return f"note:{namespace}:{digest}"
 
 
 INSERT_NOTE_SQL = f"""
@@ -128,14 +129,15 @@ def build_note_row(
     tags: list[str],
     now: float,
     namespace: str = DEFAULT_NAMESPACE,
-    author: str | None = None,
     *,
+    author: str,
     occurred_at: float | None = None,
     entities: list[str] | None = None,
+    shared: bool = False,
 ) -> dict[str, Any]:
     """Validate a note and map it to memory_chunks columns (no embedding).
 
-    The id is `note:{namespace}:{sha256(content)[:16]}` over the stripped content.
+    The id is `note:{namespace}:{sha256(author + content)[:16]}` over the stripped content.
     """
     content = content.strip()
     if not content:
@@ -144,13 +146,16 @@ def build_note_row(
         raise ValueError(f"content exceeds {NOTE_MAX_CHARS} chars")
     if kind not in NOTE_KINDS:
         raise ValueError(f"kind must be one of {NOTE_KINDS}")
+    if not author:
+        raise ValueError("author is required")
     normalized_tags = normalize_tags([] if tags is None else tags)
     metadata: dict[str, Any] = {"tags": normalized_tags}
     if slugs := normalize_entities(entities):
         metadata["entities"] = slugs
-    if author is not None:
-        metadata["author"] = author
-    row_id = note_id(namespace, content)
+    metadata["author"] = author
+    if shared:
+        metadata["shared"] = True
+    row_id = note_id(namespace, author, content)
     return {
         "id": row_id,
         "source_type": "agent_note",
@@ -174,8 +179,9 @@ async def save_note(
     supersedes: str | None = None,
     namespace: str = DEFAULT_NAMESPACE,
     occurred_at: str | None = None,
-    author: str | None = None,
+    author: str,
     allow_similar: bool = False,
+    shared: bool = False,
     source_session: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory.
@@ -194,9 +200,10 @@ async def save_note(
         tags,
         now,
         namespace,
-        author,
+        author=author,
         occurred_at=occurred_ts,
         entities=entities,
+        shared=shared,
     )
     secret_type = find_secret("\n".join([content, *(tags or [])]))
     if secret_type is not None:
@@ -239,6 +246,8 @@ async def save_note(
                       AND namespace = $4
                       AND id <> $2
                       AND 1 - (embedding <=> $1::halfvec) > $3
+                      AND (metadata->>'author' = $5
+                           OR metadata @> '{{"shared": true}}'::jsonb)
                     ORDER BY score DESC
                     LIMIT 3
                     """,
@@ -246,6 +255,7 @@ async def save_note(
                     row["id"],
                     NOTE_SIMILAR_THRESHOLD,
                     namespace,
+                    author,
                 )
             ]
             acknowledged = [n["id"] for n in neighbours if n["id"] != supersedes]
@@ -322,6 +332,7 @@ async def list_notes(
     since: str | None = None,
     until: str | None = None,
     author: str | None = None,
+    visible_to: str | None = None,
     limit: int = LIST_NOTES_DEFAULT_LIMIT,
 ) -> list[dict[str, Any]]:
     """List agent notes newest-first without a search query or embedding call.
@@ -348,6 +359,7 @@ async def list_notes(
         since=since_ts,
         until=until_ts,
         author=author,
+        visible_to=visible_to,
     )
     async with db.acquire() as conn:
         rows = await conn.fetch(
@@ -375,6 +387,8 @@ async def list_notes(
             "namespace": row["namespace"],
             "date": note_date(row["occurred_at"], row["ts_last_active"]),
         }
+        if metadata.get("shared") is True:
+            note["shared"] = True
         if row["archived_at"] is not None:
             note["archived"] = True
         for field in ("source_session", *LINEAGE_FIELDS, *ENTITY_STAMP_FIELDS):

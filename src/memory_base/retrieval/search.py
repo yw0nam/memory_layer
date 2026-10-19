@@ -225,10 +225,13 @@ def history_predicates(
     since: float | None = None,
     until: float | None = None,
     author: str | None = None,
+    visible_to: str | None = None,
 ) -> tuple[str, list[Any]]:
     """Filter clauses over memory_chunks; placeholders start at $2, $1 being the caller's.
 
     since/until bound when the remembered event happened, falling back to the save time.
+    `visible_to` limits agent notes to that author's own and shared ones; other sources
+    are not notes and stay visible.
     """
     prefix = f"{alias}." if alias else ""
     event_time = f"COALESCE({prefix}occurred_at, {prefix}ts_last_active)"
@@ -257,6 +260,13 @@ def history_predicates(
     if author is not None:
         args.append(author)
         clauses.append(f"{prefix}metadata->>'author' = ${len(args) + 1}")
+    if visible_to is not None:
+        args.append(visible_to)
+        clauses.append(
+            f"({prefix}source_type <> 'agent_note' "
+            f"OR {prefix}metadata->>'author' = ${len(args) + 1} "
+            f"OR {prefix}metadata @> '{{\"shared\": true}}'::jsonb)"
+        )
     return " AND ".join(clauses) or "true", args
 
 
@@ -334,6 +344,7 @@ async def _search_memory(
     since: float | None = None,
     until: float | None = None,
     author: str | None = None,
+    visible_to: str | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
     schema = PG_SCHEMA if schema is None else schema
@@ -347,6 +358,7 @@ async def _search_memory(
         since=since,
         until=until,
         author=author,
+        visible_to=visible_to,
     )
     columns = (
         "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
@@ -388,6 +400,7 @@ async def _search_memory(
             "tags": metadata.get("tags", []),
             "entities": metadata.get("entities", []),
             "author": metadata.get("author"),
+            "shared": metadata.get("shared") is True,
             "supersedes": metadata.get("supersedes"),
             "source_session": metadata.get("source_session"),
             "namespace": r["namespace"],
@@ -535,6 +548,7 @@ async def search(
     until: str | None = None,
     min_score: float | None = None,
     author: str | None = None,
+    visible_to: str | None = None,
     budget_tokens: int | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
@@ -567,6 +581,7 @@ async def search(
                 since=since_ts,
                 until=until_ts,
                 author=author,
+                visible_to=visible_to,
                 schema=schema,
             )
         hits = _dedup_cap(hits)

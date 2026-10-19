@@ -8,7 +8,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from memory_base.serve.access import namespaces
-from memory_base.serve.common.http import error, json_body
+from memory_base.serve.common.http import error, json_body, note_scope
 from memory_base.serve.consolidation import groups, verdicts
 
 
@@ -71,6 +71,9 @@ async def groups_route(request: Request) -> JSONResponse:
             lambda x: groups.MIN_LIMIT <= x <= groups.MAX_LIMIT,
             f"an integer between {groups.MIN_LIMIT} and {groups.MAX_LIMIT}",
         )
+        requested_author = request.query_params.get("author")
+        author, visible_to = note_scope(request.state.author, requested_author)
+        author = author or visible_to or groups.ALL_AUTHORS
     except ValueError as exc:
         return error(str(exc))
     requested = request.query_params.getlist("namespace")
@@ -81,11 +84,12 @@ async def groups_route(request: Request) -> JSONResponse:
     if unknown:
         return error(f"unregistered namespace: {', '.join(unknown)}")
     names = sorted(set(requested or registered))
-    snapshots = await groups.read_snapshots(names, threshold, neighbors)
+    snapshots = await groups.read_snapshots(names, author, threshold, neighbors)
     return JSONResponse(
         {
             "params": {
                 "namespace": names,
+                "author": author,
                 "threshold": threshold,
                 "neighbors": neighbors,
                 "max_group": max_group,
@@ -116,7 +120,8 @@ async def verdicts_route(request: Request) -> JSONResponse:
         return error(f"invalid JSON body: {exc}")
     registered = {row["name"] for row in await namespaces.list_namespaces()}
     try:
-        batch = verdicts.parse_batch(body, registered)
+        batch = verdicts.parse_batch(body, registered, request.state.author)
+        await verdicts.validate_authors(batch)
     except verdicts.RequestError as exc:
         return error(str(exc))
     return JSONResponse({"results": await verdicts.process_batch(batch)})
@@ -129,11 +134,11 @@ async def undo_route(request: Request) -> JSONResponse:
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
     try:
-        action_id, author = verdicts.parse_undo(body)
+        action_id = verdicts.parse_undo(body)
     except verdicts.RequestError as exc:
         return error(str(exc))
     try:
-        result = await verdicts.undo(action_id, author)
+        result = await verdicts.undo(action_id, request.state.author)
     except verdicts.UndoNotFound as exc:
         return error(str(exc), 404)
     except verdicts.UndoRefused as exc:

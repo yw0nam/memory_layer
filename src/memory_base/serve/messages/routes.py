@@ -9,13 +9,12 @@ from starlette.responses import JSONResponse
 
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
-from memory_base.serve.common.http import RequestError, author_slug, error, json_body
+from memory_base.serve.common.http import error, json_body
 from memory_base.serve.messages import store
 
 MESSAGE_BODY_FIELDS = frozenset(
     {
         "namespace",
-        "author",
         "subject",
         "status",
         "result",
@@ -43,14 +42,10 @@ async def send_route(request: Request) -> JSONResponse:
     if not isinstance(namespace, str) or not namespace.strip():
         return error("namespace must be a non-empty string")
     try:
-        author = author_slug(body.get("author"))
-    except RequestError as exc:
-        return error(str(exc))
-    try:
         row, replayed = await store.send_message(
             key,
             namespace=namespace,
-            author=author,
+            author=request.state.author,
             subject=body.get("subject"),
             status=body.get("status"),
             result=body.get("result"),

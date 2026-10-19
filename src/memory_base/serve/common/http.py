@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from memory_base.serve.access.auth import AUTHOR_RE, RESERVED_AUTHOR
+
 TEXT_LIMIT = 2000
-AUTHOR_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
 async def json_body(request: Request) -> dict[str, Any]:
@@ -50,11 +50,19 @@ def object_fields(
     return body
 
 
-def author_slug(value: Any) -> str:
-    """The author a client declares; attribution only, so a slug is all that is checked."""
-    if not isinstance(value, str) or not AUTHOR_RE.fullmatch(value):
-        raise RequestError("author must be an author slug")
-    return value
+def note_scope(request_author: str, requested: str | None) -> tuple[str | None, str | None]:
+    """Resolve a note read's author filter into (author_exact, visible_to).
+
+    Omitted means the caller's own notes plus shared ones; "all" covers every author;
+    a slug means exactly that author.
+    """
+    if requested is None:
+        return None, request_author
+    if requested == RESERVED_AUTHOR:
+        return None, None
+    if not AUTHOR_RE.fullmatch(requested):
+        raise RequestError('author must be an author slug or "all"')
+    return requested, None
 
 
 def stripped(value: Any, name: str) -> str:

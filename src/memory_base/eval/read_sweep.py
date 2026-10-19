@@ -144,7 +144,7 @@ def _hermes_client():
 def _client_block(path: str, api_hits: list[dict[str, Any]]) -> str:
     if path == "claude-code":
         return _prefetch_hook().build_context_block(api_hits)
-    client = _hermes_client().MemoryBaseClient(url="", api_key="")
+    client = _hermes_client().MemoryBaseClient(url="", api_key="", author="")
     client.search = lambda query: api_hits
     return client.build_prefetch("sweep")
 

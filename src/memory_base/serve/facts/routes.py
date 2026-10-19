@@ -1,6 +1,6 @@
 """REST routes for facts: the consolidation write batch and the entity card read.
 
-A write names the author it is attributed to; the card is read across every namespace
+A write is attributed to the X-Author header; the card is read across every namespace
 unless filtered.
 """
 
@@ -18,7 +18,6 @@ from memory_base.retrieval.search import normalize_namespaces
 from memory_base.serve.common.entities import SLUG_RE, entity_row
 from memory_base.serve.common.http import (
     RequestError,
-    author_slug,
     bounded_text,
     error,
     object_fields,
@@ -95,11 +94,10 @@ def _op(raw: Any) -> dict[str, Any]:
     return op
 
 
-def parse_batch(body: Any) -> tuple[list[dict[str, Any]], str, bool]:
-    """`{author, ops, dry_run?}` → (ops, author, dry_run)."""
-    fields = object_fields(body, {"author", "ops"}, {"dry_run"})
-    author, ops, dry_run = fields["author"], fields["ops"], fields.get("dry_run", False)
-    author_slug(author)
+def parse_batch(body: Any) -> tuple[list[dict[str, Any]], bool]:
+    """`{ops, dry_run?}` → (ops, dry_run)."""
+    fields = object_fields(body, {"ops"}, {"dry_run"})
+    ops, dry_run = fields["ops"], fields.get("dry_run", False)
     if not isinstance(dry_run, bool):
         raise RequestError("dry_run must be a boolean")
     if not isinstance(ops, list) or not 1 <= len(ops) <= MAX_OPS:
@@ -110,17 +108,17 @@ def parse_batch(body: Any) -> tuple[list[dict[str, Any]], str, bool]:
             parsed.append(_op(raw))
         except RequestError as exc:
             raise RequestError(f"op {index}: {exc}") from None
-    return parsed, author, dry_run
+    return parsed, dry_run
 
 
 async def write_route(request: Request) -> JSONResponse:
     """Apply a batch of fact ops all or nothing; `dry_run` validates and returns the plan."""
     try:
-        ops, author, dry_run = parse_batch(await request_body(request))
+        ops, dry_run = parse_batch(await request_body(request))
     except RequestError as exc:
         return error(str(exc))
     try:
-        results = await store.apply(ops, author, dry_run)
+        results = await store.apply(ops, request.state.author, dry_run)
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse({"results": results})

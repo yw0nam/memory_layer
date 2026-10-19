@@ -15,6 +15,8 @@ async def namespaces_create_route(request: Request) -> JSONResponse:
         body = await json_body(request)
     except Exception as exc:
         return error(f"invalid JSON body: {exc}")
+    if "author" in body:
+        return error("author comes from the X-Author header")
     try:
         result = await namespaces.create_namespace(body.get("name"))
     except namespaces.NamespaceExistsError as exc:
