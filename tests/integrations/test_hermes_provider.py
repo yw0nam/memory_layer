@@ -61,6 +61,12 @@ def test_the_default_client_is_built_with_the_benchmarked_prefetch_floor(plugin,
     assert client.top_k == 5
 
 
+def test_the_client_is_built_with_the_configured_author(plugin, monkeypatch):
+    config = {"url": "http://memory-base.local", "api_key": "k", "author": "natsume"}
+    monkeypatch.setattr(plugin, "_load_plugin_config", lambda: config)
+    assert plugin.MemoryBaseProvider()._build_client().author == "natsume"
+
+
 SESSION_LINE = (
     "Session: hermes {session} (pass it as session_id with origin hermes "
     "when a note is distilled from this session)"
@@ -332,6 +338,11 @@ def test_the_config_schema_names_the_setup_fields(plugin):
     ]
     key = schema[1]
     assert key["secret"] is True and key["env_var"] == "MEMORY_BASE_API_KEY"
+    author = schema[2]
+    assert author["required"] is True
+    assert author["description"] == (
+        "The author slug this profile writes under and reads by default; sent as the X-Author header."
+    )
 
 
 def test_save_config_writes_the_non_secret_values_and_never_the_key(plugin):
