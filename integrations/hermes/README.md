@@ -85,7 +85,7 @@ Read from `memory.memory_base` in the Hermes profile's `config.yaml`:
 | `min_score`   | `0.25`                     | relevance floor for prefetch search          |
 | `api_key`     | *(none)*                   | API key value; takes precedence over `api_key_env` |
 | `api_key_env` | `MEMORY_BASE_API_KEY`     | env var holding the memory-base API key     |
-| `author`      | *(none)*                   | the author slug this profile writes under and reads by default (e.g. `hermes`); sent as the `X-Author` header, its card is delivered, and without it no card is |
+| `author`      | *(required)*               | the author slug this profile writes under and reads by default (e.g. `hermes`); sent as the `X-Author` header; without it the provider is unavailable |
 | `user_entity` | *(none)*                   | slug of the user's entity; its card is delivered at session start |
 | `namespace`   | *(none)*                   | namespace this agent's turns land in; empty means `default` |
 

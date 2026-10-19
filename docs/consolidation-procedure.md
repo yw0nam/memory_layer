@@ -109,9 +109,10 @@ always pass the operator's namespaces explicitly, one `namespace` parameter each
 | `max_group_chars` | ≥ 500 | 12000 |
 | `limit` | 1–1000 groups per namespace | 200 |
 
-Omitted, `author` groups the header author's own notes and shared notes; a slug groups
+Omitted, `author` groups exactly the header author's notes; a slug groups
 exactly that author's notes; `all` groups every author present in the namespace, one
-author per group — groups never mix authors. The response holds `params`,
+author per group — groups never mix authors. The response holds `params` (echoing the
+resolved `author`, a slug or `all`),
 `procedure_version`, and, per namespace, `active_notes`,
 `pairs`, `acknowledged`, `cached`, `groups`, `deferred`, and `truncated`. A group has `key`,
 `min_score`, `max_score`, and `members`; a member has `id`, `kind` (`personal` or `work`),
@@ -300,7 +301,7 @@ The response is `{"results": [...]}`; a result has `group_key`, `status`, `reaso
 | `cached` | the group has a recorded verdict, or matches the members of an undone action | nothing |
 | `duplicate` | the idempotency key and payload match a recorded verdict; the recorded result is returned | nothing |
 | `stale` | `group_key` or `member_ids` match no group issued now, or the notes changed during the apply; `current_groups` lists the current groups sharing a member | judge those groups again once in this run as in step 2 (two judgments), verify any merge as in step 3, and submit with new group keys and idempotency keys; a second `stale` is logged |
-| `rejected` | a check failed; `reason` says which (reused idempotency key with another payload, `action cap reached`, a retire or merge rule, a token-check `drops …` or `adds …`, a credential, a replacement that exists archived) | log the reason; a merge rejected by the token check or a merge rule takes the one correction of step 3 and is sent again under the same idempotency key (the server records no rejected verdict); every other rejection is logged only |
+| `rejected` | a check failed; `reason` says which (reused idempotency key with another payload, `action cap reached`, a retire or merge rule, `group mixes authors: a, b`, a token-check `drops …` or `adds …`, a credential, a replacement that exists archived) | log the reason; a merge rejected by the token check or a merge rule takes the one correction of step 3 and is sent again under the same idempotency key (the server records no rejected verdict); every other rejection is logged only |
 | `failed` | an embedder or database error rolled this verdict back | retry once with the same idempotency key and the same payload; if it fails again, log it |
 
 The agent calls only the consolidation routes (groups, verdicts, actions, undo) and, for

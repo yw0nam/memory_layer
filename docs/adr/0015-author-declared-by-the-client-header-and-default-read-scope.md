@@ -38,13 +38,17 @@ as plain memory.
   store two notes. The near-duplicate check runs over the writer's default scope in the
   namespace, so another author's shared note is still refused as a near-duplicate and
   another author's private note is invisible and accepted.
-- Consolidation runs per persona: each agent judges groups drawn from its own author.
-  Groups never mix authors, a merged note carries the members' author, and the action and
-  every record it writes carry the header author.
+- Consolidation runs per persona: each agent judges groups built among exactly its own
+  author's notes — the groups route's `author` parameter defaults to the header author.
+  Groups never mix authors. A merged note carries the members' author and is shared only
+  when every member is shared; the action and every record it writes carry the header
+  author.
 
 ## Consequences
 
-- A note outside a client's default scope is reached with `author: "all"`. That a read
+- A note outside a client's default scope is reached with `author: "all"`. A note whose
+  metadata has no author is outside every author scope and is reached only by id or
+  through `author: "all"` listings. That a read
   without a namespace filter covers every namespace is unchanged.
 - Connecting an agent is giving it a key and an author slug, and configuring the client to
   send both on every request. No persona receives another persona's notes unless they are
