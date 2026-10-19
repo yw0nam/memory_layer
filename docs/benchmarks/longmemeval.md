@@ -86,8 +86,8 @@ grid point from the same candidates (see `read-settings.md`).
 
 ## Extraction
 
-The extractor is `glm-5.3-flash` on the z.ai endpoint resolved from `.env`
-(`resolve_llm_provider`; any other provider is refused), temperature 0, thinking
+The extractor is `glm-5.3-flash` on the z.ai endpoint built from `ZAI_API_KEY` in `.env`
+(`zai_provider`, whatever other chat keys are set), temperature 0, thinking
 disabled, JSON output, with the committed prompt
 `scripts/longmemeval/extract_prompt.txt`. Each note keeps the label the extractor gave it
 (`note`, `decision`, `episode`); every note is loaded as kind `personal`. `--prompt digest`
@@ -145,7 +145,7 @@ are reported for both runs.
 ## Answer and judge
 
 `scripts/longmemeval/answer.py` is a client like the extractor: it builds its model
-client from `resolve_llm_provider`, requires the z.ai provider, and calls
+client from `zai_provider` (the z.ai endpoint, whatever other chat keys are set), and calls
 `glm-5.3-flash` with temperature 0 and thinking disabled, five questions at a time.
 An answer keeps upstream's 500-token limit. A judgment gets 200 tokens instead of
 upstream's 10: `glm-5.3-flash` sometimes emits reasoning even with thinking disabled,

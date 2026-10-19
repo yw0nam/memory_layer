@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.metadata
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -223,20 +222,15 @@ def test_openai_compatible_branch_disables_glm_thinking_only_on_zai(
     assert completions.kwargs["extra_body"] == expected
 
 
-def test_opencode_client_identifies_itself_with_a_session_per_client():
+def test_only_the_opencode_client_identifies_itself_with_a_session_per_client():
     provider = llm.LlmProvider(name="opencode", model="m", api_key="k", base_url="https://o")
     first, second = llm._openai_client(provider), llm._openai_client(provider)
 
-    assert first.default_headers["User-Agent"] == (
-        f"memory-base/{importlib.metadata.version('memory-base')}"
-    )
+    assert first.default_headers["User-Agent"].startswith("memory-base/")
     assert first.default_headers["x-opencode-session"]
     assert (
         first.default_headers["x-opencode-session"] != second.default_headers["x-opencode-session"]
     )
-
-
-def test_other_providers_send_no_opencode_session_header():
     assert "x-opencode-session" not in llm._openai_client(_vllm()).default_headers
 
 

@@ -83,6 +83,8 @@ def test_every_stateful_service_persists_something():
 def test_api_receives_every_backend_endpoint_and_model_name():
     """Anything the container reads from the environment must be forwarded to it."""
     for name in (
+        "OPENCODE_API_KEY",
+        "OPENCODE_MODEL",
         "ZAI_API_KEY",
         "ZAI_BASE_URL",
         "ZAI_MODEL",
