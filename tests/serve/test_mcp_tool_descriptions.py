@@ -41,7 +41,7 @@ def test_the_author_argument_states_the_default_and_the_explicit_list(schemas, n
     author = schemas[name]["properties"]["author"]
     assert author["description"] == (
         "Omitted: your own notes and shared notes. Another agent's notes come back only "
-        'when you name it: a list of slugs returns exactly those agents\' notes, e.g. '
+        "when you name it: a list of slugs returns exactly those agents' notes, e.g. "
         '["natsume", "claude-code"]; include your own slug to keep yours. '
         '"all": every agent\'s notes.'
     )

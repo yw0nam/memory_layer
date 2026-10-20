@@ -72,8 +72,8 @@ async def groups_route(request: Request) -> JSONResponse:
             f"an integer between {groups.MIN_LIMIT} and {groups.MAX_LIMIT}",
         )
         requested_author = request.query_params.get("author")
-        author, visible_to = note_scope(request.state.author, requested_author)
-        author = author or visible_to or RESERVED_AUTHOR
+        authors, visible_to = note_scope(request.state.author, requested_author)
+        author = authors[0] if authors else visible_to or RESERVED_AUTHOR
     except ValueError as exc:
         return error(str(exc))
     requested = request.query_params.getlist("namespace")

@@ -59,7 +59,7 @@ def test_admin_notes_defaults_older_than_days_to_90(monkeypatch):
     captured = {}
     rows = [{"id": "note:a", "hit_count": 0, "last_hit_at": None}]
 
-    async def fake_list_old_notes(older_than_days, author=None, visible_to=None):
+    async def fake_list_old_notes(older_than_days, authors=None, visible_to=None):
         captured["older_than_days"] = older_than_days
         return rows
 
@@ -73,7 +73,7 @@ def test_admin_notes_defaults_older_than_days_to_90(monkeypatch):
 def test_admin_notes_custom_older_than_days_reaches_admin(monkeypatch):
     captured = {}
 
-    async def fake_list_old_notes(older_than_days, author=None, visible_to=None):
+    async def fake_list_old_notes(older_than_days, authors=None, visible_to=None):
         captured["older_than_days"] = older_than_days
         return []
 
@@ -213,7 +213,7 @@ def test_admin_duplicates_custom_params_reach_admin(monkeypatch):
 def test_admin_duplicates_invalid_author_400():
     response = client.get("/admin/duplicates", params={"author": "Not A Slug"})
     assert response.status_code == 400
-    assert response.json()["error"] == 'author must be an author slug or "all"'
+    assert response.json()["error"] == 'author must be "all" or a list of author slugs'
 
 
 def test_admin_duplicates_non_numeric_threshold_400():

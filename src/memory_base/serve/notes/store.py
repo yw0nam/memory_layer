@@ -331,7 +331,7 @@ async def list_notes(
     include_archived: bool = False,
     since: str | None = None,
     until: str | None = None,
-    author: str | None = None,
+    authors: list[str] | None = None,
     visible_to: str | None = None,
     limit: int = LIST_NOTES_DEFAULT_LIMIT,
 ) -> list[dict[str, Any]]:
@@ -358,7 +358,7 @@ async def list_notes(
         namespaces=namespaces,
         since=since_ts,
         until=until_ts,
-        author=author,
+        authors=authors,
         visible_to=visible_to,
     )
     async with db.acquire() as conn:

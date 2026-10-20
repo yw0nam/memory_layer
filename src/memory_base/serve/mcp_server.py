@@ -108,8 +108,9 @@ _SERVER_INSTRUCTIONS_CLOSING = """\
 A namespace is a label for filtering, and a write without one lands in `default`; a read
 without a namespace covers every namespace, and no namespace is private. The author is the
 X-Author header your client sends: writes are attributed to it, and reads return your own
-notes and shared notes unless `author` says otherwise ("all" for every agent, a slug for
-one). A note's first tag names its subject, usually the repository or domain it belongs
+notes and shared notes. Another agent's notes come back only when `author` names it, as a
+list of slugs such as author=["natsume", "claude-code"] (include your own slug to keep
+yours), or "all" for every agent. A note's first tag names its subject, usually the repository or domain it belongs
 to, so that a later search can narrow to it.
 
 Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly

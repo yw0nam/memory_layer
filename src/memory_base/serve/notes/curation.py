@@ -35,11 +35,11 @@ def _with_shared(row: Any) -> dict:
 
 
 async def list_old_notes(
-    older_than_days: int, *, author: str | None = None, visible_to: str | None = None
+    older_than_days: int, *, authors: list[str] | None = None, visible_to: str | None = None
 ) -> list[dict]:
     """Return active agent notes older than the requested age, within the read scope."""
     predicates, filter_args = history_predicates(
-        include_archived=False, kind=None, tags=None, author=author, visible_to=visible_to
+        include_archived=False, kind=None, tags=None, authors=authors, visible_to=visible_to
     )
     async with db.acquire() as conn:
         rows = await conn.fetch(
@@ -157,7 +157,7 @@ async def find_duplicates(
     kind: str | None,
     limit: int,
     *,
-    author: str | None = None,
+    authors: list[str] | None = None,
     visible_to: str | None = None,
 ) -> list[dict]:
     """Return active agent-note pairs meeting the cosine-similarity threshold.
@@ -169,7 +169,7 @@ async def find_duplicates(
         kind=None,
         tags=None,
         alias="a",
-        author=author,
+        authors=authors,
         visible_to=visible_to,
         start=3,
     )
@@ -178,7 +178,7 @@ async def find_duplicates(
         kind=None,
         tags=None,
         alias="candidate",
-        author=author,
+        authors=authors,
         visible_to=visible_to,
         start=3 + len(outer_args),
     )
@@ -257,14 +257,14 @@ async def find_duplicates(
 
 
 async def archive_candidates(
-    now: float, *, author: str | None = None, visible_to: str | None = None
+    now: float, *, authors: list[str] | None = None, visible_to: str | None = None
 ) -> list[dict]:
     """Return active agent notes matching the configured cold-tier rule, within scope."""
     predicates, filter_args = history_predicates(
         include_archived=False,
         kind=None,
         tags=None,
-        author=author,
+        authors=authors,
         visible_to=visible_to,
         start=3,
     )

@@ -336,7 +336,7 @@ def test_memory_fusion_uses_vector_fts_and_recency_voters(monkeypatch):
 
 
 def test_author_filter_is_accepted_for_memory_source():
-    assert validate_search_options("memory", None, None, author="natsume") == (
+    assert validate_search_options("memory", None, None, authors=["natsume"]) == (
         None,
         None,
         None,
@@ -347,20 +347,20 @@ def test_author_filter_is_accepted_for_memory_source():
 
 def test_author_filter_requires_memory_source():
     with pytest.raises(ValueError, match='author filter requires source="memory"'):
-        validate_search_options("code", None, None, author="natsume")
+        validate_search_options("code", None, None, authors=["natsume"])
 
 
 def test_malformed_author_filter_is_rejected():
     with pytest.raises(ValueError, match="author"):
-        validate_search_options("memory", None, None, author=1)
+        validate_search_options("memory", None, None, authors="natsume")
 
 
 def test_history_predicates_adds_author_clause():
     predicates, args = history_predicates(
-        include_archived=True, kind=None, tags=None, author="natsume"
+        include_archived=True, kind=None, tags=None, authors=["natsume"]
     )
-    assert predicates == "metadata->>'author' = $2"
-    assert args == ["natsume"]
+    assert predicates == "metadata->>'author' = ANY($2::text[])"
+    assert args == [["natsume"]]
 
 
 def test_history_predicates_author_clause_numbers_last():
@@ -371,18 +371,18 @@ def test_history_predicates_author_clause_numbers_last():
         namespaces=["team-a"],
         since=1.0,
         until=2.0,
-        author="natsume",
+        authors=["natsume"],
     )
-    assert args == ["work", ["infra"], ["team-a"], 1.0, 2.0, "natsume"]
-    assert "metadata->>'author' = $7" in predicates
+    assert args == ["work", ["infra"], ["team-a"], 1.0, 2.0, ["natsume"]]
+    assert "metadata->>'author' = ANY($7::text[])" in predicates
 
 
 def test_search_memory_filters_by_author():
     conn = FakeSearchConnection([[], []])
-    asyncio.run(_search_memory(conn, "query", "[1]", author="natsume"))
+    asyncio.run(_search_memory(conn, "query", "[1]", authors=["natsume"]))
     for sql, args in conn.queries:
-        assert "metadata->>'author' = $" in sql
-        assert args[-1] == "natsume"
+        assert "metadata->>'author' = ANY($" in sql
+        assert args[-1] == ["natsume"]
 
 
 def test_memory_hit_carries_the_author():

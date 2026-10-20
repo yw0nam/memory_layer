@@ -8,7 +8,7 @@ from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from memory_base.serve.common import rest_client
-from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION
+from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION, AuthorScope, author_params
 
 NOTES_LIMIT = 20
 
@@ -17,10 +17,7 @@ async def read_entity(
     slug: str,
     include_past: bool = False,
     namespace: str | None = None,
-    author: Annotated[
-        str | None,
-        Field(description=AUTHOR_SCOPE_DESCRIPTION),
-    ] = None,
+    author: Annotated[AuthorScope, Field(description=AUTHOR_SCOPE_DESCRIPTION)] = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Read what memory knows of one subject: its card, as {entity, facts, incoming, notes}.
@@ -49,7 +46,7 @@ async def read_entity(
         params=[
             ("entity", slug),
             ("limit", str(NOTES_LIMIT)),
-            *([("author", author)] if author is not None else []),
+            *author_params(author),
             *scope,
         ],
         headers=headers,

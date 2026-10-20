@@ -171,16 +171,6 @@ def test_a_non_string_author_is_a_400():
     assert response.json()["error"] == 'author must be "all" or a list of author slugs'
 
 
-def test_history_predicates_matches_any_listed_author():
-    from memory_base.retrieval.search import history_predicates
-
-    clause, args = history_predicates(
-        include_archived=False, kind=None, tags=None, authors=["natsume", "claude-code"]
-    )
-    assert clause.endswith(" AND metadata->>'author' = ANY($2::text[])")
-    assert args == [["natsume", "claude-code"]]
-
-
 def test_history_predicates_carries_the_visible_to_clause():
     from memory_base.retrieval.search import history_predicates
 

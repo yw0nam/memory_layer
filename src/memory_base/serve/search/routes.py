@@ -121,7 +121,7 @@ async def search_route(request: Request) -> JSONResponse:
         return error('author must be an author slug or "all"')
     try:
         requested_namespaces = normalize_namespaces(body.get("namespaces"))
-        author, visible_to = note_scope(request.state.author, body.get("author"))
+        authors, visible_to = note_scope(request.state.author, body.get("author"))
         options: dict[str, Any] = {
             "source": source,
             "include_archived": include_archived,
@@ -138,8 +138,8 @@ async def search_route(request: Request) -> JSONResponse:
             options["until"] = body["until"]
         if "min_score" in body:
             options["min_score"] = body["min_score"]
-        if author is not None:
-            options["author"] = author
+        if authors is not None:
+            options["authors"] = authors
         if visible_to is not None:
             options["visible_to"] = visible_to
         if budget_tokens is not None:

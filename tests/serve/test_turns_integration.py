@@ -246,7 +246,7 @@ def test_a_note_names_its_source_session(tag):
             author=tag,
             source_session={"origin": "hermes", "session_id": f"{tag}-src"},
         )
-        listed = await note_store.list_notes(tags=["pytest"], author=tag)
+        listed = await note_store.list_notes(tags=["pytest"], authors=[tag])
         await db.close_pool()
         return saved, listed
 

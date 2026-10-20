@@ -104,7 +104,7 @@ async def list_route(request: Request) -> JSONResponse:
         return error("include_archived must be true or false")
     try:
         requested_namespaces = normalize_namespaces(params.getlist("namespace") or None)
-        author, visible_to = note_scope(request.state.author, params.get("author"))
+        authors, visible_to = note_scope(request.state.author, params.getlist("author") or None)
     except ValueError as exc:
         return error(str(exc))
     try:
@@ -116,7 +116,7 @@ async def list_route(request: Request) -> JSONResponse:
             include_archived=include_archived == "true",
             since=params.get("since"),
             until=params.get("until"),
-            author=author,
+            authors=authors,
             visible_to=visible_to,
             limit=limit,
         )
@@ -132,10 +132,12 @@ async def old_notes_route(request: Request) -> JSONResponse:
     except ValueError:
         return error("older_than_days must be an integer")
     try:
-        author, visible_to = note_scope(request.state.author, request.query_params.get("author"))
+        authors, visible_to = note_scope(
+            request.state.author, request.query_params.getlist("author") or None
+        )
     except ValueError as exc:
         return error(str(exc))
-    rows = await curation.list_old_notes(older_than_days, author=author, visible_to=visible_to)
+    rows = await curation.list_old_notes(older_than_days, authors=authors, visible_to=visible_to)
     return JSONResponse(rows)
 
 
@@ -194,11 +196,13 @@ async def duplicates_route(request: Request) -> JSONResponse:
     except ValueError:
         return error("limit must be an integer")
     try:
-        author, visible_to = note_scope(request.state.author, request.query_params.get("author"))
+        authors, visible_to = note_scope(
+            request.state.author, request.query_params.getlist("author") or None
+        )
     except ValueError as exc:
         return error(str(exc))
     pairs = await curation.find_duplicates(
-        threshold, kind, limit, author=author, visible_to=visible_to
+        threshold, kind, limit, authors=authors, visible_to=visible_to
     )
     return JSONResponse({"pairs": pairs})
 
@@ -236,10 +240,12 @@ async def archive_route(request: Request) -> JSONResponse:
             return JSONResponse({"archived": archived})
         return JSONResponse({"notes_to_archive": rows})
     try:
-        author, visible_to = note_scope(request.state.author, request.query_params.get("author"))
+        authors, visible_to = note_scope(
+            request.state.author, request.query_params.getlist("author") or None
+        )
     except ValueError as exc:
         return error(str(exc))
-    candidates = await curation.archive_candidates(now, author=author, visible_to=visible_to)
+    candidates = await curation.archive_candidates(now, authors=authors, visible_to=visible_to)
     if body.get("confirm") is True:
         archived = await curation.archive_rows(
             [row["id"] for row in candidates], now, archived_by=request.state.author
