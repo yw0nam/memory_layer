@@ -169,9 +169,9 @@ def test_admin_notes_delete_malformed_json_400():
 def test_admin_duplicates_defaults(monkeypatch):
     captured = {}
 
-    async def fake_find_duplicates(threshold, kind, limit, author=None, visible_to=None):
+    async def fake_find_duplicates(threshold, kind, limit, authors=None, visible_to=None):
         captured.update(
-            threshold=threshold, kind=kind, limit=limit, author=author, visible_to=visible_to
+            threshold=threshold, kind=kind, limit=limit, authors=authors, visible_to=visible_to
         )
         return []
 
@@ -182,7 +182,7 @@ def test_admin_duplicates_defaults(monkeypatch):
         "threshold": 0.75,
         "kind": None,
         "limit": 50,
-        "author": None,
+        "authors": None,
         "visible_to": "claude-code",
     }
 
@@ -190,9 +190,9 @@ def test_admin_duplicates_defaults(monkeypatch):
 def test_admin_duplicates_custom_params_reach_admin(monkeypatch):
     captured = {}
 
-    async def fake_find_duplicates(threshold, kind, limit, author=None, visible_to=None):
+    async def fake_find_duplicates(threshold, kind, limit, authors=None, visible_to=None):
         captured.update(
-            threshold=threshold, kind=kind, limit=limit, author=author, visible_to=visible_to
+            threshold=threshold, kind=kind, limit=limit, authors=authors, visible_to=visible_to
         )
         return []
 
@@ -205,7 +205,7 @@ def test_admin_duplicates_custom_params_reach_admin(monkeypatch):
         "threshold": 0.8,
         "kind": "work",
         "limit": 5,
-        "author": None,
+        "authors": None,
         "visible_to": "claude-code",
     }
 
@@ -294,7 +294,7 @@ def test_admin_archive_dry_run_by_default(monkeypatch):
     calls = {"archive_candidates": 0, "archive_rows": None}
     candidates = [{"id": "note:old", "kind": "agent_note", "hit_count": 0, "last_hit_at": None}]
 
-    async def fake_archive_candidates(now, author=None, visible_to=None):
+    async def fake_archive_candidates(now, authors=None, visible_to=None):
         calls["archive_candidates"] += 1
         assert isinstance(now, float)
         return candidates
@@ -319,7 +319,7 @@ def test_admin_archive_confirm_archives_the_cold_notes(monkeypatch):
         {"id": "note:old2", "kind": "history", "hit_count": 2, "last_hit_at": 123.0},
     ]
 
-    async def fake_archive_candidates(now, author=None, visible_to=None):
+    async def fake_archive_candidates(now, authors=None, visible_to=None):
         return candidates
 
     async def fake_archive_rows(ids, now, archived_by=None):
@@ -343,7 +343,7 @@ def test_admin_archive_with_ids_previews_those_rows(monkeypatch):
         calls["rows_by_ids"] = ids
         return rows
 
-    async def fake_archive_candidates(now, author=None, visible_to=None):
+    async def fake_archive_candidates(now, authors=None, visible_to=None):
         calls["archive_candidates"] += 1
         return []
 
@@ -424,20 +424,20 @@ def test_admin_archive_malformed_ids_400():
 def test_admin_archive_filter_selection_passes_the_scope(monkeypatch):
     captured = {}
 
-    async def fake_archive_candidates(now, author=None, visible_to=None):
-        captured.update(author=author, visible_to=visible_to)
+    async def fake_archive_candidates(now, authors=None, visible_to=None):
+        captured.update(authors=authors, visible_to=visible_to)
         return []
 
     monkeypatch.setattr(curation, "archive_candidates", fake_archive_candidates)
     assert client.post("/admin/archive", json={}).status_code == 200
-    assert captured == {"author": None, "visible_to": "claude-code"}
+    assert captured == {"authors": None, "visible_to": "claude-code"}
 
 
 def test_admin_archive_filter_selection_confirm_stamps_the_header_author(monkeypatch):
     captured = {}
     candidates = [{"id": "note:old", "kind": "note", "hit_count": 0, "last_hit_at": None}]
 
-    async def fake_archive_candidates(now, author=None, visible_to=None):
+    async def fake_archive_candidates(now, authors=None, visible_to=None):
         return candidates
 
     async def fake_archive_rows(ids, now, archived_by=None):
@@ -602,7 +602,7 @@ def test_search_forwards_the_author_filter(monkeypatch):
         "/search", json={"query": "hello", "source": "memory", "author": "natsume"}
     )
     assert response.status_code == 200
-    assert captured["author"] == "natsume"
+    assert captured["authors"] == ["natsume"]
 
 
 def test_search_omitted_author_is_not_forwarded(monkeypatch):
@@ -615,7 +615,7 @@ def test_search_omitted_author_is_not_forwarded(monkeypatch):
     monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post("/search", json={"query": "hello"})
     assert response.status_code == 200
-    assert "author" not in captured
+    assert "authors" not in captured
 
 
 def test_search_null_author_400():
