@@ -86,11 +86,16 @@ Read from `memory.memory_base` in the Hermes profile's `config.yaml`:
 | `api_key`     | *(none)*                   | API key value; takes precedence over `api_key_env` |
 | `api_key_env` | `MEMORY_BASE_API_KEY`     | env var holding the memory-base API key     |
 | `author`      | *(required)*               | the author slug this profile writes under and reads by default (e.g. `hermes`); sent as the `X-Author` header; without it the provider is unavailable |
-| `user_entity` | *(none)*                   | slug of the user's entity; its card is delivered at session start |
-| `namespace`   | *(none)*                   | namespace this agent's turns land in; empty means `default` |
+| `user_entity` | *(none)*                   | slug of the user's own entity (kind `person`), as `list_entities` shows it; its card is delivered at session start; empty: no user card |
+| `namespace`   | *(none)*                   | a registered namespace for this agent's turns and for the facts on its session-start cards; empty means `default`; the server refuses every turn in an unregistered namespace |
 
 The API key is `api_key` when set, otherwise the environment variable named by
 `api_key_env`.
+
+The namespace does not choose where `save_memory` writes and does not narrow the prefetch
+search; reads are scoped by the author. The `connect-agent` skill
+(`integrations/claude_code/skills/connect-agent/SKILL.md`) walks through picking the
+author, the user entity, and the namespace, and registering a new namespace.
 
 `hermes memory setup` configures the provider: it prompts for `url`, `api_key` (stored in
 `.env` as `MEMORY_BASE_API_KEY`), `author`, `user_entity`, `namespace`, `top_k`, `min_score` and `timeout`,

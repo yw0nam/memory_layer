@@ -19,10 +19,13 @@ Enabling the plugin asks for its options. Change them later in `/config`.
 | MCP URL | the MCP server (streamable HTTP) | `http://localhost:8765/mcp` |
 | API key | this agent's key, sent as `X-API-Key`; held in the secure store | none |
 | Author | the author slug this agent writes under and reads by default; sent as the `X-Author` header; its card is delivered at session start | `claude-code` |
-| User entity | slug of the user's entity; its card is delivered at session start | none |
-| Namespace | where this agent's turns land; empty means `default` | none |
+| User entity | slug of the user's own entity (kind `person`), as `list_entities` shows it; its card is delivered at session start; empty: no user card | none |
+| Namespace | a registered namespace for this agent's turns and for the facts on its session-start cards; empty means `default`; the server refuses every turn in an unregistered namespace | none |
 
-The `connect-agent` skill walks through minting a key for an agent.
+The namespace does not choose where `save_memory` writes and does not narrow the
+per-prompt search; reads are scoped by the author. The `connect-agent` skill walks through
+picking the author, the user entity, and the namespace, registering a new namespace, and
+minting a key for an agent.
 
 ## What the plugin provides
 
