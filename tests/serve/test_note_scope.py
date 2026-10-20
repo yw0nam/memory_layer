@@ -34,13 +34,16 @@ def test_all_lifts_the_scope():
     assert note_scope("claude-code", "all") == (None, None)
 
 
-def test_a_slug_narrows_to_that_author():
-    assert note_scope("claude-code", "natsume") == ("natsume", None)
+def test_a_list_names_exactly_those_authors():
+    assert note_scope("claude-code", ["natsume", "claude-code"]) == (
+        ["natsume", "claude-code"],
+        None,
+    )
 
 
-@pytest.mark.parametrize("requested", ["Not A Slug", "", " all "])
+@pytest.mark.parametrize("requested", ["Not A Slug", "", " all ", [], ["natsume", "Bad"]])
 def test_an_invalid_value_is_refused(requested):
-    with pytest.raises(RequestError, match='author must be an author slug or "all"'):
+    with pytest.raises(RequestError, match='author must be "all" or a list of author slugs'):
         note_scope("claude-code", requested)
 
 
@@ -52,7 +55,9 @@ def searched(monkeypatch):
     captured = {}
 
     async def fake_search(query, **options):
-        captured.update({"author": options.get("author"), "visible_to": options.get("visible_to")})
+        captured.update(
+            {"authors": options.get("authors"), "visible_to": options.get("visible_to")}
+        )
         return []
 
     monkeypatch.setattr(search_routes, "search", fake_search)
@@ -75,8 +80,8 @@ def listed(monkeypatch):
 def old_listed(monkeypatch):
     captured = {}
 
-    async def fake_list_old_notes(older_than_days, author=None, visible_to=None):
-        captured.update(author=author, visible_to=visible_to)
+    async def fake_list_old_notes(older_than_days, authors=None, visible_to=None):
+        captured.update(authors=authors, visible_to=visible_to)
         return []
 
     monkeypatch.setattr(curation, "list_old_notes", fake_list_old_notes)
@@ -101,19 +106,31 @@ def consolidated(monkeypatch):
 
 def test_search_defaults_to_own_and_shared_notes(searched):
     assert client.post("/search", json={"query": "q", "source": "memory"}).status_code == 200
-    assert searched["author"] is None
+    assert searched["authors"] is None
     assert searched["visible_to"] == "claude-code"
+
+
+def test_search_narrows_to_the_listed_authors(searched):
+    body = {"query": "q", "source": "memory", "author": ["natsume", "claude-code"]}
+    assert client.post("/search", json=body).status_code == 200
+    assert searched == {"authors": ["natsume", "claude-code"], "visible_to": None}
 
 
 def test_notes_defaults_to_own_and_shared_notes(listed):
     assert client.get("/notes").status_code == 200
-    assert listed["author"] is None
+    assert listed["authors"] is None
     assert listed["visible_to"] == "claude-code"
+
+
+def test_notes_narrows_to_the_repeated_author_params(listed):
+    assert client.get("/notes?author=natsume&author=claude-code").status_code == 200
+    assert listed["authors"] == ["natsume", "claude-code"]
+    assert listed["visible_to"] is None
 
 
 def test_admin_notes_defaults_to_own_and_shared_notes(old_listed):
     assert client.get("/admin/notes").status_code == 200
-    assert old_listed == {"author": None, "visible_to": "claude-code"}
+    assert old_listed == {"authors": None, "visible_to": "claude-code"}
 
 
 def test_consolidation_groups_default_to_exactly_the_header_author(consolidated):
@@ -151,7 +168,7 @@ def test_read_entity_notes_default_to_own_and_shared_notes(monkeypatch):
 def test_a_non_string_author_is_a_400():
     response = client.post("/search", json={"query": "q", "source": "memory", "author": 5})
     assert response.status_code == 400
-    assert response.json()["error"] == 'author must be an author slug or "all"'
+    assert response.json()["error"] == 'author must be "all" or a list of author slugs'
 
 
 def test_history_predicates_carries_the_visible_to_clause():

@@ -190,8 +190,8 @@ def test_list_notes_forwards_the_author_filter(monkeypatch):
         return httpx.Response(200, json=[])
 
     _patch_client(monkeypatch, handler)
-    asyncio.run(note_tools.list_notes(author="natsume"))
-    assert captured["params"] == [("author", "natsume")]
+    asyncio.run(note_tools.list_notes(author=["natsume", "claude-code"]))
+    assert captured["params"] == [("author", "natsume"), ("author", "claude-code")]
 
 
 def test_list_notes_omits_unset_filters(monkeypatch):

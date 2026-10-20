@@ -37,11 +37,15 @@ def schemas() -> dict[str, dict]:
 @pytest.mark.parametrize(
     "name", ["search_memory", "list_notes", "list_memory_duplicates", "read_entity"]
 )
-def test_the_author_argument_states_the_three_way_scope(schemas, name):
-    assert schemas[name]["properties"]["author"]["description"] == (
-        'Omitted: your own notes and shared notes. "all": every agent\'s notes. '
-        "A slug: that agent's notes only."
+def test_the_author_argument_states_the_default_and_the_explicit_list(schemas, name):
+    author = schemas[name]["properties"]["author"]
+    assert author["description"] == (
+        "Omitted: your own notes and shared notes. Another agent's notes come back only "
+        "when you name it: a list of slugs returns exactly those agents' notes, e.g. "
+        '["natsume", "claude-code"]; include your own slug to keep yours. '
+        '"all": every agent\'s notes.'
     )
+    assert {"type": "array", "items": {"type": "string"}} in author["anyOf"]
 
 
 def test_search_tools_state_the_rerank_cap_on_top_k(descriptions):

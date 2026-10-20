@@ -49,7 +49,7 @@ def test_list_notes_defaults(monkeypatch):
     assert captured["include_archived"] is False
     assert captured["limit"] == 50
     assert captured["namespaces"] is None  # stubbed identity is admin
-    assert captured["author"] is None
+    assert captured["authors"] is None
     assert captured["visible_to"] == "claude-code"
 
 
@@ -72,7 +72,7 @@ def test_list_notes_forwards_the_author_filter(monkeypatch):
     captured = _capture_list_notes(monkeypatch)
     response = client.get("/notes?author=natsume")
     assert response.status_code == 200
-    assert captured["author"] == "natsume"
+    assert captured["authors"] == ["natsume"]
     assert captured["visible_to"] is None
 
 
@@ -80,7 +80,7 @@ def test_list_notes_omitted_author_filter_is_the_default_scope(monkeypatch):
     captured = _capture_list_notes(monkeypatch)
     response = client.get("/notes")
     assert response.status_code == 200
-    assert captured["author"] is None
+    assert captured["authors"] is None
     assert captured["visible_to"] == "claude-code"
 
 
@@ -88,14 +88,14 @@ def test_list_notes_author_all_covers_every_author(monkeypatch):
     captured = _capture_list_notes(monkeypatch)
     response = client.get("/notes?author=all")
     assert response.status_code == 200
-    assert captured["author"] is None
+    assert captured["authors"] is None
     assert captured["visible_to"] is None
 
 
 def test_list_notes_invalid_author_400():
     response = client.get("/notes?author=Bad")
     assert response.status_code == 400
-    assert response.json()["error"] == 'author must be an author slug or "all"'
+    assert response.json()["error"] == 'author must be "all" or a list of author slugs'
 
 
 def test_list_notes_invalid_limit_400():
@@ -338,16 +338,16 @@ def test_list_notes_omits_lineage_fields_when_unrecorded(monkeypatch):
 def test_list_notes_filters_by_author(monkeypatch):
     conn = FakeConnection([])
     _patch_conn(monkeypatch, conn)
-    asyncio.run(store.list_notes(author="natsume"))
-    assert "metadata->>'author' = $" in conn.query
-    assert "natsume" in conn.args
+    asyncio.run(store.list_notes(authors=["natsume"]))
+    assert "metadata->>'author' = ANY($" in conn.query
+    assert ["natsume"] in conn.args
 
 
 def test_list_notes_scope_clause_is_and_ed_with_the_others(monkeypatch):
     conn = FakeConnection([])
     _patch_conn(monkeypatch, conn)
-    asyncio.run(store.list_notes(author="natsume", visible_to="claude-code"))
-    assert "metadata->>'author' = $" in conn.query
+    asyncio.run(store.list_notes(authors=["natsume"], visible_to="claude-code"))
+    assert "metadata->>'author' = ANY($" in conn.query
     assert "metadata @> '{\"shared\": true}'::jsonb" in conn.query
 
 

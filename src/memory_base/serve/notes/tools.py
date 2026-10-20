@@ -8,7 +8,7 @@ from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from memory_base.serve.common import rest_client
-from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION
+from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION, AuthorScope, author_params
 
 
 async def list_notes(
@@ -19,10 +19,7 @@ async def list_notes(
     until: str | None = None,
     include_archived: bool = False,
     namespace: str | None = None,
-    author: Annotated[
-        str | None,
-        Field(description=AUTHOR_SCOPE_DESCRIPTION),
-    ] = None,
+    author: Annotated[AuthorScope, Field(description=AUTHOR_SCOPE_DESCRIPTION)] = None,
     limit: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
@@ -59,8 +56,7 @@ async def list_notes(
         params.append(("include_archived", "true"))
     if namespace is not None:
         params.append(("namespace", namespace))
-    if author is not None:
-        params.append(("author", author))
+    params += author_params(author)
     if limit is not None:
         params.append(("limit", str(limit)))
     return await rest_client.call(
@@ -188,10 +184,7 @@ async def list_memory_duplicates(
     threshold: float | None = None,
     kind: str | None = None,
     limit: int | None = None,
-    author: Annotated[
-        str | None,
-        Field(description=AUTHOR_SCOPE_DESCRIPTION),
-    ] = None,
+    author: Annotated[AuthorScope, Field(description=AUTHOR_SCOPE_DESCRIPTION)] = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """List active note pairs whose meaning nearly coincides.
@@ -211,8 +204,7 @@ async def list_memory_duplicates(
         params.append(("kind", kind))
     if limit is not None:
         params.append(("limit", str(limit)))
-    if author is not None:
-        params.append(("author", author))
+    params += author_params(author)
     return await rest_client.call(
         "GET",
         "/admin/duplicates",

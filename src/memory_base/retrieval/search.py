@@ -189,11 +189,11 @@ def validate_search_options(
     repo: Any = None,
     since: Any = None,
     until: Any = None,
-    author: Any = None,
+    authors: Any = None,
 ) -> tuple[str | None, list[str] | None, list[str] | None, float | None, float | None]:
     """Validate source-specific filters and return normalized values.
 
-    `author` needs no normalization, so it is validated here but not returned.
+    `authors` needs no normalization, so it is validated here but not returned.
     """
     if kind is not None and kind not in SEARCH_KINDS:
         raise ValueError(f"kind must be one of {SEARCH_KINDS}")
@@ -206,9 +206,13 @@ def validate_search_options(
     since_ts, until_ts = normalize_time_range(since, until)
     if (since_ts is not None or until_ts is not None) and source != "memory":
         raise ValueError('since and until filters require source="memory"')
-    if author is not None:
-        if not isinstance(author, str) or not author.strip():
-            raise ValueError("author must be a non-empty string")
+    if authors is not None:
+        if (
+            not isinstance(authors, list)
+            or not authors
+            or not all(isinstance(a, str) and a.strip() for a in authors)
+        ):
+            raise ValueError("authors must be a non-empty list of non-empty strings")
         if source != "memory":
             raise ValueError('author filter requires source="memory"')
     return kind, normalized_tags, normalized_repo, since_ts, until_ts
@@ -237,7 +241,7 @@ def history_predicates(
     namespaces: list[str] | None = None,
     since: float | None = None,
     until: float | None = None,
-    author: str | None = None,
+    authors: list[str] | None = None,
     visible_to: str | None = None,
     start: int = 1,
 ) -> tuple[str, list[Any]]:
@@ -272,9 +276,9 @@ def history_predicates(
     if until is not None:
         args.append(until)
         clauses.append(f"{event_time} < ${start + len(args)}")
-    if author is not None:
-        args.append(author)
-        clauses.append(f"{prefix}metadata->>'author' = ${start + len(args)}")
+    if authors is not None:
+        args.append(authors)
+        clauses.append(f"{prefix}metadata->>'author' = ANY(${start + len(args)}::text[])")
     if visible_to is not None:
         args.append(visible_to)
         clauses.append(visible_clause(alias, start + len(args)))
@@ -354,7 +358,7 @@ async def _search_memory(
     namespaces: list[str] | None = None,
     since: float | None = None,
     until: float | None = None,
-    author: str | None = None,
+    authors: list[str] | None = None,
     visible_to: str | None = None,
     schema: str | None = None,
 ) -> list[Hit]:
@@ -368,7 +372,7 @@ async def _search_memory(
         namespaces=namespaces,
         since=since,
         until=until,
-        author=author,
+        authors=authors,
         visible_to=visible_to,
     )
     columns = (
@@ -558,7 +562,7 @@ async def search(
     since: str | None = None,
     until: str | None = None,
     min_score: float | None = None,
-    author: str | None = None,
+    authors: list[str] | None = None,
     visible_to: str | None = None,
     budget_tokens: int | None = None,
     schema: str | None = None,
@@ -570,7 +574,7 @@ async def search(
     returned text would exceed the budget; the floor and RERANK_TOP do not apply.
     """
     kind, tags, repo, since_ts, until_ts = validate_search_options(
-        source, kind, tags, repo, since, until, author
+        source, kind, tags, repo, since, until, authors
     )
     namespaces = normalize_namespaces(namespaces)
 
@@ -591,7 +595,7 @@ async def search(
                 namespaces=namespaces,
                 since=since_ts,
                 until=until_ts,
-                author=author,
+                authors=authors,
                 visible_to=visible_to,
                 schema=schema,
             )

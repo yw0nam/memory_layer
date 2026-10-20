@@ -133,6 +133,50 @@ def test_a_shared_note_is_in_another_authors_default_reads():
         asyncio.run(_drop(namespace))
 
 
+def test_a_list_of_authors_reads_exactly_those_authors():
+    namespace = f"scope-list-{uuid.uuid4().hex[:8]}"
+    marker = f"zzzscopelist{uuid.uuid4().hex[:8]}"
+    topics = {A: "staging deploy", B: "release freeze", C: "backup rotation"}
+
+    async def seed() -> dict[str, str]:
+        await namespaces.create_namespace(namespace)
+        ids = {}
+        for author, topic in topics.items():
+            saved = await store.save_note(
+                f"read scope integration pin {marker}: the {topic} rule holds",
+                tags=["test"],
+                kind="work",
+                namespace=namespace,
+                author=author,
+            )
+            ids[author] = saved["id"]
+        return ids
+
+    ids = asyncio.run(seed())
+    try:
+        listing = _client(C).get(
+            "/notes", params=[("namespace", namespace), ("author", A), ("author", B)]
+        )
+        assert listing.status_code == 200, listing.text
+        assert {row["id"] for row in listing.json()} == {ids[A], ids[B]}
+
+        found = _client(C).post(
+            "/search",
+            json={
+                "query": f"read scope integration pin {marker}",
+                "source": "memory",
+                "namespaces": [namespace],
+                "author": [A, B],
+                "min_score": 0,
+            },
+        )
+        assert found.status_code == 200, found.text
+        assert {hit["id"] for hit in found.json()} == {ids[A], ids[B]}
+    finally:
+        asyncio.run(db.close_pool())
+        asyncio.run(_drop(namespace))
+
+
 def test_the_near_duplicate_check_runs_over_the_writers_scope():
     namespace = f"scope-duplicate-{uuid.uuid4().hex[:8]}"
     marker = f"zzzscopedup{uuid.uuid4().hex[:8]}"

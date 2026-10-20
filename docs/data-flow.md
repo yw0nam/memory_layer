@@ -205,8 +205,9 @@ Private repositories authenticate through the git credential store — see
 Memory hits (notes, document chunks, CSV cards) carry the row's `id`, `kind`, and
 `tags`, and `entities` (empty when the note names none), plus `supersedes` for a note that replaced one and `shared: true` on a shared
 note. Omitted, `author` returns the caller's default read scope — the calling author's own
-notes plus the shared notes; `all` searches every author; a slug returns only that
-author's notes. Document chunks and CSV cards are not notes: they have no author, so they
+notes plus the shared notes; `all` searches every author; a list of slugs returns
+exactly those authors' notes, so a caller reads another agent's notes only by naming it.
+The MCP tools take the same list, e.g. `author=["natsume", "claude-code"]`. Document chunks and CSV cards are not notes: they have no author, so they
 pass an omitted or `all` read and drop out of a slug read, which filters every row on the
 author. `GET /notes` rows carry the same `entities`. `?entity=<slug>` narrows to notes whose `metadata.entities` holds the slug, beside the `kind`, `tags`, and `namespace` filters. `date` is
 the note's `occurred_at` when recorded, else `ts_last_active`. `since`/`until` bound the
@@ -320,7 +321,7 @@ The sending key partitions the retries of an `idempotency_key`; it grants nothin
 
 `GET /admin/duplicates` lists near-duplicate agent-note pairs by cosine with each side's author —
 `threshold` (default 0.75) and the three-way `author` (omitted: the caller's default
-scope; `all`: every author; a slug: that author),
+scope; `all`: every author; slugs: exactly those authors),
 `GET /admin/notes` lists old agent notes, and `POST /admin/restore` clears `archived_at`
 and `metadata.archived_by`, `replaced_by`, and `consolidated_into`. `POST /admin/archive` archives the agent notes named by `ids`, or,
 when `ids` is omitted, the cold agent notes the `author` query parameter selects (the

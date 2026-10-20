@@ -8,7 +8,7 @@ from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from memory_base.serve.common import rest_client
-from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION
+from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION, AuthorScope
 
 
 async def _search(
@@ -23,7 +23,7 @@ async def _search(
     since: str | None = None,
     until: str | None = None,
     min_score: float | None = None,
-    author: str | None = None,
+    author: AuthorScope = None,
     budget_tokens: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
@@ -150,10 +150,7 @@ async def search_memory(
     since: str | None = None,
     until: str | None = None,
     min_score: float | None = None,
-    author: Annotated[
-        str | None,
-        Field(description=AUTHOR_SCOPE_DESCRIPTION),
-    ] = None,
+    author: Annotated[AuthorScope, Field(description=AUTHOR_SCOPE_DESCRIPTION)] = None,
     budget_tokens: int | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
