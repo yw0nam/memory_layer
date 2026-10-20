@@ -37,13 +37,13 @@
     "user_entity": {
       "type": "string",
       "title": "User entity",
-      "description": "Slug of the user's entity; its card is delivered at session start.",
+      "description": "Slug of the user's own entity (kind person), as list_entities shows it; its card is delivered at session start. Empty: no user card.",
       "required": false
     },
     "namespace": {
       "type": "string",
       "title": "Namespace",
-      "description": "Where this agent's turns land; empty means `default`.",
+      "description": "A registered namespace for this agent's turns and for the facts on its session-start cards; empty means `default`. Register a new one first (the connect-agent skill shows how): the server refuses every turn in an unregistered namespace.",
       "required": false
     }
   }
