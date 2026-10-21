@@ -64,7 +64,7 @@ def repo(tmp_path: pathlib.Path) -> pathlib.Path:
     return repo
 
 
-def _commit(repo: pathlib.Path, **files: str) -> None:
+def _commit(repo: pathlib.Path, files: dict[str, str]) -> None:
     """Append each file's text to the working tree and commit it."""
     for name, text in files.items():
         path = repo / name
@@ -79,21 +79,14 @@ def run_diff(repo: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
 
 
 def test_diff_mode_flags_an_edited_doc(repo):
-    _commit(repo, **{"docs/a.md": FLAGGED + "\n"})
+    _commit(repo, {"docs/a.md": FLAGGED + "\n"})
     result = run_diff(repo, "main")
     assert result.returncode == 1
     assert f"docs/a.md: {FLAGGED}" in result.stdout.splitlines()
 
 
-def test_diff_mode_flags_a_new_doc(repo):
-    _commit(repo, **{"docs/new.md": FLAGGED + "\n"})
-    result = run_diff(repo, "main")
-    assert result.returncode == 1
-    assert f"docs/new.md: {FLAGGED}" in result.stdout.splitlines()
-
-
 def test_diff_mode_strips_one_plus_prefix(repo):
-    _commit(repo, **{"docs/plus.md": "++ " + FLAGGED + "\n"})
+    _commit(repo, {"docs/plus.md": "++ " + FLAGGED + "\n"})
     result = run_diff(repo, "main")
     assert result.returncode == 1
     assert f"docs/plus.md: ++ {FLAGGED}" in result.stdout.splitlines()
@@ -107,19 +100,19 @@ def test_diff_mode_ignores_removed_lines(repo):
 
 
 def test_diff_mode_ignores_the_changelog_at_any_depth(repo):
-    _commit(repo, **{"CHANGELOG.md": FLAGGED + "\n", "sub/CHANGELOG.md": FLAGGED + "\n"})
+    _commit(repo, {"CHANGELOG.md": FLAGGED + "\n", "sub/CHANGELOG.md": FLAGGED + "\n"})
     result = run_diff(repo, "main")
     assert result.returncode == 0, result.stdout
 
 
 def test_diff_mode_ignores_non_markdown(repo):
-    _commit(repo, **{"notes.txt": FLAGGED + "\n"})
+    _commit(repo, {"notes.txt": FLAGGED + "\n"})
     result = run_diff(repo, "main")
     assert result.returncode == 0, result.stdout
 
 
 def test_diff_mode_names_a_non_ascii_path_unquoted(repo):
-    _commit(repo, **{"docs/한글.md": "이 기능은 제거했다.\n"})
+    _commit(repo, {"docs/한글.md": "이 기능은 제거했다.\n"})
     result = run_diff(repo, "main")
     assert result.returncode == 1
     assert "docs/한글.md: 이 기능은 제거했다." in result.stdout.splitlines()
@@ -128,7 +121,7 @@ def test_diff_mode_names_a_non_ascii_path_unquoted(repo):
 def test_diff_mode_names_each_file_of_a_multi_file_diff(repo):
     _commit(
         repo,
-        **{
+        {
             "docs/a.md": "A clean added line.\n",
             "docs/b.md": FLAGGED + "\n",
             "docs/c.md": FLAGGED + "\n",
@@ -142,14 +135,34 @@ def test_diff_mode_names_each_file_of_a_multi_file_diff(repo):
 
 def test_diff_mode_survives_a_deleted_first_file(repo):
     _git(repo, "rm", "-q", "docs/a.md")
-    _commit(repo, **{"docs/z.md": FLAGGED + "\n"})
+    _commit(repo, {"docs/z.md": "이 기능은 제거했다.\n"})
     result = run_diff(repo, "main")
     assert result.returncode == 1
-    assert f"docs/z.md: {FLAGGED}" in result.stdout.splitlines()
+    assert "docs/z.md: 이 기능은 제거했다." in result.stdout.splitlines()
+
+
+def test_diff_mode_passes_a_pure_rename(repo):
+    _git(repo, "mv", "docs/a.md", "docs/renamed.md")
+    _git(repo, "commit", "-qm", "topic")
+    result = run_diff(repo, "main")
+    assert result.returncode == 0, result.stdout
+
+
+def test_diff_mode_judges_the_line_not_the_path(repo):
+    _commit(repo, {"docs/no longer/x.md": "A clean added line.\n"})
+    result = run_diff(repo, "main")
+    assert result.returncode == 0, result.stdout
+
+
+def test_diff_mode_strips_the_tab_after_a_path_with_a_space(repo):
+    _commit(repo, {"docs/a b.md": FLAGGED + "\n"})
+    result = run_diff(repo, "main")
+    assert result.returncode == 1
+    assert f"docs/a b.md: {FLAGGED}" in result.stdout.splitlines()
 
 
 def test_diff_mode_over_5000_added_lines_finishes_in_under_5_seconds(repo):
-    _commit(repo, **{"docs/big.md": "".join(f"line {i}\n" for i in range(5000))})
+    _commit(repo, {"docs/big.md": "".join(f"line {i}\n" for i in range(5000))})
     start = time.monotonic()
     result = run_diff(repo, "main")
     assert result.returncode == 0, result.stdout
