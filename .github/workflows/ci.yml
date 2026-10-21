@@ -49,6 +49,16 @@ jobs:
           TEST_GUARD_SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'skip-tests') && '1' || '' }}
         run: bash scripts/ci/test-guard.sh "origin/${{ github.event.pull_request.base.ref }}"
 
+  docs-guard:
+    name: docs-guard (docs are current-state)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # full history so we can diff against the PR base
+      - run: bash scripts/ci/docs-guard.sh "origin/${{ github.event.pull_request.base.ref }}"
+
   pr-title:
     name: pr-title (conventional + english)
     runs-on: ubuntu-latest

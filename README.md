@@ -312,4 +312,6 @@ uv run python -m memory_base.eval.mcp_writer --dataset PATH --questions ID[,ID..
 ```
 
 Work happens in a git worktree and lands via PR; `main` requires a PR and green CI (lint,
-unit tests, test-guard, PR title). See `AGENTS.md` for the full contributor contract.
+unit tests, test-guard, docs-guard, PR title). The docs-guard job and the `PostToolUse` edit
+hook share `scripts/ci/docs-guard.sh`, which flags change-narrative vocabulary in markdown.
+See `AGENTS.md` for the full contributor contract.
