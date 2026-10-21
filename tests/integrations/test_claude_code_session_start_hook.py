@@ -230,9 +230,10 @@ def test_prints_both_cards_then_the_session_line_then_handoffs_in_one_fence():
     assert block.count("<memory-context>") == 1
     assert ("/entities/claude-code", {}) in get.calls
     assert ("/entities/yw0nam", {}) in get.calls
-    assert ("/messages", {"purpose": "handoff", "scope": "repo:github.com/o/r", "limit": "10"}) in (
-        get.calls
-    )
+    assert (
+        "/messages",
+        {"purpose": "handoff", "scope": "repo:github.com/o/r", "limit": "100"},
+    ) in get.calls
 
 
 def test_only_the_agents_card_is_fetched_without_a_user_entity():
@@ -370,23 +371,42 @@ def test_completed_handoffs_leave_the_continue_list_for_one_line():
     )
     lines = _lines(block)
     start = lines.index(HANDOFF_HEADER)
-    assert lines[start + 1 : start + 3] == HANDOFF_LINES[1:]
     assert [line for line in lines if line.startswith("- ")] == HANDOFF_LINES[1:]
     assert lines[start + 3] == (
-        "Memory: 2 completed handoffs delivered for this repo; claim one to read it "
-        "(ids: 9b2d3c44-0000-4000-8000-000000000003, 9b2d3c44-0000-4000-8000-000000000004)."
+        "Memory: completed handoffs delivered for this repo: 2. "
+        "Claim one to read it; list_messages names their ids."
     )
 
 
-def test_a_lone_completed_handoff_prints_one_line_without_the_continue_header():
+def test_completed_handoffs_print_one_counted_line_without_the_continue_header():
     row = dict(HANDOFFS[0], status="completed")
     block = run_hook(_payload(), RecordingGet([row]), _origin("git@github.com:o/r.git"))
     lines = _lines(block)
     assert HANDOFF_HEADER not in block
     assert not any(line.startswith("- ") for line in lines)
     assert lines[-1] == (
-        "Memory: 1 completed handoff delivered for this repo; claim it to read it "
-        f"(id: {row['id']})."
+        "Memory: completed handoffs delivered for this repo: 1. "
+        "Claim one to read it; list_messages names their ids."
+    )
+
+
+def test_completed_handoffs_never_crowd_open_ones_out_of_the_list():
+    completed = [
+        dict(HANDOFFS[0], id=f"completed-{i}", subject=f"done {i}", status="completed")
+        for i in range(12)
+    ]
+    open_row = dict(HANDOFFS[0], id="open-1")
+    block = run_hook(
+        _payload(), RecordingGet([*completed, open_row]), _origin("git@github.com:o/r.git")
+    )
+    lines = _lines(block)
+    start = lines.index(HANDOFF_HEADER)
+    assert [line for line in lines if line.startswith("- ")] == [
+        "- 2026-09-28  Session entry hooks  (status: in_progress, id: open-1)"
+    ]
+    assert lines[start + 2] == (
+        "Memory: completed handoffs delivered for this repo: 12. "
+        "Claim one to read it; list_messages names their ids."
     )
 
 
