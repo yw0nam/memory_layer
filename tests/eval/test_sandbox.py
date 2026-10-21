@@ -67,10 +67,22 @@ def test_an_interrupt_stops_the_api_then_the_database_and_restores_handlers(monk
         signal.signal(signal.SIGINT, signal.default_int_handler)
     assert events == ["db in", "api in", "api out", "db out"]
     assert "sandbox stopped" in capsys.readouterr().err
-    assert seen["int"] is signal.default_int_handler
-    assert seen["term"] not in (before_term, signal.SIG_IGN, signal.SIG_DFL)
+    assert seen["int"] == sandbox._stop
+    assert seen["term"] == sandbox._stop
     assert after_int == signal.SIG_IGN
     assert after_term == before_term
+
+
+def test_a_stop_signal_ignores_further_ones_and_interrupts():
+    before = {n: signal.getsignal(n) for n in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            sandbox._stop(signal.SIGTERM, None)
+        assert signal.getsignal(signal.SIGINT) == signal.SIG_IGN
+        assert signal.getsignal(signal.SIGTERM) == signal.SIG_IGN
+    finally:
+        for number, handler in before.items():
+            signal.signal(number, handler)
 
 
 def test_prepare_closes_the_pool_when_minting_the_key_fails(monkeypatch):

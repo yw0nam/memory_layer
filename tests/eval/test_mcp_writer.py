@@ -257,6 +257,17 @@ def test_an_interrupt_while_the_eval_api_boots_stops_it_and_removes_its_tempdir(
     assert not Path(api.state.name).exists()
 
 
+def test_a_failed_start_removes_the_eval_api_tempdir(monkeypatch):
+    def failing(argv, **kwargs):
+        raise OSError("no uv")
+
+    monkeypatch.setattr(mcp_writer.subprocess, "Popen", failing)
+    api = mcp_writer.EvalApi()
+    with pytest.raises(OSError):
+        api.__enter__()
+    assert not Path(api.state.name).exists()
+
+
 def test_questions_run_concurrently_up_to_the_limit(monkeypatch, tmp_path):
     in_flight, peak, done = 0, 0, []
 
