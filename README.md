@@ -313,3 +313,5 @@ uv run python -m memory_base.eval.mcp_writer --dataset PATH --questions ID[,ID..
 
 Work happens in a git worktree and lands via PR; `main` requires a PR and green CI (lint,
 unit tests, test-guard, PR title). See `AGENTS.md` for the full contributor contract.
+Runtime evidence for a PR comes from `uv run python -m memory_base.eval.sandbox`, which serves the
+real REST API on a throwaway Postgres and prints its URL and a key.

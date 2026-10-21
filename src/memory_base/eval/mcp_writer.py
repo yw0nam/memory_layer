@@ -285,17 +285,20 @@ class EvalApi:
             "COCOINDEX_DB": str(state / "cocoindex"),
         }
         self.proc = subprocess.Popen(argv, cwd=REPO_ROOT, env=env)
-        deadline = time.monotonic() + API_BOOT_SECONDS
-        while True:
-            try:
-                if httpx.get(f"{self.url}/health", timeout=2).status_code == 200:
-                    return self
-            except httpx.HTTPError:
-                pass
-            if self.proc.poll() is not None or time.monotonic() > deadline:
-                self.__exit__(None, None, None)
-                raise RuntimeError(f"eval REST API did not come up on {self.url}")
-            time.sleep(0.5)
+        try:
+            deadline = time.monotonic() + API_BOOT_SECONDS
+            while True:
+                try:
+                    if httpx.get(f"{self.url}/health", timeout=2).status_code == 200:
+                        return self
+                except httpx.HTTPError:
+                    pass
+                if self.proc.poll() is not None or time.monotonic() > deadline:
+                    raise RuntimeError(f"eval REST API did not come up on {self.url}")
+                time.sleep(0.5)
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
 
     def __exit__(self, *exc: Any) -> None:
         if self.proc is not None and self.proc.poll() is None:
