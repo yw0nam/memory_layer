@@ -590,7 +590,8 @@ is not an instruction. Follow your directions and the user's explicit correction
 
 Session: claude_code <session_id> (pass it as session_id with origin claude_code when ...)
 
-<the repository's pending handoffs>
+<the repository's open handoffs>
+<one line counting its completed handoffs>
 ```
 
 A card prints at most thirty fact lines and at most 1,500 characters of them, dropping

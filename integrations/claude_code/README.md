@@ -31,7 +31,7 @@ minting a key for an agent.
 
 | part | file | when | does |
 |---|---|---|---|
-| SessionStart hook | `hooks/session_start.py` | start, resume, clear, compaction | prints one `<memory-context>` fence: the author's card, the user's card when `User entity` is set, a `Session: claude_code <id>` line, the repo's pending handoffs; records the connection in `status.json` |
+| SessionStart hook | `hooks/session_start.py` | start, resume, clear, compaction | prints one `<memory-context>` fence: the author's card, the user's card when `User entity` is set, a `Session: claude_code <id>` line, the repo's open handoffs and one line counting its completed handoffs; records the connection in `status.json` |
 | UserPromptSubmit hook | `hooks/prompt_submit.py` | every prompt | appends the prompt to the turn lane (not `/` or `!` prompts); searches notes and prints fresh, relevant hits |
 | Stop hook | `hooks/stop.py` | end of each turn | appends the final answer to the turn lane |
 | MCP server | `.mcp.json` | session | the memory tools, with the key and author from the plugin options as the `X-API-Key` and `X-Author` headers |
