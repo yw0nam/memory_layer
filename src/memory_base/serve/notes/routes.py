@@ -29,7 +29,7 @@ def _ids(body: dict[str, Any]) -> list[str] | None:
     return ids
 
 
-def _missing(ids: list[str], rows: list[dict], noun: str) -> JSONResponse | None:
+def _refuse_missing(ids: list[str], rows: list[dict], noun: str) -> JSONResponse | None:
     """A 400 naming the requested ids absent from rows; None when every id was found."""
     missing = sorted(set(ids) - {row["id"] for row in rows})
     if not missing:
@@ -167,7 +167,7 @@ async def delete_route(request: Request) -> JSONResponse:
     if ids is None:
         return error("ids must be a non-empty list")
     rows = await curation.notes_by_ids(ids)
-    if refused := _missing(ids, rows, "agent notes"):
+    if refused := _refuse_missing(ids, rows, "agent notes"):
         return refused
     if body.get("confirm") is True:
         deleted = await curation.delete_notes(ids)
@@ -237,7 +237,7 @@ async def archive_route(request: Request) -> JSONResponse:
     now = time.time()
     if ids is not None:
         rows = await curation.rows_by_ids(ids, notes_only=True)
-        if refused := _missing(ids, rows, "active notes"):
+        if refused := _refuse_missing(ids, rows, "active notes"):
             return refused
         if body.get("confirm") is True:
             archived = await curation.archive_rows(ids, now, archived_by=request.state.author)
@@ -270,7 +270,7 @@ async def restore_route(request: Request) -> JSONResponse:
     if ids is None:
         return error("ids must be a non-empty list")
     rows = await curation.rows_by_ids(ids)
-    if refused := _missing(ids, rows, "stored rows"):
+    if refused := _refuse_missing(ids, rows, "stored rows"):
         return refused
     if body.get("confirm") is True:
         restored = await curation.restore_rows(ids)
