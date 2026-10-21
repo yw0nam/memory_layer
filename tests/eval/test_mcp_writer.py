@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -229,6 +230,42 @@ def test_the_eval_api_keeps_its_on_disk_state_in_its_own_tempdir(monkeypatch):
     env = spawned["env"]
     for name in ("INGEST_SPOOL", "REPO_CACHE", "LOG_DIR", "COCOINDEX_DB"):
         assert env[name].startswith(state)
+
+
+def test_an_interrupt_while_the_eval_api_boots_stops_it_and_removes_its_tempdir(monkeypatch):
+    stopped = []
+
+    class Proc:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            stopped.append(True)
+
+        def wait(self, timeout):
+            return 0
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(mcp_writer.subprocess, "Popen", lambda argv, **kwargs: Proc())
+    monkeypatch.setattr(mcp_writer.httpx, "get", interrupted)
+    api = mcp_writer.EvalApi()
+    with pytest.raises(KeyboardInterrupt):
+        api.__enter__()
+    assert stopped == [True]
+    assert not Path(api.state.name).exists()
+
+
+def test_a_failed_start_removes_the_eval_api_tempdir(monkeypatch):
+    def failing(argv, **kwargs):
+        raise OSError("no uv")
+
+    monkeypatch.setattr(mcp_writer.subprocess, "Popen", failing)
+    api = mcp_writer.EvalApi()
+    with pytest.raises(OSError):
+        api.__enter__()
+    assert not Path(api.state.name).exists()
 
 
 def test_questions_run_concurrently_up_to_the_limit(monkeypatch, tmp_path):
