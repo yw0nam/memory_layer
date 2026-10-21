@@ -4,7 +4,7 @@
 <!-- What and why -->
 
 ## Related issues
-<!-- Closes #__ -->
+<!-- One line per resolved issue: Closes #N -->
 
 ## Runtime evidence (required for ingest / retrieval / serving behavior)
 <!-- Unit tests are not runtime verification. For any behavioral change, paste
