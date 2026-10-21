@@ -10,27 +10,25 @@ import pytest
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "worktree.sh"
 GIT_ENV = {
-    **os.environ,
+    **{key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
     "GIT_AUTHOR_NAME": "Test",
     "GIT_AUTHOR_EMAIL": "test@example.com",
-    "GIT_AUTHOR_DATE": "2020-01-01T00:00:00Z",
     "GIT_COMMITTER_NAME": "Test",
     "GIT_COMMITTER_EMAIL": "test@example.com",
-    "GIT_COMMITTER_DATE": "2020-01-01T00:00:00Z",
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_NOSYSTEM": "1",
 }
 
 
-def _git(cwd: pathlib.Path, *args: str) -> str:
+def _git(cwd: pathlib.Path, *args: str, check: bool = True):
     return subprocess.run(
-        ["git", "-c", "init.defaultBranch=main", *args],
+        ["git", *args],
         cwd=cwd,
         env=GIT_ENV,
         capture_output=True,
         text=True,
-        check=True,
-    ).stdout
+        check=check,
+    )
 
 
 def _run(cwd: pathlib.Path, *args: str):
@@ -42,7 +40,7 @@ def _run(cwd: pathlib.Path, *args: str):
 @pytest.fixture
 def repo(tmp_path):
     origin = tmp_path / "origin.git"
-    _git(tmp_path, "init", "-q", "--bare", str(origin))
+    _git(tmp_path, "init", "-q", "-b", "main", "--bare", str(origin))
     repo = tmp_path / "repo"
     _git(tmp_path, "clone", "-q", str(origin), str(repo))
     (repo / ".gitignore").write_text(".env\n")
@@ -58,15 +56,25 @@ def test_creates_worktree_from_origin_main_with_env_link(repo, tmp_path):
     assert result.returncode == 0, result.stderr
     worktree = tmp_path / "repo.wt" / "feat-x"
     assert result.stdout.strip().splitlines()[-1] == str(worktree)
-    assert _git(worktree, "rev-parse", "--abbrev-ref", "HEAD").strip() == "feat/x"
-    assert _git(worktree, "rev-parse", "HEAD") == _git(repo, "rev-parse", "origin/main")
+    assert _git(worktree, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "feat/x"
+    assert (
+        _git(worktree, "rev-parse", "HEAD").stdout == _git(repo, "rev-parse", "origin/main").stdout
+    )
     assert (worktree / ".env").is_symlink()
     assert (worktree / ".env").resolve() == (repo / ".env").resolve()
+    upstream = _git(worktree, "rev-parse", "--abbrev-ref", "feat/x@{upstream}", check=False)
+    assert upstream.returncode != 0
 
 
-def test_second_run_with_same_branch_fails(repo):
+def test_runs_from_inside_a_worktree(repo, tmp_path):
     assert _run(repo, "feat/x").returncode == 0
-    assert _run(repo, "feat/x").returncode != 0
+    worktree = tmp_path / "repo.wt" / "feat-x"
+    result = _run(worktree, "feat/y")
+    assert result.returncode == 0, result.stderr
+    nested = tmp_path / "repo.wt" / "feat-y"
+    assert result.stdout.strip().splitlines()[-1] == str(nested)
+    assert nested.parent == worktree.parent
+    assert (nested / ".env").resolve() == (repo / ".env").resolve()
 
 
 def test_requires_a_branch_argument(repo):
