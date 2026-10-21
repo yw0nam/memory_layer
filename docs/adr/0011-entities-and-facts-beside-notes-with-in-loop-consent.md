@@ -4,7 +4,7 @@
 
 Accepted for the entity registry and the consent step; the Facts, Reading, Existing notes, and Surface sections are replaced by ADR-0013
 
-Access statements superseded by ADR-0014. Entity archive superseded: an entity is deleted (CONTEXT.md).
+Access statements superseded by ADR-0014. Entity archive superseded: an entity is deleted (GLOSSARY.md).
 
 ## Context
 
