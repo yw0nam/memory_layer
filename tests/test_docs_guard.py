@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 import subprocess
+import time
 
 import pytest
 
@@ -28,12 +29,6 @@ def test_text_mode_flags_a_no_longer_line():
     result = run_text("The cache expires after five minutes.", FLAGGED)
     assert result.returncode == 1
     assert FLAGGED in result.stdout
-
-
-def test_text_mode_flags_the_korean_vocabulary():
-    result = run_text("이 기능은 제거했다.")
-    assert result.returncode == 1
-    assert "제거했다" in result.stdout
 
 
 def test_text_mode_passes_current_state_text():
@@ -87,21 +82,21 @@ def test_diff_mode_flags_an_edited_doc(repo):
     _commit(repo, **{"docs/a.md": FLAGGED + "\n"})
     result = run_diff(repo, "main")
     assert result.returncode == 1
-    assert "docs/a.md" in result.stdout
+    assert f"docs/a.md: {FLAGGED}" in result.stdout.splitlines()
 
 
 def test_diff_mode_flags_a_new_doc(repo):
     _commit(repo, **{"docs/new.md": FLAGGED + "\n"})
     result = run_diff(repo, "main")
     assert result.returncode == 1
-    assert "docs/new.md" in result.stdout
+    assert f"docs/new.md: {FLAGGED}" in result.stdout.splitlines()
 
 
 def test_diff_mode_strips_one_plus_prefix(repo):
     _commit(repo, **{"docs/plus.md": "++ " + FLAGGED + "\n"})
     result = run_diff(repo, "main")
     assert result.returncode == 1
-    assert f"docs/plus.md: ++ {FLAGGED}" in result.stdout
+    assert f"docs/plus.md: ++ {FLAGGED}" in result.stdout.splitlines()
 
 
 def test_diff_mode_ignores_removed_lines(repo):
@@ -127,7 +122,38 @@ def test_diff_mode_names_a_non_ascii_path_unquoted(repo):
     _commit(repo, **{"docs/한글.md": "이 기능은 제거했다.\n"})
     result = run_diff(repo, "main")
     assert result.returncode == 1
-    assert "docs/한글.md" in result.stdout
+    assert "docs/한글.md: 이 기능은 제거했다." in result.stdout.splitlines()
+
+
+def test_diff_mode_names_each_file_of_a_multi_file_diff(repo):
+    _commit(
+        repo,
+        **{
+            "docs/a.md": "A clean added line.\n",
+            "docs/b.md": FLAGGED + "\n",
+            "docs/c.md": FLAGGED + "\n",
+        },
+    )
+    result = run_diff(repo, "main")
+    assert result.returncode == 1
+    assert f"docs/b.md: {FLAGGED}" in result.stdout.splitlines()
+    assert f"docs/c.md: {FLAGGED}" in result.stdout.splitlines()
+
+
+def test_diff_mode_survives_a_deleted_first_file(repo):
+    _git(repo, "rm", "-q", "docs/a.md")
+    _commit(repo, **{"docs/z.md": FLAGGED + "\n"})
+    result = run_diff(repo, "main")
+    assert result.returncode == 1
+    assert f"docs/z.md: {FLAGGED}" in result.stdout.splitlines()
+
+
+def test_diff_mode_over_5000_added_lines_finishes_in_under_5_seconds(repo):
+    _commit(repo, **{"docs/big.md": "".join(f"line {i}\n" for i in range(5000))})
+    start = time.monotonic()
+    result = run_diff(repo, "main")
+    assert result.returncode == 0, result.stdout
+    assert time.monotonic() - start < 5
 
 
 def test_diff_mode_exits_2_on_an_unknown_base_ref(repo):
