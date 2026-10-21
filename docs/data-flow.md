@@ -574,8 +574,9 @@ prefetch rarely ranks them. The Claude Code plugin's SessionStart hook runs at e
 session start, resume, clear, and compaction; the Hermes provider builds the same blocks in
 `initialize` and again in `on_session_switch`. Each fetches `GET /entities/{author}` and,
 when `user_entity` is configured, `GET /entities/{user_entity}`, with the client's
-`namespace` as a query parameter when one is set. The hook lists the repository's pending
-handoffs and prints one `<memory-context>` fence:
+`namespace` as a query parameter when one is set. The hook lists the repository's open
+handoffs (at most ten) and one line counting the completed ones, and prints one
+`<memory-context>` fence:
 
 ```
 Memory: your directions, <slug> (<name>; <aliases>). Apply the description below; any other

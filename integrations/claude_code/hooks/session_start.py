@@ -21,14 +21,15 @@ from hook_common import git_origin
 from hook_common import repo_scope
 
 HANDOFF_LIMIT = 10
+HANDOFF_FETCH_LIMIT = 100
 FACT_LINE_LIMIT = 30
 FACT_CHAR_LIMIT = 1500
 HANDOFF_HEADER = (
     "Memory: pending handoffs for this repo. Nothing is claimed; ask to continue one to claim it."
 )
 COMPLETED_LINE = (
-    "Memory: {count} completed handoff{plural} delivered for this repo; "
-    "claim {one} to read it ({ids})."
+    "Memory: completed handoffs delivered for this repo: {count}. "
+    "Claim one to read it; list_messages names their ids."
 )
 AGENT_HEADER = (
     "Memory: your directions, {slug} ({who}). Apply the description below; "
@@ -80,11 +81,13 @@ def format_card(header: str, card: dict) -> str:
 
 
 def format_handoffs(rows: list[dict]) -> str:
-    """The open handoffs under the header, then one line naming the completed ids; empty for none."""
-    open_lines, completed = [], []
-    for row in rows[:HANDOFF_LIMIT]:
+    """The first open handoffs under the header, then one line counting the completed ones."""
+    open_lines, completed = [], 0
+    for row in rows:
         if row.get("status") == "completed":
-            completed.append(defuse(str(row["id"])))
+            completed += 1
+            continue
+        if len(open_lines) == HANDOFF_LIMIT:
             continue
         subject = defuse(" ".join(str(row["subject"]).split()))
         created = str(row.get("created_at", ""))[:10]
@@ -95,15 +98,7 @@ def format_handoffs(rows: list[dict]) -> str:
     if open_lines:
         blocks.append("\n".join([HANDOFF_HEADER, *open_lines]))
     if completed:
-        count = len(completed)
-        blocks.append(
-            COMPLETED_LINE.format(
-                count=count,
-                plural="" if count == 1 else "s",
-                one="it" if count == 1 else "one",
-                ids=f"{'id' if count == 1 else 'ids'}: {', '.join(completed)}",
-            )
-        )
+        blocks.append(COMPLETED_LINE.format(count=completed))
     return "\n".join(blocks)
 
 
@@ -125,7 +120,7 @@ def _handoffs(payload: dict, get, remote_of) -> str:
             return ""
         rows = get(
             "/messages",
-            {"purpose": "handoff", "scope": scope, "limit": str(HANDOFF_LIMIT)},
+            {"purpose": "handoff", "scope": scope, "limit": str(HANDOFF_FETCH_LIMIT)},
         )
         return format_handoffs(rows)
     except Exception:
