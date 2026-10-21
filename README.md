@@ -309,9 +309,8 @@ uv run python -m memory_base.eval.retrieval          # fixture retrieval eval re
 uv run python -m memory_base.eval.retrieval --notes  # labeled real-query replay against live memory
 uv run python scripts/longmemeval/extract.py --dataset PATH  # LongMemEval harness, see docs/benchmarks/longmemeval.md
 uv run python -m memory_base.eval.mcp_writer --dataset PATH --questions ID[,ID...]  # LongMemEval writer through the real MCP tools (headless Claude Code, throwaway Postgres)
+uv run python -m memory_base.eval.sandbox  # real REST API on a throwaway Postgres; prints URL and key (runtime evidence)
 ```
 
 Work happens in a git worktree and lands via PR; `main` requires a PR and green CI (lint,
 unit tests, test-guard, PR title). See `AGENTS.md` for the full contributor contract.
-Runtime evidence for a PR comes from `uv run python -m memory_base.eval.sandbox`, which serves the
-real REST API on a throwaway Postgres and prints its URL and a key.

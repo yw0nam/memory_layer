@@ -13,7 +13,7 @@ import asyncio
 import signal
 import sys
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 from memory_base.core import db
 from memory_base.eval.longmemeval import _prepare_schema, throwaway_postgres
@@ -35,14 +35,17 @@ def _wait() -> None:
     threading.Event().wait()
 
 
-def _terminate(signum, frame) -> None:
+def _stop(signum, frame) -> None:
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
     raise KeyboardInterrupt
 
 
-def main(argv: Sequence[str] | None = None, wait: Callable[[], None] = _wait) -> None:
+def main(wait: Callable[[], None] = _wait) -> None:
+    # SIGINT is installed explicitly because a background start inherits it as ignored.
     previous = {
-        signal.SIGINT: signal.signal(signal.SIGINT, signal.default_int_handler),
-        signal.SIGTERM: signal.signal(signal.SIGTERM, _terminate),
+        signal.SIGINT: signal.signal(signal.SIGINT, _stop),
+        signal.SIGTERM: signal.signal(signal.SIGTERM, _stop),
     }
     try:
         with throwaway_postgres() as database:

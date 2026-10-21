@@ -284,8 +284,8 @@ class EvalApi:
             "LOG_DIR": str(state / "logs"),
             "COCOINDEX_DB": str(state / "cocoindex"),
         }
-        self.proc = subprocess.Popen(argv, cwd=REPO_ROOT, env=env)
         try:
+            self.proc = subprocess.Popen(argv, cwd=REPO_ROOT, env=env)
             deadline = time.monotonic() + API_BOOT_SECONDS
             while True:
                 try:
