@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Create a worktree from origin/main with the primary checkout's .env linked.
-# Usage: scripts/worktree.sh <branch>
+# Usage: scripts/worktree.sh <branch>; creates a worktree from origin/main with the primary .env linked.
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
@@ -10,13 +9,13 @@ fi
 
 branch=$1
 primary=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
-path="$primary.wt/${branch//\//-}"
+worktree="$primary.wt/${branch//\//-}"
 
 git -C "$primary" fetch -q origin
-git -C "$primary" worktree add -q -b "$branch" "$path" origin/main
+git -C "$primary" worktree add -q --no-track -b "$branch" "$worktree" origin/main
 
-if [[ -e "$primary/.env" ]]; then
-  ln -s "$primary/.env" "$path/.env"
+if [[ -e "$primary/.env" && ! -e "$worktree/.env" ]]; then
+  ln -s "$primary/.env" "$worktree/.env"
 fi
 
-echo "$path"
+echo "$worktree"
