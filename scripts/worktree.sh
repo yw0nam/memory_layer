@@ -8,7 +8,8 @@ if [[ $# -ne 1 ]]; then
 fi
 
 branch=$1
-primary=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+primary=$(dirname "$common_dir")
 worktree="$primary.wt/${branch//\//-}"
 
 git -C "$primary" fetch -q origin

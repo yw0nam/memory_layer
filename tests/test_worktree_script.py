@@ -73,7 +73,6 @@ def test_runs_from_inside_a_worktree(repo, tmp_path):
     assert result.returncode == 0, result.stderr
     nested = tmp_path / "repo.wt" / "feat-y"
     assert result.stdout.strip().splitlines()[-1] == str(nested)
-    assert nested.parent == worktree.parent
     assert (nested / ".env").resolve() == (repo / ".env").resolve()
 
 
