@@ -47,6 +47,6 @@ The five canonical triage labels are used as-is: `needs-triage`, `needs-info`, `
 
 ### Domain docs
 
-`CONTEXT.md` and `docs/adr/` at the repo root hold domain vocabulary and decisions,
+`GLOSSARY.md` and `docs/adr/` at the repo root hold domain vocabulary and decisions,
 created lazily as terms or decisions get resolved rather than scaffolded upfront.
 See `docs/agents/domain.md`.
