@@ -16,6 +16,7 @@ Endpoint contract pinned by these tests:
     ``{"rows": <that list>}``; ``curation.delete_notes`` is NOT called.
   - confirm true: calls ``curation.delete_notes(ids) -> int``;
     response ``{"deleted": <count>}``.
+  - an id that is not an agent note -> 400 naming it in ``missing``.
   - missing/empty ``ids``, or malformed JSON -> 400.
 - ``GET /admin/duplicates?threshold=0.75&kind=&limit=50`` -> calls
   ``curation.find_duplicates(threshold, kind, limit)``;
@@ -32,6 +33,7 @@ Endpoint contract pinned by these tests:
     ``{"rows": <that list>}``; ``curation.restore_rows`` is NOT called.
   - confirm true: calls ``curation.restore_rows(ids) -> int``;
     response ``{"restored": <count>}``.
+  - an id that is not a stored row -> 400 naming it in ``missing``.
   - missing ``ids`` -> 400.
 - ``POST /search`` gains optional ``"include_archived"`` (default False),
   forwarded to ``memory_base.retrieval.search.search`` as the keyword
@@ -43,6 +45,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from starlette.testclient import TestClient
 
 from memory_base.serve import api
@@ -145,6 +148,25 @@ def test_admin_notes_delete_confirm_true_calls_delete_notes(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"deleted": 2}
     assert calls["ids"] == ["note:a", "note:b"]
+
+
+@pytest.mark.parametrize("extra", [{}, {"confirm": True}])
+def test_admin_notes_delete_names_ids_it_cannot_find(monkeypatch, extra):
+    calls = {"delete_notes": None}
+
+    async def fake_notes_by_ids(ids):
+        return [{"id": "note:a"}]
+
+    async def fake_delete_notes(ids):
+        calls["delete_notes"] = ids
+        return len(ids)
+
+    monkeypatch.setattr(curation, "notes_by_ids", fake_notes_by_ids)
+    monkeypatch.setattr(curation, "delete_notes", fake_delete_notes)
+    response = client.post("/admin/notes/delete", json={"ids": ["note:a", "note:gone"], **extra})
+    assert response.status_code == 400
+    assert response.json()["missing"] == ["note:gone"]
+    assert calls["delete_notes"] is None
 
 
 def test_admin_notes_delete_empty_ids_400():
@@ -566,6 +588,25 @@ def test_admin_restore_confirm_true_calls_restore_rows(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"restored": 2}
     assert calls["ids"] == ["a", "b"]
+
+
+@pytest.mark.parametrize("extra", [{}, {"confirm": True}])
+def test_admin_restore_names_ids_it_cannot_find(monkeypatch, extra):
+    calls = {"restore_rows": None}
+
+    async def fake_rows_by_ids(ids):
+        return [{"id": "note:a"}]
+
+    async def fake_restore_rows(ids):
+        calls["restore_rows"] = ids
+        return len(ids)
+
+    monkeypatch.setattr(curation, "rows_by_ids", fake_rows_by_ids)
+    monkeypatch.setattr(curation, "restore_rows", fake_restore_rows)
+    response = client.post("/admin/restore", json={"ids": ["note:a", "note:gone"], **extra})
+    assert response.status_code == 400
+    assert response.json()["missing"] == ["note:gone"]
+    assert calls["restore_rows"] is None
 
 
 def test_admin_restore_missing_ids_400():
