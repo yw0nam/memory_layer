@@ -113,7 +113,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `GET` | `/namespaces` | list the registered namespaces |
 | `DELETE` | `/namespaces/{name}` | unregister a namespace with no notes, chunks, table rows, messages, or turns; the reserved `default` namespace cannot be deleted |
 | `GET` | `/admin/notes` | active agent notes older than `older_than_days`, in the caller's default read scope unless repeated `author` params name slugs or `all` |
-| `POST` | `/admin/notes/delete` | preview, or delete with `confirm` |
+| `POST` | `/admin/notes/delete` | preview, or delete with `confirm`; an id that is not an agent note makes the whole call a 400 that lists them as `missing` |
 | `POST` | `/admin/notes/move` | move agent notes into another registered namespace — `ids`, `namespace`; returns `{moved, skipped}`, rewriting each moved note's id to `note:<target>:<hash>`; an id already present in the target, or naming no agent note, is skipped |
 | `GET` | `/admin/duplicates` | near-duplicate agent-note pairs above `threshold` (default 0.75) — repeated `author` (omitted: the caller's own and shared notes; `all`: every author; slugs: exactly those authors); each side carries its author |
 | `GET` | `/admin/consolidate/groups` | groups of active agent notes that may state the same thing, for an agent to judge; a pair either note lists in `similar_ack` is ignored and counted; a group with a recorded verdict, or with exactly the members of an undone action, is left out and counted `cached`; changes no note — `namespace` (repeatable, default every registered namespace), `author` (omitted: exactly the calling author's notes; a slug: that author; `all`: every author present, one author per group — groups never mix authors), `threshold` (0 < x ≤ 1, default 0.72), `neighbors` (1–50, default 5), `max_group` (2–20, default 6), `max_group_chars` (≥ 500, default 12000), `limit` (groups per namespace, 1–1000, default 200); see [data flow](docs/data-flow.md#consolidation-groups) |
@@ -123,7 +123,7 @@ End-to-end memory QA on a LongMemEval_S subset through the agent-distilled write
 | `POST` | `/admin/archive` | preview cold agent notes (`notes_to_archive`), then archive them with `confirm`; `ids` selects agent notes, and the header author is stamped on every row archived; without `ids` the preview selects by the `author` query param (omitted: the caller's default scope; slugs or `all` replace it); an id that is not an active note makes the whole call a 400 that lists them as `missing` |
 | `DELETE` | `/admin/sessions/{origin}/{session_id}` | hard-delete every turn of a session; returns `{deleted}` |
 | `POST` | `/admin/messages/purge` | preview claimed, cancelled, superseded, and expired messages (`messages_to_delete`), then delete them with `confirm` (`deleted`); deletion is permanent and releases their idempotency keys |
-| `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author and the `replaced_by` and `consolidated_into` lineage |
+| `POST` | `/admin/restore` | preview, or restore with `confirm`; restoring clears the archiving author and the `replaced_by` and `consolidated_into` lineage; an id that names no stored row makes the whole call a 400 that lists them as `missing` |
 
 The `/admin/*` routes are maintenance routes; any valid key may call them.
 
