@@ -1,4 +1,4 @@
-"""Claude Code SessionStart hook: deliver this agent's and the user's cards and this repo's pending handoffs.
+"""Claude Code SessionStart hook: deliver this agent's and the user's cards and this repo's handoffs.
 
 Prints one <memory-context> fence and records the connection state to `status.json` in
 the plugin data directory. The hook never claims a handoff. Config comes from the plugin
@@ -21,10 +21,15 @@ from hook_common import git_origin
 from hook_common import repo_scope
 
 HANDOFF_LIMIT = 10
+HANDOFF_FETCH_LIMIT = 100
 FACT_LINE_LIMIT = 30
 FACT_CHAR_LIMIT = 1500
 HANDOFF_HEADER = (
     "Memory: pending handoffs for this repo. Nothing is claimed; ask to continue one to claim it."
+)
+COMPLETED_LINE = (
+    "Memory: completed handoffs delivered for this repo: {count}. "
+    "Claim one to read it; list_messages names their ids."
 )
 AGENT_HEADER = (
     "Memory: your directions, {slug} ({who}). Apply the description below; "
@@ -76,13 +81,25 @@ def format_card(header: str, card: dict) -> str:
 
 
 def format_handoffs(rows: list[dict]) -> str:
-    """The handoff header and one line per handoff; empty for none."""
-    lines = []
-    for row in rows[:HANDOFF_LIMIT]:
+    """The first open handoffs under the header, then one line counting the completed ones."""
+    open_lines, completed = [], 0
+    for row in rows:
+        if row.get("status") == "completed":
+            completed += 1
+            continue
+        if len(open_lines) == HANDOFF_LIMIT:
+            continue
         subject = defuse(" ".join(str(row["subject"]).split()))
         created = str(row.get("created_at", ""))[:10]
-        lines.append(f"- {created}  {subject}  (status: {row.get('status', '?')}, id: {row['id']})")
-    return "\n".join([HANDOFF_HEADER, *lines]) if lines else ""
+        open_lines.append(
+            f"- {created}  {subject}  (status: {row.get('status', '?')}, id: {row['id']})"
+        )
+    blocks = []
+    if open_lines:
+        blocks.append("\n".join([HANDOFF_HEADER, *open_lines]))
+    if completed:
+        blocks.append(COMPLETED_LINE.format(count=completed))
+    return "\n".join(blocks)
 
 
 def _card(get, slug: str, header: str, namespace: str | None) -> str | None:
@@ -103,7 +120,7 @@ def _handoffs(payload: dict, get, remote_of) -> str:
             return ""
         rows = get(
             "/messages",
-            {"purpose": "handoff", "scope": scope, "limit": str(HANDOFF_LIMIT)},
+            {"purpose": "handoff", "scope": scope, "limit": str(HANDOFF_FETCH_LIMIT)},
         )
         return format_handoffs(rows)
     except Exception:
@@ -119,7 +136,7 @@ def run_hook(
     user_entity: str | None = None,
     namespace: str | None = None,
 ) -> str:
-    """Fetch the agent's card, the user's card, and this repo's pending handoffs via `get`.
+    """Fetch the agent's card, the user's card, and this repo's handoffs via `get`.
 
     One fence: the agent card, the user card, the Session line, the handoffs.
     """
