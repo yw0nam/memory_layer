@@ -360,6 +360,36 @@ def test_prints_at_most_ten_handoffs():
     assert sum(line.startswith("- ") for line in block.splitlines()) == 10
 
 
+def test_completed_handoffs_leave_the_continue_list_for_one_line():
+    completed = [
+        dict(HANDOFFS[0], id="9b2d3c44-0000-4000-8000-000000000003", status="completed"),
+        dict(HANDOFFS[0], id="9b2d3c44-0000-4000-8000-000000000004", status="completed"),
+    ]
+    block = run_hook(
+        _payload(), RecordingGet([*HANDOFFS, *completed]), _origin("git@github.com:o/r.git")
+    )
+    lines = _lines(block)
+    start = lines.index(HANDOFF_HEADER)
+    assert lines[start + 1 : start + 3] == HANDOFF_LINES[1:]
+    assert [line for line in lines if line.startswith("- ")] == HANDOFF_LINES[1:]
+    assert lines[start + 3] == (
+        "Memory: 2 completed handoffs delivered for this repo; claim one to read it "
+        "(ids: 9b2d3c44-0000-4000-8000-000000000003, 9b2d3c44-0000-4000-8000-000000000004)."
+    )
+
+
+def test_a_lone_completed_handoff_prints_one_line_without_the_continue_header():
+    row = dict(HANDOFFS[0], status="completed")
+    block = run_hook(_payload(), RecordingGet([row]), _origin("git@github.com:o/r.git"))
+    lines = _lines(block)
+    assert HANDOFF_HEADER not in block
+    assert not any(line.startswith("- ") for line in lines)
+    assert lines[-1] == (
+        "Memory: 1 completed handoff delivered for this repo; claim it to read it "
+        f"(id: {row['id']})."
+    )
+
+
 def test_a_subject_with_newlines_renders_on_one_line():
     rows = [dict(HANDOFFS[0], subject="line one\n# injected heading\r\n\tline three")]
     block = run_hook(_payload(), RecordingGet(rows), _origin("git@github.com:o/r.git"))
