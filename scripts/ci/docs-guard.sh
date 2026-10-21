@@ -10,6 +10,11 @@ set -u
 SKIP='제거/대체/축소'
 VOCAB='더 이상|이전엔|이전에는|기존에는|제거(했|됐|되었)|대체(했|됐|되었)|축소(했|됐|되었)|추가했다|no longer'
 
+# First 5 lines that skip the skip-line pattern and hit the vocabulary.
+filter() {
+  grep -vF -- "$SKIP" | grep -E -- "$VOCAB" | head -5
+}
+
 usage() {
   echo "usage: docs-guard.sh [base-ref] (no argument checks stdin text)" >&2
   exit 2
@@ -18,7 +23,7 @@ usage() {
 [ $# -le 1 ] || usage
 
 if [ $# -eq 0 ]; then
-  hits=$(grep -vE "$SKIP" | grep -nE "$VOCAB" | head -5)
+  hits=$(grep -n '' | filter)
   if [ -n "$hits" ]; then
     printf '%s\n' "$hits"
     exit 1
@@ -32,7 +37,8 @@ if ! base_commit=$(git merge-base "$base" HEAD 2>/dev/null); then
   exit 2
 fi
 
-diff=$(git -c core.quotePath=false diff -U0 --no-color "$base_commit" HEAD -- '*.md' \
+# --no-renames keeps deleted and added files explicit so every added line is checked.
+diff=$(git -c core.quotePath=false diff -U0 --no-color --no-renames "$base_commit" HEAD -- '*.md' \
   ':(exclude,glob)**/node_modules/**' \
   ':(exclude,glob)**/.github/**' \
   ':(exclude,glob)**/.claude/**' \
@@ -41,39 +47,21 @@ diff=$(git -c core.quotePath=false diff -U0 --no-color "$base_commit" HEAD -- '*
   exit 2
 }
 
-file=""
-in_hunk=false
-hits=0
-while IFS= read -r line; do
-  if $in_hunk; then
-    case "$line" in
-      "+"*)
-        [ -n "$file" ] || continue
-        added=${line#'+'}
-        case "$added" in
-          *"$SKIP"*) ;;
-          *)
-            if printf '%s\n' "$added" | grep -qE "$VOCAB"; then
-              printf '%s: %s\n' "$file" "$added"
-              hits=$((hits + 1))
-              [ "$hits" -ge 5 ] && break
-            fi
-            ;;
-        esac
-        ;;
-    esac
-  else
-    # A file header runs from diff --git to its first @@.
-    case "$line" in
-      "diff --git "*) file="" ;;
-      "+++ /dev/null") file="" ;;
-      "+++ "*) file=${line#'+++ '} ;;
-      "@@"*) in_hunk=true ;;
-    esac
-  fi
-done <<< "$diff"
+# Emit "<path>: <added line>" for every added line; the header runs from
+# diff --git (which resets the path and the hunk state) to its first @@.
+hits=$(printf '%s\n' "$diff" | awk '
+  /^diff --git / { path = ""; inhunk = 0; next }
+  !inhunk {
+    if ($0 ~ /^\+\+\+ \/dev\/null$/) path = ""
+    else if ($0 ~ /^\+\+\+ b\//) path = substr($0, 7)
+    else if ($0 ~ /^@@/) inhunk = 1
+    next
+  }
+  path != "" && /^\+/ { print path ": " substr($0, 2) }
+' | filter)
 
-if [ "$hits" -gt 0 ]; then
+if [ -n "$hits" ]; then
+  printf '%s\n' "$hits"
   echo 'Docs are current-state only (AGENTS.md, "Docs: current-state only"); describe what the system is.'
   exit 1
 fi

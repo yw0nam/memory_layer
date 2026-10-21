@@ -57,7 +57,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # full history so we can diff against the PR base
-      - run: bash scripts/ci/docs-guard.sh "origin/${{ github.event.pull_request.base.ref }}"
+      - name: Enforce that docs describe the current state
+        run: bash scripts/ci/docs-guard.sh "origin/${{ github.event.pull_request.base.ref }}"
 
   pr-title:
     name: pr-title (conventional + english)
