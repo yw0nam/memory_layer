@@ -1,8 +1,8 @@
 # memory-base plugin for Claude Code
 
 A Claude Code plugin that connects a session to memory-base: the agent's and the user's
-cards and the repo's handoffs at session start, relevant notes on every prompt, and the verbatim turn
-record kept beside them (the turn lane).
+cards and the repo's handoffs at session start, and the verbatim turn record kept beside
+them (the turn lane).
 
 ## Install
 
@@ -22,8 +22,7 @@ Enabling the plugin asks for its options. Change them later in `/config`.
 | User entity | slug of the user's own entity (kind `person`), as `list_entities` shows it; its card is delivered at session start; empty: no user card | none |
 | Namespace | a registered namespace for this agent's turns and for the facts on its session-start cards; empty means `default`; the server refuses every turn in an unregistered namespace | none |
 
-The namespace does not choose where `save_memory` writes and does not narrow the
-per-prompt search; reads are scoped by the author. The `connect-agent` skill walks through
+The namespace does not choose where `save_memory` writes; reads are scoped by the author. The `connect-agent` skill walks through
 picking the author, the user entity, and the namespace, registering a new namespace, and
 minting a key for an agent.
 
@@ -32,15 +31,13 @@ minting a key for an agent.
 | part | file | when | does |
 |---|---|---|---|
 | SessionStart hook | `hooks/session_start.py` | start, resume, clear, compaction | prints one `<memory-context>` fence: the author's card, the user's card when `User entity` is set, a `Session: claude_code <id>` line, the repo's open handoffs and one line counting its completed handoffs; records the connection in `status.json` |
-| UserPromptSubmit hook | `hooks/prompt_submit.py` | every prompt | appends the prompt to the turn lane (not `/` or `!` prompts); searches notes and prints fresh, relevant hits |
+| UserPromptSubmit hook | `hooks/prompt_submit.py` | every prompt | appends the prompt to the turn lane (not `/` or `!` prompts) |
 | Stop hook | `hooks/stop.py` | end of each turn | appends the final answer to the turn lane |
 | MCP server | `.mcp.json` | session | the memory tools, with the key and author from the plugin options as the `X-API-Key` and `X-Author` headers |
 | `/memory-base:init` | `skills/init` | on demand | reports `status.json` and flags old hand-installed entries |
 | `/memory-base:connect-agent` | `skills/connect-agent` | on demand | connects, changes, or disconnects an agent |
 
-The search spans every namespace and sends no `author` filter, so it returns this agent's
-own notes and the shared notes; a note line names its author only when another agent
-wrote it. Hooks are stdlib Python, fail open (exit 0),
+Hooks are stdlib Python, fail open (exit 0),
 and run synchronously.
 
 ## Turn capture
@@ -71,8 +68,7 @@ spooled: turns that fail are not saved.
 `${CLAUDE_PLUGIN_DATA}` (`~/.claude/plugins/data/<id>/`) holds `status.json` (configured,
 card reachable, URL, author, namespace, check time, error) and `sessions/<session_id>.json`
 (the failure marker). Without `CLAUDE_PLUGIN_DATA` the hooks use a `memory_base_plugin`
-directory under the system temp directory. Each prompt appends one row to
-`MEMORY_PREFETCH_LOG` (default `~/.claude/memory_prefetch_log.jsonl`).
+directory under the system temp directory.
 
 ## Check
 

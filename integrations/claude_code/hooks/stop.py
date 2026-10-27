@@ -28,7 +28,7 @@ def main() -> int:
             message,
             payload.get("cwd") or "",
         )
-        emit("Stop", None, notice)
+        emit(None, notice)
     except Exception:
         pass
     return 0

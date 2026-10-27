@@ -4,8 +4,8 @@ Each query is searched once with a budget no packet reaches, which returns every
 candidate in rerank order; each grid point is then cut from that list with the production
 helpers (`_apply_min_score`, `_pack_budget`), so every point sees the same candidates and
 scores. A budget point with a floor drops candidates below it before packing. Each read path
-then delivers the cut hits the way its client does: `search` returns them all, `claude-code`
-renders the prefetch hook's context block, and `hermes` renders the Hermes provider's prefetch.
+then delivers the cut hits the way its client does: `search` returns them all, and `hermes`
+renders the Hermes provider's prefetch.
 
 Corpora: the LongMemEval personal notes (`longmemeval retrieve --read candidates`
 writes the candidate packets; `lme-probe` searches the probe prompts in one question's
@@ -40,7 +40,6 @@ from memory_base.retrieval import search as search_module
 
 REPO_ROOT = lme.REPO_ROOT
 PROBES_PATH = REPO_ROOT / "tests" / "fixtures" / "read_sweep_probes.jsonl"
-PREFETCH_HOOK_PATH = REPO_ROOT / "integrations" / "claude_code" / "hooks" / "prompt_submit.py"
 HERMES_CLIENT_PATH = REPO_ROOT / "integrations" / "hermes" / "memory_base" / "client.py"
 CANDIDATES_BUDGET = lme.CANDIDATES_BUDGET
 CANDIDATES_RUN = lme.run_name("baseline", "candidates")
@@ -51,7 +50,7 @@ TOP_KS = (3, 5, 10)
 TOP_K_FLOORS = (0.0, 0.25, 0.4, 0.6)
 BUDGETS = (800, 1500, 2500, 4000)
 BUDGET_FLOORS = (0.0, 0.25, 0.4)
-PATHS = ("search", "claude-code", "hermes")
+PATHS = ("search", "hermes")
 # The sweep's own author: hits by any other author render with their name, as a client does.
 SWEEP_AUTHOR = "read-sweep"
 INTENTS = ("off_topic", "memory")
@@ -131,21 +130,11 @@ def _load_integration(name: str, path: Path):
 
 
 @functools.cache
-def _prefetch_hook():
-    hooks_dir = str(PREFETCH_HOOK_PATH.parent)
-    if hooks_dir not in sys.path:
-        sys.path.insert(0, hooks_dir)
-    return _load_integration("memory_base_sweep_prefetch_hook", PREFETCH_HOOK_PATH)
-
-
-@functools.cache
 def _hermes_client():
     return _load_integration("memory_base_sweep_hermes_client", HERMES_CLIENT_PATH)
 
 
-def _client_block(path: str, api_hits: list[dict[str, Any]]) -> str:
-    if path == "claude-code":
-        return _prefetch_hook().build_context_block(api_hits, SWEEP_AUTHOR)
+def _hermes_block(api_hits: list[dict[str, Any]]) -> str:
     client = _hermes_client().MemoryBaseClient(url="", api_key="", author=SWEEP_AUTHOR)
     client.search = lambda query: api_hits
     return client.build_prefetch("sweep")
@@ -159,10 +148,9 @@ def deliver(path: str, rows: Sequence[dict[str, Any]]) -> tuple[list[dict[str, A
     if path == "search":
         return rows, sum(hit_tokens(row) for row in rows)
     api_hits = [{"date": DATE_PLACEHOLDER, "text": _text(row)} for row in rows]
-    block = _client_block(path, api_hits)
-    # Both clients cut at a line boundary, so the shortest prefix rendering the same block
-    # is the set of hits that reached the prompt.
-    kept = next(n for n in range(len(rows) + 1) if _client_block(path, api_hits[:n]) == block)
+    block = _hermes_block(api_hits)
+    # shortcut: counts the shortest prefix rendering the same block, so a hit the client skips as oversize still counts; count by membership before trusting the Hermes numbers.
+    kept = next(n for n in range(len(rows) + 1) if _hermes_block(api_hits[:n]) == block)
     return rows[:kept], len(block) // 4
 
 

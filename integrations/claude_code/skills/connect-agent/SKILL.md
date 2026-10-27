@@ -50,8 +50,7 @@ The namespace changes two things only:
   every namespace.
 
 It does not choose where `save_memory` writes: a save without `namespace` lands in
-`default`. It does not narrow the per-prompt search, which covers every namespace. Reads
-are scoped by the author, not by the namespace.
+`default`. Reads are scoped by the author, not by the namespace.
 
 `default` always exists. Any other namespace is registered in step 3, before the client
 uses it: the server refuses every turn in an unregistered namespace with
