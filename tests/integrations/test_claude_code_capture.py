@@ -127,11 +127,9 @@ def test_a_refusal_message_is_trimmed(server):
 @pytest.fixture
 def hook_env(monkeypatch, tmp_path):
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    monkeypatch.setenv("MEMORY_PREFETCH_LOG", str(tmp_path / "prefetch.jsonl"))
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_URL", "http://memory.test")
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_API_KEY", "key")
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_AUTHOR", "claude-code")
-    monkeypatch.setattr(prompt_submit, "_fetch_from_server", lambda cfg: lambda query: [])
 
 
 def _run(module, monkeypatch, payload):
@@ -152,21 +150,11 @@ def test_slash_and_bang_prompts_are_not_captured(server, hook_env, monkeypatch, 
     assert server.bodies == []
 
 
-def test_the_capture_line_and_the_prefetch_block_leave_as_one_json_object(
-    server, hook_env, monkeypatch, capsys
-):
+def test_the_capture_line_leaves_as_a_system_message_alone(server, hook_env, monkeypatch, capsys):
     server.outcomes = [Unreachable("down")]
-    monkeypatch.setattr(
-        prompt_submit,
-        "_fetch_from_server",
-        lambda cfg: lambda query: [{"date": "2026-01-01", "score": 0.9, "text": "a note"}],
-    )
     payload = {"session_id": "s1", "prompt": "x" * 30, "cwd": "/w"}
     assert _run(prompt_submit, monkeypatch, payload) == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["systemMessage"] == UNREACHABLE
-    assert out["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-    assert "a note" in out["hookSpecificOutput"]["additionalContext"]
+    assert json.loads(capsys.readouterr().out) == {"systemMessage": UNREACHABLE}
 
 
 def test_stop_captures_the_final_answer(server, hook_env, monkeypatch):

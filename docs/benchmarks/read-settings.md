@@ -1,7 +1,7 @@
 # Read settings
 
 How `top_k`, `min_score`, and `budget_tokens` trade answer accuracy against injected tokens
-and junk on the three read paths, measured on the LongMemEval_S personal corpus and on a
+and junk on the two read paths, measured on the LongMemEval_S personal corpus and on a
 snapshot of the deployed corpus with `memory_base.eval.read_sweep`.
 
 ## Read paths
@@ -9,8 +9,7 @@ snapshot of the deployed corpus with `memory_base.eval.read_sweep`.
 | path | caller | shipped read | what decides it |
 |---|---|---|---|
 | A. search | an agent calling `search_memory` while answering | `top_k=10`, floor `MIN_SCORE` 0.25 (`min_score` omitted); `budget_tokens=4000` on request | answer accuracy, then tokens |
-| B. prefetch, Claude Code | `integrations/claude_code/hooks/prompt_submit.py`, every prompt | `TOP_K=3`, `MIN_SCORE=0.4`, block cut at `BLOCK_LIMIT=1500` characters | tokens per prompt and junk; most prompts carry no memory intent |
-| C. prefetch, Hermes | `integrations/hermes/memory_base`, every turn | `top_k=5`, `min_score=0.25`, body cut at `PREFETCH_CHAR_BUDGET=2000` characters | as B, on personal memory |
+| B. prefetch, Hermes | `integrations/hermes/memory_base`, every turn | `top_k=5`, `min_score=0.25`, body cut at `PREFETCH_CHAR_BUDGET=2000` characters | tokens per turn and junk on personal memory; most turns carry no memory intent |
 
 ## Method
 
@@ -24,15 +23,14 @@ query ──search(budget_tokens=10**9)──> every fused candidate (FUSED_TOP=
                                               │
           read path delivery                  v
     search      : every cut hit, tokens = sum of estimate_tokens
-    claude-code : prompt_submit.build_context_block, tokens = block chars / 4
     hermes      : MemoryBaseClient.build_prefetch,    tokens = block chars / 4
 ```
 
 One search per query feeds every grid point, so all points see the same candidates and
 rerank scores. A budget point with a floor drops candidates below the floor before packing;
 production `search()` ignores `min_score` in budget mode, so the budget rows with a floor
-describe that packing rule rather than a shipped read. The delivery step runs the clients'
-own rendering code: a hit that reached the prompt counts, a hit the client cut does not.
+describe that packing rule rather than a shipped read. The delivery step runs the Hermes
+client's rendering code: a hit that reached the prompt counts, a hit the client cut does not.
 
 Grid: `top_k` in {3, 5, 10} x `min_score` in {0, 0.25, 0.4, 0.6}; `budget_tokens` in
 {800, 1500, 2500, 4000} x `min_score` in {0, 0.25, 0.4}. A setting is named `k<top_k>-f<floor>`
@@ -109,34 +107,7 @@ there.
 on LME and deployed R@5 from 0.913 to 0.863. The deployed corpus holds longer notes, so
 `k10-f0` costs 1,545 tokens per call there.
 
-## B. prefetch, Claude Code
-
-The clients send `top_k`, so only the top_k rows apply.
-
-| setting | recall_all | recall_all@10 | mean tokens | junk share | zero-hit rate | deployed R@5 | deployed MRR@10 | deployed expect-empty | deployed off-topic fire | deployed off-topic tokens | LME off-topic fire | QA | verdict |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| k3-f0 | 0.789 | 0.789 | 285 | 0.212 | 0.00 | 0.580 | 0.573 | 1/9 | 0.925 | 262 | 1.00 | - | 37 of 40 off-topic prompts fire |
-| k3-f0.25 | 0.726 | 0.726 | 194 | 0.018 | 0.10 | 0.580 | 0.573 | 5/9 | 0.100 | 19 | 0.00 | 0.78 | QA 0.78; 4 of 40 off-topic prompts fire |
-| k3-f0.4 | 0.684 | 0.684 | 185 | 0.019 | 0.11 | 0.580 | 0.573 | 6/9 | 0.025 | 4 | 0.00 | - | selected: 1 of 40 off-topic prompts fires |
-| k3-f0.6 | 0.632 | 0.632 | 172 | 0.000 | 0.14 | 0.580 | 0.573 | 6/9 | 0.000 | 0 | 0.00 | 0.67 | hook read: QA 0.67 |
-| k5-f0 | 0.800 | 0.800 | 317 | 0.278 | 0.00 | 0.580 | 0.573 | 1/9 | 0.925 | 262 | 1.00 | - |  |
-| k5-f0.25 | 0.737 | 0.737 | 198 | 0.018 | 0.10 | 0.580 | 0.573 | 5/9 | 0.100 | 19 | 0.00 | - |  |
-| k5-f0.4 | 0.695 | 0.695 | 189 | 0.018 | 0.11 | 0.580 | 0.573 | 6/9 | 0.025 | 4 | 0.00 | - |  |
-| k5-f0.6 | 0.632 | 0.632 | 175 | 0.000 | 0.14 | 0.580 | 0.573 | 6/9 | 0.000 | 0 | 0.00 | - |  |
-| k10-f0 | 0.800 | 0.800 | 318 | 0.281 | 0.00 | 0.580 | 0.573 | 1/9 | 0.925 | 262 | 1.00 | - |  |
-| k10-f0.25 | 0.737 | 0.737 | 198 | 0.018 | 0.10 | 0.580 | 0.573 | 5/9 | 0.100 | 19 | 0.00 | - |  |
-| k10-f0.4 | 0.695 | 0.695 | 189 | 0.018 | 0.11 | 0.580 | 0.573 | 6/9 | 0.025 | 4 | 0.00 | - |  |
-| k10-f0.6 | 0.632 | 0.632 | 175 | 0.000 | 0.14 | 0.580 | 0.573 | 6/9 | 0.000 | 0 | 0.00 | - |  |
-
-The hook's block stops at the first line that would pass `BLOCK_LIMIT`, so a first hit
-longer than 1,276 characters empties the whole block: 6 of the 34 labelled deployed
-queries have such a first hit, which holds deployed R@5 at 0.580 for every setting (0.740 to
-0.913 on the search path, before the hook's cut). On LME, lowering the floor from 0.6 to 0.25 raises QA from
-0.67 to 0.78 (multi-session 0.407 to 0.630) for 22 more tokens per prompt; on the deployed
-corpus it makes 4 of 40 off-topic prompts inject a block (0 at 0.6, 1 at 0.4). `top_k` above
-3 changes recall_all by at most 0.011 because the block limit binds first.
-
-## C. prefetch, Hermes
+## B. prefetch, Hermes
 
 | setting | recall_all | recall_all@10 | mean tokens | junk share | zero-hit rate | deployed R@5 | deployed MRR@10 | deployed expect-empty | deployed off-topic fire | deployed off-topic tokens | LME off-topic fire | QA | verdict |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -164,11 +135,9 @@ before the provider's cut. On the deployed corpus 5 of 40 off-topic prompts inje
 | path | setting | deciding numbers |
 |---|---|---|
 | A. search | `top_k=10`, `min_score=0` | QA 0.90 against 0.91 for `budget_tokens=4000` at 22 % of the tokens; recall_all 0.926 against 0.779 at the 0.25 floor |
-| B. Claude Code | `TOP_K=3`, `MIN_SCORE=0.4` | off-topic fire 0.025 against 0.100 at 0.25; LME recall_all 0.684 against 0.632 at 0.6; expect-empty 6/9 as at 0.6 |
-| C. Hermes | `top_k=5`, `min_score=0.25` | QA 0.82; recall_all 0.768 against 0.653 at the 0.6 floor; no off-topic prompt fires on the LME personal corpus, 5 of 40 on the deployed corpus |
+| B. Hermes | `top_k=5`, `min_score=0.25` | QA 0.82; recall_all 0.768 against 0.653 at the 0.6 floor; no off-topic prompt fires on the LME personal corpus, 5 of 40 on the deployed corpus |
 
-QA at `k3-f0.4` on the Claude Code path and at `k5-f0.6` on the Hermes path is not measured; its recall_all lies between the
-two measured floors (0.632 at 0.6 with QA 0.67, 0.726 at 0.25 with QA 0.78).
+QA at `k5-f0.6` on the Hermes path is not measured.
 
 ## Transfer between corpora
 
@@ -177,7 +146,7 @@ two measured floors (0.632 at 0.6 with QA 0.67, 0.726 at 0.25 with QA 0.78).
 | a floor cuts aggregate-question recall | recall_all 0.926 -> 0.779 at 0.25 | R@5 0.913 -> 0.863 at 0.25 | yes; smaller on the deployed labels, which are mostly single-note lookups |
 | top 10 without a floor matches the 4000-token budget | recall_all@10 equal, QA 0.90 / 0.91 | R@5 equal (0.913) | recall yes; QA measured on LME only |
 | off-topic prompts pass a 0.25 floor | never | 5 of 40 | no: coding prompts match coding notes, not personal ones |
-| long notes empty the client blocks | no packet has a first hit past 1,276 characters | 6 of 34 labelled queries | deployed only |
+| long notes empty the Hermes prefetch | no packet has a first hit past 1,812 characters | R@5 0.863 -> 0.700 | deployed only |
 | QA numbers | measured | not measured (no reference answers) | no |
 
 ## Commands

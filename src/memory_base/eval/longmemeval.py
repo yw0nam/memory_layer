@@ -9,7 +9,7 @@ seeded judgments a person grades by hand, and `score` reports QA accuracy, sessi
 retrieval metrics, and the judge agreement rate.
 
 Runs: `baseline` and `dated` (`--variant dated`: temporal-reasoning questions, date-prefixed
-embeddings). `--read prefetch` reads each question the way the prefetch hook does (top 5,
+embeddings). `--read prefetch` reads each question the way the Hermes prefetch does (top 5,
 score floor 0.25) instead of search_memory's defaults (top 10, floor 0.25) and prefixes the
 run name with `prefetch`; `--read budget` packs hits up to a 4000-token budget
 (`budget_tokens`) and prefixes `budget`; `--read candidates` keeps every fused candidate in
@@ -65,7 +65,7 @@ VARIANTS = ("baseline", "dated")
 RUNS = ("baseline", "dated", "prefetch", "budget")
 # A budget no packet reaches, so a search returns every fused candidate in rerank order.
 CANDIDATES_BUDGET = 10**9
-# How a reader bounds its hits: search_memory's defaults, the values the prefetch hook
+# How a reader bounds its hits: search_memory's defaults, the values the Hermes prefetch
 # sends, a token budget packed in rerank order, and every candidate for the read sweep.
 READ_SETTINGS = {
     "search": {"top_k": 10, "min_score": None},

@@ -569,8 +569,8 @@ from `notes`, and an undo of an action that archived it fails with 409.
 ## Session start
 
 Standing text an agent receives at every session start sits outside search: facts and
-rules that apply to every task match the topic of almost no message, so per-message
-prefetch rarely ranks them. The Claude Code plugin's SessionStart hook runs at every
+rules that apply to every task match the topic of almost no message, so the Hermes
+per-turn prefetch rarely ranks them. The Claude Code plugin's SessionStart hook runs at every
 session start, resume, clear, and compaction; the Hermes provider builds the same blocks in
 `initialize` and again in `on_session_switch`. Each fetches `GET /entities/{author}` and,
 when `user_entity` is configured, `GET /entities/{user_entity}`, with the client's
@@ -599,8 +599,8 @@ A card prints at most thirty fact lines and at most 1,500 characters of them, dr
 whole lines from the end; the description is never cut. Memory-context tags inside a card
 are defused to `[memory-context]`. A failed or malformed fetch of the agent's own card
 prints `Memory: your directions could not be fetched.`; a failed user-card fetch prints
-nothing. The Session line and the handoffs print in every case. Per-message prefetch does
-not include cards.
+nothing. The Session line and the handoffs print in every case. The Hermes per-turn
+prefetch does not include cards.
 
 ## Entity registry
 
