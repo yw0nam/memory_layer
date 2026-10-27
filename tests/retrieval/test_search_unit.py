@@ -84,7 +84,7 @@ def test_dedup_cap_caps_same_file_to_per_file_cap():
 def test_dedup_cap_overall_fused_top_cap():
     hits = [_hit(f"f{i}.py:L1", rrf=float(50 - i), filename=f"f{i}.py") for i in range(50)]
     out = _dedup_cap(hits)
-    assert len(out) == FUSED_TOP == 40
+    assert len(out) == FUSED_TOP == 20
 
 
 def test_dedup_cap_keeps_rrf_descending_order():
