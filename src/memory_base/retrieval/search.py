@@ -27,7 +27,8 @@ from memory_base.core.config import (
 RRF_K = 60
 CANDIDATES_PER_SIGNAL = 50
 PER_FILE_CAP = 3
-FUSED_TOP = 40
+FUSED_TOP = 20
+BUDGET_FUSED_TOP = 40
 RERANK_TOP = 10
 SEARCH_KINDS = ("doc", "personal", "work")
 # Reranker input budget; the API's TEXT_LIMIT is separate and bounds only code responses.
@@ -438,8 +439,8 @@ async def _search_memory(
     return hits
 
 
-def _dedup_cap(hits: list[Hit]) -> list[Hit]:
-    """Per-file/session cap for diversity, then take fused top."""
+def _dedup_cap(hits: list[Hit], limit: int = FUSED_TOP) -> list[Hit]:
+    """Per-file/session cap for diversity, then take the fused top `limit`."""
     hits.sort(key=lambda h: h.rrf, reverse=True)
     counts: dict[tuple[str, ...], int] = {}
     out = []
@@ -453,7 +454,7 @@ def _dedup_cap(hits: list[Hit]) -> list[Hit]:
             continue
         counts[key] = counts.get(key, 0) + 1
         out.append(h)
-        if len(out) >= FUSED_TOP:
+        if len(out) >= limit:
             break
     return out
 
@@ -569,9 +570,10 @@ async def search(
 ) -> list[Hit]:
     """Return ranked hits; schema overrides PG_SCHEMA and only the eval harness passes it.
 
-    Without budget_tokens: the top RERANK_TOP reranked hits above the score floor.
-    With it: every fused candidate in reranked order until the token estimate of the
-    returned text would exceed the budget; the floor and RERANK_TOP do not apply.
+    Without budget_tokens: the top RERANK_TOP of FUSED_TOP reranked candidates, above the
+    score floor.
+    With it: BUDGET_FUSED_TOP candidates in reranked order until the token estimate
+    of the returned text would exceed the budget; the floor and RERANK_TOP do not apply.
     """
     kind, tags, repo, since_ts, until_ts = validate_search_options(
         source, kind, tags, repo, since, until, authors
@@ -599,7 +601,7 @@ async def search(
                 visible_to=visible_to,
                 schema=schema,
             )
-        hits = _dedup_cap(hits)
+        hits = _dedup_cap(hits, FUSED_TOP if budget_tokens is None else BUDGET_FUSED_TOP)
     if rerank:
         hits = await _rerank(query, hits)
     if budget_tokens is None:

@@ -256,7 +256,7 @@ extraction policy, and
 budget-mode recall counts about 12.6 distinct sessions per packet against 1.6 under
 search, so the budget row and the search rows are not one-to-one comparable.
 
-| run | read | FUSED_TOP | recall_all@10 | ndcg_any@10 | QA accuracy | multi-session QA | mean hits per packet | mean packet chars |
+| run | read | fused candidates | recall_all@10 | ndcg_any@10 | QA accuracy | multi-session QA | mean hits per packet | mean packet chars |
 |---|---|---|---|---|---|---|---|---|
 | search, 90-day age decay before the reranker | top 10, floor 0.25 | 20 | 0.663 | 0.809 | 0.74 | 0.667 | 1.84 | 653 |
 | search | top 10, floor 0.25 | 20 | 0.779 | 0.863 | 0.81 | 0.667 | 1.98 | 699 |
@@ -297,7 +297,7 @@ Session-level `recall_all@10` / `ndcg_any@10` over the 95 non-abstention questio
 | zero-hit packets (of 100) | 10 | 10 | 0 |
 | answer input tokens | 83,441 | 85,645 | 726,934 |
 
-The budget packs at most `FUSED_TOP` reranked candidates: 86 of the 100 budget packets
+The budget packs at most `BUDGET_FUSED_TOP` reranked candidates: 86 of the 100 budget packets
 reach 3,800 estimated tokens or more, and hit counts range from 30 to 40. At
 `FUSED_TOP=20` the same budget returns all 20 candidates for every question, with
 identical `recall_all@10` and `ndcg_any@10` and QA 0.89 (multi-session 0.852).
@@ -319,7 +319,7 @@ from ShareGPT, whose provenance is unclear. The committed manifest
 ordered question ids with per-type and abstention counts, code revision, upstream
 commit, the sha256 of every prompt (extract, answer, judge), model ids and
 parameters (extractor, embedder, reranker, answerer, judge), `NOTE_SIMILAR_THRESHOLD`,
-`MIN_SCORE`, `RERANK_TOP`, `FUSED_TOP`, the database image id and
+`MIN_SCORE`, `RERANK_TOP`, `FUSED_TOP`, `BUDGET_FUSED_TOP`, the database image id and
 extensions, token totals for every model stage, counts, the judge agreement, and the
 sha256 of every jsonl artefact. Its extraction note counts are derived from the recorded
 extraction under the current save-path checks, while `notes_sha256`, `sessions_sha256`,

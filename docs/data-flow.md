@@ -186,7 +186,7 @@ Private repositories authenticate through the git credential store — see
                         ▼
                 RRF   Σ w/(60 + rank)   w: vec 1.0 · fts 0.2 · rec 0.25
                         ▼
-                per-file / per-session cap 3  → top 40
+                per-file / per-session cap 3  → top 20 (top 40 when budget_tokens is set)
                         ▼
                 🎯 rerank (vLLM)
                         ▼

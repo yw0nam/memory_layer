@@ -736,6 +736,7 @@ def _retrieval_constants() -> dict[str, Any]:
         "MIN_SCORE": search.MIN_SCORE,
         "RERANK_TOP": search.RERANK_TOP,
         "FUSED_TOP": search.FUSED_TOP,
+        "BUDGET_FUSED_TOP": search.BUDGET_FUSED_TOP,
         "CANDIDATES_PER_SIGNAL": search.CANDIDATES_PER_SIGNAL,
         "PER_FILE_CAP": search.PER_FILE_CAP,
     }
