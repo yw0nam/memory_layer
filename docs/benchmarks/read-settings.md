@@ -124,9 +124,9 @@ on LME and deployed R@5 from 0.913 to 0.863. The deployed corpus holds longer no
 | k10-f0.4 | 0.726 | 0.726 | 198 | 0.017 | 0.11 | 0.660 | 0.623 | 6/9 | 0.050 | 13 | 0.00 | - |  |
 | k10-f0.6 | 0.653 | 0.653 | 180 | 0.000 | 0.14 | 0.660 | 0.623 | 6/9 | 0.025 | 10 | 0.00 | - |  |
 
-`k5-f0.25` answers 82 of 100 at 209 tokens per turn. The provider truncates at a line
-boundary, so a single-line first hit longer than 1,812 characters also empties the prefetch; 5 of
-the 176 distinct deployed notes seen are that long, and deployed R@5 is 0.700 against 0.863
+`k5-f0.25` answers 82 of 100 at 209 tokens per turn. The provider skips a hit whose line
+does not fit its character budget and keeps filling with later hits; 5 of the 176 distinct
+deployed notes seen are longer than 1,812 characters, and deployed R@5 is 0.700 against 0.863
 before the provider's cut. On the deployed corpus 5 of 40 off-topic prompts inject at floor
 0.25 and 2 at 0.4; on the LME personal corpus none do at any floor from 0.25 up.
 
@@ -146,7 +146,6 @@ QA at `k5-f0.6` on the Hermes path is not measured.
 | a floor cuts aggregate-question recall | recall_all 0.926 -> 0.779 at 0.25 | R@5 0.913 -> 0.863 at 0.25 | yes; smaller on the deployed labels, which are mostly single-note lookups |
 | top 10 without a floor matches the 4000-token budget | recall_all@10 equal, QA 0.90 / 0.91 | R@5 equal (0.913) | recall yes; QA measured on LME only |
 | off-topic prompts pass a 0.25 floor | never | 5 of 40 | no: coding prompts match coding notes, not personal ones |
-| long notes empty the Hermes prefetch | no packet has a first hit past 1,812 characters | R@5 0.863 -> 0.700 | deployed only |
 | QA numbers | measured | not measured (no reference answers) | no |
 
 ## Commands

@@ -33,7 +33,7 @@ def main() -> int:
             prompt,
             payload.get("cwd") or "",
         )
-        emit("UserPromptSubmit", None, notice)
+        emit(None, notice)
     except Exception:
         pass
     return 0

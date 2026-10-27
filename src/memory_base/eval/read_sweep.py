@@ -149,8 +149,7 @@ def deliver(path: str, rows: Sequence[dict[str, Any]]) -> tuple[list[dict[str, A
         return rows, sum(hit_tokens(row) for row in rows)
     api_hits = [{"date": DATE_PLACEHOLDER, "text": _text(row)} for row in rows]
     block = _hermes_block(api_hits)
-    # The client cuts at a line boundary, so the shortest prefix rendering the same block
-    # is the set of hits that reached the prompt.
+    # shortcut: counts the shortest prefix rendering the same block, so a hit the client skips as oversize still counts; count by membership before trusting the Hermes numbers.
     kept = next(n for n in range(len(rows) + 1) if _hermes_block(api_hits[:n]) == block)
     return rows[:kept], len(block) // 4
 

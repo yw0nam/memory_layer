@@ -180,22 +180,17 @@ def test_the_hooks_do_nothing_without_a_key(server, monkeypatch, capsys):
 
 
 def test_emit_prints_plain_text_for_context_alone(capsys):
-    hook_common.emit("UserPromptSubmit", "ctx", None)
+    hook_common.emit("ctx", None)
     assert capsys.readouterr().out == "ctx\n"
 
 
-def test_emit_prints_one_json_object_with_a_system_message(capsys):
-    hook_common.emit("UserPromptSubmit", "ctx", "line")
-    assert json.loads(capsys.readouterr().out) == {
-        "hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "ctx"},
-        "systemMessage": "line",
-    }
-    hook_common.emit("Stop", None, "line")
+def test_emit_prints_a_system_message_as_one_json_object(capsys):
+    hook_common.emit(None, "line")
     assert json.loads(capsys.readouterr().out) == {"systemMessage": "line"}
 
 
 def test_emit_prints_nothing_when_both_are_absent(capsys):
-    hook_common.emit("Stop", None, None)
+    hook_common.emit(None, None)
     assert capsys.readouterr().out == ""
 
 

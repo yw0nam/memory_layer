@@ -106,7 +106,7 @@ def get(cfg: Config, path: str, params: dict | None = None, timeout: float = REA
     return _request(cfg, urllib.request.Request(f"{cfg.url.rstrip('/')}{path}{query}"), timeout)
 
 
-def post(cfg: Config, path: str, body: dict, timeout: float = READ_TIMEOUT):
+def post(cfg: Config, path: str, body: dict, timeout: float):
     req = urllib.request.Request(
         f"{cfg.url.rstrip('/')}{path}",
         data=json.dumps(body).encode(),
@@ -219,13 +219,9 @@ def post_turn(cfg: Config, session_id: str, role: str, content: str, cwd: str) -
     return None
 
 
-def emit(event: str, context: str | None, system_message: str | None) -> None:
-    """Print the hook's output: plain context, or one JSON object when a user line is present."""
-    if system_message is None:
-        if context:
-            print(context)
-        return
-    output: dict = {"systemMessage": system_message}
-    if context:
-        output["hookSpecificOutput"] = {"hookEventName": event, "additionalContext": context}
-    print(json.dumps(output, ensure_ascii=False))
+def emit(context: str | None, system_message: str | None) -> None:
+    """Print the hook's output: plain context, or a JSON `systemMessage` line for the user."""
+    if system_message is not None:
+        print(json.dumps({"systemMessage": system_message}, ensure_ascii=False))
+    elif context:
+        print(context)

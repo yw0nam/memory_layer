@@ -189,7 +189,7 @@ def main() -> int:
         block = run_hook(
             payload, fetch, author=cfg.author, user_entity=cfg.user_entity, namespace=cfg.namespace
         )
-        emit("SessionStart", block, None)
+        emit(block, None)
         try:
             _write_status(cfg, not failure, failure[0] if failure else None)
         except Exception:
