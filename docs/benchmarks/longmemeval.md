@@ -297,7 +297,7 @@ Session-level `recall_all@10` / `ndcg_any@10` over the 95 non-abstention questio
 | zero-hit packets (of 100) | 10 | 10 | 0 |
 | answer input tokens | 83,441 | 85,645 | 726,934 |
 
-The budget packs at most `FUSED_TOP` reranked candidates: 86 of the 100 budget packets
+The budget packs at most `BUDGET_FUSED_TOP` reranked candidates: 86 of the 100 budget packets
 reach 3,800 estimated tokens or more, and hit counts range from 30 to 40. At
 `FUSED_TOP=20` the same budget returns all 20 candidates for every question, with
 identical `recall_all@10` and `ndcg_any@10` and QA 0.89 (multi-session 0.852).

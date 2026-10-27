@@ -209,10 +209,12 @@ def test_the_candidates_read_keeps_every_fused_candidate(monkeypatch):
 
     async def search(query, **kwargs):
         calls.append(kwargs)
-        return [Hit(i) for i in range(search_module.FUSED_TOP)]
+        return [Hit(i) for i in range(search_module.BUDGET_FUSED_TOP)]
 
     async def load(namespace, units, notes_by_unit, writer=None):
-        return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(search_module.FUSED_TOP)}
+        return lme.LoadStats(), {
+            f"n{i}": {("s1", D1)} for i in range(search_module.BUDGET_FUSED_TOP)
+        }
 
     async def create(namespace):
         pass
@@ -231,7 +233,7 @@ def test_the_candidates_read_keeps_every_fused_candidate(monkeypatch):
     assert lme.run_name("baseline", "candidates") == sweep.CANDIDATES_RUN
     packet = asyncio.run(lme.retrieve_question(question, {}, sweep.CANDIDATES_RUN))
     assert calls[0]["budget_tokens"] == sweep.CANDIDATES_BUDGET
-    assert len(packet["hits"]) == search_module.FUSED_TOP
+    assert len(packet["hits"]) == search_module.BUDGET_FUSED_TOP
 
 
 def test_probe_collection_searches_each_probe_in_the_question_namespace(monkeypatch):

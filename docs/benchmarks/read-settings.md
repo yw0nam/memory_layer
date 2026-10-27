@@ -14,7 +14,7 @@ snapshot of the deployed corpus with `memory_base.eval.read_sweep`.
 ## Method
 
 ```
-query ──search(budget_tokens=10**9)──> every fused candidate (FUSED_TOP=40), rerank order
+query ──search(budget_tokens=10**9)──> every fused candidate (BUDGET_FUSED_TOP=40), rerank order
                                               │
           grid point, production helpers      │  _apply_min_score / _pack_budget
                                               v
@@ -36,8 +36,8 @@ Grid: `top_k` in {3, 5, 10} x `min_score` in {0, 0.25, 0.4, 0.6}; `budget_tokens
 {800, 1500, 2500, 4000} x `min_score` in {0, 0.25, 0.4}. A setting is named `k<top_k>-f<floor>`
 or `b<budget>-f<floor>`.
 
-A real `longmemeval retrieve` on ten questions returns the derived hits exactly for
-`k5-f0.6` and `k10-f0.25` (10 of 10 packets identical). For `b4000-f0`, 4 of 10 packets are
+With 40 fused candidates reranked in both modes, a real `longmemeval retrieve` on ten
+questions returns the derived hits exactly for `k5-f0.6` and `k10-f0.25` (10 of 10 packets identical). For `b4000-f0`, 4 of 10 packets are
 identical and the rest share 29 to 38 of their 30 to 38 hits: the reranker's scores below
 0.01 vary between calls, which reorders the packed tail.
 
@@ -138,6 +138,28 @@ before the provider's cut. On the deployed corpus 5 of 40 off-topic prompts inje
 | B. Hermes | `top_k=5`, `min_score=0.25` | QA 0.82; recall_all 0.768 against 0.653 at the 0.6 floor; no off-topic prompt fires on the LME personal corpus, 5 of 40 on the deployed corpus |
 
 QA at `k5-f0.6` on the Hermes path is not measured.
+
+## Fused candidates
+
+Production `search()` reranks `FUSED_TOP=20` fused candidates in `top_k` mode and
+`BUDGET_FUSED_TOP=40` in budget mode, so the `top_k` rows above derive from a larger candidate
+set than the shipped read. Reranking time is linear in the candidate count, about 24 ms per
+candidate. `/search` latency on 40 replayed prompts (`top_k=3`, `min_score=0.4`, a data copy of
+the deployed notes, live embedder and reranker, sequential):
+
+| fused candidates | p50 ms | p90 ms |
+|---|---|---|
+| 10 | 483 | 584 |
+| 20 | 721 | 807 |
+| 30 | 913 | 1,253 |
+| 40 | 936 | 1,091 |
+
+On the deployed snapshot, 10, 20, and 40 candidates give the same R@5, MRR@10, and
+expect-empty for `k3-f0.4`, `k5-f0.25` (Hermes), and `k10-f0.25` (search). Only 5 labels score
+against the active corpus. Against 40 candidates, the delivered hits of `k3-f0.4` differ on
+3 of 94 labelled and probe queries at 20 and on 6 of 94 at 10, all unlabelled. On LongMemEval,
+20 and 40 candidates give the same retrieval metrics (`longmemeval.md`); 10 is not measured
+there.
 
 ## Transfer between corpora
 
