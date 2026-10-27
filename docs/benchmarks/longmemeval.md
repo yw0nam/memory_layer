@@ -256,7 +256,7 @@ extraction policy, and
 budget-mode recall counts about 12.6 distinct sessions per packet against 1.6 under
 search, so the budget row and the search rows are not one-to-one comparable.
 
-| run | read | FUSED_TOP | recall_all@10 | ndcg_any@10 | QA accuracy | multi-session QA | mean hits per packet | mean packet chars |
+| run | read | fused candidates | recall_all@10 | ndcg_any@10 | QA accuracy | multi-session QA | mean hits per packet | mean packet chars |
 |---|---|---|---|---|---|---|---|---|
 | search, 90-day age decay before the reranker | top 10, floor 0.25 | 20 | 0.663 | 0.809 | 0.74 | 0.667 | 1.84 | 653 |
 | search | top 10, floor 0.25 | 20 | 0.779 | 0.863 | 0.81 | 0.667 | 1.98 | 699 |
@@ -319,7 +319,7 @@ from ShareGPT, whose provenance is unclear. The committed manifest
 ordered question ids with per-type and abstention counts, code revision, upstream
 commit, the sha256 of every prompt (extract, answer, judge), model ids and
 parameters (extractor, embedder, reranker, answerer, judge), `NOTE_SIMILAR_THRESHOLD`,
-`MIN_SCORE`, `RERANK_TOP`, `FUSED_TOP`, the database image id and
+`MIN_SCORE`, `RERANK_TOP`, `FUSED_TOP`, `BUDGET_FUSED_TOP`, the database image id and
 extensions, token totals for every model stage, counts, the judge agreement, and the
 sha256 of every jsonl artefact. Its extraction note counts are derived from the recorded
 extraction under the current save-path checks, while `notes_sha256`, `sessions_sha256`,

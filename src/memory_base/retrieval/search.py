@@ -572,7 +572,7 @@ async def search(
 
     Without budget_tokens: the top RERANK_TOP of FUSED_TOP reranked candidates, above the
     score floor.
-    With it: BUDGET_FUSED_TOP reranked candidates in reranked order until the token estimate
+    With it: BUDGET_FUSED_TOP candidates in reranked order until the token estimate
     of the returned text would exceed the budget; the floor and RERANK_TOP do not apply.
     """
     kind, tags, repo, since_ts, until_ts = validate_search_options(

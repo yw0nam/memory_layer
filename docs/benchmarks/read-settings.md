@@ -36,9 +36,10 @@ Grid: `top_k` in {3, 5, 10} x `min_score` in {0, 0.25, 0.4, 0.6}; `budget_tokens
 {800, 1500, 2500, 4000} x `min_score` in {0, 0.25, 0.4}. A setting is named `k<top_k>-f<floor>`
 or `b<budget>-f<floor>`.
 
-With 40 fused candidates reranked in both modes, a real `longmemeval retrieve` on ten
-questions returns the derived hits exactly for `k5-f0.6` and `k10-f0.25` (10 of 10 packets identical). For `b4000-f0`, 4 of 10 packets are
-identical and the rest share 29 to 38 of their 30 to 38 hits: the reranker's scores below
+Checked with 40 fused candidates reranked in both modes, a real `longmemeval retrieve` on
+ten questions returns the derived hits exactly for `k5-f0.6` and `k10-f0.25` (10 of 10
+packets identical); production `top_k` reads rerank 20 (see Fused candidates). For
+`b4000-f0`, 4 of 10 packets are identical and the rest share 29 to 38 of their 30 to 38 hits: the reranker's scores below
 0.01 vary between calls, which reorders the packed tail.
 
 ## Corpora
@@ -143,8 +144,8 @@ QA at `k5-f0.6` on the Hermes path is not measured.
 
 Production `search()` reranks `FUSED_TOP=20` fused candidates in `top_k` mode and
 `BUDGET_FUSED_TOP=40` in budget mode, so the `top_k` rows above derive from a larger candidate
-set than the shipped read. Reranking time is linear in the candidate count, about 24 ms per
-candidate. `/search` latency on 40 replayed prompts (`top_k=3`, `min_score=0.4`, a data copy of
+set than the shipped read. From 10 to 30 candidates, each one adds about 21 ms of reranking;
+30 and 40 differ by 23 ms. `/search` latency on 40 replayed prompts (`top_k=3`, `min_score=0.4`, a data copy of
 the deployed notes, live embedder and reranker, sequential):
 
 | fused candidates | p50 ms | p90 ms |
