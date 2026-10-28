@@ -34,9 +34,7 @@ row sees the candidates a shipped read reranks. A budget point with a floor drop
 below the floor before packing; production `search()` ignores `min_score` in budget mode, so
 the budget rows with a floor describe that packing rule rather than a shipped read. The
 delivery step runs the Hermes client's rendering code: a hit that reached the prompt counts, a
-hit the client skipped does not. The client skips a hit whose line does not fit the 2000-character budget and keeps
-filling with later hits, so a note longer than about 1,950 characters never reaches the prompt
-(2 of the 5 scored deployed labels have a 1,962-character relevant note).
+hit the client skipped does not.
 
 Grid: `top_k` in {3, 5, 10} x `min_score` in {0, 0.25, 0.4, 0.6}; `budget_tokens` in
 {800, 1500, 2500, 4000} x `min_score` in {0, 0.25, 0.4}. A setting is named `k<top_k>-f<floor>`
@@ -65,7 +63,8 @@ Metric definitions:
 
 ## Rerank scores
 
-The reranker's scores are bimodal on both corpora: 92.8 % of LME candidates and 64.5 % of
+The reranker's scores are bimodal on both corpora. Over the 40-candidate `hits` lists of the
+100 LME questions and of the 34 deployed labels, 92.8 % of LME candidates and 64.5 % of
 deployed candidates score below 0.01, and 4.0 % and 5.6 % score 0.6 or more. Answer notes
 for aggregate questions (multi-session, temporal) often score below 0.25 because each note
 holds one part of the answer, so any floor removes them. The coding probe prompts never
@@ -117,18 +116,19 @@ longer notes, so `k10-f0` costs 2,119 tokens per call there.
 | k3-f0.4 | 0.705 | 0.705 | 190 | 0.018 | 0.11 | 0.200 | 0.200 | 7/9 | 0.025 | 10 | 0.00 | - |  |
 | k3-f0.6 | 0.653 | 0.653 | 175 | 0.000 | 0.13 | 0.200 | 0.200 | 8/9 | 0.025 | 10 | 0.00 | - |  |
 | k5-f0 | 0.832 | 0.832 | 429 | 0.346 | 0.00 | 0.267 | 0.267 | 0/9 | 1.000 | 440 | 1.00 | - | 40 of 40 off-topic prompts fire |
-| k5-f0.25 | 0.758 | 0.758 | 212 | 0.022 | 0.10 | 0.267 | 0.267 | 6/9 | 0.100 | 28 | 0.00 | 0.79 | selected: QA 0.79 |
+| k5-f0.25 | 0.758 | 0.758 | 212 | 0.022 | 0.10 | 0.267 | 0.267 | 6/9 | 0.100 | 28 | 0.00 | 0.79 | selected: QA 0.79; provider read |
 | k5-f0.4 | 0.716 | 0.716 | 197 | 0.017 | 0.11 | 0.200 | 0.200 | 7/9 | 0.025 | 10 | 0.00 | - | 1 of 40 off-topic prompts fire |
-| k5-f0.6 | 0.663 | 0.663 | 181 | 0.000 | 0.13 | 0.200 | 0.200 | 8/9 | 0.025 | 10 | 0.00 | - | provider read |
+| k5-f0.6 | 0.663 | 0.663 | 181 | 0.000 | 0.13 | 0.200 | 0.200 | 8/9 | 0.025 | 10 | 0.00 | - |  |
 | k10-f0 | 0.863 | 0.863 | 477 | 0.412 | 0.00 | 0.267 | 0.267 | 0/9 | 1.000 | 458 | 1.00 | - |  |
 | k10-f0.25 | 0.758 | 0.758 | 213 | 0.021 | 0.10 | 0.267 | 0.267 | 6/9 | 0.100 | 28 | 0.00 | - |  |
 | k10-f0.4 | 0.716 | 0.716 | 197 | 0.017 | 0.11 | 0.200 | 0.200 | 7/9 | 0.025 | 10 | 0.00 | - |  |
 | k10-f0.6 | 0.663 | 0.663 | 181 | 0.000 | 0.13 | 0.200 | 0.200 | 8/9 | 0.025 | 10 | 0.00 | - |  |
 
-`k5-f0.25` answers 79 of 100 at 209 tokens per turn. The provider skips a hit whose line
-does not fit its character budget and keeps filling with later hits, so a note longer than
-about 1,950 characters never reaches the prompt; deployed R@5 is 0.267 against 0.667 for the same
-setting on the search path (5 scored labels, 2 of them with a 1,962-character relevant note).
+`k5-f0.25` answers 79 of 100 at 212 tokens per turn. The provider skips a hit whose line
+does not fit the 2000-character budget and keeps filling with later hits, so a note longer
+than about 1,810 characters never reaches the prompt. Three of the 5 scored deployed labels
+share one 1,962-character relevant note, which puts Hermes deployed R@5 at 0.267 against 0.867
+on the search path at floor 0.
 On the deployed corpus 4 of 40 off-topic prompts inject at floor 0.25 and 1 at 0.4; on the
 LME personal corpus none do at any floor from 0.25 up.
 
@@ -155,12 +155,8 @@ the deployed notes, live embedder and reranker, sequential):
 | 30 | 913 | 1,253 |
 | 40 | 936 | 1,091 |
 
-On the deployed snapshot, 10, 20, and 40 candidates give the same R@5, MRR@10, and
-expect-empty for `k3-f0.4`, `k5-f0.25` (Hermes), and `k10-f0.25` (search). Only 5 labels score
-against the active corpus. Against 40 candidates, the delivered hits of `k3-f0.4` differ on
-3 of 94 labelled and probe queries at 20 and on 6 of 94 at 10, all unlabelled. On LongMemEval,
-20 and 40 candidates give the same retrieval metrics (`longmemeval.md`); 10 is not measured
-there.
+On LongMemEval, 20 and 40 candidates give the same retrieval metrics (`longmemeval.md`); 10 is
+not measured there.
 
 ## Transfer between corpora
 

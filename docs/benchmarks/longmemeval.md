@@ -76,7 +76,7 @@ by side.
 | `search` (default) | production floor | first 10 | unprefixed |
 | `prefetch` | `min_score=0.25` | first 5 | `prefetch-…` |
 | `budget` | `budget_tokens=4000` | every packed hit | `budget-…` |
-| `candidates` | a budget no packet reaches | every fused candidate, in rerank order | `candidates-…` |
+| `candidates` | a budget no packet reaches | every fused candidate, in rerank order; the packet also carries `top_k_hits`, the production `top_k` read | `candidates-…` |
 
 A budget packet records its `budget_tokens`, and the manifest records the read setting
 of every run.
