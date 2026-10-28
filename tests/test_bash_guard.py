@@ -1,4 +1,4 @@
-"""Contract tests for the PreToolUse git guard.
+"""Contract tests for the PreToolUse Bash guard.
 
 The guard is a shell script, so it is exercised the way the harness calls it:
 a hook payload on stdin, a permission decision on stdout.
@@ -110,8 +110,51 @@ def test_allows_commit_on_a_branch_other_than_main(tmp_path: Path):
         )
 
 
-def test_still_blocks_reading_dotenv():
-    assert denied(run_guard("cat .env", cwd=REPO_ROOT))
+# ---- the secrets file is denied only as a file operand of a reader ----------
+
+# Split so this module is not itself matched when a tool reads it back.
+SECRETS = "." + "env"
+
+ALLOWED_COMMANDS = {
+    "prose in a delegation prompt": (
+        f'agent-send impl "set the X-Author header the way the {SECRETS} file does"'
+    ),
+    "grep pattern escaping the dot": f'grep -l "\\{SECRETS}" .claude/hooks/*',
+    "prose naming reader verbs": (
+        f'agent-send explore s "Never read, cat, grep, or source the file named {SECRETS}"'
+    ),
+    "commit message naming a reader": f'git commit -m "fix: cat {SECRETS} no longer"',
+    "reader name inside a word": f"echo header {SECRETS}",
+    "heredoc body prose in a substitution": (
+        f'gh pr create --body "$(cat <<EOF\nthe {SECRETS} file holds credentials\nEOF\n)"'
+    ),
+    "example file": f"cat {SECRETS}.example",
+    "cp is not a reader": f"cp {SECRETS} /tmp/x",
+}
+
+DENIED_COMMANDS = {
+    "cat": f"cat {SECRETS}",
+    "head on a parent path": f"head -5 ../{SECRETS}",
+    "grep file operand": f"grep KEY {SECRETS}",
+    "source": f"source {SECRETS}",
+    "after &&": f"ls && cat {SECRETS}",
+    "after a newline": f"ls\ncat {SECRETS}",
+    "after a comment line": f"# show config\ncat {SECRETS}",
+    "after sudo": f"sudo cat {SECRETS}",
+    "inside if": f"if true; then cat {SECRETS}; fi",
+    "quoted operand": f'cat "{SECRETS}"',
+    "between apostrophes inside double quotes": f'echo "it\'s"; cat {SECRETS}; echo "don\'t"',
+}
+
+
+@pytest.mark.parametrize("command", ALLOWED_COMMANDS.values(), ids=ALLOWED_COMMANDS.keys())
+def test_allows_a_command_that_does_not_read_the_secrets_file(command: str):
+    assert not denied(run_guard(command, cwd=REPO_ROOT))
+
+
+@pytest.mark.parametrize("command", DENIED_COMMANDS.values(), ids=DENIED_COMMANDS.keys())
+def test_denies_a_read_of_the_secrets_file(command: str):
+    assert denied(run_guard(command, cwd=REPO_ROOT))
 
 
 # ---- prose in quoted arguments is not a command -----------------------------
