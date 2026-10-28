@@ -163,7 +163,7 @@ async def search_memory(
     `top_k` applies, so a `top_k` above 10 still returns at most 10 hits.
     Each hit has source="memory", ref (document ref), date (YYYY-MM-DD),
     score, and text: the note or chunk in full, never cut in the response
-    (bounded when written instead — notes up to 4000 chars, document
+    (bounded when written instead — notes up to 1750 chars, document
     chunks and CSV cards up to 2000).
 
     Archived memory is excluded by default. Set `include_archived` only when the

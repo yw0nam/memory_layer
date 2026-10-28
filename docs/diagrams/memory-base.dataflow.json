@@ -93,7 +93,7 @@
       "id": "validate",
       "type": "security",
       "label": "Validate · Dedup",
-      "sublabel": "≤4000 chars · kind",
+      "sublabel": "≤1750 chars · kind",
       "stage": 1,
       "row": 0,
       "tag": "id = sha256"
