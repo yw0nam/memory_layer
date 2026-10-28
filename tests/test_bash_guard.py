@@ -143,6 +143,7 @@ DENIED_COMMANDS = {
     "after sudo": f"sudo cat {SECRETS}",
     "inside if": f"if true; then cat {SECRETS}; fi",
     "quoted operand": f'cat "{SECRETS}"',
+    "between apostrophes inside double quotes": f'echo "it\'s"; cat {SECRETS}; echo "don\'t"',
 }
 
 
