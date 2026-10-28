@@ -102,7 +102,8 @@ there.
 
 `k10-f0` reaches the recall_all@10 of `b4000-f0` (0.926) at 24 % of its tokens (939 against
 3,884) and answers 88 of 100 against 91; answer input tokens over the 100 questions are
-235,097 against 726,478. `b1500-f0` answers 90 at 1,437 tokens. The floor 0.25 that
+235,097 against 739,087. `b1500-f0` answers 90 at 1,437 tokens (328,954 answer input tokens),
+two questions above `k10-f0` for 53 % more tokens. The floor 0.25 that
 `search_memory` applies when `min_score` is omitted cuts recall_all from 0.926 to 0.768
 on LME and deployed R@5 from 0.867 to 0.667 (5 scored labels). The deployed corpus holds
 longer notes, so `k10-f0` costs 2,119 tokens per call there.
