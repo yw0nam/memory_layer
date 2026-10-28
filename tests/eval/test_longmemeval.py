@@ -784,3 +784,38 @@ def test_frontier_prints_the_grid_for_the_selected_run(tmp_path, capsys):
     assert "| top_k | floor | coverage |" in out
     assert "Best cell" in out
     assert not (tmp_path / "report.md").exists()
+
+
+def test_a_candidates_run_adds_the_production_top_k_read_to_its_packet(monkeypatch):
+    from memory_base.eval import retrieval
+    from memory_base.serve.access import namespaces
+
+    class Hit:
+        def __init__(self, i):
+            self.meta = {"id": f"n{i}", "occurred_at": 1.0}
+            self.ts, self.score, self.text = 1.0, 1 - i / 20, "t"
+
+    calls = []
+
+    async def search(query, **kwargs):
+        calls.append(kwargs)
+        return [Hit(i) for i in range(3 if kwargs.get("budget_tokens") is None else 12)]
+
+    async def load(namespace, units, notes_by_unit):
+        return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(12)}
+
+    async def create(namespace):
+        pass
+
+    monkeypatch.setattr(retrieval, "_search_with_retry", search)
+    monkeypatch.setattr(lme, "load_question_notes", load)
+    monkeypatch.setattr(namespaces, "create_namespace", create)
+    question = make_question("q1", "multi-session", sessions=[("s1", D1)])
+    packet = asyncio.run(lme.retrieve_question(question, {}, "candidates"))
+    assert len(packet["hits"]) == 12
+    assert [h["id"] for h in packet["top_k_hits"]] == ["n0", "n1", "n2"]
+    top_k_call = calls[1]
+    assert top_k_call["min_score"] == 0.0
+    assert top_k_call.get("budget_tokens") is None
+    packet = asyncio.run(lme.retrieve_question(question, {}, "baseline"))
+    assert "top_k_hits" not in packet

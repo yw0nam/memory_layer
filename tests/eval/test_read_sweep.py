@@ -88,6 +88,18 @@ def test_the_hermes_path_stops_at_the_prefetch_char_budget():
     assert tokens > 3 * 500 // 4
 
 
+def test_the_hermes_path_skips_an_oversize_hit_and_keeps_filling():
+    rows = [record(0, 0.9, chars=1900), record(1, 0.8, chars=100)]
+    kept, _ = sweep.deliver("hermes", rows)
+    assert ids(kept) == ["n1"]
+
+
+def test_a_top_k_setting_reads_the_top_k_candidates_and_a_budget_setting_the_fused_ones():
+    row = {"hits": ranked([0.9, 0.8]), "top_k_hits": ranked([0.9])}
+    assert sweep.candidates(sweep.parse_setting("k5-f0"), row) is row["top_k_hits"]
+    assert sweep.candidates(sweep.parse_setting("b800-f0"), row) is row["hits"]
+
+
 def test_lme_metrics_count_junk_zero_hits_and_whole_packet_recall():
     questions = {
         "q1": {
@@ -119,6 +131,8 @@ def test_lme_metrics_count_junk_zero_hits_and_whole_packet_recall():
         {"question_id": "q2", "hits": [record(4, 0.2, sessions=[("s3", D1)])]},
         {"question_id": "q3_abs", "hits": [record(5, 0.9, sessions=[("s7", D1)])]},
     ]
+    for packet in packets:
+        packet["top_k_hits"] = packet["hits"]
     metrics = sweep.lme_metrics(packets, questions, sweep.parse_setting("k10-f0.25"), "search")
     assert metrics["recall_all"] == pytest.approx(0.5)
     assert metrics["junk_share"] == pytest.approx(1 / 3)
@@ -137,6 +151,8 @@ def test_probe_metrics_report_how_often_each_intent_injects_anything():
         {"intent": "off_topic", "hits": [record(1, 0.3)]},
         {"intent": "memory", "hits": [record(2, 0.9), record(3, 0.65)]},
     ]
+    for row in rows:
+        row["top_k_hits"] = row["hits"]
     metrics = sweep.probe_metrics(rows, sweep.parse_setting("k3-f0.6"), "search")
     assert metrics["off_topic"] == {
         "prompts": 2,
@@ -172,6 +188,8 @@ def test_replay_metrics_score_labels_expect_empty_and_junk_against_the_labels():
             "hits": [],
         },
     ]
+    for row in rows:
+        row["top_k_hits"] = row["hits"]
     corpus = {"n0", "n1", "n2"}
     metrics = sweep.replay_metrics(rows, corpus, sweep.parse_setting("k10-f0.25"), "search")
     assert metrics["scored"] == 1
@@ -269,11 +287,14 @@ def test_probe_collection_searches_each_probe_in_the_question_namespace(monkeypa
     assert query == "rename this variable please"
     assert kwargs["namespaces"] == ["lme-q1"]
     assert kwargs["budget_tokens"] == sweep.CANDIDATES_BUDGET
+    assert calls[2][1]["min_score"] == 0.0
+    assert "budget_tokens" not in calls[2][1]
     assert rows == [
         {
             "intent": "off_topic",
             "query": "rename this variable please",
             "hits": [{"id": "n0", "score": 0.5, "text": "note text"}],
+            "top_k_hits": [{"id": "n0", "score": 0.5, "text": "note text"}],
         }
     ]
 
@@ -294,6 +315,7 @@ def test_export_writes_the_delivered_packets_for_the_answer_stage(tmp_path):
         "question_date": D1,
         "run": sweep.CANDIDATES_RUN,
         "hits": ranked([0.9, 0.5, 0.1]),
+        "top_k_hits": ranked([0.9, 0.5, 0.1]),
     }
     lme.append_jsonl(lme.packets_path(source, sweep.CANDIDATES_RUN), [packet])
     out = tmp_path / "k3"
