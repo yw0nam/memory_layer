@@ -116,8 +116,8 @@ def test_read_jsonl_discards_a_partial_last_line(tmp_path):
 
 
 def fake_save_note(calls):
-    async def save(content, *, tags, kind, namespace, occurred_at, allow_similar):
-        calls.append((content, kind, namespace, occurred_at, allow_similar, tuple(tags)))
+    async def save(content, *, tags, kind, namespace, occurred_at, allow_similar, author):
+        calls.append((content, kind, namespace, occurred_at, allow_similar, tuple(tags), author))
         note_id = f"note:{namespace}:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
         seen = [c for c in calls[:-1] if c[0] == content and c[2] == namespace]
         similar = [{"id": "note:other"}] if "similar" in content else []
@@ -152,6 +152,7 @@ def test_loading_maps_each_note_back_to_every_session_it_came_from():
     bike = f"note:lme-q1:{hashlib.sha256(b'The user owns a red bike.').hexdigest()[:16]}"
     assert provenance[bike] == {units[0], units[1]}
     assert all(c[1] == "personal" for c in calls)
+    assert all(c[6] == lme.NOTE_AUTHOR == "longmemeval" for c in calls)
     assert stats.submitted == 3
     assert stats.stored == 2
     assert stats.duplicates == 1
@@ -784,3 +785,36 @@ def test_frontier_prints_the_grid_for_the_selected_run(tmp_path, capsys):
     assert "| top_k | floor | coverage |" in out
     assert "Best cell" in out
     assert not (tmp_path / "report.md").exists()
+
+
+def test_a_candidates_run_adds_the_production_top_k_read_to_its_packet(monkeypatch):
+    from memory_base.eval import retrieval
+    from memory_base.serve.access import namespaces
+
+    class Hit:
+        def __init__(self, i):
+            self.meta = {"id": f"n{i}", "occurred_at": 1.0}
+            self.ts, self.score, self.text = 1.0, 1 - i / 20, "t"
+
+    calls = []
+
+    async def search(query, **kwargs):
+        calls.append(kwargs)
+        return [Hit(i) for i in range(3 if kwargs.get("budget_tokens") is None else 12)]
+
+    async def load(namespace, units, notes_by_unit):
+        return lme.LoadStats(), {f"n{i}": {("s1", D1)} for i in range(12)}
+
+    async def create(namespace):
+        pass
+
+    monkeypatch.setattr(retrieval, "_search_with_retry", search)
+    monkeypatch.setattr(lme, "load_question_notes", load)
+    monkeypatch.setattr(namespaces, "create_namespace", create)
+    question = make_question("q1", "multi-session", sessions=[("s1", D1)])
+    packet = asyncio.run(lme.retrieve_question(question, {}, "candidates"))
+    assert len(packet["hits"]) == 12
+    assert [h["id"] for h in packet["top_k_hits"]] == ["n0", "n1", "n2"]
+    assert any(c.get("min_score") == 0.0 and c.get("budget_tokens") is None for c in calls)
+    packet = asyncio.run(lme.retrieve_question(question, {}, "baseline"))
+    assert "top_k_hits" not in packet

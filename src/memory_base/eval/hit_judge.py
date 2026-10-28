@@ -80,6 +80,7 @@ def _share(part: int, whole: int) -> float | None:
 
 
 def _cell(top_k: int, floor: float, judged: Sequence[tuple[dict, dict, dict]]) -> dict[str, Any]:
+    """One read cell, cut from the fused `hits` list of every packet."""
     covered: dict[bool, list[bool]] = {True: [], False: []}
     counts = dict.fromkeys(LABELS, 0)
     recall, delivered_counts = [], []

@@ -13,9 +13,9 @@ embeddings). `--read prefetch` reads each question the way the Hermes prefetch d
 score floor 0.25) instead of search_memory's defaults (top 10, floor 0.25) and prefixes the
 run name with `prefetch`; `--read budget` packs hits up to a 4000-token budget
 (`budget_tokens`) and prefixes `budget`; `--read candidates` keeps every fused candidate in
-rerank order for memory_base.eval.read_sweep and prefixes `candidates`. `frontier` reports
-evidence coverage and junk per read cell from a candidates run's hit judgments
-(memory_base.eval.hit_judge).
+rerank order, plus the production top_k read, for memory_base.eval.read_sweep and prefixes
+`candidates`. `frontier` reports evidence coverage and junk per read cell from a candidates
+run's hit judgments (memory_base.eval.hit_judge).
 
 CLI:
   uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH
@@ -55,6 +55,7 @@ SUBSET_SEED = 0
 SUBSET_SIZE = 100
 NOTE_TAGS = ("longmemeval",)
 NOTE_KIND = "personal"
+NOTE_AUTHOR = "longmemeval"
 NAMESPACE_PREFIX = "lme-"
 DB_LABEL = "memory-base-longmemeval"
 RETRIEVE_CONCURRENCY = 4
@@ -312,6 +313,7 @@ async def load_question_notes(
                 "kind": NOTE_KIND,
                 "namespace": namespace,
                 "occurred_at": occurred_at,
+                "author": NOTE_AUTHOR,
                 "allow_similar": True,
             }
             try:
@@ -704,7 +706,7 @@ async def retrieve_question(
     )
     if budget_tokens is None:
         hits = hits[: setting["top_k"]]
-    return {
+    packet = {
         "question_id": question["question_id"],
         "question_type": question["question_type"],
         "question": question["question"],
@@ -715,6 +717,12 @@ async def retrieve_question(
         "seconds": {"load": loaded - started, "search": time.monotonic() - loaded},
         "hits": [_hit_record(hit, provenance) for hit in hits],
     }
+    if setting is READ_SETTINGS["candidates"]:
+        top_k_hits = await _search_with_retry(
+            question["question"], source="memory", namespaces=[namespace], min_score=0.0
+        )
+        packet["top_k_hits"] = [_hit_record(hit, provenance) for hit in top_k_hits]
+    return packet
 
 
 def _notes_by_unit(data_dir: Path) -> tuple[dict, set[tuple[str, str]]]:
