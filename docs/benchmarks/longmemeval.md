@@ -82,7 +82,8 @@ A budget packet records its `budget_tokens`, and the manifest records the read s
 of every run.
 
 The `candidates` read feeds `memory_base.eval.read_sweep`, which cuts every read-settings
-grid point from the same candidates (see `read-settings.md`).
+grid point from its fused candidates and, for the `top_k` points, the production `top_k`
+read each `candidates` packet also carries (see `read-settings.md`).
 
 ## Extraction
 
