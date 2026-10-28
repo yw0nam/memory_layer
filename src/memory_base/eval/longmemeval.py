@@ -14,9 +14,8 @@ score floor 0.25) instead of search_memory's defaults (top 10, floor 0.25) and p
 run name with `prefetch`; `--read budget` packs hits up to a 4000-token budget
 (`budget_tokens`) and prefixes `budget`; `--read candidates` keeps every fused candidate in
 rerank order, plus the production top_k read, for memory_base.eval.read_sweep and prefixes
-`candidates`. `frontier` reports
-evidence coverage and junk per read cell from a candidates run's hit judgments
-(memory_base.eval.hit_judge).
+`candidates`. `frontier` reports evidence coverage and junk per read cell from a candidates
+run's hit judgments (memory_base.eval.hit_judge).
 
 CLI:
   uv run python -m memory_base.eval.longmemeval retrieve --dataset PATH
@@ -68,8 +67,7 @@ RUNS = ("baseline", "dated", "prefetch", "budget")
 # A budget no packet reaches, so a search returns every fused candidate in rerank order.
 CANDIDATES_BUDGET = 10**9
 # How a reader bounds its hits: search_memory's defaults, the values the Hermes prefetch
-# sends, a token budget packed in rerank order, and every candidate for the read sweep (whose
-# packets also carry the production top_k read).
+# sends, a token budget packed in rerank order, and every candidate for the read sweep.
 READ_SETTINGS = {
     "search": {"top_k": 10, "min_score": None},
     "prefetch": {"top_k": 5, "min_score": 0.25},
@@ -708,13 +706,7 @@ async def retrieve_question(
     )
     if budget_tokens is None:
         hits = hits[: setting["top_k"]]
-    extra = {}
-    if setting is READ_SETTINGS["candidates"]:
-        top_k_hits = await _search_with_retry(
-            question["question"], source="memory", namespaces=[namespace], min_score=0.0
-        )
-        extra["top_k_hits"] = [_hit_record(hit, provenance) for hit in top_k_hits]
-    return {
+    packet = {
         "question_id": question["question_id"],
         "question_type": question["question_type"],
         "question": question["question"],
@@ -724,8 +716,13 @@ async def retrieve_question(
         "load": asdict(stats),
         "seconds": {"load": loaded - started, "search": time.monotonic() - loaded},
         "hits": [_hit_record(hit, provenance) for hit in hits],
-        **extra,
     }
+    if setting is READ_SETTINGS["candidates"]:
+        top_k_hits = await _search_with_retry(
+            question["question"], source="memory", namespaces=[namespace], min_score=0.0
+        )
+        packet["top_k_hits"] = [_hit_record(hit, provenance) for hit in top_k_hits]
+    return packet
 
 
 def _notes_by_unit(data_dir: Path) -> tuple[dict, set[tuple[str, str]]]:

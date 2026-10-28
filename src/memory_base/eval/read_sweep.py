@@ -302,14 +302,16 @@ async def probe_question(
         top_k_hits = await retrieval._search_with_retry(
             probe["query"], source="memory", namespaces=[namespace], min_score=0.0
         )
+
+        def records(found):
+            return [{"id": h.meta["id"], "score": h.score, "text": h.text} for h in found]
+
         rows.append(
             {
                 "intent": probe["intent"],
                 "query": probe["query"],
-                "hits": [{"id": h.meta["id"], "score": h.score, "text": h.text} for h in hits],
-                "top_k_hits": [
-                    {"id": h.meta["id"], "score": h.score, "text": h.text} for h in top_k_hits
-                ],
+                "hits": records(hits),
+                "top_k_hits": records(top_k_hits),
             }
         )
     return rows

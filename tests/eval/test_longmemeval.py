@@ -815,8 +815,6 @@ def test_a_candidates_run_adds_the_production_top_k_read_to_its_packet(monkeypat
     packet = asyncio.run(lme.retrieve_question(question, {}, "candidates"))
     assert len(packet["hits"]) == 12
     assert [h["id"] for h in packet["top_k_hits"]] == ["n0", "n1", "n2"]
-    top_k_call = calls[1]
-    assert top_k_call["min_score"] == 0.0
-    assert top_k_call.get("budget_tokens") is None
+    assert any(c.get("min_score") == 0.0 and c.get("budget_tokens") is None for c in calls)
     packet = asyncio.run(lme.retrieve_question(question, {}, "baseline"))
     assert "top_k_hits" not in packet
