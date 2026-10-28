@@ -116,8 +116,8 @@ def test_read_jsonl_discards_a_partial_last_line(tmp_path):
 
 
 def fake_save_note(calls):
-    async def save(content, *, tags, kind, namespace, occurred_at, allow_similar):
-        calls.append((content, kind, namespace, occurred_at, allow_similar, tuple(tags)))
+    async def save(content, *, tags, kind, namespace, occurred_at, allow_similar, author):
+        calls.append((content, kind, namespace, occurred_at, allow_similar, tuple(tags), author))
         note_id = f"note:{namespace}:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
         seen = [c for c in calls[:-1] if c[0] == content and c[2] == namespace]
         similar = [{"id": "note:other"}] if "similar" in content else []
@@ -152,6 +152,7 @@ def test_loading_maps_each_note_back_to_every_session_it_came_from():
     bike = f"note:lme-q1:{hashlib.sha256(b'The user owns a red bike.').hexdigest()[:16]}"
     assert provenance[bike] == {units[0], units[1]}
     assert all(c[1] == "personal" for c in calls)
+    assert all(c[6] == lme.NOTE_AUTHOR == "longmemeval" for c in calls)
     assert stats.submitted == 3
     assert stats.stored == 2
     assert stats.duplicates == 1
