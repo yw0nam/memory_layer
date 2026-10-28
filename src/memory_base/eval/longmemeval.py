@@ -56,6 +56,7 @@ SUBSET_SEED = 0
 SUBSET_SIZE = 100
 NOTE_TAGS = ("longmemeval",)
 NOTE_KIND = "personal"
+NOTE_AUTHOR = "longmemeval"
 NAMESPACE_PREFIX = "lme-"
 DB_LABEL = "memory-base-longmemeval"
 RETRIEVE_CONCURRENCY = 4
@@ -314,6 +315,7 @@ async def load_question_notes(
                 "kind": NOTE_KIND,
                 "namespace": namespace,
                 "occurred_at": occurred_at,
+                "author": NOTE_AUTHOR,
                 "allow_similar": True,
             }
             try:
