@@ -15,8 +15,8 @@ cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null) |
 [ -z "$cmd" ] && exit 0
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 
-# Quoted spans holding whitespace are prose, not file operands.
-prose_free=$(printf '%s' "$cmd" | sed "s/'[^']*[[:space:]][^']*'//g" | sed -z 's/"[^"]*[[:space:]][^"]*"//g') || prose_free="$cmd"
+# Quoted spans holding whitespace are prose, not file operands; one left-to-right pass keeps an apostrophe inside double quotes literal.
+prose_free=$(printf '%s' "$cmd" | sed -zE "s/(\"[^\"[:space:]]*\"|'[^'[:space:]]*')|\"[^\"]*\"|'[^'\n]*'/\1/g") || prose_free="$cmd"
 if printf '%s' "$prose_free" | grep -qE '(^|[;&|({!`[:space:]])(cat|less|more|head|tail|bat|grep|rg|sed|awk|strings|base64|xxd|source)[[:space:]]([^;&|]*[[:space:]/"'"'"'<=])?\.env([^.A-Za-z0-9_-]|$)'; then
   deny ".env holds internal endpoints and DB credentials — reading it into the transcript is blocked. Check existence with ls; copy it into a worktree with cp without exposing contents."
 fi
