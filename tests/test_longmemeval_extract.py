@@ -378,8 +378,8 @@ def test_the_digest_and_personal_prompts_are_the_packaged_extraction_prompts():
 
 def test_the_packaged_prompt_shas_are_pinned():
     assert extract.prompt_sha256("digest") == (
-        "d36c16c1e5f1e23450d550ceacb5503edcdbf01f473f350cd2f98763261d24c1"
+        "9adbc3ccc476b68f4187912ebc25110056149a8fc2bd0ef400b4b0d5610f7770"
     )
     assert extract.prompt_sha256("personal") == (
-        "9609641776fd4d3c014da668bbb45c83ec12a74206957fb692c9b00f200e9c92"
+        "be65e74358ecec6096a7d208be2acace063617171dd23788d2045707b0f2846f"
     )
