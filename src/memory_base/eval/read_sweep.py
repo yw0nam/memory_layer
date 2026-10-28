@@ -1,11 +1,12 @@
-"""Read-settings sweep: every top_k / min_score / budget_tokens point from one search per query.
+"""Read-settings sweep: every top_k / min_score / budget_tokens point from two searches per query.
 
-Each query is searched once with a budget no packet reaches, which returns every fused
-candidate in rerank order; each grid point is then cut from that list with the production
-helpers (`_apply_min_score`, `_pack_budget`), so every point sees the same candidates and
-scores. A budget point with a floor drops candidates below it before packing. Each read path
-then delivers the cut hits the way its client does: `search` returns them all, and `hermes`
-renders the Hermes provider's prefetch.
+Each query is searched twice: with a budget no packet reaches, which returns every fused
+candidate in rerank order (`hits`, the budget points' candidates), and as the production top_k
+read with no floor (`top_k_hits`, the top_k points' candidates). Each grid point is cut from
+its list with the production helpers (`_apply_min_score`, `_pack_budget`). A budget point with
+a floor drops candidates below it before packing. Each read path then delivers the cut hits
+the way its client does: `search` returns them all, and `hermes` renders the Hermes
+provider's prefetch, skipping a hit that does not fit.
 
 Corpora: the LongMemEval personal notes (`longmemeval retrieve --read candidates`
 writes the candidate packets; `lme-probe` searches the probe prompts in one question's
@@ -120,6 +121,11 @@ def apply_setting(setting: ReadSetting, rows: Sequence[dict[str, Any]]) -> list[
     return [hit.meta["row"] for hit in kept]
 
 
+def candidates(setting: ReadSetting, row: dict[str, Any]) -> list[dict[str, Any]]:
+    """The candidate list the setting's read mode searches: top_k reads its own search."""
+    return row["top_k_hits"] if setting.budget_tokens is None else row["hits"]
+
+
 def _load_integration(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -147,11 +153,15 @@ def deliver(path: str, rows: Sequence[dict[str, Any]]) -> tuple[list[dict[str, A
         return [], 0
     if path == "search":
         return rows, sum(hit_tokens(row) for row in rows)
-    api_hits = [{"date": DATE_PLACEHOLDER, "text": _text(row)} for row in rows]
-    block = _hermes_block(api_hits)
-    # shortcut: counts the shortest prefix rendering the same block, so a hit the client skips as oversize still counts; count by membership before trusting the Hermes numbers.
-    kept = next(n for n in range(len(rows) + 1) if _hermes_block(api_hits[:n]) == block)
-    return rows[:kept], len(block) // 4
+    kept, api_hits, block = [], [], ""
+    for row in rows:
+        api_hit = {"date": DATE_PLACEHOLDER, "text": _text(row)}
+        grown = _hermes_block(api_hits + [api_hit])
+        if grown != block:
+            kept.append(row)
+            api_hits.append(api_hit)
+            block = grown
+    return kept, len(block) // 4
 
 
 def _mean(values: Sequence[float]) -> float | None:
@@ -171,7 +181,7 @@ def lme_metrics(
     """Session recall, tokens, junk share and zero-hit rate of one setting on one read path."""
     derived, tokens = [], []
     for packet in packets:
-        hits, used = deliver(path, apply_setting(setting, packet["hits"]))
+        hits, used = deliver(path, apply_setting(setting, candidates(setting, packet)))
         derived.append({**packet, "hits": hits})
         tokens.append(used)
     overall = lme.retrieval_metrics(derived, questions)["overall"]
@@ -202,7 +212,9 @@ def probe_metrics(
     report: dict[str, dict[str, Any]] = {}
     for intent in INTENTS:
         group = [row for row in rows if row["intent"] == intent]
-        delivered = [deliver(path, apply_setting(setting, row["hits"])) for row in group]
+        delivered = [
+            deliver(path, apply_setting(setting, candidates(setting, row))) for row in group
+        ]
         report[intent] = {
             "prompts": len(group),
             "fire_rate": _mean([float(bool(hits)) for hits, _ in delivered]),
@@ -231,7 +243,7 @@ def replay_metrics(
         label = retrieval.EvalLabel(
             row["query"], row["query_class"], tuple(row["relevant_ids"]), row["expect_empty"]
         )
-        hits, used = deliver(path, apply_setting(setting, row["hits"]))
+        hits, used = deliver(path, apply_setting(setting, candidates(setting, row)))
         labels.append(label)
         retrieved.append([hit["id"] for hit in hits])
         tokens.append(used)
@@ -287,11 +299,17 @@ async def probe_question(
             namespaces=[namespace],
             budget_tokens=CANDIDATES_BUDGET,
         )
+        top_k_hits = await retrieval._search_with_retry(
+            probe["query"], source="memory", namespaces=[namespace], min_score=0.0
+        )
         rows.append(
             {
                 "intent": probe["intent"],
                 "query": probe["query"],
                 "hits": [{"id": h.meta["id"], "score": h.score, "text": h.text} for h in hits],
+                "top_k_hits": [
+                    {"id": h.meta["id"], "score": h.score, "text": h.text} for h in top_k_hits
+                ],
             }
         )
     return rows
@@ -369,11 +387,15 @@ async def _collect_deployed(
     finally:
         await conn.close()
 
-    async def candidates(query: str) -> list[dict[str, Any]]:
-        hits = await retrieval._search_with_retry(
+    async def searched(query: str) -> dict[str, list[dict[str, Any]]]:
+        fused = await retrieval._search_with_retry(
             query, source="memory", budget_tokens=CANDIDATES_BUDGET
         )
-        return [{"id": h.meta["id"], "score": h.score, "chars": len(h.text)} for h in hits]
+        top_k = await retrieval._search_with_retry(query, source="memory", min_score=0.0)
+        return {
+            name: [{"id": h.meta["id"], "score": h.score, "chars": len(h.text)} for h in hits]
+            for name, hits in (("hits", fused), ("top_k_hits", top_k))
+        }
 
     try:
         labels = [
@@ -382,7 +404,7 @@ async def _collect_deployed(
                 "query_class": label.query_class,
                 "relevant_ids": list(label.relevant_ids),
                 "expect_empty": label.expect_empty,
-                "hits": await candidates(label.query),
+                **await searched(label.query),
             }
             for label in retrieval.load_labels(retrieval.NOTES_LABELS_PATH)
         ]
@@ -390,7 +412,7 @@ async def _collect_deployed(
             {
                 "intent": probe["intent"],
                 "query": probe["query"],
-                "hits": await candidates(probe["query"]),
+                **await searched(probe["query"]),
             }
             for probe in probes
         ]
@@ -509,7 +531,7 @@ def export_packets(data_dir: Path, setting: ReadSetting, path: str, out_dir: Pat
     """Write the path's delivered hits as the packets the answer stage reads."""
     rows = []
     for packet in lme.read_jsonl(lme.packets_path(data_dir, CANDIDATES_RUN)):
-        hits, _ = deliver(path, apply_setting(setting, packet["hits"]))
+        hits, _ = deliver(path, apply_setting(setting, candidates(setting, packet)))
         rows.append(
             {
                 **packet,
