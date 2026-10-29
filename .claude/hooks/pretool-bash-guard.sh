@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash) guard. Denies shell reads of .env (secret exposure)
-# and git commit/push while on main (worktree → PR rule). The agent cannot
+# PreToolUse(Bash) guard. Denies shell reads of .env (secret exposure), a pytest
+# run piped into a pager without pipefail (a failure reads as exit 0), and
+# git commit/push while on main (worktree → PR rule). The agent cannot
 # commit/push to main; it must request the user. Fails OPEN on any error.
 set -u
 
@@ -19,6 +20,12 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 prose_free=$(printf '%s' "$cmd" | sed -zE "s/(\"[^\"[:space:]]*\"|'[^'[:space:]]*')|\"[^\"]*\"|'[^'\n]*'/\1/g") || prose_free="$cmd"
 if printf '%s' "$prose_free" | grep -qE '(^|[;&|({!`[:space:]])(cat|less|more|head|tail|bat|grep|rg|sed|awk|strings|base64|xxd|source)[[:space:]]([^;&|]*[[:space:]/"'"'"'<=])?\.env([^.A-Za-z0-9_-]|$)'; then
   deny ".env holds internal endpoints and DB credentials — reading it into the transcript is blocked. Check existence with ls; copy it into a worktree with cp without exposing contents."
+fi
+
+# A pipeline reports its last command's status, so a pager after pytest turns a failing run into exit 0.
+if ! printf '%s' "$prose_free" | grep -q 'pipefail' &&
+   printf '%s' "$prose_free" | grep -qE '(^|[;&|(][[:space:]]*|[[:space:]]run([[:space:]]+-[^[:space:];&|]+)*[[:space:]]+|-m[[:space:]]+)pytest(([^;&|]|>&)*)\|[[:space:]]*(tail|head)([[:space:]]|$)'; then
+  deny "pytest piped into tail or head exits with the pager's status, so a failing run reads as passed. Start the command with 'set -o pipefail;', or redirect the run to a file and check \$? before reading the file."
 fi
 
 # Double quotes are stripped across the whole command; apostrophes stay line-scoped.
