@@ -895,6 +895,27 @@ def test_listing_is_pending_only_newest_first_with_filters_and_limit():
         asyncio.run(_cleanup(marker))
 
 
+def test_listing_returns_headers_and_matches_a_subject_fragment():
+    marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
+    first = f"{marker} YUI plugin sprint: tool count (#1706)"
+    try:
+        wanted = _send_handoff(first).json()["id"]
+        _send_handoff(f"{marker} Other work (#1671)", scope="repo:github.com/o/other")
+        listed = asyncio.run(store.list_messages(subject="#1706"))
+        assert [row["id"] for row in listed] == [wanted]
+        assert "content" not in listed[0]
+        variant = f"{marker.upper()}  yui  PLUGIN sprint: tool count (#1706)"
+        assert [r["id"] for r in asyncio.run(store.list_messages(subject=variant))] == [wanted]
+        full = asyncio.run(store.list_messages(subject="#1706", include_content=True))
+        assert "state of the work" in full[0]["content"]
+        rest = client.get("/messages", params={"subject": "#1706"}).json()
+        assert "content" not in rest[0]
+        rest = client.get("/messages", params={"subject": "#1706", "include_content": "true"})
+        assert "content" in rest.json()[0]
+    finally:
+        asyncio.run(_cleanup(marker))
+
+
 def test_response_never_exposes_key_identity():
     marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
     try:

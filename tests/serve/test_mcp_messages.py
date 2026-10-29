@@ -92,6 +92,7 @@ def test_list_messages_doc_lists_the_exact_public_fields():
         "author",
         "created_at",
         "expires_at",
+        "include_content",
         "content",
     ):
         assert field in description, field
@@ -222,6 +223,15 @@ def test_list_messages_omits_unset_filters(monkeypatch):
     captured = {}
     _patch_client(monkeypatch, _capturing_handler(captured, status=200, body=[]))
     asyncio.run(tools.list_messages())
+    assert captured["params"] == {}
+
+
+def test_list_messages_sends_include_content_only_when_true(monkeypatch):
+    captured = {}
+    _patch_client(monkeypatch, _capturing_handler(captured, status=200, body=[]))
+    asyncio.run(tools.list_messages(include_content=True))
+    assert captured["params"] == {"include_content": "true"}
+    asyncio.run(tools.list_messages(include_content=False))
     assert captured["params"] == {}
 
 

@@ -163,8 +163,18 @@ def test_listing_filters_on_the_canonical_scope_and_subject_key(use):
             purpose="handoff", scope="repo:https://GitHub.com/o/r.git", subject="  Deploy   Plan "
         )
     )
-    ((_, args, _),) = conn.statements
+    ((sql, args, _),) = conn.statements
     assert args[:3] == ("handoff", "repo:github.com/o/r", "deploy plan")
+    assert "strpos(subject_key, $3) > 0" in sql
+
+
+def test_listing_selects_content_only_when_asked(use):
+    conn = use(RecordingConn())
+    asyncio.run(store.list_messages())
+    asyncio.run(store.list_messages(include_content=True))
+    headers_sql, full_sql = (sql.split(" FROM ")[0] for sql, _, _ in conn.statements)
+    assert "content" not in headers_sql
+    assert "content" in full_sql
 
 
 def test_purge_covers_every_namespace_but_only_terminal_rows(use):
