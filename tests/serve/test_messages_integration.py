@@ -931,7 +931,7 @@ def test_response_never_exposes_key_identity():
         asyncio.run(_cleanup(marker))
 
 
-# ---- handoff retention: completed expires after three days, open ones never ----------------------------
+# ---- handoff retention: completed expires after three days, open ones never ----
 
 
 async def _execute(sql, *args):

@@ -50,8 +50,9 @@ _Avoid_: notification, inbox item, chat message
 A message snapshotting the state of a stretch of work, addressed to a portable scope
 (`repo:<origin>` or `project:<organization>/<project>`) instead of a namespace. Carries
 a report status (`in_progress`, `blocked`, or `completed`); a new snapshot of the same
-subject supersedes the pending one. Has no expiry unless its sender gives one: it stays
-pending until claimed, superseded, or cancelled.
+subject supersedes the pending one. A `completed` handoff expires 3 days after it is
+sent; an `in_progress` or `blocked` one has no expiry. Either way its sender may give an
+`expires_at`, and it stays pending until claimed, superseded, cancelled, or expired.
 _Avoid_: session summary, progress note, status report
 
 **Turn**:

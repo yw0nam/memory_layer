@@ -198,7 +198,8 @@ on — never automatically. `send_message` publishes a general message or, with 
 a handoff snapshot; `cancel_message` withdraws a sender's own pending message. A
 general message is operational and expires after `MESSAGE_TTL_DAYS`; a completed
 handoff expires after 3 days and an in_progress or blocked one stays pending until it
-is claimed, superseded, or cancelled, unless its sender gives an `expires_at`; a note is durable knowledge.
+is claimed, superseded, or cancelled, unless its sender gives an `expires_at`; a note
+is durable knowledge.
 
 ## Running
 
