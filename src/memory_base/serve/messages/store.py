@@ -28,6 +28,7 @@ from memory_base.core.schema import ensure_schema_once
 from memory_base.serve.access import namespaces
 
 MESSAGE_MAX_TTL_DAYS = 30
+COMPLETED_HANDOFF_TTL_DAYS = 3
 MESSAGE_TTL_DAYS = int(os.getenv("MESSAGE_TTL_DAYS", "7"))
 if not 1 <= MESSAGE_TTL_DAYS <= MESSAGE_MAX_TTL_DAYS:
     raise RuntimeError(
@@ -235,15 +236,18 @@ def render_content(
     return content
 
 
-def resolve_expires_at(purpose: str, expires_at: Any) -> datetime | None:
+def resolve_expires_at(purpose: str, status: str, expires_at: Any) -> datetime | None:
     """The caller's expiry (future, at most MESSAGE_MAX_TTL_DAYS out), else the default.
 
-    A general message defaults to now + MESSAGE_TTL_DAYS; a handoff defaults to
+    A general message defaults to now + MESSAGE_TTL_DAYS and a completed handoff to
+    now + COMPLETED_HANDOFF_TTL_DAYS; an in_progress or blocked handoff defaults to
     no expiry and stays pending until it is claimed, superseded, or cancelled.
     """
     now = datetime.now(timezone.utc)
     if expires_at is None:
-        return None if purpose == "handoff" else now + timedelta(days=MESSAGE_TTL_DAYS)
+        if purpose != "handoff":
+            return now + timedelta(days=MESSAGE_TTL_DAYS)
+        return now + timedelta(days=COMPLETED_HANDOFF_TTL_DAYS) if status == "completed" else None
     if not isinstance(expires_at, str) or not expires_at.strip():
         raise ValueError("expires_at must be an ISO 8601 datetime string")
     try:
@@ -347,7 +351,7 @@ async def send_message(
     verification = validate_verification(verification)
     refs = validate_refs(refs)
     content = render_content(subject, status, result, next_text, verification, refs)
-    expires = resolve_expires_at(purpose, expires_at)
+    expires = resolve_expires_at(purpose, status, expires_at)
     expires_specified = expires_at is not None
     idem = validate_idempotency_key(idempotency_key)
 

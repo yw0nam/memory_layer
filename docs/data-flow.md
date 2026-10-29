@@ -51,7 +51,8 @@ POST /messages {subject, status, result, …}
  validate purpose (scope ⇒ handoff), status, next,
  verification {command, status, result}, refs ≤ 10 https,
  expires_at (future, ≤ 30 days; default MESSAGE_TTL_DAYS
- for a message, none for a handoff)
+ for a message, 3 days for a completed
+ handoff, none for another handoff)
    │
    ▼
  render canonical Markdown (blockquote every user line,
@@ -279,9 +280,10 @@ engine's message so the caller can correct its SQL.
 
 ## Read path — messages (`GET /messages`, claim, cancel)
 
-A general message sent without `expires_at` expires after `MESSAGE_TTL_DAYS`; a handoff
-sent without one has a null `expires_at` and never expires — it leaves the pending set
-only by claim, supersede, or cancel. A caller-supplied `expires_at` must be in the future
+A general message sent without `expires_at` expires after `MESSAGE_TTL_DAYS` and a
+completed handoff 3 days after it is sent; an in_progress or blocked handoff sent without
+one has a null `expires_at` and never expires — it leaves the pending set only by claim,
+supersede, or cancel. A caller-supplied `expires_at` must be in the future
 and at most 30 days out for either purpose.
 
 Messages are read by address, never by similarity. `GET /messages` lists pending,
@@ -793,7 +795,7 @@ written and deleted in the same transactions as the document's Card.
 `status` (the report state: `info` | `in_progress` | `blocked` | `completed`),
 `content` (canonical Markdown), `author`, `sender_key`, `idempotency_key`, and the
 timestamptz lifecycle fields `created_at`, `claimed_at`, `cancelled_at`,
-`superseded_at`, `expires_at` (null for a handoff sent without one). No embedding
+`superseded_at`, `expires_at` (null for an open handoff sent without one). No embedding
 column, no search index; a partial index serves the pending listing, and a unique partial index on
 (`sender_key`, `idempotency_key`) backs idempotent sends. The lifecycle timestamps stay
 internal — responses carry the report status only.

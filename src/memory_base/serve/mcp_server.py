@@ -90,8 +90,9 @@ a namespace, or — with a scope repo:<origin> or project:<organization>/<projec
 handoff, the latest snapshot of a work state statused in_progress, blocked, or
 completed. Whoever next works in that scope claims it; a new snapshot supersedes the
 pending one, and a completed handoff remains the delivered record of that state. A
-handoff stays pending until it is claimed, superseded, or cancelled unless its sender
-gives an expires_at; a general message expires after the server's default TTL. Keep the
+completed handoff expires 3 days after it is sent and an in_progress or blocked one stays
+pending until it is claimed, superseded, or cancelled, unless its sender gives an
+expires_at; a general message expires after the server's default TTL. Keep the
 lanes straight: a note is durable knowledge, memory of the user or of the work, read
 again whenever it matches; a message is operational state and is consumed once. That
 makes a message the right carrier for progress and next steps, and the wrong place for

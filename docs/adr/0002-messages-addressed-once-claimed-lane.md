@@ -39,9 +39,10 @@ nothing escapes the skeleton, and rejects instead of truncating past 16 KiB.
   admin purge deletes delivered, cancelled, superseded, and expired rows — no
   scheduler and no new sweep.
 - Retention: a general message expires after `MESSAGE_TTL_DAYS` unless its sender
-  gives an earlier `expires_at`. A handoff has no expiry unless its sender gives one
-  (at most 30 days out); it stays pending until it is claimed, superseded by a newer
-  snapshot of its subject, or cancelled.
+  gives an earlier `expires_at`. A completed handoff expires 3 days after it is sent
+  unless its sender gives an `expires_at` (at most 30 days out). An in_progress or
+  blocked handoff has no expiry unless its sender gives one; it stays pending until it
+  is claimed, superseded by a newer snapshot of its subject, or cancelled.
 - Responses expose the report status (`info`, `in_progress`, `blocked`, `completed`)
   and never the lifecycle timestamps or key identities; a 200 claim or cancel response
   itself proves the transition.
