@@ -144,9 +144,10 @@ async def save_memory(
     description outrank this default.
 
     Write `content` in English, standalone, subject first, with absolute dates ("on
-    2026-09-30"). Before saving, search_memory the same subject; if the new note replaces
-    one, pass `supersedes` and state the previous value, e.g. "20 dozen eggs as of 2023-05
-    (30 dozen as of 2023-01)".
+    2026-09-30"), at most 1,750 characters; a longer note becomes one note per fact.
+    Before saving, search_memory the same subject; if the new note replaces one, pass
+    `supersedes` and state the previous value, e.g. "20 dozen eggs as of 2023-05 (30 dozen
+    as of 2023-01)".
 
     `entities` names the registered entities the note is about (slugs from list_entities,
     at most 10). A preference the user authorizes as a direction to you is a change to your

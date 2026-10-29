@@ -415,7 +415,7 @@ def test_a_merge_identical_to_an_archived_note_is_rejected():
     [
         ({}, "content"),
         ({"merged_text": "   "}, "content"),
-        ({"merged_text": "x" * 4001}, "4000"),
+        ({"merged_text": "x" * 1751}, "1750"),
         ({"merged_text": MERGED + " ghp_abcdefghijklmnopqrstuvwxyz0123456789"}, "credential"),
         ({"merged_text": "Weekday deploys run."}, "04:00"),
         ({"merged_text": MERGED + " Owned by Infra."}, "Infra"),

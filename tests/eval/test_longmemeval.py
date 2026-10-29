@@ -165,7 +165,7 @@ def test_loading_counts_credential_and_invalid_refusals():
     async def save(content, **kwargs):
         if "secret" in content:
             raise CredentialNoteError("AWS Access Key")
-        raise ValueError("content exceeds 4000 chars")
+        raise ValueError("content exceeds 1750 chars")
 
     units = [("s1", "2023/05/20 (Sat) 02:21")]
     notes_by_unit = {

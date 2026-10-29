@@ -379,9 +379,9 @@ def test_save_memory_empty_content_400():
 
 
 def test_save_memory_oversized_content_400():
-    response = client.post("/save_memory", json={"content": "x" * 4001, "kind": "work"})
+    response = client.post("/save_memory", json={"content": "x" * 1751, "kind": "work"})
     assert response.status_code == 400
-    assert response.json()["error"] == "content exceeds 4000 chars"
+    assert response.json()["error"] == "content exceeds 1750 chars"
 
 
 def test_save_memory_bad_kind_400():

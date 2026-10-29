@@ -27,7 +27,8 @@ from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 
 
-NOTE_MAX_CHARS = 4000
+# leaves room for the Hermes prefetch header and an author tag (a 40-character author name fits plain text up to 1,769)
+NOTE_MAX_CHARS = 1750
 NOTE_KINDS = ("personal", "work")
 MAX_NOTE_ENTITIES = 10
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))

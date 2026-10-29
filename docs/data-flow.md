@@ -11,7 +11,7 @@ POST /save_memory       POST /ingest/document         POST /repos {url}
    │                       │ upload fields → 400         │
    │                       │ 202 {job_id}                │ 202 {job_id}
    ▼                       ▼                             ▼
- validate ≤4000         MarkItDown worker            url validated
+ validate ≤1750         MarkItDown worker            url validated
  kind ∈ personal|work           (killable, 120 s)            free disk? → 507
    │                       │                             │
    ▼                       ▼                             │
@@ -213,7 +213,7 @@ author. `GET /notes` rows carry the same `entities`. `?entity=<slug>` narrows to
 the note's `occurred_at` when recorded, else `ts_last_active`. `since`/`until` bound the
 same event time, `COALESCE(occurred_at, ts_last_active)`, so an episode is found by the
 day it happened; recency voting and decay read `ts_last_active` alone. Memory hits carry their stored text whole; each is
-bounded at write time instead — notes ≤4000 chars, document chunks ≤2000 (hard split), CSV
+bounded at write time instead — notes ≤1750 chars, document chunks ≤2000 (hard split), CSV
 cards ≤2000 (the ingest job fails if the summary runs longer). Code hits have no such
 bound — CocoIndex's chunk_size is a target, not a limit — so the response still cuts them
 to 2000 chars. `score` is the rerank score, falling back to the
@@ -478,7 +478,7 @@ The plan runs these checks in order; the first that fails decides the status.
 | 5 | `group_key` and the sorted `member_ids` equal a group that the groups procedure builds now from the request's group parameters (no `limit`, no cache filter) | `stale`, with `current_groups`: the current groups that share a member, in the groups-route shape |
 | 6 | retire or merge: fewer than `max_actions` retire and merge actions recorded for this `run_id` and namespace; keep is never capped and never counts | `rejected` (`action cap reached`) |
 | 7 | retire: `retire_ids` non-empty, without repeats, all members, and at least one member left | `rejected` |
-| 8 | merge: every member has one kind; `merged_text` passes the note validation (non-blank, at most 4000 chars) and the credential scan; the token check passes | `rejected` |
+| 8 | merge: every member has one kind; `merged_text` passes the note validation (non-blank, at most 1750 chars) and the credential scan; the token check passes | `rejected` |
 
 A merge then resolves its replacement:
 

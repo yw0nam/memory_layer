@@ -20,6 +20,7 @@ from client import Refused
 from client import Unreachable
 from client import clean_prefetch_query
 from client import resolve_api_key
+from memory_base.serve.notes.store import NOTE_MAX_CHARS
 
 
 def _client(handler, **kwargs):
@@ -149,6 +150,16 @@ def test_build_prefetch_shows_a_foreign_author():
 
     result = _client(handler).build_prefetch("q")
     assert "- [2026-08-19] (perlica) first hit" in result
+
+
+def test_build_prefetch_delivers_a_note_at_the_save_path_cap_from_another_author():
+    # plain text only: fence-like text is rewritten before measuring and can lengthen the line
+    text = "x" * NOTE_MAX_CHARS
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"date": "2026-10-28", "author": "a" * 40, "text": text}])
+
+    assert text in _client(handler).build_prefetch("q")
 
 
 def test_build_prefetch_hides_the_readers_own_author():
