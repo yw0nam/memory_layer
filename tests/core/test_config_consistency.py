@@ -41,7 +41,7 @@ def test_oversample_factor_is_gone():
     assert not hasattr(config, "OVERSAMPLE_FACTOR")
 
 
-def test_rerank_uses_query_timeout(monkeypatch):
+def test_rerank_reads_on_query_timeout_and_connects_on_the_short_timeout(monkeypatch):
     monkeypatch.setenv("RERANK_URL", "http://fake")
     captured = {}
 
@@ -69,7 +69,9 @@ def test_rerank_uses_query_timeout(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
     hit = search_mod.Hit(source="memory", ref="r", text="text", ts=0.0)
     asyncio.run(search_mod._rerank("q", [hit]))
-    assert captured.get("timeout") == config.QUERY_TIMEOUT_SECONDS
+    timeout = captured["timeout"]
+    assert timeout.read == config.QUERY_TIMEOUT_SECONDS
+    assert timeout.connect == config.RERANK_CONNECT_TIMEOUT_SECONDS
 
 
 def test_embed_many_orders_output_by_response_index_not_response_order(monkeypatch):

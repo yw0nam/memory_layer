@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,6 +21,7 @@ from memory_base.serve.common.http import note_scope
 from memory_base.serve.notes.store import note_date
 from memory_base.serve.search import access_log
 
+LOGGER = logging.getLogger(__name__)
 SOURCES = ("all", "code", "memory")
 # Beyond this a query is a pasted payload, not a question: it costs embedder and BM25
 # work no ranking can use.
@@ -147,10 +150,19 @@ async def search_route(request: Request) -> JSONResponse:
         if requested_namespaces is not None:
             options["namespaces"] = requested_namespaces
         log_filters = {k: v for k, v in options.items() if k != "source"} | {"top_k": top_k}
+        started = time.monotonic()
         hits = await search(query, **options)
         if budget_tokens is None:
             hits = hits[:top_k]
     except UpstreamUnavailable as exc:
+        cause = exc.__cause__
+        LOGGER.warning(
+            "search unavailable: service=%s cause=%s: %s elapsed=%.1fs",
+            exc.service,
+            type(cause).__name__,
+            cause,
+            time.monotonic() - started,
+        )
         return error(f"search unavailable: {exc}, so memory cannot be attached right now", 503)
     except ValueError as exc:
         return error(str(exc))

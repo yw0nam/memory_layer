@@ -19,6 +19,8 @@ SERVICE_TIMEOUT_SECONDS = 120
 # Query-path ceiling: callers budget 1.5-5s, so a stalled endpoint must fail long before
 # the ingest timeout would.
 QUERY_TIMEOUT_SECONDS = 10
+# A TCP connect that has not completed in 2s is a stall; the reranker call retries it once.
+RERANK_CONNECT_TIMEOUT_SECONDS = 2
 
 # Qwen3 embedding convention: instruction-prefixed query, raw document.
 _QUERY_PREFIX = (

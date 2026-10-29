@@ -80,3 +80,20 @@ def test_query_within_the_bound_is_untouched(monkeypatch):
     monkeypatch.setattr(search_routes, "search", fake_search)
     client.post("/search", json={"query": "short question"})
     assert captured["query"] == "short question"
+
+
+def test_unavailable_503_logs_service_cause_and_elapsed(monkeypatch, caplog):
+    async def fake_search(query, **kwargs):
+        raise UpstreamUnavailable("reranking") from TimeoutError("connect stalled")
+
+    monkeypatch.setattr(search_routes, "search", fake_search)
+    with caplog.at_level("WARNING"):
+        response = client.post("/search", json={"query": "what did we decide"})
+    assert response.status_code == 503
+    assert response.json()["error"] == (
+        "search unavailable: the reranking service is not responding, so memory cannot be attached right now"
+    )
+    [record] = [r for r in caplog.records if r.levelname == "WARNING"]
+    line = record.getMessage()
+    assert "reranking" in line and "TimeoutError" in line and "connect stalled" in line
+    assert "elapsed" in line
