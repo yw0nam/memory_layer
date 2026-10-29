@@ -198,3 +198,32 @@ def test_still_denies_a_real_command_between_apostrophes_on_separate_lines():
     """Apostrophe stripping stays line-scoped, so a pair of them cannot span a real command."""
     command = f'echo "it\'s fine"\n{VERB}\necho "that\'s all"'
     assert denied(run_guard(command, cwd=primary_worktree()))
+
+
+# ---- a pytest run piped into tail or head reports the pager's exit status ---
+
+PIPE_DENIED = {
+    "tail": "uv run pytest -q | tail -3",
+    "stderr merged": 'uv run pytest -m "not integration" -q 2>&1 | tail -5',
+    "head": "pytest -q tests/serve | head -20",
+    "uv run with options": "uv run --no-sync pytest -q | tail -1",
+    "python -m": "python -m pytest -q | tail -2",
+}
+
+PIPE_ALLOWED = {
+    "pipefail set": "set -o pipefail; uv run pytest -q | tail -3",
+    "redirect then status": "uv run pytest -q > log.txt; echo $?",
+    "no pipe": "uv run pytest -q",
+    "pytest as a grep pattern": "grep -rn pytest pyproject.toml | head -3",
+    "prose in a delegation prompt": 'agent-send impl s "never run pytest | tail without pipefail"',
+}
+
+
+@pytest.mark.parametrize("command", PIPE_DENIED.values(), ids=PIPE_DENIED.keys())
+def test_denies_pytest_piped_into_a_pager_without_pipefail(command: str):
+    assert denied(run_guard(command, cwd=REPO_ROOT))
+
+
+@pytest.mark.parametrize("command", PIPE_ALLOWED.values(), ids=PIPE_ALLOWED.keys())
+def test_allows_a_pytest_run_whose_exit_status_survives(command: str):
+    assert not denied(run_guard(command, cwd=REPO_ROOT))
