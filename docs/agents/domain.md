@@ -38,6 +38,16 @@ Multi-context repo (presence of `GLOSSARY-MAP.md` at the root):
         └── docs/adr/
 ```
 
+## A contract is stated in several places
+
+A change to an MCP tool or REST contract (a field, a default, a limit, a retention rule)
+updates every place that states it, in the same PR: the tool docstring in
+`src/memory_base/serve/<feature>/tools.py` (the tool description), the server instructions
+in `src/memory_base/serve/mcp_server.py`, the REST table and lane paragraphs in
+`README.md`, `docs/data-flow.md`, `docs/configuration.md`, `GLOSSARY.md`, the ADR that
+records the rule, and test fakes that echo the old value. Grep each of them for the old
+value before calling the change done.
+
 ## Use the glossary's vocabulary
 
 When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `GLOSSARY.md`. Don't drift to synonyms the glossary explicitly avoids.

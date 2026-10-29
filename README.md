@@ -232,6 +232,12 @@ uv run python -m memory_base.retrieval.search "your query" --source code
 The memory schema is created on first write (`ensure_schema`); the code table is created
 by the indexer.
 
+### Deploy
+
+`scripts/deploy.sh` fast-forwards the main checkout, rebuilds the `api` and `mcp`
+services, and waits until they report healthy. It refuses a checkout that is not on
+`main`. An MCP client reconnects after the `mcp` container restarts.
+
 ### Backup
 
 `scripts/backup.sh <backup-dir> [keep]` writes a gzipped `pg_dump` of the database and
