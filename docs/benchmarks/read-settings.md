@@ -105,7 +105,7 @@ there.
 235,097 against 739,087. `b1500-f0` answers 90 at 1,437 tokens (328,954 answer input tokens),
 two questions above `k10-f0` for 53 % more tokens. The floor 0.25 that
 `search_memory` applies when `min_score` is omitted cuts recall_all from 0.926 to 0.768
-on LME and deployed R@5 from 0.867 to 0.667 (5 scored labels). The deployed corpus holds
+on LME and leaves deployed R@5 at 0.958 (12 scored labels). The deployed corpus holds
 longer notes, so `k10-f0` costs 1,890 tokens per call there.
 
 ## B. prefetch, Hermes
@@ -127,9 +127,8 @@ longer notes, so `k10-f0` costs 1,890 tokens per call there.
 
 `k5-f0.25` answers 79 of 100 at 212 tokens per turn. The provider skips a hit whose line
 does not fit the 2000-character budget and keeps filling with later hits, so a note longer
-than about 1,810 characters never reaches the prompt. Three of the 5 scored deployed labels
-share one 1,962-character relevant note, which puts Hermes deployed R@5 at 0.708 against 0.958
-on the search path at floor 0.
+than about 1,810 characters never reaches the prompt. Hermes deployed R@5 is 0.708 against
+0.958 on the search path at floor 0.
 On the deployed corpus 4 of 40 off-topic prompts inject at floor 0.25 and 1 at 0.4; on the
 LME personal corpus none do at any floor from 0.25 up.
 
@@ -163,8 +162,8 @@ not measured there.
 
 | conclusion | LME personal | deployed coding | transfers |
 |---|---|---|---|
-| a floor cuts aggregate-question recall | recall_all 0.926 -> 0.768 at 0.25 | R@5 0.867 -> 0.667 at 0.25 | yes |
-| top 10 without a floor matches the 4000-token budget | recall_all@10 equal, QA 0.88 / 0.91 | R@5 equal (0.867) | recall yes; QA measured on LME only |
+| a floor cuts aggregate-question recall | recall_all 0.926 -> 0.768 at 0.25 | R@5 0.958 at 0 and at 0.25 | no: every scored deployed label's answer scores above 0.25 |
+| top 10 without a floor matches the 4000-token budget | recall_all@10 equal, QA 0.88 / 0.91 | R@5 0.958 against 0.875 | no on deployed R@5; QA measured on LME only |
 | off-topic prompts pass a 0.25 floor | never | 4 of 40 | no: coding prompts match coding notes, not personal ones |
 | QA numbers | measured | not measured (no reference answers) | no |
 
