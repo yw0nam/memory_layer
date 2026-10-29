@@ -49,8 +49,8 @@ async def send_message(
     `idempotency_key` (max 128 chars) replays an identical send instead of
     duplicating it. `expires_at` is an ISO 8601 datetime at most 30 days out;
     without it a general message expires after the server's configured default
-    TTL and a handoff never expires (it leaves the lane by claim, supersede, or
-    cancel).
+    TTL and a completed handoff expires 3 days after it is sent; an in_progress or
+    blocked handoff never expires (it leaves the lane by claim, supersede, or cancel).
     """
     body: dict[str, Any] = {
         "subject": subject,
@@ -94,9 +94,9 @@ async def list_messages(
     similarity, and never appear in search results. Returns newest-first rows
     with exactly id, namespace, purpose, scope, subject, status (the report
     state: info, in_progress, blocked, or completed), author, created_at, and
-    expires_at (null for a handoff without an expiry). `include_content` adds
-    content, the canonical Markdown; list headers first, then claim the one
-    you act on, which returns its content.
+    expires_at (null for an in_progress or blocked handoff without an
+    expiry). `include_content` adds content, the canonical Markdown; list
+    headers first, then claim the one you act on, which returns its content.
 
     `purpose` is "message" or "handoff"; `scope` is the portable scope the
     message was sent with; `subject` matches any part of the subject, ignoring
