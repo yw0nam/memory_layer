@@ -931,7 +931,7 @@ def test_response_never_exposes_key_identity():
         asyncio.run(_cleanup(marker))
 
 
-# ---- handoff retention: no expiry unless the sender gives one ----------------------------
+# ---- handoff retention: completed expires after three days, open ones never ----------------------------
 
 
 async def _execute(sql, *args):
@@ -956,6 +956,18 @@ def test_a_handoff_without_expiry_is_stored_null_and_listed_as_pending():
         ).json()
         assert [row["id"] for row in listed] == [sent.json()["id"]]
         assert listed[0]["expires_at"] is None
+    finally:
+        asyncio.run(_cleanup(marker))
+
+
+def test_a_completed_handoff_without_expiry_is_stored_with_a_three_day_expiry():
+    marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
+    try:
+        done = _send_handoff(f"{marker} finished work", status="completed", next=None)
+        assert done.status_code == 201
+        remaining = datetime.fromisoformat(done.json()["expires_at"]) - datetime.now(timezone.utc)
+        assert timedelta(days=2.9) < remaining <= timedelta(days=3)
+        assert _send_handoff(f"{marker} open work").json()["expires_at"] is None
     finally:
         asyncio.run(_cleanup(marker))
 

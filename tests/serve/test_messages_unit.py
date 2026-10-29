@@ -414,38 +414,49 @@ def test_render_rejects_content_over_16kib_instead_of_truncating():
 
 def test_a_message_without_expiry_expires_after_message_ttl_days(monkeypatch):
     monkeypatch.setattr(store, "MESSAGE_TTL_DAYS", 7)
-    expires = store.resolve_expires_at("message", None)
+    expires = store.resolve_expires_at("message", "info", None)
     assert timedelta(days=6.9) < expires - datetime.now(timezone.utc) <= timedelta(days=7.1)
 
 
-def test_a_handoff_without_expiry_never_expires():
-    assert store.resolve_expires_at("handoff", None) is None
+def test_an_open_handoff_without_expiry_never_expires():
+    assert store.resolve_expires_at("handoff", "in_progress", None) is None
+    assert store.resolve_expires_at("handoff", "blocked", None) is None
+
+
+def test_a_completed_handoff_without_expiry_expires_after_three_days():
+    expires = store.resolve_expires_at("handoff", "completed", None)
+    assert timedelta(days=2.9) < expires - datetime.now(timezone.utc) <= timedelta(days=3.1)
+
+
+def test_a_completed_handoff_keeps_an_explicit_expiry():
+    soon = datetime.now(timezone.utc) + timedelta(days=10)
+    assert store.resolve_expires_at("handoff", "completed", soon.isoformat()) == soon
 
 
 def test_expires_at_accepts_future_iso_string():
     soon = datetime.now(timezone.utc) + timedelta(days=2)
-    assert store.resolve_expires_at("handoff", soon.isoformat()) == soon
+    assert store.resolve_expires_at("handoff", "in_progress", soon.isoformat()) == soon
 
 
 def test_expires_at_must_be_in_the_future():
     past = datetime.now(timezone.utc) - timedelta(hours=1)
     with pytest.raises(ValueError):
-        store.resolve_expires_at("handoff", past.isoformat())
+        store.resolve_expires_at("handoff", "in_progress", past.isoformat())
 
 
 def test_expires_at_may_be_at_most_thirty_days_out():
     limit = datetime.now(timezone.utc) + timedelta(days=30, minutes=5)
     with pytest.raises(ValueError):
-        store.resolve_expires_at("handoff", limit.isoformat())
+        store.resolve_expires_at("handoff", "in_progress", limit.isoformat())
     ok = datetime.now(timezone.utc) + timedelta(days=29)
-    assert store.resolve_expires_at("handoff", ok.isoformat()) == ok
+    assert store.resolve_expires_at("handoff", "in_progress", ok.isoformat()) == ok
 
 
 def test_expires_at_rejects_unparseable_and_non_string():
     with pytest.raises(ValueError):
-        store.resolve_expires_at("message", "not a date")
+        store.resolve_expires_at("message", "info", "not a date")
     with pytest.raises(ValueError):
-        store.resolve_expires_at("handoff", 12345)
+        store.resolve_expires_at("handoff", "in_progress", 12345)
 
 
 # ---- idempotency key ------------------------------------------------------------
