@@ -200,6 +200,25 @@ def test_get_messages_default_limit_50_and_max_100(monkeypatch):
     assert client.get("/messages", params={"limit": "zero"}).status_code == 400
 
 
+def test_get_messages_include_content_passes_through(monkeypatch):
+    captured = {}
+
+    async def fake_list(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(store, "list_messages", fake_list)
+    client.get("/messages")
+    assert captured["include_content"] is False
+    client.get("/messages", params={"include_content": "false"})
+    assert captured["include_content"] is False
+    client.get("/messages", params={"include_content": "true"})
+    assert captured["include_content"] is True
+    response = client.get("/messages", params={"include_content": "maybe"})
+    assert response.status_code == 400
+    assert response.json()["error"] == "include_content must be true or false"
+
+
 def test_get_messages_unknown_purpose_400(monkeypatch):
     response = client.get("/messages", params={"purpose": "memo"})
     assert response.status_code == 400

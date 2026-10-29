@@ -525,6 +525,22 @@ def test_public_row_exposes_only_the_contracted_fields():
     assert public["expires_at"] == row["expires_at"].isoformat()
 
 
+def test_public_row_of_a_header_only_row_has_no_content_key():
+    row = _stored_row()
+    del row["content"]
+    assert set(store.public_row(row)) == {
+        "id",
+        "namespace",
+        "purpose",
+        "scope",
+        "subject",
+        "status",
+        "author",
+        "created_at",
+        "expires_at",
+    }
+
+
 def test_public_row_renders_a_missing_expiry_as_null():
     assert store.public_row(_stored_row(expires_at=None))["expires_at"] is None
 
