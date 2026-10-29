@@ -18,6 +18,7 @@ from memory_base.core import db
 from memory_base.core.config import (
     PG_SCHEMA,
     QUERY_TIMEOUT_SECONDS,
+    RERANK_CONNECT_TIMEOUT_SECONDS,
     VllmEmbedder,
     rerank_model,
     require_env,
@@ -515,7 +516,10 @@ async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
 
     if not hits:
         return hits
-    async with httpx.AsyncClient(timeout=QUERY_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(QUERY_TIMEOUT_SECONDS, connect=RERANK_CONNECT_TIMEOUT_SECONDS),
+        transport=httpx.AsyncHTTPTransport(retries=1),
+    ) as client:
         try:
             r = await client.post(
                 require_env("RERANK_URL").rstrip("/") + "/rerank",
