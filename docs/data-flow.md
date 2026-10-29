@@ -286,9 +286,12 @@ and at most 30 days out for either purpose.
 
 Messages are read by address, never by similarity. `GET /messages` lists pending,
 unexpired messages newest-first (created_at DESC, id DESC) with `namespace`, `purpose`,
-`scope`, and `subject` filters — the subject filter normalizes its argument the same
-way the send path does, so any spelling variant of a subject finds its snapshot chain —
-and a `limit` (default 50, max 100). No query, no embedding call, no access to
+`scope`, and `subject` filters — the subject filter matches a case-insensitive
+substring of the normalized subject, so a full subject in any spelling variant still finds
+its snapshot chain — and a `limit` (default 50, max 100). Rows are headers (id,
+namespace, purpose, scope, subject, status, author, created_at, expires_at);
+`include_content=true` adds `content`, and a claim returns the content of the message it
+takes. No query, no embedding call, no access to
 `memory_chunks`.
 
 Delivery is at-most-once. `POST /messages/{id}/claim` is a single conditional UPDATE

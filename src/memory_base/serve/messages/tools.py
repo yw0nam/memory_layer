@@ -85,6 +85,7 @@ async def list_messages(
     scope: str | None = None,
     subject: str | None = None,
     limit: int | None = None,
+    include_content: bool = False,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """List pending, unexpired messages addressed to a namespace.
@@ -92,13 +93,14 @@ async def list_messages(
     No query and no embedding call: messages are read by address, never by
     similarity, and never appear in search results. Returns newest-first rows
     with exactly id, namespace, purpose, scope, subject, status (the report
-    state: info, in_progress, blocked, or completed), author, created_at,
-    expires_at (null for a handoff without an expiry), and content — the
-    canonical Markdown.
+    state: info, in_progress, blocked, or completed), author, created_at, and
+    expires_at (null for a handoff without an expiry). `include_content` adds
+    content, the canonical Markdown; list headers first, then claim the one
+    you act on, which returns its content.
 
     `purpose` is "message" or "handoff"; `scope` is the portable scope the
-    message was sent with; `subject` matches after the same normalization the
-    server applies on send (any spelling variant of the subject finds it).
+    message was sent with; `subject` matches any part of the subject, ignoring
+    case and spacing variants (for example "#1706").
     `namespace` narrows to one namespace; omitted, it covers every
     namespace. `limit` defaults to 50,
     max 100.
@@ -114,6 +116,8 @@ async def list_messages(
         params.append(("subject", subject))
     if limit is not None:
         params.append(("limit", str(limit)))
+    if include_content:
+        params.append(("include_content", "true"))
     return await rest_client.call(
         "GET",
         "/messages",

@@ -78,6 +78,9 @@ async def list_route(request: Request) -> JSONResponse:
     if not 1 <= limit <= store.LIST_MESSAGES_MAX_LIMIT:
         return error(f"limit must be between 1 and {store.LIST_MESSAGES_MAX_LIMIT}")
     purpose = params.get("purpose") or None
+    include_content = params.get("include_content", "false")
+    if include_content not in ("true", "false"):
+        return error("include_content must be true or false")
     try:
         rows = await store.list_messages(
             namespaces=requested_namespaces,
@@ -85,6 +88,7 @@ async def list_route(request: Request) -> JSONResponse:
             scope=params.get("scope") or None,
             subject=params.get("subject") or None,
             limit=limit,
+            include_content=include_content == "true",
         )
     except ValueError as exc:
         return error(str(exc))

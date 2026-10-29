@@ -47,9 +47,8 @@ _PROJECT_SEGMENT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _SCP_ORIGIN_RE = re.compile(r"(?:(?P<user>[^:@]+)@)?(?P<host>[^:/]+):(?P<path>.+)")
 _ORIGIN_HOST_RE = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
-_PUBLIC_COLUMNS = (
-    "id, namespace, purpose, scope, subject, status, author, created_at, expires_at, content"
-)
+_HEADER_COLUMNS = "id, namespace, purpose, scope, subject, status, author, created_at, expires_at"
+_PUBLIC_COLUMNS = f"{_HEADER_COLUMNS}, content"
 
 
 class MessageConflict(Exception):
@@ -300,7 +299,7 @@ def public_row(row: asyncpg.Record | dict[str, Any]) -> dict[str, Any]:
     never changes; a 200 claim or cancel response itself proves the delivery
     transition.
     """
-    return {
+    public = {
         "id": str(row["id"]),
         "namespace": row["namespace"],
         "purpose": row["purpose"],
@@ -310,8 +309,10 @@ def public_row(row: asyncpg.Record | dict[str, Any]) -> dict[str, Any]:
         "author": row["author"],
         "created_at": row["created_at"].isoformat(),
         "expires_at": row["expires_at"].isoformat() if row["expires_at"] is not None else None,
-        "content": row["content"],
     }
+    if "content" in row.keys():
+        public["content"] = row["content"]
+    return public
 
 
 async def send_message(
@@ -493,8 +494,9 @@ async def list_messages(
     scope: str | None = None,
     subject: str | None = None,
     limit: int = LIST_MESSAGES_DEFAULT_LIMIT,
+    include_content: bool = False,
 ) -> list[dict[str, Any]]:
-    """Pending, unexpired messages newest-first; no query and no embedding call."""
+    """Pending, unexpired messages newest-first as headers; no query and no embedding call."""
     if (
         isinstance(limit, bool)
         or not isinstance(limit, int)
@@ -524,13 +526,13 @@ async def list_messages(
         predicates.append(f"scope = ${len(args)}")
     if subject_key is not None:
         args.append(subject_key)
-        predicates.append(f"subject_key = ${len(args)}")
+        predicates.append(f"strpos(subject_key, ${len(args)}) > 0")
     args.append(limit)
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         rows = await conn.fetch(
             f"""
-            SELECT {_PUBLIC_COLUMNS}
+            SELECT {_PUBLIC_COLUMNS if include_content else _HEADER_COLUMNS}
             FROM "{PG_SCHEMA}".messages
             WHERE {" AND ".join(predicates)}
             ORDER BY created_at DESC, id DESC

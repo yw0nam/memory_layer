@@ -82,8 +82,8 @@ its entities from link_entities, not from a second save."""
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
 searchable, listed while pending and consumed by claiming. At the start of a session,
-list_messages for your namespaces and claim_message each one you act on — a claim is
-exclusive, and it fires only when called, never automatically from a prefetch hook.
+list_messages for your namespaces (it returns headers: subject and status) and
+claim_message each one you act on, which returns its content — a claim is exclusive, and it fires only when called, never automatically from a prefetch hook.
 send_message takes two shapes: a general message (status "info", no scope) addressed to
 a namespace, or — with a scope repo:<origin> or project:<organization>/<project> — a
 handoff, the latest snapshot of a work state statused in_progress, blocked, or
