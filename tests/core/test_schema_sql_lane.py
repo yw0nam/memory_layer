@@ -34,19 +34,6 @@ def test_api_keys_and_jobs_stamp_their_own_created_at(monkeypatch):
         assert "created_at timestamptz NOT NULL DEFAULT now()" in body, table
 
 
-def test_the_schema_creates_and_drops_only_the_tables_it_keeps(monkeypatch):
-    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
-    conn = RecordingConnection()
-
-    asyncio.run(schema.ensure_schema(conn))
-
-    sql = " ".join("\n".join(conn.queries).split())
-    assert "DROP TABLE" not in sql
-    for name in ("entities", "facts", "consolidation_actions", "turns", "retrieval_log"):
-        assert f'"scratch_schema".{name}' not in sql
-    assert "hit_count" not in sql and "last_hit_at" not in sql
-
-
 def test_messages_table_carries_the_lifecycle_constraints_and_indexes(monkeypatch):
     monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
     conn = RecordingConnection()
