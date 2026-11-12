@@ -349,7 +349,7 @@ def test_search_and_listing_filter_by_the_new_kinds():
                 assert response.status_code == 200, response.json()
             found = c.post(
                 "/search",
-                json={"query": marker, "source": "memory", "kind": "personal"},
+                json={"query": marker, "kind": "personal"},
             )
             assert found.status_code == 200
             assert [hit["id"] for hit in found.json()] == [ids[0]]
@@ -357,7 +357,7 @@ def test_search_and_listing_filter_by_the_new_kinds():
             assert listed.status_code == 200
             assert [row["id"] for row in listed.json()] == [ids[1]]
             for bad in (
-                c.post("/search", json={"query": marker, "source": "memory", "kind": "note"}),
+                c.post("/search", json={"query": marker, "kind": "note"}),
                 c.get("/notes", params={"kind": "note"}),
             ):
                 assert bad.status_code == 400

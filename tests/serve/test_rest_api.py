@@ -504,7 +504,7 @@ def test_search_omitted_time_bounds_do_not_reach_search(monkeypatch):
         return []
 
     monkeypatch.setattr(search_routes, "search", fake_search)
-    response = client.post("/search", json={"query": "q", "source": "memory"})
+    response = client.post("/search", json={"query": "q"})
     assert response.status_code == 200
     assert "since" not in captured
     assert "until" not in captured

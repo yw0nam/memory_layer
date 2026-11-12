@@ -92,7 +92,7 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-class EvalApi:
+class SandboxApi:
     """The REST API as a subprocess on a free loopback port, against the throwaway DB_URL."""
 
     def __init__(self) -> None:
@@ -101,7 +101,7 @@ class EvalApi:
         self.proc: subprocess.Popen | None = None
         self.state = tempfile.TemporaryDirectory()
 
-    def __enter__(self) -> EvalApi:
+    def __enter__(self) -> SandboxApi:
         argv = [
             "uv", "run", "--no-sync", "uvicorn", "memory_base.serve.api:app",
             "--host", "127.0.0.1", "--port", str(self.port), "--log-level", "warning",
@@ -117,7 +117,7 @@ class EvalApi:
                 except httpx.HTTPError:
                     pass
                 if self.proc.poll() is not None or time.monotonic() > deadline:
-                    raise RuntimeError(f"eval REST API did not come up on {self.url}")
+                    raise RuntimeError(f"sandbox REST API did not come up on {self.url}")
                 time.sleep(0.5)
         except BaseException:
             self.__exit__(None, None, None)
@@ -160,7 +160,7 @@ def main(wait: Callable[[], None] = _wait) -> None:
     try:
         with throwaway_postgres() as database:
             key = asyncio.run(_prepare(database["url"]))
-            with EvalApi() as api:
+            with SandboxApi() as api:
                 print(f"URL {api.url}")
                 print(f"KEY {key}")
                 print(f"AUTHOR {AUTHOR}")

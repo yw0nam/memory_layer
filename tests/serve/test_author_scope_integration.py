@@ -91,9 +91,7 @@ def test_search_never_returns_a_foreign_private_note():
 
     asyncio.run(seed())
     try:
-        response = _client(B).post(
-            "/search", json={"query": content, "source": "memory", "top_k": 20}
-        )
+        response = _client(B).post("/search", json={"query": content, "top_k": 20})
         assert response.status_code == 200, response.text
         found = {hit["id"] for hit in response.json()}
         assert own_id in found
@@ -123,9 +121,7 @@ def test_a_shared_note_is_in_another_authors_default_reads():
         assert note_id in [row["id"] for row in listing.json()]
         assert listing.json()[0]["shared"] is True
 
-        found = _client(B).post(
-            "/search", json={"query": content, "source": "memory", "namespaces": [namespace]}
-        )
+        found = _client(B).post("/search", json={"query": content, "namespaces": [namespace]})
         assert found.status_code == 200
         assert note_id in [hit["id"] for hit in found.json()]
     finally:
@@ -164,7 +160,6 @@ def test_a_list_of_authors_reads_exactly_those_authors():
             "/search",
             json={
                 "query": f"read scope integration pin {marker}",
-                "source": "memory",
                 "namespaces": [namespace],
                 "author": [A, B],
                 "min_score": 0,

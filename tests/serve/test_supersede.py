@@ -587,7 +587,7 @@ def test_supersede_pointer_is_visible_in_notes_listing_and_search(client):
 
         found = client.post(
             "/search",
-            json={"query": content_b, "source": "memory", "namespaces": ["default"]},
+            json={"query": content_b, "namespaces": ["default"]},
         )
         assert found.status_code == 200
         hit = next(h for h in found.json() if h["id"] == note_b)
