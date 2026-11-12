@@ -28,14 +28,11 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from memory_base.core.logger import setup_logging
 from memory_base.serve.documents import tools as document_tools
-from memory_base.serve.entities import tools as entity_tools
-from memory_base.serve.facts import tools as fact_tools
 from memory_base.serve.messages import tools as message_tools
 from memory_base.serve.notes import tools as note_tools
 from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.search import tools as search_tools
 from memory_base.serve.tables import tools as table_tools
-from memory_base.serve.turns import tools as turn_tools
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
@@ -68,17 +65,6 @@ supersede it rather than adding a note that contradicts it, and if other active 
 state the same stale value, archive them with archive_notes. `shared: true` saves a note
 every agent sees."""
 
-_ENTITY_REGISTRY = """\
-Entities are a registry of the people, projects, and things the user has consented to.
-Before naming one, list_entities and reuse a slug or alias that exists; register_entity
-refuses a name another entity holds. Every create, edit, and delete needs the user's
-consent: a dialog on a client with elicitation, otherwise a needs_consent reply that you
-put to the user before calling again with confirmed=true. In an unattended session
-(cron, no user present) never pass confirmed; leave a message instead. read_entity returns
-an entity's card. Facts are written only by the consolidation run, from notes that name
-an entity; to correct one, save a note naming the entity. A note that already exists gets
-its entities from link_entities, not from a second save."""
-
 _MESSAGE_LANE = """\
 Messages are an addressed, one-time signal lane beside the notes: never embedded, never
 searchable, listed while pending and consumed by claiming. At the start of a session,
@@ -98,14 +84,6 @@ again whenever it matches; a message is operational state and is consumed once. 
 makes a message the right carrier for progress and next steps, and the wrong place for
 anything meant to be read more than once."""
 
-_TURN_LANE = """\
-The turn lane is the verbatim record of the user's and the assistant's messages, kept by
-the client's hook and read on demand with list_sessions, read_session, and
-search_transcript when a decision from an earlier session is needed or a note must be
-checked against what was said. search_memory never searches it, and it is never a reason
-to skip saving a note. When you save a note distilled from this session, pass session_id
-and origin so the note names its source."""
-
 _SERVER_INSTRUCTIONS_CLOSING = """\
 A namespace is a label for filtering, and a write without one lands in `default`; a read
 without a namespace covers every namespace, and no namespace is private. The author is the
@@ -115,18 +93,14 @@ list of slugs such as author=["natsume", "claude-code"] (include your own slug t
 yours), or "all" for every agent. A note's first tag names its subject, usually the repository or domain it belongs
 to, so that a later search can narrow to it.
 
-Curate rarely. list_memory_duplicates shows active note pairs whose meaning nearly
-coincides; read both sides, then either merge them into one note with save_memory
-(supersedes=...) or drop one with archive_notes. delete_notes is for rows that
+Curate rarely. archive_notes retires a stale note and delete_notes is for rows that
 must never resurface; archiving is otherwise always preferred."""
 
 SERVER_INSTRUCTIONS = "\n\n".join(
     (
         _SERVER_INSTRUCTIONS_OPENING.rstrip("\n"),
         _WRITE_POLICY,
-        _ENTITY_REGISTRY,
         _MESSAGE_LANE,
-        _TURN_LANE,
         _SERVER_INSTRUCTIONS_CLOSING,
     )
 )
@@ -160,16 +134,7 @@ mcp.tool()(message_tools.send_message)
 mcp.tool()(message_tools.list_messages)
 mcp.tool()(message_tools.claim_message)
 mcp.tool()(message_tools.cancel_message)
-mcp.tool()(entity_tools.list_entities)
-mcp.tool()(entity_tools.register_entity)
-mcp.tool()(fact_tools.read_entity)
-mcp.tool()(turn_tools.list_sessions)
-mcp.tool()(turn_tools.read_session)
-mcp.tool()(turn_tools.search_transcript)
-mcp.tool()(note_tools.list_memory_duplicates)
 mcp.tool()(note_tools.archive_notes)
-mcp.tool()(note_tools.link_entities)
-mcp.tool()(note_tools.restore_notes)
 mcp.tool()(note_tools.delete_notes)
 mcp.tool()(table_tools.query_table)
 mcp.tool()(document_tools.ingest_document)

@@ -64,7 +64,6 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
         content,
         *,
         tags,
-        entities=None,
         kind,
         supersedes=None,
         namespace="default",
@@ -72,7 +71,6 @@ def test_save_memory_response_shape_pins_superseded_and_similar(monkeypatch, cli
         author=None,
         allow_similar=False,
         shared=False,
-        source_session=None,
     ):
         return {
             "id": "note:aaaaaaaaaaaaaaaa",
@@ -101,7 +99,6 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
         content,
         *,
         tags,
-        entities=None,
         kind,
         supersedes=None,
         namespace="default",
@@ -109,7 +106,6 @@ def test_save_memory_forwards_supersedes_to_save_note(monkeypatch, client):
         author=None,
         allow_similar=False,
         shared=False,
-        source_session=None,
     ):
         captured["supersedes"] = supersedes
         return {
@@ -141,7 +137,6 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
         content,
         *,
         tags,
-        entities=None,
         kind,
         supersedes=None,
         namespace="default",
@@ -149,7 +144,6 @@ def test_save_memory_absent_supersedes_forwards_none(monkeypatch, client):
         author=None,
         allow_similar=False,
         shared=False,
-        source_session=None,
     ):
         captured["supersedes"] = supersedes
         return {
@@ -208,7 +202,6 @@ def test_save_memory_forwards_allow_similar_to_save_note(monkeypatch, client):
         content,
         *,
         tags,
-        entities=None,
         kind,
         supersedes=None,
         namespace="default",
@@ -216,7 +209,6 @@ def test_save_memory_forwards_allow_similar_to_save_note(monkeypatch, client):
         author=None,
         allow_similar=False,
         shared=False,
-        source_session=None,
     ):
         captured["allow_similar"] = allow_similar
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
@@ -437,7 +429,6 @@ def test_mcp_save_memory_posts_supersedes_in_body(monkeypatch):
         "content": "new content",
         "kind": "work",
         "tags": None,
-        "entities": None,
         "supersedes": "note:old0000000000",
         "allow_similar": False,
     }
@@ -466,7 +457,6 @@ def test_mcp_save_memory_posts_supersedes_none_when_absent(monkeypatch):
         "content": "new content",
         "kind": "work",
         "tags": ["test"],
-        "entities": None,
         "supersedes": None,
         "allow_similar": False,
     }
@@ -710,7 +700,7 @@ def test_supersede_with_content_of_an_archived_note_400_keeps_target_active(clie
         )
         assert response.status_code == 400
         assert note_a in response.json()["error"]
-        assert "restore_notes" in response.json()["error"]
+        assert "archive_notes" in response.json()["error"]
         assert asyncio.run(_fetch_archived_at(note_b)) is None
         assert asyncio.run(_fetch_archived_at(note_a)) is not None
     finally:

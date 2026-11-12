@@ -19,7 +19,6 @@ from memory_base.serve.common.http import error
 from memory_base.serve.common.http import json_body
 from memory_base.serve.common.http import note_scope
 from memory_base.serve.notes.store import note_date
-from memory_base.serve.search import access_log
 
 LOGGER = logging.getLogger(__name__)
 SOURCES = ("all", "code", "memory")
@@ -37,7 +36,6 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
             "id": hit.meta["id"],
             "kind": hit.meta["kind"],
             "tags": hit.meta["tags"],
-            "entities": hit.meta["entities"],
             "ref": hit.ref,
             "date": note_date(hit.meta["occurred_at"], hit.ts),
             "score": hit.score,
@@ -66,8 +64,6 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         out["shared"] = True
     if hit.meta.get("supersedes") is not None:
         out["supersedes"] = hit.meta["supersedes"]
-    if hit.meta.get("source_session") is not None:
-        out["source_session"] = hit.meta["source_session"]
     if "columns" in hit.meta:
         out["columns"] = hit.meta["columns"]
     return out
@@ -149,7 +145,6 @@ async def search_route(request: Request) -> JSONResponse:
             options["budget_tokens"] = budget_tokens
         if requested_namespaces is not None:
             options["namespaces"] = requested_namespaces
-        log_filters = {k: v for k, v in options.items() if k != "source"} | {"top_k": top_k}
         started = time.monotonic()
         hits = await search(query, **options)
         if budget_tokens is None:
@@ -166,5 +161,4 @@ async def search_route(request: Request) -> JSONResponse:
         return error(f"search unavailable: {exc}, so memory cannot be attached right now", 503)
     except ValueError as exc:
         return error(str(exc))
-    access_log.record_retrieval(query, source, hits, filters=log_filters)
     return JSONResponse([hit_to_dict(hit) for hit in hits])

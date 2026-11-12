@@ -302,41 +302,6 @@ def test_search_returns_rest_response_body_unmodified(monkeypatch):
 # ---- lifecycle tool proxying ------------------------------------------------
 
 
-def test_list_memory_duplicates_gets_admin_duplicates(monkeypatch):
-    captured = {}
-    payload = {"pairs": [{"a": {"id": "note:a"}, "b": {"id": "note:b"}, "score": 0.97}]}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["method"] = request.method
-        captured["path"] = request.url.path
-        captured["params"] = request.url.params.multi_items()
-        captured["header"] = request.headers.get("x-api-key")
-        return httpx.Response(200, json=payload)
-
-    _patch_client(monkeypatch, handler)
-    monkeypatch.setenv("MEMORY_API_KEY", "env-key")
-    result = asyncio.run(note_tools.list_memory_duplicates(threshold=0.95, kind="work", limit=5))
-    assert captured["method"] == "GET"
-    assert captured["path"] == "/admin/duplicates"
-    assert sorted(captured["params"]) == sorted(
-        [("threshold", "0.95"), ("kind", "work"), ("limit", "5")]
-    )
-    assert captured["header"] == "env-key"
-    assert result == payload
-
-
-def test_list_memory_duplicates_omits_unset_params(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["params"] = request.url.params.multi_items()
-        return httpx.Response(200, json={"pairs": []})
-
-    _patch_client(monkeypatch, handler)
-    asyncio.run(note_tools.list_memory_duplicates())
-    assert captured["params"] == []
-
-
 def test_archive_notes_posts_ids_and_the_auth_headers(monkeypatch):
     captured = {}
 
@@ -369,32 +334,6 @@ def test_archive_notes_sends_confirm_only_when_true(monkeypatch):
     _patch_client(monkeypatch, handler)
     asyncio.run(note_tools.archive_notes(["note:a"], confirm=True))
     assert captured["json"]["confirm"] is True
-
-
-def test_restore_notes_posts_ids(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["path"] = request.url.path
-        captured["json"] = json.loads(request.content)
-        return httpx.Response(200, json={"rows": []})
-
-    _patch_client(monkeypatch, handler)
-    asyncio.run(note_tools.restore_notes(["note:a"]))
-    assert captured["path"] == "/admin/restore"
-    assert captured["json"] == {"ids": ["note:a"]}
-
-
-def test_restore_notes_sends_confirm_only_when_true(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["json"] = json.loads(request.content)
-        return httpx.Response(200, json={"restored": 1})
-
-    _patch_client(monkeypatch, handler)
-    asyncio.run(note_tools.restore_notes(["note:a"], confirm=True))
-    assert captured["json"] == {"ids": ["note:a"], "confirm": True}
 
 
 def test_delete_notes_posts_ids(monkeypatch):

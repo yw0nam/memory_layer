@@ -26,7 +26,7 @@ from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.serve import api, mcp_server
 from memory_base.serve.common import rest_client
 from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
-from memory_base.serve.notes import curation, store, tools
+from memory_base.serve.notes import store, tools
 from memory_base.serve.notes.store import (
     build_note_row,
     save_note,
@@ -127,22 +127,6 @@ def test_content_errors_win_over_a_missing_kind():
     assert response.json()["error"] == "content must not be empty"
 
 
-def test_duplicates_route_rejects_an_unknown_kind(monkeypatch):
-    calls = []
-
-    async def fake_find_duplicates(threshold, kind, limit, **options):
-        calls.append(kind)
-        return []
-
-    monkeypatch.setattr(curation, "find_duplicates", fake_find_duplicates)
-    response = client.get("/admin/duplicates", params={"kind": "note"})
-    assert response.status_code == 400
-    assert response.json()["error"] == KIND_ERROR
-    assert calls == []
-    assert client.get("/admin/duplicates", params={"kind": "work"}).status_code == 200
-    assert calls == ["work"]
-
-
 # ---- MCP: the save tool ----------------------------------------------------------
 
 
@@ -211,7 +195,6 @@ def test_save_memory_posts_the_kind_it_is_given(monkeypatch, kind):
         "content": "distilled content",
         "kind": kind,
         "tags": ["infra"],
-        "entities": None,
         "supersedes": None,
         "allow_similar": False,
     }
@@ -231,7 +214,6 @@ def test_save_memory_description_states_the_decision_points_only():
         "(PIN, password, lock combination, one-time, pickup, or verification code)",
         "stated in the same sentence as its name",
         "keep every other code, password, or combination out yourself",
-        "The `Remember` and `Don't remember` lines of your description outrank this default.",
         "English",
         "search_memory the same subject",
         "`supersedes`",

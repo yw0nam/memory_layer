@@ -6,7 +6,6 @@ at the module level, matching the existing convention (e.g.
 
 - ``search_routes.search``  -- delegate for POST /search (memory_base.retrieval.search.search)
 - ``store.save_note``  -- delegate for POST /save_memory (memory_base.serve.notes.store)
-- ``access_log``   -- buffered access logging after a search (memory_base.serve.search.access_log)
 - ``health.db_healthy``, ``health.embedding_healthy``, ``health.rerank_healthy``,
   ``health.llm_healthy`` -- async dependency probes used by GET /health/services
 - ``search_routes.hit_to_dict``  -- Hit -> {source, ref, date, score, text[, context]} serializer
@@ -21,7 +20,6 @@ from starlette.testclient import TestClient
 
 from memory_base.retrieval.search import Hit
 from memory_base.serve import api, health
-from memory_base.serve.search import access_log
 from memory_base.serve.search import routes as search_routes
 from memory_base.serve.notes import store
 
@@ -46,12 +44,6 @@ def _hit(
         rerank_score=rerank_score,
         meta=meta or {},
     )
-
-
-@pytest.fixture(autouse=True)
-def _empty_access_log_buffer(monkeypatch):
-    monkeypatch.setattr(access_log, "_pending_logs", [])
-    monkeypatch.setattr(access_log, "_pending_hits", {})
 
 
 # ---- GET /health and /health/services -------------------------------------------------------
@@ -413,7 +405,6 @@ def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
         content,
         *,
         tags,
-        entities=None,
         kind,
         supersedes=None,
         namespace="default",
@@ -421,7 +412,6 @@ def test_save_memory_valid_content_delegates_to_save_note(monkeypatch):
         author=None,
         allow_similar=False,
         shared=False,
-        source_session=None,
     ):
         captured["content"] = content
         captured["kind"] = kind
@@ -468,7 +458,6 @@ def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
         content,
         *,
         tags,
-        entities=None,
         kind,
         supersedes=None,
         namespace="default",
@@ -476,7 +465,6 @@ def test_save_memory_omitted_namespace_defaults_to_default(monkeypatch):
         author=None,
         allow_similar=False,
         shared=False,
-        source_session=None,
     ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
@@ -494,7 +482,6 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
         content,
         *,
         tags,
-        entities=None,
         kind,
         supersedes=None,
         namespace="default",
@@ -502,7 +489,6 @@ def test_save_memory_forwards_explicit_namespace(monkeypatch):
         author=None,
         allow_similar=False,
         shared=False,
-        source_session=None,
     ):
         captured["namespace"] = namespace
         return {"id": "note:x", "kind": kind, "stored": True, "superseded": None, "similar": []}
@@ -525,7 +511,6 @@ def test_save_memory_unregistered_namespace_400(monkeypatch):
         content,
         *,
         tags,
-        entities=None,
         kind,
         supersedes=None,
         namespace="default",
@@ -533,7 +518,6 @@ def test_save_memory_unregistered_namespace_400(monkeypatch):
         author=None,
         allow_similar=False,
         shared=False,
-        source_session=None,
     ):
         raise ValueError(f"unregistered namespace: {namespace}")
 

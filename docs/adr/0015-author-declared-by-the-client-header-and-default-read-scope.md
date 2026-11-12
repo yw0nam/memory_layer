@@ -7,8 +7,8 @@ Accepted; supersedes the sentence "Nothing in the store is hidden from another a
 
 ## Context
 
-Several agents share one store, and each agent carries its own persona: two Hermes
-profiles, a Claude Code session, a scheduled consolidation agent. The boundary between
+Several agents share one store, and each agent carries its own persona: a Hermes
+profile and a Claude Code session. The boundary between
 personas is the author, the slug a note is attributed to. An `author` argument the model
 fills on every write lets a model attribute a note to another agent, and a read that
 returns every author's notes delivers one persona's notes into another persona's context
@@ -23,13 +23,11 @@ as plain memory.
   nothing beyond attribution (ADR-0014 stands).
 - The `author` body field and tool argument are removed from every write; a write body
   that still carries `author` is refused with 400. Every write — saved note, archive,
-  entity change, link, message, fact, consolidation verdict, undo — is attributed to the
-  header author.
+  message — is attributed to the header author.
 - The default read scope of notes is the notes whose author equals the header author plus
   the notes marked `shared`. It applies to every discovery read of notes: note hits of
-  `/search`, `GET /notes`, `GET /admin/notes`, `GET /admin/duplicates`, and filter-based
-  archive discovery. It does not apply to entity cards and facts, messages, handoffs,
-  turns, document chunks, CSV cards, code search, or any operation addressed by id. A
+  `/search` and `GET /notes`. It does not apply to messages, handoffs,
+  document chunks, CSV cards, code search, or any operation addressed by id. A
   read's `author` filter is three-way: omitted is the default scope, `all` is every
   author's notes, a slug is exactly that author's notes.
 - `save_memory` takes a boolean `shared`. A shared note stays attributed to its writer and
@@ -38,11 +36,6 @@ as plain memory.
   store two notes. The near-duplicate check runs over the writer's default scope in the
   namespace, so another author's shared note is still refused as a near-duplicate and
   another author's private note is invisible and accepted.
-- Consolidation runs per persona: each agent judges groups built among exactly its own
-  author's notes — the groups route's `author` parameter defaults to the header author.
-  Groups never mix authors. A merged note carries the members' author and is shared only
-  when every member is shared; the action and every record it writes carry the header
-  author.
 
 ## Consequences
 
@@ -55,5 +48,3 @@ as plain memory.
   shared or the read names their author.
 - The same text from two authors is two notes, and the near-duplicate refusal crosses the
   persona boundary only through shared notes.
-- Rendering marks foreign authors: a prefetched note line shows its author when another
-  agent wrote it, and stays plain for the reader's own notes.

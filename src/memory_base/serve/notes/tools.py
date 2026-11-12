@@ -13,7 +13,6 @@ from memory_base.serve.common.http import AUTHOR_SCOPE_DESCRIPTION, AuthorScope,
 
 async def list_notes(
     tags: list[str] | None = None,
-    entity: str | None = None,
     kind: str | None = None,
     since: str | None = None,
     until: str | None = None,
@@ -30,22 +29,17 @@ async def list_notes(
     session start), or every note saved in a time window ("what was saved last
     week"). Works without the embedding backend. Returns up to `limit` notes
     (default 50, max 200) newest-first, each with id, kind, text (truncated to
-    2000 chars), tags, entities, author, namespace, and date (YYYY-MM-DD), plus the
-    lineage it records: `supersedes`, `archived_by`, `replaced_by` (the note that
-    superseded it), `consolidated_into` (the notes a consolidation folded it
-    into), `merged_from` and `merged_dates` (the notes a consolidation merged
-    into it), `consolidation_action`, and `undone_action`.
+    2000 chars), tags, author, namespace, and date (YYYY-MM-DD), plus the
+    lineage it records: `supersedes`, `archived_by`, and `replaced_by` (the note that
+    superseded it).
 
-    `tags` matches notes carrying any of the given tags. `entity` is an entity slug
-    (from list_entities) and narrows to notes naming it. `kind` is "personal" or
+    `tags` matches notes carrying any of the given tags. `kind` is "personal" or
     "work". `since`/`until` are ISO 8601 dates or datetimes (a bare date
     covers that whole day; naive values are read as UTC). `include_archived`
     adds superseded notes, marked "archived": true. `author` narrows the listing.
     `namespace` narrows to one namespace; omitted, it covers every namespace.
     """
     params: list[tuple[str, str]] = [("tags", tag) for tag in tags or []]
-    if entity is not None:
-        params.append(("entity", entity))
     if kind is not None:
         params.append(("kind", kind))
     if since is not None:
@@ -84,12 +78,6 @@ async def save_memory(
             "note is stored."
         ),
     ],
-    entities: Annotated[
-        list[str] | None,
-        Field(
-            description="Slugs of the registered entities the note is about, from list_entities."
-        ),
-    ] = None,
     supersedes: Annotated[
         str | None, Field(description="Id of the note this one replaces; that note is archived.")
     ] = None,
@@ -115,20 +103,6 @@ async def save_memory(
             "pass it when the note records an event."
         ),
     ] = None,
-    session_id: Annotated[
-        str | None,
-        Field(
-            description="The client session this note was distilled from, as the session-start "
-            "context names it; stored as source_session on the note."
-        ),
-    ] = None,
-    origin: Annotated[
-        str | None,
-        Field(
-            description="The origin of that session (claude_code or hermes); pass it with "
-            "session_id."
-        ),
-    ] = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Remember the user and their work for later sessions.
@@ -140,8 +114,7 @@ async def save_memory(
     issue, commit, or file already says, generic advice, or filler. The server refuses API
     keys, tokens, and a digit code (PIN, password, lock combination, one-time, pickup, or
     verification code) stated in the same sentence as its name; keep every other code,
-    password, or combination out yourself. The `Remember` and `Don't remember` lines of your
-    description outrank this default.
+    password, or combination out yourself.
 
     Write `content` in English, standalone, subject first, with absolute dates ("on
     2026-09-30"), at most 1,750 characters; a longer note becomes one note per fact.
@@ -149,17 +122,12 @@ async def save_memory(
     `supersedes` and state the previous value, e.g. "20 dozen eggs as of 2023-05 (30 dozen
     as of 2023-01)".
 
-    `entities` names the registered entities the note is about (slugs from list_entities,
-    at most 10). A preference the user authorizes as a direction to you is a change to your
-    description, not a note; otherwise it is descriptive knowledge and belongs here.
-    A note that already exists gets its entities from link_entities, not from a second save.
     `shared: true` puts the note in every agent's default read scope; you stay its author.
     """
     body: dict[str, Any] = {
         "content": content,
         "kind": kind,
         "tags": tags,
-        "entities": entities,
         "supersedes": supersedes,
         "allow_similar": allow_similar,
     }
@@ -169,47 +137,10 @@ async def save_memory(
         body["namespace"] = namespace
     if occurred_at is not None:
         body["occurred_at"] = occurred_at
-    if (session_id is None) != (origin is None):
-        raise ValueError("session_id and origin go together: pass both or neither")
-    if session_id is not None:
-        body["source_session"] = {"origin": origin, "session_id": session_id}
     return await rest_client.call(
         "POST",
         "/save_memory",
         json=body,
-        headers=rest_client.auth_headers(ctx),
-    )
-
-
-async def list_memory_duplicates(
-    threshold: float | None = None,
-    kind: str | None = None,
-    limit: int | None = None,
-    author: Annotated[AuthorScope, Field(description=AUTHOR_SCOPE_DESCRIPTION)] = None,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """List active note pairs whose meaning nearly coincides.
-
-    Read-only. Each pair carries both notes' id, kind, author, and text plus
-    their cosine score, over every namespace; both sides are inside your read scope.
-    Read both sides before acting: merge them into one note with `save_memory` with
-    `supersedes`, or drop one with `archive_notes`. `threshold` (default 0.75), `kind`, and
-    `limit` (default 50) narrow the scan; `kind` is "personal" or "work". Pairs at 0.80 and
-    above usually state one thing twice; pairs between 0.75 and 0.80 usually share a
-    subject and differ in fact, so read before merging.
-    """
-    params: list[tuple[str, str]] = []
-    if threshold is not None:
-        params.append(("threshold", str(threshold)))
-    if kind is not None:
-        params.append(("kind", kind))
-    if limit is not None:
-        params.append(("limit", str(limit)))
-    params += author_params(author)
-    return await rest_client.call(
-        "GET",
-        "/admin/duplicates",
-        params=params,
         headers=rest_client.auth_headers(ctx),
     )
 
@@ -222,7 +153,7 @@ async def archive_notes(
     """Archive the named notes, recording you as the agent that archived them.
 
     Without `confirm` this previews the rows instead of changing them. Archived
-    notes leave search results and prefetch but stay restorable with `restore_notes`.
+    notes leave search results.
     """
     body: dict[str, Any] = {"ids": ids}
     if confirm:
@@ -230,27 +161,6 @@ async def archive_notes(
     return await rest_client.call(
         "POST",
         "/admin/archive",
-        json=body,
-        headers=rest_client.auth_headers(ctx),
-    )
-
-
-async def restore_notes(
-    ids: list[str],
-    confirm: bool = False,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Bring archived notes back into search results.
-
-    Without `confirm` this previews the rows instead of changing them.
-    Restoring clears the archiving agent's name from the note.
-    """
-    body: dict[str, Any] = {"ids": ids}
-    if confirm:
-        body["confirm"] = True
-    return await rest_client.call(
-        "POST",
-        "/admin/restore",
         json=body,
         headers=rest_client.auth_headers(ctx),
     )
@@ -264,8 +174,7 @@ async def delete_notes(
     """Delete the named notes permanently, recording nothing.
 
     Without `confirm` this previews the rows instead of deleting them. Prefer
-    `archive_notes` unless the row must never resurface: a deleted note cannot
-    be restored and leaves no trace of who removed it.
+    `archive_notes` unless the row must never resurface: a deleted note leaves no trace of who removed it.
     """
     body: dict[str, Any] = {"ids": ids}
     if confirm:
@@ -273,37 +182,6 @@ async def delete_notes(
     return await rest_client.call(
         "POST",
         "/admin/notes/delete",
-        json=body,
-        headers=rest_client.auth_headers(ctx),
-    )
-
-
-async def link_entities(
-    ids: list[str],
-    add: list[str] | None = None,
-    remove: list[str] | None = None,
-    confirm: bool = False,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Add or remove entity slugs on existing notes, recording you as the editor.
-
-    Each note's slugs become (its current slugs + `add`) - `remove`, the same change for
-    every id (1 to 200 active notes, at most 10 slugs each).
-    `add` slugs must be registered entities (list_entities); `remove` slugs only unlink the
-    note and never delete the entity or its facts. Content, id, and dates do not change.
-    Without `confirm` this returns each note's before and after and writes nothing; any
-    refused id refuses the whole call.
-    """
-    body: dict[str, Any] = {"ids": ids}
-    if add:
-        body["add"] = add
-    if remove:
-        body["remove"] = remove
-    if confirm:
-        body["confirm"] = True
-    return await rest_client.call(
-        "POST",
-        "/notes/entities",
         json=body,
         headers=rest_client.auth_headers(ctx),
     )

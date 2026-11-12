@@ -239,7 +239,6 @@ def history_predicates(
     kind: str | None,
     tags: list[str] | None,
     alias: str = "",
-    entity: str | None = None,
     namespaces: list[str] | None = None,
     since: float | None = None,
     until: float | None = None,
@@ -266,9 +265,6 @@ def history_predicates(
     if tags is not None:
         args.append(tags)
         clauses.append(f"{prefix}metadata->'tags' ?| ${start + len(args)}::text[]")
-    if entity is not None:
-        args.append(entity)
-        clauses.append(f"{prefix}metadata->'entities' ? ${start + len(args)}")
     if namespaces:
         args.append(namespaces)
         clauses.append(f"{prefix}namespace = ANY(${start + len(args)}::text[])")
@@ -415,11 +411,9 @@ async def _search_memory(
             "raw": r["content_raw"],
             "kind": r["chunk_kind"],
             "tags": metadata.get("tags", []),
-            "entities": metadata.get("entities", []),
             "author": metadata.get("author"),
             "shared": metadata.get("shared") is True,
             "supersedes": metadata.get("supersedes"),
-            "source_session": metadata.get("source_session"),
             "namespace": r["namespace"],
             "session_id": r["session_id"],
             "archived": r["archived_at"] is not None,

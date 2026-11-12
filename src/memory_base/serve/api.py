@@ -14,19 +14,14 @@ from memory_base.core.logger import setup_logging
 from memory_base.serve import health
 from memory_base.serve.access import routes as access_routes
 from memory_base.serve.access.auth import ApiKeyAuthMiddleware
-from memory_base.serve.consolidation import routes as consolidation_routes
 from memory_base.serve.documents import pipeline as document_pipeline
 from memory_base.serve.documents import routes as document_routes
-from memory_base.serve.entities import routes as entity_routes
-from memory_base.serve.facts import routes as fact_routes
 from memory_base.serve.messages import routes as message_routes
 from memory_base.serve.notes import routes as note_routes
 from memory_base.serve.repos import cache as repo_cache
 from memory_base.serve.repos import routes as repo_routes
-from memory_base.serve.search import access_log
 from memory_base.serve.search import routes as search_routes
 from memory_base.serve.tables import routes as table_routes
-from memory_base.serve.turns import routes as turn_routes
 
 setup_logging()
 logging.getLogger("uvicorn.access").addFilter(health.HealthAccessFilter())
@@ -36,7 +31,6 @@ logging.getLogger("uvicorn.access").addFilter(health.HealthAccessFilter())
 BACKGROUND = (
     (document_pipeline.start, document_pipeline.stop),
     (repo_cache.start, repo_cache.stop),
-    (access_log.start, access_log.stop),
 )
 
 
@@ -64,20 +58,10 @@ app = Starlette(
         Route("/search", search_routes.search_route, methods=["POST"]),
         Route("/save_memory", note_routes.save_route, methods=["POST"]),
         Route("/notes", note_routes.list_route, methods=["GET"]),
-        Route("/notes/entities", note_routes.link_entities_route, methods=["POST"]),
-        Route("/entities", entity_routes.list_route, methods=["GET"]),
-        Route("/entities", entity_routes.upsert_route, methods=["POST"]),
-        Route("/entities/{slug}/delete", entity_routes.delete_route, methods=["POST"]),
-        Route("/entities/{slug}", fact_routes.card_route, methods=["GET"]),
-        Route("/admin/facts", fact_routes.write_route, methods=["POST"]),
         Route("/messages", message_routes.send_route, methods=["POST"]),
         Route("/messages", message_routes.list_route, methods=["GET"]),
         Route("/messages/{message_id}/claim", message_routes.claim_route, methods=["POST"]),
         Route("/messages/{message_id}", message_routes.cancel_route, methods=["DELETE"]),
-        Route("/turns", turn_routes.append_route, methods=["POST"]),
-        Route("/turns/search", turn_routes.search_route, methods=["GET"]),
-        Route("/sessions", turn_routes.sessions_route, methods=["GET"]),
-        Route("/sessions/{origin}/{session_id:path}", turn_routes.session_route, methods=["GET"]),
         Route("/tables/query", table_routes.query_route, methods=["POST"]),
         Route("/ingest/document", document_routes.ingest_route, methods=["POST"]),
         Route("/ingest/jobs", document_routes.jobs_route, methods=["GET"]),
@@ -90,21 +74,8 @@ app = Starlette(
         Route("/namespaces", access_routes.namespaces_create_route, methods=["POST"]),
         Route("/namespaces", access_routes.namespaces_list_route, methods=["GET"]),
         Route("/namespaces/{name}", access_routes.namespaces_delete_route, methods=["DELETE"]),
-        Route("/admin/notes", note_routes.old_notes_route, methods=["GET"]),
         Route("/admin/notes/delete", note_routes.delete_route, methods=["POST"]),
-        Route("/admin/notes/move", note_routes.move_route, methods=["POST"]),
-        Route("/admin/duplicates", note_routes.duplicates_route, methods=["GET"]),
-        Route("/admin/consolidate/groups", consolidation_routes.groups_route, methods=["GET"]),
-        Route("/admin/consolidate/verdicts", consolidation_routes.verdicts_route, methods=["POST"]),
-        Route("/admin/consolidate/undo", consolidation_routes.undo_route, methods=["POST"]),
-        Route("/admin/consolidate/actions", consolidation_routes.actions_route, methods=["GET"]),
         Route("/admin/archive", note_routes.archive_route, methods=["POST"]),
         Route("/admin/messages/purge", message_routes.purge_route, methods=["POST"]),
-        Route(
-            "/admin/sessions/{origin}/{session_id:path}",
-            turn_routes.delete_session_route,
-            methods=["DELETE"],
-        ),
-        Route("/admin/restore", note_routes.restore_route, methods=["POST"]),
     ],
 )

@@ -24,7 +24,6 @@ def test_instructions_name_the_tools_each_rule_routes_to():
 
 
 def test_instructions_describe_the_curation_workflow():
-    assert "list_memory_duplicates" in SERVER_INSTRUCTIONS
     assert "archive_notes" in SERVER_INSTRUCTIONS
     assert "delete_notes" in SERVER_INSTRUCTIONS
 
@@ -52,14 +51,6 @@ def test_instructions_draw_the_message_vs_note_line():
     assert "one-time" in SERVER_INSTRUCTIONS
     assert "the right carrier for progress and next steps" in " ".join(SERVER_INSTRUCTIONS.split())
     assert "never embedded" in SERVER_INSTRUCTIONS
-
-
-def test_instructions_describe_the_turn_lane():
-    flat = " ".join(SERVER_INSTRUCTIONS.split())
-    for name in ("list_sessions", "read_session", "search_transcript"):
-        assert name in flat
-    assert "never a reason to skip saving a note" in flat
-    assert "pass session_id and origin" in flat
 
 
 def test_instructions_state_the_header_author_and_the_read_scope():

@@ -1,10 +1,8 @@
 # Memory Base
 
-A retrieval layer whose memory is distilled content, kept beside a verbatim record of
-the conversations it came from. Agents write memories through a validating tool;
-documents and code repositories are ingested through source adapters; the client's hook
-posts each message of a conversation as it happens. Every consumer reads back through
-one REST API.
+A retrieval layer whose memory is distilled content. Agents write memories through a
+validating tool; documents and code repositories are ingested through source adapters.
+Every consumer reads back through one REST API.
 
 ## Language
 
@@ -15,7 +13,7 @@ The unit of storage and retrieval — one embedded, independently searchable pie
 _Avoid_: record, entry, item, document (for the unit)
 
 **Note**:
-An agent-authored memory, distilled by the agent before it arrives rather than extracted from a file. A note names the registered entities it is about in `entities`.
+An agent-authored memory, distilled by the agent before it arrives rather than extracted from a file.
 _Avoid_: memo, observation
 
 **Kind**:
@@ -54,14 +52,6 @@ subject supersedes the pending one. A `completed` handoff expires 3 days after i
 sent; an `in_progress` or `blocked` one has no expiry. Either way its sender may give an
 `expires_at`, and it stays pending until claimed, superseded, cancelled, or expired.
 _Avoid_: session summary, progress note, status report
-
-**Turn**:
-One message of a conversation, the user's or the assistant's, stored verbatim in `turns` as the client delivered it, with the assistant's reasoning when the client exposes it. Read by time, session, and literal substring; never embedded, never returned by search, never prefetched.
-_Avoid_: transcript line, utterance, log entry
-
-**Session**:
-The conversation a client ran, named by the client's own session id under its origin (`claude_code` or `hermes`); the unit `list_sessions` lists and `read_session` reads in order. A note may name the session it came from as `source_session`.
-_Avoid_: conversation (reserved for the lane as a whole), thread, chat
 
 **Claim**:
 The at-most-once delivery of a pending message: exactly one claimer wins, and the
@@ -102,41 +92,9 @@ _Avoid_: label, category, topic
 To replace a note with a newer one, archiving the old rather than deleting it. Superseded notes stay retrievable on request.
 _Avoid_: overwrite, replace, delete, revoke
 
-**Group**:
-A set of active notes in one namespace, every pair at or above the similarity threshold and none acknowledged as distinct through `similar_ack`, offered to an agent to judge whether they state the same thing. Built by `GET /admin/consolidate/groups`; a note is in at most one group.
-_Avoid_: cluster, duplicate set
-
-**Group key**:
-A hash over a group's members and each member's prompt-visible fields (text, kind, author, save time, event date, tags, entities, supersedes) and the procedure version; it changes whenever any of them does.
-_Avoid_: group id, fingerprint
-
-**Verdict**:
-An agent's judgement of one issued group — `keep`, `retire` (with the ids to archive), or `merge` (with the merged text) — with a reason and an idempotency key. The server accepts it only for a group it issues now under the same key and members, and checks it deterministically; it judges no content.
-_Avoid_: decision, ruling, review
-
-**Consolidation action**:
-The record of one accepted verdict in `consolidation_actions`: what it archived, what survived or replaced the members, the archived notes' metadata before the change, and whether it was undone. Its group key is the verdict cache; undo reverses exactly one action.
-_Avoid_: job, operation, change set
-
 **Lineage fields**:
-Note metadata that links a note to the notes that replaced or absorbed it: `supersedes` and `replaced_by` from a supersede save, `consolidated_into` on a note a consolidation archived, and `merged_from` and `merged_dates` on a merge's replacement.
+Note metadata that links a note to the note that replaced it: `supersedes` and `replaced_by` from a supersede save, and `archived_by` on an archived note.
 _Avoid_: history, provenance, links
-
-**Entity**:
-A registered person, agent, project, organisation, place, or thing, keyed by a slug the user consented to. Aliases resolve other spellings of its name; the server infers no equivalence between names and merges nothing. Deleting an entity, with the user's consent, unlinks its slug from every note, deletes the facts it holds and the facts that point at it, and frees its slug, name, and aliases; registering the name again reattaches nothing.
-_Avoid_: node, subject, topic
-
-**Fact**:
-One property or relation of an entity, keyed by entity and attribute and distilled from a note by the consolidation run. A `value_entity` instead of a `value_text` makes it a relation. A fact is current while its `archived_at` is null; a replace or remove closes it and a deleted note archives it.
-_Avoid_: triple, attribute row
-
-**Card**:
-An entity's registry row, the current facts it holds and the facts that point at it, and the notes naming it.
-_Avoid_: profile, summary
-
-**Consent**:
-The user's answer, inside the conversation, to a change of the entity registry; recorded as the method the client reported: `elicitation`, `conversation`, or `import`.
-_Avoid_: approval, permission, authorization
 
 **Distilled**:
 Reduced to its worth-keeping form by the writer before storage. The server stores a note without a content gate; distillation is the writer's job, guided by the tool description and the server instructions.
