@@ -9,7 +9,7 @@ seeded judgments a person grades by hand, and `score` reports QA accuracy, sessi
 retrieval metrics, and the judge agreement rate.
 
 Runs: `baseline` and `dated` (`--variant dated`: temporal-reasoning questions, date-prefixed
-embeddings). `--read prefetch` reads each question the way the Hermes prefetch does (top 5,
+embeddings). `--read prefetch` reads each question with a small prefetch-style read (top 5,
 score floor 0.25) instead of search_memory's defaults (top 10, floor 0.25) and prefixes the
 run name with `prefetch`; `--read budget` packs hits up to a 4000-token budget
 (`budget_tokens`) and prefixes `budget`; `--read candidates` keeps every fused candidate in

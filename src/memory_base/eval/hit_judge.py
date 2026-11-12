@@ -1,4 +1,4 @@
-"""Per-hit judgments of a LongMemEval candidates run and the read-settings frontier over them.
+"""Per-hit judgments of a LongMemEval candidates run and the evidence-coverage and junk frontier over them.
 
 The judge labels each of a packet's first ten hits useful, related, misleading or
 unrelated to the question and names the shortest hit prefix that suffices for the
