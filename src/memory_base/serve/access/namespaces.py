@@ -31,7 +31,7 @@ class NamespaceNotFoundError(NamespaceError):
 
 
 class NamespaceNotEmptyError(NamespaceError):
-    """The namespace still has notes, chunks, table rows, messages, or turns."""
+    """The namespace still has notes, chunks, table rows, or messages."""
 
 
 def validate_namespace_name(name: Any) -> str:

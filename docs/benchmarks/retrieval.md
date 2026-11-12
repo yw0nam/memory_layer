@@ -61,9 +61,7 @@ and lifts hybrid above vector-only.
 
 - `eval/retrieval.py` measures two labeled sets: checked-in fixture documents ingested
   into a scratch schema (`python -m memory_base.eval.retrieval`), and
-  `tests/fixtures/retrieval_eval_notes.jsonl` — real queries sampled from
-  `retrieval_log`, replayed by `scripts/label_notes_replay.py`, and hand-labeled from
-  the replayed candidates — scored
+  `tests/fixtures/retrieval_eval_notes.jsonl` — hand-labeled real queries, scored
   against the live schema under the production rerank floor
   (`python -m memory_base.eval.retrieval --notes`).
 - Quoted phrases have no adjacency enforcement — the BM25 index stores term

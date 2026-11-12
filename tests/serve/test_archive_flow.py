@@ -1,15 +1,11 @@
-"""Integration test for the full cold-tier / note lifecycle flow (real DB).
+"""Integration test for the note archive and delete flow (real DB).
 
-Seeds synthetic rows directly via
-asyncpg (bypassing the embedder-backed save path, so old timestamps can be
-set precisely), then drives the real REST app through the whole lifecycle:
+Seeds synthetic rows directly via asyncpg, then drives the real REST app through:
 
     /admin/archive (dry-run -> confirm) -> /search default vs include_archived
-    -> /admin/restore (dry-run -> confirm) -> /admin/notes -> /admin/notes/delete
-    (dry-run -> confirm) -> /admin/duplicates
+    -> /admin/notes/delete (dry-run -> confirm)
 
-Every seeded row is deleted in ``finally`` regardless of outcome. Skipped
-when the DB is unreachable, matching tests/test_save_memory.py.
+Every seeded row is deleted in ``finally`` regardless of outcome.
 """
 
 from __future__ import annotations
@@ -56,10 +52,9 @@ async def _seed_row(
         f"""
         INSERT INTO "{PG_SCHEMA}".memory_chunks
           (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-           distilled, embedding, ts_last_active, metadata,
-           hit_count, last_hit_at)
-        VALUES ($1,$7,'save_memory',$6,$1,$2,$2,$3::halfvec,$4,
-                jsonb_build_object('author', $8::text), 0, $5)
+           distilled, embedding, ts_last_active, metadata)
+        VALUES ($1,$6,'save_memory',$5,$1,$2,$2,$3::halfvec,$4,
+                jsonb_build_object('author', $7::text))
         ON CONFLICT (id) DO NOTHING
         """,
         row_id,

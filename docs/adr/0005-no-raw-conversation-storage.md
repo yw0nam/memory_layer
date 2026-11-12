@@ -2,7 +2,7 @@
 
 ## Status
 
-Superseded by ADR-0012, which stores the user's and the assistant's messages in a lane of their own, read on demand and never ranked; the content gate's judge prompt was superseded by ADR-0007
+Accepted; the content gate's judge prompt was superseded by ADR-0007
 
 ## Context
 
@@ -22,7 +22,7 @@ messages are the only things that cross sessions.
 - A fact the writer missed is a writer problem fixed at write time: the `save_memory`
   instructions and the content gate's judge prompt (ADR-0006), not a stored session to
   mine later.
-- There is no capture hook and no conversation endpoint; the Claude Code and Hermes
-  integrations only prefetch notes into a session.
+- There is no capture hook and no conversation endpoint; the Claude Code plugin prints
+  handoff headers at session start.
 - A note id is `note:{namespace}:{sha256(content)[:16]}`, taken over the stripped
   content alone.
