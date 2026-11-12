@@ -1,8 +1,6 @@
 """Unit tests for the namespace registry (memory_base.serve.access.namespaces): no real DB.
 
-memory_base.core.db.acquire is monkeypatched to a fake connection, matching the
-convention already used in tests/serve/test_ingest_api.py
-(``monkeypatch.setattr(document_store.db, "acquire", acquire)``).
+memory_base.core.db.acquire is monkeypatched to a fake connection.
 """
 
 from __future__ import annotations

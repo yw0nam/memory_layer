@@ -121,7 +121,7 @@ def test_mcp_search_memory_tool_real_call_returns_expected_schema(rest_in_proces
     async def _run():
         async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
             return await client.call_tool(
-                "search_memory", {"query": marker, "top_k": 3, "min_score": 0}
+                "search_memory", {"query": marker, "top_k": 3, "min_score": 0, "author": "all"}
             )
 
     with seeded_notes(f"integration-test pin: {marker}"):
