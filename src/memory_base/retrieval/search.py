@@ -1,11 +1,7 @@
-"""Hybrid search: FTS + vector + recency signals fused with RRF, then reranked.
-
-CLI: uv run python -m memory_base.retrieval.search "your query" [--source code|memory|all]
-"""
+"""Hybrid search over notes: FTS + vector + recency signals fused with RRF, then reranked."""
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 from dataclasses import dataclass, field
@@ -27,17 +23,12 @@ from memory_base.core.config import (
 
 RRF_K = 60
 CANDIDATES_PER_SIGNAL = 50
-PER_FILE_CAP = 3
 FUSED_TOP = 20
 BUDGET_FUSED_TOP = 40
 RERANK_TOP = 10
-SEARCH_KINDS = ("doc", "personal", "work")
-# Reranker input budget; the API's TEXT_LIMIT is separate and bounds only code responses.
+SEARCH_KINDS = ("personal", "work")
 RERANK_TEXT_LIMIT = 4000
-NEIGHBOR_LINE_WINDOW = 40
-NEIGHBOR_LIMIT = 2
 MEMORY_BM25_INDEX = "memory_chunks_bm25"
-CODE_BM25_INDEX = "code_chunks_bm25"
 # Reranker relevance floor (0..1, rerank-only): above junk (<=~0.01), below weak true hits (~0.29).
 MIN_SCORE = 0.25
 FTS_RRF_WEIGHT = 0.2
@@ -68,8 +59,7 @@ class UpstreamUnavailable(RuntimeError):
 
 @dataclass
 class Hit:
-    source: str  # "code" | "memory"
-    ref: str  # filename:lines or session id
+    ref: str  # note ref
     text: str  # text shown to reranker / synthesis
     ts: float  # recency timestamp (epoch sec)
     rrf: float = 0.0
@@ -111,7 +101,7 @@ def normalize_tags(tags: Any, *, allow_empty: bool = False) -> list[str] | None:
 
     Search filters (allow_empty=False, the default) treat an absent value as "no
     filter" (None) and reject an explicit empty or all-blank list as ambiguous with
-    that. Stored data (allow_empty=True, e.g. note/document tags) has no such
+    that. Stored data (allow_empty=True, e.g. note tags) has no such
     ambiguity: an absent or empty value both normalize to "no tags" ([]).
     """
     if tags is None:
@@ -126,18 +116,6 @@ def normalize_tags(tags: Any, *, allow_empty: bool = False) -> list[str] | None:
     normalized = list(dict.fromkeys(tag.strip().lower() for tag in tags if tag.strip()))
     if not normalized and not allow_empty:
         raise ValueError("tags must be a non-empty list of strings")
-    return normalized
-
-
-def _normalize_repo(repo: Any) -> list[str] | None:
-    """Repo names are cache directory names, so case is preserved."""
-    if repo is None:
-        return None
-    if not isinstance(repo, list) or any(not isinstance(name, str) for name in repo):
-        raise ValueError("repo must be a non-empty list of strings")
-    normalized = list(dict.fromkeys(name.strip() for name in repo if name.strip()))
-    if not normalized:
-        raise ValueError("repo must be a non-empty list of strings")
     return normalized
 
 
@@ -185,46 +163,31 @@ def normalize_time_range(since: Any, until: Any) -> tuple[float | None, float | 
 
 
 def validate_search_options(
-    source: str,
     kind: Any,
     tags: Any,
-    repo: Any = None,
     since: Any = None,
     until: Any = None,
     authors: Any = None,
-) -> tuple[str | None, list[str] | None, list[str] | None, float | None, float | None]:
-    """Validate source-specific filters and return normalized values.
+) -> tuple[str | None, list[str] | None, float | None, float | None]:
+    """Validate the filters and return normalized kind, tags, and time bounds.
 
     `authors` needs no normalization, so it is validated here but not returned.
     """
     if kind is not None and kind not in SEARCH_KINDS:
         raise ValueError(f"kind must be one of {SEARCH_KINDS}")
     normalized_tags = normalize_tags(tags)
-    if (kind is not None or normalized_tags is not None) and source != "memory":
-        raise ValueError('kind and tags filters require source="memory"')
-    normalized_repo = _normalize_repo(repo)
-    if normalized_repo is not None and source != "code":
-        raise ValueError('repo filter requires source="code"')
     since_ts, until_ts = normalize_time_range(since, until)
-    if (since_ts is not None or until_ts is not None) and source != "memory":
-        raise ValueError('since and until filters require source="memory"')
-    if authors is not None:
-        if (
-            not isinstance(authors, list)
-            or not authors
-            or not all(isinstance(a, str) and a.strip() for a in authors)
-        ):
-            raise ValueError("authors must be a non-empty list of non-empty strings")
-        if source != "memory":
-            raise ValueError('author filter requires source="memory"')
-    return kind, normalized_tags, normalized_repo, since_ts, until_ts
+    if authors is not None and (
+        not isinstance(authors, list)
+        or not authors
+        or not all(isinstance(a, str) and a.strip() for a in authors)
+    ):
+        raise ValueError("authors must be a non-empty list of non-empty strings")
+    return kind, normalized_tags, since_ts, until_ts
 
 
 def visible_clause(alias: str, index: int) -> str:
-    """The clause hiding another author's private notes, `$index` being the reader.
-
-    Non-note sources (document chunks, CSV cards) stay visible.
-    """
+    """The clause hiding another author's private notes, `$index` being the reader."""
     prefix = f"{alias}." if alias else ""
     return (
         f"({prefix}source_type <> 'agent_note' "
@@ -250,8 +213,7 @@ def history_predicates(
 
     `start` is the index of the caller's last already-bound argument ($1 by default).
     since/until bound when the remembered event happened, falling back to the save time.
-    `visible_to` limits agent notes to that author's own and shared ones; other sources
-    are not notes and stay visible.
+    `visible_to` limits agent notes to that author's own and shared ones.
     """
     prefix = f"{alias}." if alias else ""
     event_time = f"COALESCE({prefix}occurred_at, {prefix}ts_last_active)"
@@ -283,69 +245,6 @@ def history_predicates(
     return " AND ".join(clauses) or "true", args
 
 
-async def _search_code(
-    conn: asyncpg.Connection,
-    query: str,
-    qvec_lit: str,
-    repo: list[str] | None = None,
-    schema: str | None = None,
-) -> list[Hit]:
-    schema = PG_SCHEMA if schema is None else schema
-    tbl = f'"{schema}"."code_chunks"'
-    bm25_index = f"{schema}.{CODE_BM25_INDEX}"
-    columns = "id, repo, filename, code, start_line, end_line, mtime"
-    # ponytail: the planner picks a seq scan at this corpus size, so the filter runs
-    # before the distance sort. Once it switches to the HNSW index, set
-    # hnsw.iterative_scan = relaxed_order or filtered recall drops to whatever
-    # survives the unfiltered top-k cut.
-    repo_clause = " AND repo = ANY($2::text[])" if repo else ""
-    repo_args = [repo] if repo else []
-    try:
-        vec_rows = await conn.fetch(
-            f"SELECT {columns} FROM {tbl} WHERE true{repo_clause} "
-            f"ORDER BY embedding <=> $1::halfvec LIMIT {CANDIDATES_PER_SIGNAL}",
-            qvec_lit,
-            *repo_args,
-        )
-        fts_rows = await conn.fetch(
-            f"SELECT {columns} FROM {tbl} "
-            f"WHERE (code <@> to_bm25query($1, '{bm25_index}')) < 0{repo_clause} "
-            f"ORDER BY code <@> to_bm25query($1, '{bm25_index}') "
-            f"LIMIT {CANDIDATES_PER_SIGNAL}",
-            query,
-            *repo_args,
-        )
-    except asyncpg.exceptions.UndefinedTableError:
-        # CocoIndex creates code_chunks on first repo ingestion; no repo yet means no hits.
-        return []
-    by_id = {r["id"]: r for r in [*vec_rows, *fts_rows]}
-    recency = time_decay_list({r["id"]: r["mtime"] for r in by_id.values()})
-    scores = rrf_fuse(
-        [[r["id"] for r in vec_rows], [r["id"] for r in fts_rows], recency],
-        [1.0, FTS_RRF_WEIGHT, TIEBREAK_RRF_WEIGHT],
-    )
-
-    hits = []
-    for cid, score in scores.items():
-        r = by_id[cid]
-        hits.append(
-            Hit(
-                source="code",
-                ref=f"{r['filename']}:L{r['start_line']}-L{r['end_line']}",
-                text=r["code"],
-                ts=r["mtime"],
-                rrf=score,
-                meta={
-                    "id": cid,
-                    "repo": r["repo"],
-                    "filename": r["filename"],
-                    "start_line": r["start_line"],
-                },
-            )
-        )
-    return hits
-
-
 async def _search_memory(
     conn: asyncpg.Connection,
     query: str,
@@ -358,11 +257,9 @@ async def _search_memory(
     until: float | None = None,
     authors: list[str] | None = None,
     visible_to: str | None = None,
-    schema: str | None = None,
 ) -> list[Hit]:
-    schema = PG_SCHEMA if schema is None else schema
-    tbl = f'"{schema}"."memory_chunks"'
-    bm25_index = f"{schema}.{MEMORY_BM25_INDEX}"
+    tbl = f'"{PG_SCHEMA}"."memory_chunks"'
+    bm25_index = f"{PG_SCHEMA}.{MEMORY_BM25_INDEX}"
     predicates, filter_args = history_predicates(
         include_archived=include_archived,
         kind=kind,
@@ -375,7 +272,7 @@ async def _search_memory(
     )
     columns = (
         "id, source_ref, chunk_kind, metadata, distilled, content_raw, ts_last_active, "
-        "archived_at, namespace, session_id, occurred_at"
+        "archived_at, occurred_at"
     )
     try:
         vec_rows = await conn.fetch(
@@ -414,17 +311,12 @@ async def _search_memory(
             "author": metadata.get("author"),
             "shared": metadata.get("shared") is True,
             "supersedes": metadata.get("supersedes"),
-            "namespace": r["namespace"],
-            "session_id": r["session_id"],
             "archived": r["archived_at"] is not None,
             "occurred_at": r["occurred_at"],
         }
-        if "columns" in metadata:
-            hit_meta["columns"] = metadata["columns"]
         hits.append(
             Hit(
-                source="memory",
-                ref=metadata.get("search_ref") or r["source_ref"],
+                ref=r["source_ref"],
                 text=r["distilled"] or r["content_raw"],
                 ts=r["ts_last_active"],
                 rrf=score,
@@ -432,26 +324,6 @@ async def _search_memory(
             )
         )
     return hits
-
-
-def _dedup_cap(hits: list[Hit], limit: int = FUSED_TOP) -> list[Hit]:
-    """Per-file/session cap for diversity, then take the fused top `limit`."""
-    hits.sort(key=lambda h: h.rrf, reverse=True)
-    counts: dict[tuple[str, ...], int] = {}
-    out = []
-    for h in hits:
-        key = (
-            (h.source, h.meta["namespace"], h.meta["session_id"])
-            if h.source == "memory"
-            else (h.source, h.meta.get("filename") or h.ref)
-        )
-        if counts.get(key, 0) >= PER_FILE_CAP:
-            continue
-        counts[key] = counts.get(key, 0) + 1
-        out.append(h)
-        if len(out) >= limit:
-            break
-    return out
 
 
 def _apply_min_score(hits: list[Hit], min_score: float | None, rerank: bool) -> list[Hit]:
@@ -463,9 +335,9 @@ def _apply_min_score(hits: list[Hit], min_score: float | None, rerank: bool) -> 
 
 
 def estimate_tokens(hit: Hit) -> int:
-    """Token estimate of what a hit returns: its text plus any restored context."""
+    """Token estimate of what a hit returns: its text."""
     # ponytail: chars/4, no tokenizer dependency.
-    return max(1, (len(hit.text) + len(hit.meta.get("context") or "")) // 4)
+    return max(1, len(hit.text) // 4)
 
 
 def _pack_budget(hits: list[Hit], budget_tokens: int) -> list[Hit]:
@@ -528,35 +400,12 @@ async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
     return hits
 
 
-async def _restore_context(
-    conn: asyncpg.Connection, hits: list[Hit], schema: str | None = None
-) -> None:
-    """Re-attach neighboring code chunks so cut-off premises come back."""
-    schema = PG_SCHEMA if schema is None else schema
-    tbl = f'"{schema}"."code_chunks"'
-    for h in hits:
-        if h.source != "code":
-            continue
-        rows = await conn.fetch(
-            f"SELECT code, start_line FROM {tbl} WHERE filename = $1 "
-            f"AND id <> $2 AND abs(start_line - $3) <= {NEIGHBOR_LINE_WINDOW} "
-            f"ORDER BY start_line LIMIT {NEIGHBOR_LIMIT}",
-            h.meta["filename"],
-            h.meta["id"],
-            h.meta["start_line"],
-        )
-        if rows:
-            h.meta["context"] = "\n...\n".join(r["code"] for r in rows)
-
-
 async def search(
     query: str,
-    source: str = "all",
     rerank: bool = True,
     include_archived: bool = False,
     kind: str | None = None,
     tags: list[str] | None = None,
-    repo: list[str] | None = None,
     namespaces: list[str] | None = None,
     since: str | None = None,
     until: str | None = None,
@@ -564,71 +413,40 @@ async def search(
     authors: list[str] | None = None,
     visible_to: str | None = None,
     budget_tokens: int | None = None,
-    schema: str | None = None,
 ) -> list[Hit]:
-    """Return ranked hits; schema overrides PG_SCHEMA and only the eval harness passes it.
+    """Return ranked note hits.
 
     Without budget_tokens: the top RERANK_TOP of FUSED_TOP reranked candidates, above the
     score floor.
     With it: BUDGET_FUSED_TOP candidates in reranked order until the token estimate
     of the returned text would exceed the budget; the floor and RERANK_TOP do not apply.
     """
-    kind, tags, repo, since_ts, until_ts = validate_search_options(
-        source, kind, tags, repo, since, until, authors
-    )
+    kind, tags, since_ts, until_ts = validate_search_options(kind, tags, since, until, authors)
     namespaces = normalize_namespaces(namespaces)
 
     qvec_lit = await _embed_query(query)
 
     async with db.acquire() as conn:
-        hits: list[Hit] = []
-        if source in ("code", "all"):
-            hits += await _search_code(conn, query, qvec_lit, repo=repo, schema=schema)
-        if source in ("memory", "all"):
-            hits += await _search_memory(
-                conn,
-                query,
-                qvec_lit,
-                include_archived=include_archived,
-                kind=kind,
-                tags=tags,
-                namespaces=namespaces,
-                since=since_ts,
-                until=until_ts,
-                authors=authors,
-                visible_to=visible_to,
-                schema=schema,
-            )
-        hits = _dedup_cap(hits, FUSED_TOP if budget_tokens is None else BUDGET_FUSED_TOP)
+        hits = await _search_memory(
+            conn,
+            query,
+            qvec_lit,
+            include_archived=include_archived,
+            kind=kind,
+            tags=tags,
+            namespaces=namespaces,
+            since=since_ts,
+            until=until_ts,
+            authors=authors,
+            visible_to=visible_to,
+        )
+    hits = sorted(hits, key=lambda h: h.rrf, reverse=True)[
+        : FUSED_TOP if budget_tokens is None else BUDGET_FUSED_TOP
+    ]
     if rerank:
         hits = await _rerank(query, hits)
     if budget_tokens is None:
         hits = _apply_min_score(hits[:RERANK_TOP] if rerank else hits, min_score, rerank)
-    async with db.acquire() as conn:
-        await _restore_context(conn, hits, schema=schema)
-    if budget_tokens is not None:
+    else:
         hits = _pack_budget(hits, budget_tokens)
     return hits
-
-
-async def _main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("query")
-    ap.add_argument("--source", choices=["code", "memory", "all"], default="all")
-    ap.add_argument("--no-rerank", action="store_true")
-    ap.add_argument("--min-score", type=float, default=None)
-    args = ap.parse_args()
-
-    for h in await search(
-        args.query,
-        source=args.source,
-        rerank=not args.no_rerank,
-        min_score=args.min_score,
-    ):
-        print(f"[{h.score:.4f}] ({h.source}) {h.ref}")
-        print("    " + h.text[:300].replace("\n", "\n    "))
-        print("---")
-
-
-if __name__ == "__main__":
-    asyncio.run(_main())

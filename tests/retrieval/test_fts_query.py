@@ -105,8 +105,7 @@ def test_short_chunk_ranks_above_longer_matching_chunk(seeded_namespace):
     assert "scattered" in refs
 
 
-def test_all_fts_legs_use_shared_bm25_indexes():
+def test_the_fts_leg_uses_the_shared_bm25_index():
     assert "MEMORY_BM25_INDEX" in inspect.getsource(search._search_memory)
-    assert "CODE_BM25_INDEX" in inspect.getsource(search._search_code)
     assert not hasattr(search, "FTS_TSQUERY_SQL")
     assert not hasattr(search, "fts_query_text")

@@ -19,8 +19,6 @@ def test_initialize_response_carries_the_instructions():
 
 def test_instructions_name_the_tools_each_rule_routes_to():
     assert "search_memory" in SERVER_INSTRUCTIONS
-    assert "search_code" in SERVER_INSTRUCTIONS
-    assert "query_table" in SERVER_INSTRUCTIONS
 
 
 def test_instructions_describe_the_curation_workflow():

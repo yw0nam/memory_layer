@@ -71,13 +71,13 @@ def listed(monkeypatch):
 
 
 def test_search_defaults_to_own_and_shared_notes(searched):
-    assert client.post("/search", json={"query": "q", "source": "memory"}).status_code == 200
+    assert client.post("/search", json={"query": "q"}).status_code == 200
     assert searched["authors"] is None
     assert searched["visible_to"] == "claude-code"
 
 
 def test_search_narrows_to_the_listed_authors(searched):
-    body = {"query": "q", "source": "memory", "author": ["natsume", "claude-code"]}
+    body = {"query": "q", "author": ["natsume", "claude-code"]}
     assert client.post("/search", json=body).status_code == 200
     assert searched == {"authors": ["natsume", "claude-code"], "visible_to": None}
 
@@ -98,7 +98,7 @@ def test_notes_narrows_to_the_repeated_author_params(listed):
 
 
 def test_a_non_string_author_is_a_400():
-    response = client.post("/search", json={"query": "q", "source": "memory", "author": 5})
+    response = client.post("/search", json={"query": "q", "author": 5})
     assert response.status_code == 400
     assert response.json()["error"] == 'author must be "all" or a list of author slugs'
 
@@ -147,7 +147,6 @@ def test_a_note_hit_carries_shared():
     from memory_base.serve.search.routes import hit_to_dict
 
     hit = Hit(
-        source="memory",
         ref="save_memory",
         text="t",
         ts=0.0,
@@ -168,7 +167,6 @@ def test_a_note_hit_without_shared_omits_it():
     from memory_base.serve.search.routes import hit_to_dict
 
     hit = Hit(
-        source="memory",
         ref="save_memory",
         text="t",
         ts=0.0,
