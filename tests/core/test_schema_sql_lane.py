@@ -34,16 +34,17 @@ def test_api_keys_and_jobs_stamp_their_own_created_at(monkeypatch):
         assert "created_at timestamptz NOT NULL DEFAULT now()" in body, table
 
 
-def test_the_retired_profile_tables_are_dropped(monkeypatch):
+def test_the_schema_creates_and_drops_only_the_tables_it_keeps(monkeypatch):
     monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
     conn = RecordingConnection()
 
     asyncio.run(schema.ensure_schema(conn))
 
     sql = " ".join("\n".join(conn.queries).split())
-    for table in ("agent_profiles", "profile_proposals"):
-        assert f'CREATE TABLE IF NOT EXISTS "scratch_schema".{table}' not in sql
-        assert f'DROP TABLE IF EXISTS "scratch_schema".{table}' in sql
+    assert "DROP TABLE" not in sql
+    for name in ("entities", "facts", "consolidation_actions", "turns", "retrieval_log"):
+        assert f'"scratch_schema".{name}' not in sql
+    assert "hit_count" not in sql and "last_hit_at" not in sql
 
 
 def test_messages_table_carries_the_lifecycle_constraints_and_indexes(monkeypatch):
@@ -149,23 +150,3 @@ def test_pending_message_index_carries_no_expiry_predicate(monkeypatch):
     index = index[: index.index(";")]
     assert "WHERE claimed_at IS NULL AND cancelled_at IS NULL AND superseded_at IS NULL" in index
     assert "expires_at" not in index
-
-
-def test_turns_are_verbatim_unembedded_and_never_granted_to_the_query_role(monkeypatch):
-    monkeypatch.setattr(schema, "PG_SCHEMA", "memory")
-    conn = RecordingConnection()
-
-    asyncio.run(schema.ensure_schema(conn))
-
-    sql = "\n".join(conn.queries)
-    assert "CREATE EXTENSION IF NOT EXISTS pg_trgm" in sql
-    body = _table_body(
-        sql.replace('"memory"', '"scratch_schema"').replace("memory.", '"scratch_schema".'), "turns"
-    )
-    assert "origin text NOT NULL CHECK (origin IN ('claude_code', 'hermes'))" in body
-    assert "role text NOT NULL CHECK (role IN ('user', 'assistant'))" in body
-    assert "seq integer NOT NULL" in body
-    assert "UNIQUE (origin, session_id, seq)" in body
-    assert "embedding" not in body
-    assert "USING gin (content gin_trgm_ops)" in " ".join(sql.split())
-    assert "memory.turns" not in sql.split("GRANT USAGE ON SCHEMA memory", 1)[1]

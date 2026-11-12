@@ -39,7 +39,6 @@ MEMORY_META = {
     "id": "note:default:0000000000000000",
     "kind": "work",
     "tags": [],
-    "entities": [],
     "occurred_at": None,
 }
 
@@ -161,19 +160,10 @@ def test_mcp_server_registers_expected_tools():
         "remove_document",
         "list_repos",
         "list_notes",
-        "list_memory_duplicates",
         "archive_notes",
-        "link_entities",
-        "restore_notes",
         "delete_notes",
         "send_message",
         "list_messages",
         "claim_message",
         "cancel_message",
-        "list_entities",
-        "register_entity",
-        "read_entity",
-        "list_sessions",
-        "read_session",
-        "search_transcript",
     }

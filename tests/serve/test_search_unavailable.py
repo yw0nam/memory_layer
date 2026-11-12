@@ -1,8 +1,7 @@
 """POST /search when the retrieval backends are down, and the query length bound.
 
-Fails today: an unreachable embedder/reranker escapes search_route as a 500
-traceback, and a multi-kilobyte query reaches search() and the access log
-unchanged.
+An unreachable embedder/reranker answers 503, and a multi-kilobyte query is
+truncated before it reaches search().
 """
 
 from __future__ import annotations
@@ -12,16 +11,9 @@ from starlette.testclient import TestClient
 
 from memory_base.retrieval.search import UpstreamUnavailable
 from memory_base.serve import api
-from memory_base.serve.search import access_log
 from memory_base.serve.search import routes as search_routes
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
-
-
-@pytest.fixture(autouse=True)
-def _empty_access_log_buffer(monkeypatch):
-    monkeypatch.setattr(access_log, "_pending_logs", [])
-    monkeypatch.setattr(access_log, "_pending_hits", {})
 
 
 def _raising(service: str):
@@ -41,12 +33,6 @@ def test_unreachable_backend_returns_503_naming_the_service(monkeypatch, service
     assert "memory cannot be attached right now" in message
 
 
-def test_unreachable_backend_records_no_access_log_row(monkeypatch):
-    monkeypatch.setattr(search_routes, "search", _raising("embedding"))
-    client.post("/search", json={"query": "what did we decide"})
-    assert access_log._pending_logs == []
-
-
 def test_long_query_is_truncated_before_search(monkeypatch):
     captured = {}
 
@@ -58,16 +44,6 @@ def test_long_query_is_truncated_before_search(monkeypatch):
     response = client.post("/search", json={"query": "x" * (search_routes.MAX_QUERY_CHARS + 500)})
     assert response.status_code == 200
     assert captured["query"] == "x" * search_routes.MAX_QUERY_CHARS
-
-
-def test_long_query_is_truncated_in_the_access_log(monkeypatch):
-    async def fake_search(query, **kwargs):
-        return []
-
-    monkeypatch.setattr(search_routes, "search", fake_search)
-    client.post("/search", json={"query": "y" * (search_routes.MAX_QUERY_CHARS + 500)})
-    logged_query = access_log._pending_logs[0][0]
-    assert logged_query == "y" * search_routes.MAX_QUERY_CHARS
 
 
 def test_query_within_the_bound_is_untouched(monkeypatch):

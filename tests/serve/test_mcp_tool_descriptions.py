@@ -34,9 +34,7 @@ def schemas() -> dict[str, dict]:
     return asyncio.run(_run())
 
 
-@pytest.mark.parametrize(
-    "name", ["search_memory", "list_notes", "list_memory_duplicates", "read_entity"]
-)
+@pytest.mark.parametrize("name", ["search_memory", "list_notes"])
 def test_the_author_argument_states_the_default_and_the_explicit_list(schemas, name):
     author = schemas[name]["properties"]["author"]
     assert author["description"] == (
@@ -73,22 +71,3 @@ def test_search_states_note_hits_are_own_and_shared(descriptions):
 
 def test_remove_document_states_it_deletes_the_table_rows(descriptions):
     assert "doc_rows" in descriptions["remove_document"]
-
-
-def test_turn_tools_state_the_lane_and_each_origins_coverage(descriptions):
-    assert "never a substitute for notes" in descriptions["list_sessions"]
-    for phrase in ("no thinking", "reasoning", "next_offset", "match"):
-        assert phrase in descriptions["read_session"], phrase
-    for name in ("list_sessions", "read_session", "search_transcript"):
-        assert len(descriptions[name]) < 1500, name
-    assert "particle" in descriptions["search_transcript"]
-    assert "source_session" in descriptions["read_session"]
-
-
-def test_entity_tools_state_the_card_the_one_writer_and_the_correction_path(descriptions):
-    card = descriptions["read_entity"]
-    assert len(card) < 1500
-    for phrase in ("consolidation", "saving a note", "never a direction"):
-        assert phrase in card, phrase
-    assert "Don't remember" in descriptions["register_entity"]
-    assert "consolidation run" in mcp_server.SERVER_INSTRUCTIONS

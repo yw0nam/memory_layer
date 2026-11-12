@@ -1,4 +1,4 @@
-"""Public database schema setup for memory chunks and retrieval logging."""
+"""Public database schema setup for memory chunks, messages, documents, and jobs."""
 
 from __future__ import annotations
 
@@ -111,8 +111,6 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           distilled text, embedding halfvec({EMB_DIM}) NOT NULL,
           ts_last_active double precision NOT NULL,
           metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb,
-          last_hit_at double precision,
-          hit_count bigint NOT NULL DEFAULT 0,
           archived_at double precision,
           namespace text NOT NULL DEFAULT 'default',
           occurred_at double precision
@@ -159,24 +157,6 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS messages__idempotency
           ON {schema}.messages (sender_key, idempotency_key)
           WHERE idempotency_key IS NOT NULL;
-        CREATE EXTENSION IF NOT EXISTS pg_trgm;
-        CREATE TABLE IF NOT EXISTS {schema}.turns (
-          id uuid PRIMARY KEY,
-          namespace text NOT NULL,
-          origin text NOT NULL CHECK (origin IN ('claude_code', 'hermes')),
-          session_id text NOT NULL,
-          seq integer NOT NULL,
-          role text NOT NULL CHECK (role IN ('user', 'assistant')),
-          content text NOT NULL,
-          reasoning text,
-          repo text,
-          created_at timestamptz NOT NULL,
-          UNIQUE (origin, session_id, seq)
-        );
-        CREATE INDEX IF NOT EXISTS turns__namespace_created
-          ON {schema}.turns (namespace, created_at DESC, id);
-        CREATE INDEX IF NOT EXISTS turns__content_trgm
-          ON {schema}.turns USING gin (content gin_trgm_ops);
         CREATE TABLE IF NOT EXISTS {schema}.namespaces (
           name text PRIMARY KEY,
           created_at double precision NOT NULL
@@ -189,75 +169,6 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           created_at timestamptz NOT NULL DEFAULT now(),
           revoked_at timestamptz
         );
-        CREATE TABLE IF NOT EXISTS {schema}.consolidation_actions (
-          id bigserial PRIMARY KEY,
-          idempotency_key text NOT NULL UNIQUE,
-          payload_hash text NOT NULL,
-          run_id text NOT NULL,
-          namespace text NOT NULL,
-          action text NOT NULL CHECK (action IN ('keep', 'retire', 'merge')),
-          group_key text NOT NULL UNIQUE,
-          member_ids text[] NOT NULL,
-          archived_ids text[] NOT NULL,
-          survivor_ids text[] NOT NULL,
-          replacement_id text,
-          replacement_created boolean NOT NULL DEFAULT false,
-          prior jsonb NOT NULL DEFAULT '{{}}'::jsonb,
-          applied_at double precision NOT NULL,
-          author text NOT NULL,
-          model text,
-          reason text NOT NULL,
-          result jsonb NOT NULL,
-          undone_at double precision,
-          undone_by text,
-          undo_result jsonb
-        );
-        CREATE INDEX IF NOT EXISTS consolidation_actions__run
-          ON {schema}.consolidation_actions (namespace, run_id);
-        DROP TABLE IF EXISTS {schema}.agent_profiles;
-        DROP TABLE IF EXISTS {schema}.profile_proposals;
-        CREATE TABLE IF NOT EXISTS {schema}.entities (
-          slug text PRIMARY KEY,
-          kind text NOT NULL
-            CHECK (kind IN ('person', 'agent', 'project', 'org', 'place', 'thing')),
-          name text NOT NULL,
-          aliases text[] NOT NULL DEFAULT '{{}}',
-          description text NOT NULL DEFAULT '',
-          created_by text NOT NULL,
-          updated_by text NOT NULL,
-          consent_method text NOT NULL
-            CHECK (consent_method IN ('elicitation', 'conversation', 'import')),
-          consented_at double precision NOT NULL,
-          created_at double precision NOT NULL,
-          updated_at double precision NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS {schema}.facts (
-          id uuid PRIMARY KEY,
-          namespace text NOT NULL,
-          entity text NOT NULL REFERENCES {schema}.entities (slug),
-          attribute text NOT NULL,
-          value_text text,
-          value_entity text REFERENCES {schema}.entities (slug),
-          note_id text REFERENCES {schema}.memory_chunks (id) ON DELETE SET NULL,
-          author text NOT NULL,
-          created_at double precision NOT NULL,
-          archived_at double precision,
-          replaced_by uuid REFERENCES {schema}.facts (id),
-          CHECK ((value_text IS NULL) <> (value_entity IS NULL))
-        );
-        CREATE INDEX IF NOT EXISTS facts__entity ON {schema}.facts (entity)
-          WHERE archived_at IS NULL;
-        CREATE INDEX IF NOT EXISTS facts__value_entity ON {schema}.facts (value_entity)
-          WHERE archived_at IS NULL;
-        CREATE TABLE IF NOT EXISTS {schema}.retrieval_log (
-          id bigserial PRIMARY KEY,
-          query text NOT NULL,
-          source text NOT NULL,
-          hit_ids text[] NOT NULL,
-          ts double precision NOT NULL,
-          filters jsonb NOT NULL DEFAULT '{{}}'::jsonb
-        );
-        CREATE INDEX IF NOT EXISTS retrieval_log__ts ON {schema}.retrieval_log (ts);
         CREATE TABLE IF NOT EXISTS {schema}.jobs (
           job_id text PRIMARY KEY,
           kind text NOT NULL CONSTRAINT jobs_kind_check CHECK (kind IN ('document', 'repo')),

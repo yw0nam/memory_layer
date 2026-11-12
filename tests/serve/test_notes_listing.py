@@ -192,7 +192,6 @@ def test_list_notes_maps_rows_to_response_shape(monkeypatch):
             "kind": "work",
             "text": "hello",
             "tags": ["infra"],
-            "entities": [],
             "author": None,
             "namespace": "default",
             "date": "2026-08-12",
@@ -296,24 +295,21 @@ def test_list_notes_reports_lineage_fields_when_recorded(monkeypatch):
     metadata = {
         "tags": ["infra"],
         "replaced_by": "note:new0000000000",
-        "consolidated_into": ["note:r", "note:s"],
-        "merged_from": ["note:a", "note:b"],
+        "archived_by": "natsume",
     }
     conn = FakeConnection([_row(metadata=metadata)])
     _patch_conn(monkeypatch, conn)
     [row] = asyncio.run(store.list_notes())
     assert row["replaced_by"] == "note:new0000000000"
-    assert row["consolidated_into"] == ["note:r", "note:s"]
-    assert row["merged_from"] == ["note:a", "note:b"]
+    assert row["archived_by"] == "natsume"
 
 
 def test_list_notes_reports_every_lineage_field_it_records(monkeypatch):
     metadata = {
         "tags": ["infra"],
-        "merged_from": ["note:a"],
-        "merged_dates": {"note:a": {"saved": "2026-08-12T00:00:00+00:00", "occurred_at": None}},
-        "consolidation_action": 4,
-        "undone_action": 4,
+        "supersedes": "note:old0000000000",
+        "archived_by": "natsume",
+        "replaced_by": "note:new0000000000",
     }
     conn = FakeConnection([_row(metadata=metadata, archived_at=AUG_12)])
     _patch_conn(monkeypatch, conn)
@@ -323,16 +319,11 @@ def test_list_notes_reports_every_lineage_field_it_records(monkeypatch):
             assert row[field] == metadata[field]
 
 
-def test_restore_clears_the_archive_lineage_fields():
-    assert store.ARCHIVE_LINEAGE_FIELDS == ("archived_by", "replaced_by", "consolidated_into")
-    assert set(store.ARCHIVE_LINEAGE_FIELDS) <= set(store.LINEAGE_FIELDS)
-
-
 def test_list_notes_omits_lineage_fields_when_unrecorded(monkeypatch):
     conn = FakeConnection([_row()])
     _patch_conn(monkeypatch, conn)
     [row] = asyncio.run(store.list_notes())
-    assert not {"replaced_by", "consolidated_into", "merged_from"} & set(row)
+    assert not {"replaced_by", "archived_by", "supersedes"} & set(row)
 
 
 def test_list_notes_filters_by_author(monkeypatch):

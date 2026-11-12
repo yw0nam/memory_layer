@@ -32,20 +32,8 @@ from memory_base.core.config import (
 )
 from memory_base.core.schema import ensure_schema
 from memory_base.serve import api
-from memory_base.serve.notes import curation
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
-
-
-def _random_vec(seed: int) -> str:
-    return vector_literal(np.random.default_rng(seed).normal(size=EMB_DIM))
-
-
-def _near_dup_vecs(seed: int) -> tuple[str, str]:
-    rng = np.random.default_rng(seed)
-    base = rng.normal(size=EMB_DIM)
-    noisy = base + rng.normal(scale=0.01, size=EMB_DIM)
-    return vector_literal(base), vector_literal(noisy)
 
 
 def _angled_vec(angle: float) -> str:
@@ -60,7 +48,6 @@ async def _seed_row(
     content: str,
     embedding_lit: str,
     ts_last_active: float,
-    last_hit_at: float | None = None,
     chunk_kind: str = "work",
     source_type: str = "agent_note",
     author: str = "claude-code",
@@ -79,7 +66,6 @@ async def _seed_row(
         content,
         embedding_lit,
         ts_last_active,
-        last_hit_at,
         chunk_kind,
         source_type,
         author,
@@ -121,64 +107,36 @@ def test_full_archive_and_note_lifecycle():
     now_real = time.time()
     token = f"zzzarchiveflow{int(now_real)}"
     old_id = f"archiveflow-old-{int(now_real)}"
-    dup_a_id = f"archiveflow-dupa-{int(now_real)}"
-    dup_b_id = f"archiveflow-dupb-{int(now_real)}"
-    distant_id = f"archiveflow-distant-{int(now_real)}"
 
     # Natural prose, not keyword soup: the reranker scores answer-like text and
     # buries non-informative token strings even on a verbatim match.
     content_old = (
-        f"The {token} cold tier experiment settled on archiving rows older than 180 days "
-        f"that also went 90 days without a retrieval hit, keeping the thresholds conservative."
+        f"The {token} archive experiment settled on archiving superseded rows by id, "
+        f"keeping them out of default search while include_archived still returns them."
     )
-    # The token stays out of the dup rows: the archive assertions below treat it
-    # as a marker unique to the archived row, and the dup pair is asserted by id.
-    content_dup_a = "near duplicate pair alpha rendition of a troubleshooting note"
-    content_dup_b = "near duplicate pair beta rendition of a troubleshooting note"
-
-    old_ts = now_real - 200 * 86400  # well past COLD_AGE_DAYS=180 and COLD_UNHIT_DAYS=90
-    dup_a_vec, dup_b_vec = _near_dup_vecs(seed=7)
 
     async def _seed_all() -> None:
-        # The archived row gets a real embedding of its content: the archive /
-        # restore assertions go through full retrieval, where a random vector
-        # would sink below the RRF candidate cut regardless of archived state.
+        # A real embedding keeps the row inside the RRF candidate cut of full retrieval.
         old_vec = await embed_text(VllmEmbedder(), content_old)
         conn = await asyncpg.connect(db_url())
         try:
             await ensure_schema(conn)
-            await _seed_row(conn, old_id, content_old, old_vec, old_ts, None)
-            await _seed_row(conn, dup_a_id, content_dup_a, dup_a_vec, now_real, None)
-            await _seed_row(conn, dup_b_id, content_dup_b, dup_b_vec, now_real, None)
-            await _seed_row(
-                conn,
-                distant_id,
-                "distant control row for duplicate detection",
-                _random_vec(seed=19),
-                now_real,
-                None,
-            )
+            await _seed_row(conn, old_id, content_old, old_vec, now_real)
         finally:
             await conn.close()
 
-    seeded_ids = [old_id, dup_a_id, dup_b_id, distant_id]
-    asyncio.run(_delete_rows(seeded_ids))
+    asyncio.run(_delete_rows([old_id]))
     asyncio.run(_seed_all())
     try:
-        # ---- /admin/archive: dry-run lists our aged row, confirm archives it ----
-        dry = client.post("/admin/archive", json={})
+        # ---- /admin/archive: dry-run previews the row, confirm archives it ----
+        dry = client.post("/admin/archive", json={"ids": [old_id]})
         assert dry.status_code == 200
-        candidates = dry.json()["notes_to_archive"]
-        candidate_ids = {c["id"] for c in candidates}
-        assert old_id in candidate_ids
-        assert dup_a_id not in candidate_ids
-        assert dup_b_id not in candidate_ids
-        (matching,) = [c for c in candidates if c["id"] == old_id]
-        assert "hit_count" in matching and "last_hit_at" in matching
+        assert [row["id"] for row in dry.json()["notes_to_archive"]] == [old_id]
+        assert asyncio.run(_archived_at(old_id)) is None
 
-        confirm = client.post("/admin/archive", json={"confirm": True})
+        confirm = client.post("/admin/archive", json={"ids": [old_id], "confirm": True})
         assert confirm.status_code == 200
-        assert confirm.json()["archived"] >= 1
+        assert confirm.json() == {"archived": 1}
         assert asyncio.run(_archived_at(old_id)) is not None
 
         # ---- default /search excludes archived rows; include_archived brings back ----
@@ -200,42 +158,9 @@ def test_full_archive_and_note_lifecycle():
         assert archived_search.status_code == 200
         archived_hits = [h for h in archived_search.json() if token in h["text"]]
         assert archived_hits
-        # Archived rows may be superseded; the caller must be able to tell them apart.
         # Only the token rows are asserted on: a lived-in database legitimately
         # returns other archived rows in an include_archived search.
         assert all(h.get("archived") is True for h in archived_hits)
-
-        # ---- /admin/restore: dry-run then confirm brings it back to default search ----
-        restore_dry = client.post("/admin/restore", json={"ids": [old_id]})
-        assert restore_dry.status_code == 200
-        assert any(r["id"] == old_id for r in restore_dry.json()["rows"])
-
-        restore_confirm = client.post("/admin/restore", json={"ids": [old_id], "confirm": True})
-        assert restore_confirm.status_code == 200
-        assert restore_confirm.json() == {"restored": 1}
-        assert asyncio.run(_archived_at(old_id)) is None
-        # The flag tracks state: the same row loses it once restored.
-        restored_search = client.post(
-            "/search",
-            json={
-                "query": content_old,
-                "source": "memory",
-                "top_k": 20,
-                "include_archived": True,
-            },
-        )
-        assert restored_search.status_code == 200
-        restored_hits = [h for h in restored_search.json() if token in h["text"]]
-        assert restored_hits
-        assert all("archived" not in h for h in restored_hits)
-        # Restore returns the row to the active pool; default-search ranking is
-        # not asserted here. Active-pool membership is verified via /admin/notes
-        # below (it filters on archived_at IS NULL).
-
-        # ---- /admin/notes lists the aged seeded note ----
-        notes = client.get("/admin/notes", params={"older_than_days": 100})
-        assert notes.status_code == 200
-        assert any(row["id"] == old_id for row in notes.json())
 
         # ---- /admin/notes/delete: dry-run then confirm removes it ----
         delete_dry = client.post("/admin/notes/delete", json={"ids": [old_id]})
@@ -246,164 +171,8 @@ def test_full_archive_and_note_lifecycle():
         assert delete_confirm.status_code == 200
         assert delete_confirm.json() == {"deleted": 1}
         assert asyncio.run(_row_count(old_id)) == 0
-
-        # ---- /admin/duplicates finds the seeded near-dup pair ----
-        duplicates = client.get("/admin/duplicates", params={"threshold": 0.95, "limit": 50})
-        assert duplicates.status_code == 200
-        pairs = duplicates.json()["pairs"]
-        matching_pairs = [
-            pair for pair in pairs if {pair["a"]["id"], pair["b"]["id"]} == {dup_a_id, dup_b_id}
-        ]
-        assert len(matching_pairs) == 1
-        assert matching_pairs[0]["score"] >= 0.95
-        assert not any(
-            distant_id in {pair["a"]["id"], pair["b"]["id"]}
-            and {pair["a"]["id"], pair["b"]["id"]} & {dup_a_id, dup_b_id}
-            for pair in pairs
-        )
     finally:
-        asyncio.run(_delete_rows(seeded_ids))
-
-
-@pytest.mark.integration
-def test_duplicates_keep_pair_found_only_from_larger_id_direction():
-    token = time.time_ns()
-    smaller_id = f"duplicate-recall-a-{token}"
-    larger_id = f"duplicate-recall-z-{token}"
-    blocker_ids = [f"duplicate-recall-m-{index}-{token}" for index in range(5)]
-    seeded_ids = [smaller_id, larger_id, *blocker_ids]
-    cluster_kind = f"duplicate-recall-{token}"
-    now = time.time()
-
-    async def _seed_cluster() -> None:
-        conn = await asyncpg.connect(db_url())
-        try:
-            await ensure_schema(conn)
-            await _seed_row(
-                conn,
-                smaller_id,
-                "asymmetric duplicate smaller",
-                _angled_vec(0),
-                now,
-                chunk_kind=cluster_kind,
-            )
-            await _seed_row(
-                conn,
-                larger_id,
-                "asymmetric duplicate larger",
-                _angled_vec(0.1),
-                now,
-                chunk_kind=cluster_kind,
-            )
-            for index, blocker_id in enumerate(blocker_ids, start=1):
-                await _seed_row(
-                    conn,
-                    blocker_id,
-                    f"closer neighbor {index}",
-                    _angled_vec(-0.01 * index),
-                    now,
-                    chunk_kind=cluster_kind,
-                )
-        finally:
-            await conn.close()
-
-    asyncio.run(_delete_rows(seeded_ids))
-    asyncio.run(_seed_cluster())
-    try:
-        pairs = asyncio.run(curation.find_duplicates(0.99, cluster_kind, 100))
-        matching_pairs = [
-            pair for pair in pairs if pair["a"]["id"] == smaller_id and pair["b"]["id"] == larger_id
-        ]
-        assert len(matching_pairs) == 1
-        assert matching_pairs[0]["score"] >= 0.99
-    finally:
-        asyncio.run(_delete_rows(seeded_ids))
-
-
-@pytest.mark.integration
-def test_duplicates_and_cold_candidates_exclude_document_chunks():
-    token = time.time_ns()
-    note_a_id = f"notesonly-note-a-{token}"
-    note_b_id = f"notesonly-note-b-{token}"
-    doc_id = f"doc:notesonly-{token}:0"
-    seeded_ids = [note_a_id, note_b_id, doc_id]
-    now = time.time()
-    old = now - 400 * 86400
-
-    async def _seed() -> None:
-        conn = await asyncpg.connect(db_url())
-        try:
-            await ensure_schema(conn)
-            vec = _angled_vec(0)
-            await _seed_row(conn, note_a_id, "notes only a", vec, old)
-            await _seed_row(conn, note_b_id, "notes only b", vec, old)
-            await _seed_row(
-                conn,
-                doc_id,
-                "notes only document",
-                vec,
-                old,
-                chunk_kind="doc",
-                source_type="document",
-            )
-        finally:
-            await conn.close()
-
-    asyncio.run(_delete_rows(seeded_ids))
-    asyncio.run(_seed())
-    try:
-        pairs = asyncio.run(curation.find_duplicates(0.99, None, 1000))
-        pair_ids = [{pair["a"]["id"], pair["b"]["id"]} for pair in pairs]
-        assert {note_a_id, note_b_id} in pair_ids
-        assert not any(doc_id in ids for ids in pair_ids)
-
-        candidate_ids = {row["id"] for row in asyncio.run(curation.archive_candidates(now))}
-        assert {note_a_id, note_b_id} <= candidate_ids
-        assert doc_id not in candidate_ids
-    finally:
-        asyncio.run(_delete_rows(seeded_ids))
-
-
-@pytest.mark.integration
-def test_archive_route_never_touches_document_chunks():
-    token = time.time_ns()
-    note_id = f"notesonly-route-note-{token}"
-    doc_id = f"doc:notesonly-route-{token}:0"
-    seeded_ids = [note_id, doc_id]
-    old = time.time() - 400 * 86400
-
-    async def _seed() -> None:
-        conn = await asyncpg.connect(db_url())
-        try:
-            await ensure_schema(conn)
-            await _seed_row(conn, note_id, "notes only route note", _angled_vec(0), old)
-            await _seed_row(
-                conn,
-                doc_id,
-                "notes only route document",
-                _angled_vec(0),
-                old,
-                chunk_kind="doc",
-                source_type="document",
-            )
-        finally:
-            await conn.close()
-
-    asyncio.run(_delete_rows(seeded_ids))
-    asyncio.run(_seed())
-    try:
-        preview = client.post("/admin/archive", json={})
-        assert preview.status_code == 200
-        previewed = {row["id"] for row in preview.json()["notes_to_archive"]}
-        assert note_id in previewed
-        assert doc_id not in previewed
-
-        confirm = client.post("/admin/archive", json={"confirm": True})
-        assert confirm.status_code == 200
-        assert asyncio.run(_archived_at(note_id)) is not None
-        assert asyncio.run(_archived_at(doc_id)) is None
-    finally:
-        asyncio.run(_delete_rows(seeded_ids))
+        asyncio.run(_delete_rows([old_id]))
 
 
 @pytest.mark.integration
@@ -450,40 +219,3 @@ def test_archive_by_ids_refuses_a_document_chunk_like_an_unknown_id():
         assert asyncio.run(_archived_at(note_id)) is not None
     finally:
         asyncio.run(_delete_rows(seeded_ids))
-
-
-@pytest.mark.integration
-def test_restore_preview_lists_an_archived_document_chunk():
-    token = time.time_ns()
-    doc_id = f"doc:notesonly-restore-{token}:0"
-    now = time.time()
-
-    async def _seed() -> None:
-        conn = await asyncpg.connect(db_url())
-        try:
-            await ensure_schema(conn)
-            await _seed_row(
-                conn,
-                doc_id,
-                "notes only restore document",
-                _angled_vec(0),
-                now,
-                chunk_kind="doc",
-                source_type="document",
-            )
-            await conn.execute(
-                f'UPDATE "{PG_SCHEMA}".memory_chunks SET archived_at = $2 WHERE id = $1',
-                doc_id,
-                now,
-            )
-        finally:
-            await conn.close()
-
-    asyncio.run(_delete_rows([doc_id]))
-    asyncio.run(_seed())
-    try:
-        preview = client.post("/admin/restore", json={"ids": [doc_id]})
-        assert preview.status_code == 200
-        assert [row["id"] for row in preview.json()["rows"]] == [doc_id]
-    finally:
-        asyncio.run(_delete_rows([doc_id]))

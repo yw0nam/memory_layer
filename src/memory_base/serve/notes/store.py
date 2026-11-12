@@ -22,7 +22,6 @@ from memory_base.retrieval.search import (
     visible_clause,
 )
 from memory_base.serve.access import namespaces
-from memory_base.serve.common.entities import SLUG_RE, lock_slugs, require_registered
 from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 
@@ -30,21 +29,11 @@ from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 # leaves room for the Hermes prefetch header and an author tag (a 40-character author name fits plain text up to 1,769)
 NOTE_MAX_CHARS = 1750
 NOTE_KINDS = ("personal", "work")
-MAX_NOTE_ENTITIES = 10
 NOTE_SIMILAR_THRESHOLD = float(os.getenv("NOTE_SIMILAR_THRESHOLD", "0.85"))
 LIST_NOTES_DEFAULT_LIMIT = 50
 LIST_NOTES_MAX_LIMIT = 200
-# Written when a note is archived by a save, an archive, or a consolidation; a restore clears them.
-ARCHIVE_LINEAGE_FIELDS = ("archived_by", "replaced_by", "consolidated_into")
-LINEAGE_FIELDS = (
-    "supersedes",
-    *ARCHIVE_LINEAGE_FIELDS,
-    "merged_from",
-    "merged_dates",
-    "consolidation_action",
-    "undone_action",
-)
-ENTITY_STAMP_FIELDS = ("entities_set_by", "entities_set_at")
+# Lineage a note records when a save supersedes it or an archive archives it.
+LINEAGE_FIELDS = ("supersedes", "archived_by", "replaced_by")
 
 
 def note_date(occurred_at: float | None, ts_last_active: float) -> str:
@@ -75,21 +64,6 @@ class CredentialNoteError(ValueError):
         super().__init__(
             f"note contains a credential ({secret_type}); store the fact without the secret"
         )
-
-
-def normalize_entities(entities: Any) -> list[str]:
-    """Validate the slug shape and count: strip, dedupe, keep order; None means none."""
-    if entities is None:
-        return []
-    if not isinstance(entities, list) or any(not isinstance(slug, str) for slug in entities):
-        raise ValueError("entities must be a list of slugs")
-    slugs = list(dict.fromkeys(slug.strip() for slug in entities))
-    if len(slugs) > MAX_NOTE_ENTITIES:
-        raise ValueError(f"entities must hold at most {MAX_NOTE_ENTITIES} slugs")
-    for slug in slugs:
-        if not SLUG_RE.fullmatch(slug):
-            raise ValueError(f"entity slug {slug!r} must match {SLUG_RE.pattern}")
-    return slugs
 
 
 def note_id(namespace: str, author: str, content: str) -> str:
@@ -134,7 +108,6 @@ def build_note_row(
     *,
     author: str,
     occurred_at: float | None = None,
-    entities: list[str] | None = None,
     shared: bool = False,
 ) -> dict[str, Any]:
     """Validate a note and map it to memory_chunks columns (no embedding).
@@ -152,8 +125,6 @@ def build_note_row(
         raise ValueError("author is required")
     normalized_tags = normalize_tags([] if tags is None else tags)
     metadata: dict[str, Any] = {"tags": normalized_tags}
-    if slugs := normalize_entities(entities):
-        metadata["entities"] = slugs
     metadata["author"] = author
     if shared:
         metadata["shared"] = True
@@ -177,14 +148,12 @@ async def save_note(
     *,
     kind: str,
     tags: list[str],
-    entities: list[str] | None = None,
     supersedes: str | None = None,
     namespace: str = DEFAULT_NAMESPACE,
     occurred_at: str | None = None,
     author: str,
     allow_similar: bool = False,
     shared: bool = False,
-    source_session: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Validate, embed, and idempotently store an agent-authored memory.
 
@@ -204,7 +173,6 @@ async def save_note(
         namespace,
         author=author,
         occurred_at=occurred_ts,
-        entities=entities,
         shared=shared,
     )
     secret_type = find_secret("\n".join([content, *(tags or [])]))
@@ -219,8 +187,6 @@ async def save_note(
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         async with conn.transaction():
-            await lock_slugs(conn)
-            await require_registered(conn, row["metadata"].get("entities", []))
             await namespaces.require_registered(conn, namespace)
             if supersedes is not None:
                 exists = await conn.fetchval(
@@ -264,8 +230,6 @@ async def save_note(
                 row["metadata"]["similar_ack"] = acknowledged
             if supersedes is not None:
                 row["metadata"]["supersedes"] = supersedes
-            if source_session is not None:
-                row["metadata"]["source_session"] = source_session
             status = await conn.execute(
                 INSERT_NOTE_SQL, *insert_note_args(row, embedding, namespace)
             )
@@ -295,9 +259,8 @@ async def save_note(
                 )
                 if not active:
                     raise ValueError(
-                        f"content is identical to archived note {row['id']}; restore it with "
-                        f"restore_notes instead of re-saving it, then archive {supersedes} "
-                        "with archive_notes"
+                        f"content is identical to archived note {row['id']}; change the content, or "
+                        f"archive {supersedes} with archive_notes"
                     )
             if supersedes is not None:
                 await conn.execute(
@@ -326,7 +289,6 @@ async def save_note(
 async def list_notes(
     *,
     tags: list[str] | None = None,
-    entity: str | None = None,
     kind: str | None = None,
     namespaces: list[str] | None = None,
     include_archived: bool = False,
@@ -355,7 +317,6 @@ async def list_notes(
         include_archived=include_archived,
         kind=kind,
         tags=normalized_tags,
-        entity=entity,
         namespaces=namespaces,
         since=since_ts,
         until=until_ts,
@@ -383,7 +344,6 @@ async def list_notes(
             "kind": row["kind"],
             "text": row["text"][:TEXT_LIMIT],
             "tags": metadata.get("tags", []),
-            "entities": metadata.get("entities", []),
             "author": metadata.get("author"),
             "namespace": row["namespace"],
             "date": note_date(row["occurred_at"], row["ts_last_active"]),
@@ -392,7 +352,7 @@ async def list_notes(
             note["shared"] = True
         if row["archived_at"] is not None:
             note["archived"] = True
-        for field in ("source_session", *LINEAGE_FIELDS, *ENTITY_STAMP_FIELDS):
+        for field in LINEAGE_FIELDS:
             if metadata.get(field) is not None:
                 note[field] = metadata[field]
         out.append(note)
