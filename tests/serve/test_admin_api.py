@@ -443,6 +443,12 @@ def test_admin_archive_malformed_ids_400():
     assert "error" in response.json()
 
 
+def test_admin_archive_refuses_a_body_without_ids():
+    response = client.post("/admin/archive", json={"confirm": True})
+    assert response.status_code == 400
+    assert response.json() == {"error": "ids must be a non-empty list"}
+
+
 def test_admin_archive_filter_selection_passes_the_scope(monkeypatch):
     captured = {}
 
