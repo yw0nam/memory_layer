@@ -34,7 +34,7 @@ def _fakes(monkeypatch, events):
         return "KEY123"
 
     monkeypatch.setattr(sandbox, "throwaway_postgres", database)
-    monkeypatch.setattr(sandbox, "EvalApi", Api)
+    monkeypatch.setattr(sandbox, "SandboxApi", Api)
     monkeypatch.setattr(sandbox, "_prepare", prepare)
 
 

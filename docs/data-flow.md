@@ -1,50 +1,43 @@
 # Data flow
 
-How content enters the store, how it comes back out, and where it lands.
+How notes and messages enter the store, how it comes back out, and where it lands.
 
 ## Write paths
 
 ```
-① NOTE                  ② DOCUMENT                    ③ CODE
-POST /save_memory       POST /ingest/document         POST /repos {url}
-   │                       │ credential scan of          │
-   │                       │ upload fields → 400         │
-   │                       │ 202 {job_id}                │ 202 {job_id}
-   ▼                       ▼                             ▼
- validate ≤1750         MarkItDown worker            url validated
- kind ∈ personal|work           (killable, 120 s)            free disk? → 507
-   │                       │                             │
-   ▼                       ▼                             │
- credential scan        credential scan of the           │
- content + raw tags     text or every CSV cell           │
- → 409                  → job failed, nothing            │
-   │                      stored; then same              │
-   │                      bytes → no_op                  │
-   │                       │                             │
-   ▼                       ▼                             ▼
- id = sha256(content)   chunk 1500 / 2000 / 200      git clone --filter=blob:none
- └ same → no-op         junk gate ✂                  + size watchdog (2 GiB)
-   │                       │                             │
-   ▼                    doc rows ────┐               cocoindex update
- embed (vLLM)           caller tags  │               tree-sitter 1000 / 300
-   │                       ▼         │                  │  mtime = commit time
-   ▼                    heading-path embedding text     ▼
- INSERT                    │  embed  │               incremental per file
- ON CONFLICT               ▼         │               (ledger: COCOINDEX_DB)
- DO NOTHING             one transaction per document     │
-   │                       │                             │
-   ▼                       ▼                             ▼
-┌──────────────────────────────────────┐      ┌────────────────────────┐
-│ memory.memory_chunks                 │      │ memory.code_chunks     │
-│ personal │ work │ doc                │      │ repo · file · L1-L40   │
-│ halfvec(2048) + HNSW + BM25          │      │ halfvec + HNSW + BM25  │
-└──────────────────────────────────────┘      └────────────────────────┘
-        ▲                                                ▲
-        └────── the write→read contract, with one more ──┘
-               memory.doc_rows — tabular rows, SQL-only
-               memory.messages — addressed signals, claim-only
+① NOTE
+POST /save_memory
+   │
+   ▼
+ validate ≤1750
+ kind ∈ personal|work
+   │
+   ▼
+ credential scan
+ content + raw tags
+ → 409
+   │
+   ▼
+ id = sha256(author + content)
+ └ same → no-op
+   │
+   ▼
+ embed (vLLM)
+   │
+   ▼
+ INSERT
+ ON CONFLICT
+ DO NOTHING
+   │
+   ▼
+┌──────────────────────────────────────┐
+│ memory.memory_chunks                 │
+│ personal │ work                      │
+│ halfvec(2048) + HNSW + BM25          │
+└──────────────────────────────────────┘
+   memory.messages — addressed signals, claim-only
 
-④ MESSAGE / HANDOFF
+② MESSAGE / HANDOFF
 POST /messages {subject, status, result, …}
    │
    ▼
@@ -64,7 +57,7 @@ POST /messages {subject, status, result, …}
  snapshots of the same namespace+scope+subject_key
 ```
 
-Every note and document write starts with a deterministic credential scan
+Every note write starts with a deterministic credential scan
 (`core/secrets.py`): the fixed-format detectors of `detect-secrets` — the npm, JWT, and
 legacy OpenAI patterns anchored at token boundaries so a scan stays linear in the text
 length — plus local Anthropic, OpenAI project/service key, and Google API key patterns,
@@ -79,11 +72,7 @@ Anthropic, Google), private-key headers, JSON Web Tokens, and
 credentials embedded in URLs (`scheme://user:pass@host`). A hit refuses the write whole —
 nothing is redacted — and the reason names only the detector type, never the matched
 value. A note is scanned together with its raw tags before embedding and refused
-with HTTP 409. A document upload's filename, `document_id`, `origin`, and tags are scanned
-before the job is admitted and refused with HTTP 400. The worker scans the extracted text
-— for a CSV, every header name and cell — before the same-bytes `no_op` check, the Card
-summary, embedding, or any write, so the job fails, nothing from the document is stored,
-and an identical re-upload is refused the same way. Prose that quotes a literal
+with HTTP 409. Prose that quotes a literal
 `BEGIN … PRIVATE KEY` header is refused as a private key.
 
 A note is stored exactly as written — the server never rewrites one and writes no notes
@@ -129,44 +118,6 @@ literals, and local paths rejected without fetching. An optional `idempotency_ke
 (unique per sender key) replays an identical effective request with 200 and refuses a
 different one with 409; deleting the row releases the key.
 
-Document uploads enter a durable Postgres backlog capped by `INGEST_BACKLOG_PER_KEY` and
-`INGEST_BACKLOG_MAX`. Two document workers dispatch fairly across API keys while serializing
-jobs for the same document. Jobs and their spooled uploads survive API restarts; startup
-requeues interrupted work and fails a job clearly when its spool file is missing. Jobs are
-observable at `GET /ingest/jobs/{job_id}` and listable at `GET /ingest/jobs`, with optional
-`origin` and `status` filters. Their stages are `queued → converting → chunking →
-embedding → writing → done`; a CSV job passes through `enriching` after `chunking`. Jobs
-carry `chunks_total`, `chunks_done`, `chunks_dropped`, `rows_written`, and
-`enrichment_retries`. Re-uploading identical bytes in `upsert` mode
-short-circuits to `no_op`. Markdown ingest calls no LLM: chunks are stored as written, and
-the optional repeated `tags` upload field lands on every chunk of the document.
-
-CSV takes a tabular branch instead. Every data row is validated (unique non-empty
-headers, consistent row width, no NUL bytes, ≤5 MB and ≤100,000 rows) and stored
-verbatim in `memory.doc_rows` — cells as strings, empty cells as JSON null — in the same
-transaction that publishes the document's one LLM-summarized knowledge Card. The Card is
-the only embedded artifact: its metadata carries the `columns` list and marks the rows
-as loaded, and search hits expose those columns next to the `document_id` handle, so a
-consumer can go from a search hit straight to a SQL query. A same-bytes upsert of a CSV
-whose rows are not yet loaded re-runs the pipeline instead of no-opping.
-
-`DELETE /ingest/documents/{document_id}?namespace=…` (default `default`) removes the
-document's chunks and its `doc_rows` together; an unknown document is 404.
-
-Repo jobs use the same durable jobs table and dispatch one at a time, so interrupted clone,
-pull, remove, and index work is retried after an API restart.
-
-The code indexer mounts every subdirectory of `REPO_CACHE` as an independent codebase, so
-adding or removing a checkout adds or tears down its rows on the next run. Clones keep
-full history (`--filter=blob:none`, lazy blobs) precisely so each file carries its real
-last-commit time into the recency signal.
-
-`POST /repos` accepts http(s) URLs only, and rejects credentials embedded in the URL.
-Private repositories authenticate through the git credential store — see
-[Private repositories](configuration.md#private-repositories).
-
-`DELETE /repos/{name}` removes a cached repo and queues a re-index that tears down its rows.
-
 ## Read path — hybrid search (`POST /search`)
 
 ```
@@ -174,95 +125,47 @@ Private repositories authenticate through the git credential store — see
          │
          ├─ embed (Qwen3 instruction prefix) ──┐
          │                                     │
- ┌───────┴────────────┐              ┌─────────┴──────────┐
- │    code_chunks     │              │   memory_chunks    │  archived excluded
- │ vec50 · fts50 · rec│              │ vec50 · fts50 · rec│  optional kind / tags
- │  optional repo     │              │                    │
- └───────┬────────────┘              └─────────┬──────────┘
-         └──────────────┬───────────────────────┘
-                        ▼
+         │                          ┌──────────┴─────────┐
+         │                          │   memory_chunks    │  archived excluded
+         │                          │ vec50 · fts50 · rec│  optional kind / tags
+         │                          └──────────┬─────────┘
+         └─────────────────────────────────────┤
+                                               ▼
                 RRF   Σ w/(60 + rank)   w: vec 1.0 · fts 0.2 · rec 0.25
                         ▼
-                per-file / per-session cap 3  → top 20 (top 40 when budget_tokens is set)
+                top 20 by fused score (top 40 when budget_tokens is set)
                         ▼
                 🎯 rerank (vLLM)
                         ▼
                 top 10 · min_score floor (default 0.25, rerank scale only)
                   │ skipped when budget_tokens is set
                         ▼
-                code hits get ±40-line neighbour chunks as `context`
-                        ▼
                 budget_tokens set: hits in rerank order until the estimate
-                (chars / 4 of text + context) would exceed the budget
+                (chars / 4 of text) would exceed the budget
                         ▼
                     hits[]
 ```
 
-Memory hits (notes, document chunks, CSV cards) carry the row's `id`, `kind`, and
-and `tags`, plus `supersedes` for a note that replaced one and `shared: true` on a shared
+A note hit carries the row's `id`, `kind`, and
+`tags`, plus `supersedes` for a note that replaced one and `shared: true` on a shared
 note. Omitted, `author` returns the caller's default read scope — the calling author's own
 notes plus the shared notes; `all` searches every author; a list of slugs returns
 exactly those authors' notes, so a caller reads another agent's notes only by naming it.
-The MCP tools take the same list, e.g. `author=["natsume", "claude-code"]`. Document chunks and CSV cards are not notes: they have no author, so they
-pass an omitted or `all` read and drop out of a slug read, which filters every row on the
-author. `GET /notes` takes the `kind`, `tags`, and `namespace` filters. `date` is
+The MCP tools take the same list, e.g. `author=["natsume", "claude-code"]`. `GET /notes` takes the `kind`, `tags`, and `namespace` filters. `date` is
 the note's `occurred_at` when recorded, else `ts_last_active`. `since`/`until` bound the
 same event time, `COALESCE(occurred_at, ts_last_active)`, so an episode is found by the
-day it happened; recency voting and decay read `ts_last_active` alone. Memory hits carry their stored text whole; each is
-bounded at write time instead — notes ≤1750 chars, document chunks ≤2000 (hard split), CSV
-cards ≤2000 (the ingest job fails if the summary runs longer). Code hits have no such
-bound — CocoIndex's chunk_size is a target, not a limit — so the response still cuts them
-to 2000 chars. `score` is the rerank score, falling back to the
+day it happened; recency voting and decay read `ts_last_active` alone. Hits carry their stored text whole; each note is
+bounded at write time instead, at ≤1750 chars. `score` is the rerank score, falling back to the
 fused RRF score. Hits below the min_score floor (default 0.25, request-adjustable, 0 disables)
 are dropped after reranking. Age enters ranking only as the recency voter in the fusion, so an
 old row with a strong vector or BM25 rank reaches the reranker. `budget_tokens` (1–32000)
 replaces the count and the floor: every fused candidate is reranked, and hits come back in
-rerank order until the running estimate of the returned text (`max(1, chars // 4)` per hit,
-restored code context included) would exceed the budget, so a multi-fact question gets every
+rerank order until the running estimate of the returned text (`max(1, chars // 4)` per hit) would exceed the budget, so a multi-fact question gets every
 relevant note that fits rather than ten. `include_archived` surfaces
 archived rows; `/search` hits mark archived rows `"archived": true` since an archived note may have been superseded by
 a newer one.
 
 The read path writes nothing to the database.
-
-## Read path — table SQL (`POST /tables/query`)
-
-Tabular questions are answered by computing over stored rows, not by retrieval. The
-working loop:
-
-```
-search_memory("developer productivity sleep")
-  └► hit: ref = "developer-productivity-metrics#card-0"
-         columns = ["developer_id", "ai_usage", "sleep_hours", "commits"]
-              │     the part of ref before "#" is the document_id, columns
-              │     are the JSON keys
-              ▼
-POST /tables/query  {"sql": "...", "namespace": "default"}
-  SELECT data->>'ai_usage'                        AS grp,
-         AVG((data->>'sleep_hours')::numeric)     AS mean_sleep
-  FROM memory.doc_rows
-  WHERE document_id = 'developer-productivity-metrics'
-  GROUP BY 1
-              │
-              ▼
-  {"columns": ["grp", "mean_sleep"], "rows": [["high", 6.5], …],
-   "row_count": 3, "truncated": false}
-```
-
-Rows are jsonb: cast for numbers (`(data->>'col')::numeric`), filter by `document_id` to
-scope one table, or aggregate across every table in the namespace by leaving the filter
-off. Without `namespace` the query covers every namespace. Results cap at 1,000 rows (`truncated: true` beyond that — page with `row_index`
-ranges), responses at 5 MB, statements at 10 s (`408`). Decimal, date, and UUID values
-arrive JSON-normalized.
-
-The SQL author is an LLM, so the lane is fenced at the database, not by string
-inspection. Queries must start with `SELECT`/`WITH` and run on a dedicated pool
-authenticated as `memory_tables_query` — a role with `SELECT` on `memory.doc_rows` and
-nothing else — inside a read-only transaction, single-statement by protocol, with forced
-row-level security pinning a request that names a namespace to it. Side-effect
-functions (`set_config`, `pg_notify`, advisory locks) are revoked, and role-level
-resource limits bound memory and lock waits. Other Postgres errors return `400` with the
-engine's message so the caller can correct its SQL.
 
 ## Read path — messages (`GET /messages`, claim, cancel)
 
@@ -338,29 +241,21 @@ The hook claims nothing and records its connection state in `status.json`.
 
 ## Storage
 
-`memory.memory_chunks` — one table for every non-code source.
+`memory.memory_chunks` — one table for notes.
 
 | column | meaning |
 |---|---|
-| `id` | `note:<namespace>:<hash>` · `doc:<document_id>:<ordinal>` for a chunk and `doc:<document_id>:card:<n>` for a CSV card, with `<document_id>` as `<namespace>:<document_id>` outside `default` |
-| `source_type` | `agent_note` · `document` |
-| `source_ref` | `save_memory` for an agent note, or the document id for a document chunk |
-| `session_id` | the note's own id, or the document id for a document chunk — the unit the search cap (`PER_FILE_CAP` per `(namespace, session_id)`) is keyed on |
-| `chunk_kind` | `personal` · `work` · `doc` |
+| `id` | `note:<namespace>:<hash>` |
+| `source_type` | `agent_note` |
+| `source_ref` | `save_memory` |
+| `session_id` | the note's own id |
+| `chunk_kind` | `personal` · `work` |
 | `content_raw` / `distilled` | stored text; BM25 index on `content_raw`, hits display `distilled` first |
 | `embedding` | `halfvec(2048)`, HNSW cosine index |
-| `ts_last_active` | save time; recency ranking and decay, and `since`/`until` when `occurred_at` is null |
+| `ts_last_active` | save time; recency ranking, and `since`/`until` when `occurred_at` is null |
 | `occurred_at` | when the remembered event happened; a hit's `date` and the `since`/`until` bound |
-| `metadata` | jsonb: `tags`, `author`, `shared`, `archived_by`, `supersedes`, `replaced_by`, `similar_ack`, `heading_path`, `content_hash`, `search_ref`, `columns`, … |
+| `metadata` | jsonb: `tags`, `author`, `shared`, `archived_by`, `supersedes`, `replaced_by`, `similar_ack`, … |
 | `archived_at` | when the row was archived; archived rows leave search |
-
-`memory.code_chunks` — written and torn down entirely by CocoIndex: `repo`, `filename`,
-`code`, `embedding`, `start_line`, `end_line`, `mtime` (last commit time).
-
-`memory.doc_rows` — a tabular document's data rows: `namespace`, `document_id`,
-`row_index`, `data` (jsonb, one object per row keyed by the CSV header). No embedding,
-no search indexes; read exclusively by `POST /tables/query` under the restricted role,
-written and deleted in the same transactions as the document's Card.
 
 `memory.messages` — addressed, once-claimed signals: `namespace`, `purpose`
 (`message` | `handoff`), `scope`, `subject` with its normalized `subject_key`,
@@ -372,8 +267,5 @@ column, no search index; a partial index serves the pending listing, and a uniqu
 (`sender_key`, `idempotency_key`) backs idempotent sends. The lifecycle timestamps stay
 internal — responses carry the report status only.
 
-`doc_rows` and `messages` are outside the retrieval contract: they are read by compute
-and by address, respectively, and are never granted to the SQL query role or returned by
-search ([ADR-0001](adr/0001-table-rows-third-read-contract.md),
-[ADR-0002](adr/0002-messages-addressed-once-claimed-lane.md)). Adding a source means
-adding an adapter, not touching retrieval or serving.
+`messages` is outside the retrieval contract: it is read by address, never returned by
+search ([ADR-0002](adr/0002-messages-addressed-once-claimed-lane.md)).

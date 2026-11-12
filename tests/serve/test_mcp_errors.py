@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from memory_base.core.config import SERVICE_TIMEOUT_SECONDS
-from memory_base.serve.repos import tools as repo_tools
+from memory_base.serve.notes import tools as note_tools
 from memory_base.serve.common import rest_client
 
 
@@ -21,16 +21,16 @@ def _patch_client(monkeypatch, handler):
     monkeypatch.setattr(rest_client, "client", fake_client)
 
 
-def _list_repos_error(monkeypatch, handler) -> str:
+def _list_notes_error(monkeypatch, handler) -> str:
     _patch_client(monkeypatch, handler)
     with pytest.raises(ValueError) as exc:
-        asyncio.run(repo_tools.list_repos())
+        asyncio.run(note_tools.list_notes())
     return str(exc.value)
 
 
 @pytest.mark.parametrize("status", [400, 503])
 def test_any_error_status_surfaces_the_backend_reason(monkeypatch, status):
-    message = _list_repos_error(
+    message = _list_notes_error(
         monkeypatch, lambda request: httpx.Response(status, json={"error": "embedder is down"})
     )
     assert message == "embedder is down"
@@ -38,32 +38,32 @@ def test_any_error_status_surfaces_the_backend_reason(monkeypatch, status):
 
 @pytest.mark.parametrize("status", [307, 502])
 def test_error_without_a_reason_payload_names_status_and_body(monkeypatch, status):
-    message = _list_repos_error(
+    message = _list_notes_error(
         monkeypatch, lambda request: httpx.Response(status, text="upstream proxy failure")
     )
     assert str(status) in message
     assert "upstream proxy failure" in message
-    assert "GET /repos" in message
+    assert "GET /notes" in message
 
 
 def test_timeout_names_the_backend_and_the_call(monkeypatch):
     def handler(request):
         raise httpx.ReadTimeout("", request=request)
 
-    message = _list_repos_error(monkeypatch, handler)
+    message = _list_notes_error(monkeypatch, handler)
     assert "timed out" in message
     assert rest_client.REST_URL in message
-    assert "GET /repos" in message
+    assert "GET /notes" in message
 
 
 def test_unreachable_backend_names_the_backend_and_the_call(monkeypatch):
     def handler(request):
         raise httpx.ConnectError("All connection attempts failed", request=request)
 
-    message = _list_repos_error(monkeypatch, handler)
+    message = _list_notes_error(monkeypatch, handler)
     assert "unreachable" in message
     assert rest_client.REST_URL in message
-    assert "GET /repos" in message
+    assert "GET /notes" in message
     assert "All connection attempts failed" in message
 
 

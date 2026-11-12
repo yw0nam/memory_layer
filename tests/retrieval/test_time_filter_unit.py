@@ -113,16 +113,9 @@ def test_omitted_bounds_add_no_clause():
 # ---- validate_search_options ------------------------------------------------
 
 
-def test_memory_source_accepts_time_bounds():
-    kind, tags, repo, since, until = validate_search_options(
-        "memory", None, None, since="2026-08-12", until="2026-08-13"
+def test_time_bounds_are_returned_as_epoch_seconds():
+    kind, tags, since, until = validate_search_options(
+        None, None, since="2026-08-12", until="2026-08-13"
     )
     assert since == AUG_12
     assert until == AUG_12 + 2 * DAY
-
-
-def test_time_bounds_require_memory_source():
-    with pytest.raises(ValueError, match='source="memory"'):
-        validate_search_options("code", None, None, since="2026-08-12")
-    with pytest.raises(ValueError, match='source="memory"'):
-        validate_search_options("code", None, None, until="2026-08-12")

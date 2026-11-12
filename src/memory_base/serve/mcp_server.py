@@ -27,12 +27,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from memory_base.core.logger import setup_logging
-from memory_base.serve.documents import tools as document_tools
 from memory_base.serve.messages import tools as message_tools
 from memory_base.serve.notes import tools as note_tools
-from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.search import tools as search_tools
-from memory_base.serve.tables import tools as table_tools
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
@@ -40,16 +37,11 @@ DEFAULT_PORT = 8765
 # Served in the initialize response, so it is stated once per client session:
 # the store's invariants only. Per-consumer usage belongs to the consumer.
 _SERVER_INSTRUCTIONS_OPENING = """\
-memory-base holds distilled knowledge in three lanes — notes (memory of the user and of
-the work), code (indexed repositories), and table rows (numbers, read with SQL) — plus
-an addressed message lane for one-time signals between sessions (never embedded, never
-searched).
+memory-base holds distilled notes (memory of the user and of the work) plus an addressed
+message lane for one-time signals between sessions (never embedded, never searched).
 
 Read first. Before starting a task or answering from recall, search_memory for earlier
 decisions on the subject — arriving without them is this server's most common misuse.
-search_code spans every indexed repository, not only the one in front of you. Questions
-about numbers are computed, not retrieved: search finds the card, query_table computes
-over the rows, and search never returns the rows themselves.
 
 """
 
@@ -125,8 +117,6 @@ mcp = FastMCP(
 )
 
 
-mcp.tool(name="search")(search_tools.search_all)
-mcp.tool()(search_tools.search_code)
 mcp.tool()(search_tools.search_memory)
 mcp.tool()(note_tools.list_notes)
 mcp.tool()(note_tools.save_memory)
@@ -136,12 +126,6 @@ mcp.tool()(message_tools.claim_message)
 mcp.tool()(message_tools.cancel_message)
 mcp.tool()(note_tools.archive_notes)
 mcp.tool()(note_tools.delete_notes)
-mcp.tool()(table_tools.query_table)
-mcp.tool()(document_tools.ingest_document)
-mcp.tool()(document_tools.remove_document)
-mcp.tool()(repo_tools.ingest_repo)
-mcp.tool()(repo_tools.remove_repo)
-mcp.tool()(repo_tools.list_repos)
 
 
 def quiet_request_noise() -> None:

@@ -26,7 +26,7 @@ def _endpoints(monkeypatch):
 
 
 def _hit():
-    return Hit(source="memory", ref="note:1", text="body", ts=0.0, rrf=0.02)
+    return Hit(ref="note:1", text="body", ts=0.0, rrf=0.02)
 
 
 def _patch_httpx(monkeypatch, handler):

@@ -15,7 +15,6 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from memory_base.core import llm
 from memory_base.serve import mcp_server
 from memory_base.serve.mcp_server import SERVER_INSTRUCTIONS
 from memory_base.serve.notes import store
@@ -73,32 +72,8 @@ def _patch_note_deps(monkeypatch, conn):
     monkeypatch.setattr(store, "ensure_schema_once", _noop)
 
 
-@pytest.fixture
-def no_chat_provider(monkeypatch):
-    """A vLLM provider resolves to a closed port; resolving it or building a client records."""
-    calls = []
-    resolve = llm.resolve_llm_provider
-
-    def recording_resolve(env):
-        calls.append("resolve_llm_provider")
-        return resolve(env)
-
-    def unreachable(provider):
-        calls.append(provider.name)
-        raise ConnectionError("no chat provider")
-
-    for name in ("OPENCODE_API_KEY", "ZAI_API_KEY", "OPENAI_API_KEY", "CLAUDE_API_KEY"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("VLLM_URL", "http://127.0.0.1:9")
-    monkeypatch.setenv("VLLM_MODEL", "none")
-    monkeypatch.setattr(llm, "resolve_llm_provider", recording_resolve)
-    monkeypatch.setattr(llm, "_openai_client", unreachable)
-    monkeypatch.setattr(llm, "_anthropic_client", unreachable)
-    return calls
-
-
 @pytest.mark.parametrize("kind", ["personal", "work"])
-def test_a_note_is_stored_with_no_chat_model_call(monkeypatch, no_chat_provider, kind):
+def test_a_note_is_embedded_and_stored(monkeypatch, kind):
     conn = FakeConnection()
     _patch_note_deps(monkeypatch, conn)
     result = asyncio.run(
@@ -107,7 +82,6 @@ def test_a_note_is_stored_with_no_chat_model_call(monkeypatch, no_chat_provider,
     assert result["stored"] is True
     assert conn.embeds == ["migrated the parser today"]
     assert conn.insert_args is not None
-    assert no_chat_provider == []
 
 
 def _tools():

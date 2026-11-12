@@ -1,1 +1,1 @@
-"""Cross-cutting utilities shared across ingest, retrieval, and serve."""
+"""Cross-cutting utilities shared across retrieval and serve."""

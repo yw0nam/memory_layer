@@ -11,8 +11,7 @@ COMPOSE = yaml.safe_load(
     (pathlib.Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text()
 )
 API = COMPOSE["services"]["api"]
-MCP = COMPOSE["services"]["mcp"]
-STATEFUL_SERVICES = ("db", "api")
+STATEFUL_SERVICES = ("db",)
 DATA_ROOT = re.compile(r"^\$\{DATA_ROOT:\?[^}]+\}/")
 
 
@@ -30,30 +29,6 @@ def _split(mount: str) -> tuple[str, str]:
     variable, brace, rest = mount.rpartition("}")
     path, _, target = (rest if brace else mount).partition(":")
     return variable + brace + path, target
-
-
-def _mount_targets() -> set[str]:
-    return {_split(mount)[1] for mount in API["volumes"]}
-
-
-def test_api_persists_cocoindex_state_on_a_volume():
-    state = API["environment"]["COCOINDEX_DB"]
-    assert not state.startswith("${"), "state path must not be inherited from the host"
-    assert state in _mount_targets()
-
-
-def test_api_persists_repo_cache_on_a_volume():
-    assert API["environment"]["REPO_CACHE"] in _mount_targets()
-
-
-def test_api_persists_ingest_spool_on_a_volume():
-    assert API["environment"]["INGEST_SPOOL"] == "/data/ingest-spool"
-    assert API["environment"]["INGEST_SPOOL"] in _mount_targets()
-
-
-def test_api_reads_git_credentials_read_only():
-    """Private clones authenticate from this file; the container must not be able to write it."""
-    assert "./git-credentials:/run/git-credentials:ro" in _mounts("api")
 
 
 def test_every_stateful_mount_sits_under_the_data_root():
@@ -83,29 +58,12 @@ def test_every_stateful_service_persists_something():
 def test_api_receives_every_backend_endpoint_and_model_name():
     """Anything the container reads from the environment must be forwarded to it."""
     for name in (
-        "OPENCODE_API_KEY",
-        "OPENCODE_MODEL",
-        "ZAI_API_KEY",
-        "ZAI_BASE_URL",
-        "ZAI_MODEL",
-        "OPENAI_API_KEY",
-        "OPENAI_MODEL",
-        "CLAUDE_API_KEY",
-        "CLAUDE_MODEL",
-        "VLLM_URL",
-        "VLLM_MODEL",
         "EMB_URL",
         "EMB_MODEL",
         "RERANK_URL",
         "RERANK_MODEL",
     ):
         assert API["environment"][name] == f"${{{name}}}"
-
-
-def test_query_password_is_forwarded_to_api_and_mcp():
-    expected = "${TABLES_QUERY_PASSWORD:?set TABLES_QUERY_PASSWORD in .env}"
-    assert API["environment"]["TABLES_QUERY_PASSWORD"] == expected
-    assert MCP["environment"]["TABLES_QUERY_PASSWORD"] == expected
 
 
 def test_api_depends_only_on_postgres():

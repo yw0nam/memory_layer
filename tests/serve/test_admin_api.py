@@ -280,7 +280,7 @@ def test_rows_by_ids_reports_archived_by(monkeypatch):
 def test_search_include_archived_true_reaches_search(monkeypatch):
     captured = {}
 
-    async def fake_search(query, source="all", include_archived=False, **options):
+    async def fake_search(query, include_archived=False, **options):
         captured["include_archived"] = include_archived
         return []
 
@@ -298,9 +298,7 @@ def test_search_forwards_the_author_filter(monkeypatch):
         return []
 
     monkeypatch.setattr(search_routes, "search", fake_search)
-    response = client.post(
-        "/search", json={"query": "hello", "source": "memory", "author": "natsume"}
-    )
+    response = client.post("/search", json={"query": "hello", "author": "natsume"})
     assert response.status_code == 200
     assert captured["authors"] == ["natsume"]
 
@@ -327,7 +325,7 @@ def test_search_null_author_400():
 def test_search_include_archived_defaults_to_false(monkeypatch):
     captured = {}
 
-    async def fake_search(query, source="all", include_archived=False, **options):
+    async def fake_search(query, include_archived=False, **options):
         captured["include_archived"] = include_archived
         return []
 

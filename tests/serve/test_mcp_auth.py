@@ -18,10 +18,7 @@ import json
 import httpx
 import pytest
 
-from memory_base.serve.documents import tools as document_tools
-from memory_base.serve.repos import tools as repo_tools
 from memory_base.serve.common import rest_client
-from memory_base.serve.tables import tools as table_tools
 from memory_base.serve.notes import tools
 from memory_base.serve.search import tools as search_tools
 
@@ -175,76 +172,6 @@ def test_save_tool_forwards_api_key_header(monkeypatch):
     assert captured["header"] == "secret"
 
 
-def test_ingest_document_forwards_api_key_header(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["header"] = request.headers.get("x-api-key")
-        return httpx.Response(
-            202, json={"job_id": "job-1", "status": "queued", "status_url": "/ingest/jobs/job-1"}
-        )
-
-    _patch_client(monkeypatch, handler)
-    ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(document_tools.ingest_document("# Guide", "guide.md", ctx=ctx))
-    assert captured["header"] == "secret"
-
-
-def test_ingest_repo_forwards_api_key_header(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["header"] = request.headers.get("x-api-key")
-        return httpx.Response(
-            202,
-            json={
-                "job_id": "j1",
-                "name": "repo",
-                "status": "queued",
-                "status_url": "/repos/jobs/j1",
-            },
-        )
-
-    _patch_client(monkeypatch, handler)
-    ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(repo_tools.ingest_repo("https://github.com/o/repo.git", ctx=ctx))
-    assert captured["header"] == "secret"
-
-
-def test_remove_repo_forwards_api_key_header(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["header"] = request.headers.get("x-api-key")
-        return httpx.Response(
-            202,
-            json={
-                "job_id": "j2",
-                "name": "repo",
-                "status": "queued",
-                "status_url": "/repos/jobs/j2",
-            },
-        )
-
-    _patch_client(monkeypatch, handler)
-    ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(repo_tools.remove_repo("repo", ctx=ctx))
-    assert captured["header"] == "secret"
-
-
-def test_list_repos_forwards_api_key_header(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["header"] = request.headers.get("x-api-key")
-        return httpx.Response(200, json=[])
-
-    _patch_client(monkeypatch, handler)
-    ctx = FakeCtx(headers={"X-API-Key": "secret"})
-    asyncio.run(repo_tools.list_repos(ctx=ctx))
-    assert captured["header"] == "secret"
-
-
 # ---- namespace argument passes through unresolved ---------------------------
 
 
@@ -314,54 +241,6 @@ def test_save_memory_explicit_namespace_forwarded(monkeypatch):
     assert captured["json"]["namespace"] == "team-a"
 
 
-def test_ingest_document_omitted_namespace_sends_no_namespace_field(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = request.content
-        return httpx.Response(
-            202, json={"job_id": "job-1", "status": "queued", "status_url": "/ingest/jobs/job-1"}
-        )
-
-    _patch_client(monkeypatch, handler)
-    asyncio.run(document_tools.ingest_document("# Guide", "guide.md"))
-    assert b'name="namespace"' not in captured["body"]
-
-
-def test_ingest_document_explicit_namespace_forwarded(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = request.content
-        return httpx.Response(
-            202, json={"job_id": "job-1", "status": "queued", "status_url": "/ingest/jobs/job-1"}
-        )
-
-    _patch_client(monkeypatch, handler)
-    asyncio.run(document_tools.ingest_document("# Guide", "guide.md", namespace="team-a"))
-    assert b'name="namespace"' in captured["body"]
-    assert b"team-a" in captured["body"]
-
-
-def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["headers"] = request.headers
-        captured["json"] = json.loads(request.content)
-        return httpx.Response(
-            200,
-            json={"columns": [], "rows": [], "row_count": 0, "truncated": False},
-        )
-
-    _patch_client(monkeypatch, handler)
-    ctx = FakeCtx({"X-API-Key": "caller-key"})
-    asyncio.run(table_tools.query_table("SELECT 1", namespace="team-a", ctx=ctx))
-
-    assert captured["headers"]["x-api-key"] == "caller-key"
-    assert captured["json"] == {"sql": "SELECT 1", "namespace": "team-a"}
-
-
 @pytest.mark.parametrize(
     "tool_call",
     [
@@ -370,15 +249,6 @@ def test_query_table_forwards_request_api_key_and_namespace(monkeypatch):
             lambda: tools.save_memory("content", tags=["test"], kind="work"),
             id="save-memory",
         ),
-        pytest.param(lambda: table_tools.query_table("SELECT 1"), id="query-table"),
-        pytest.param(
-            lambda: document_tools.ingest_document("content", "guide.md"), id="ingest-document"
-        ),
-        pytest.param(
-            lambda: repo_tools.ingest_repo("https://github.com/o/repo.git"), id="ingest-repo"
-        ),
-        pytest.param(lambda: repo_tools.remove_repo("repo"), id="remove-repo"),
-        pytest.param(lambda: repo_tools.list_repos(), id="list-repos"),
     ],
 )
 def test_tools_preserve_forbidden_backend_message(monkeypatch, tool_call):

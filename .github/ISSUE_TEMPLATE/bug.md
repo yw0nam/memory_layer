@@ -9,7 +9,7 @@ labels: ["bug"]
 <!-- What is wrong -->
 
 ## Reproduction steps
-<!-- Exact command(s), e.g. `uv run cocoindex update src/memory_base/ingest/code.py` -->
+<!-- Exact command(s), e.g. a `curl` call or an MCP tool call -->
 1.
 2.
 
@@ -19,6 +19,6 @@ labels: ["bug"]
 <!-- Paste logs / stack trace / query output -->
 
 ## Environment
-- Command / entry point (CLI, MCP tool, CocoIndex run):
+- Command / entry point (CLI, MCP tool, REST route):
 - `docker compose ps` (db / mcp status):
-- vLLM endpoints reachable (`VLLM_URL` / `EMB_URL` / `RERANK_URL`):
+- vLLM endpoints reachable (`EMB_URL` / `RERANK_URL`):

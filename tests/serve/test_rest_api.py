@@ -6,11 +6,9 @@ at the module level, matching the existing convention (e.g.
 
 - ``search_routes.search``  -- delegate for POST /search (memory_base.retrieval.search.search)
 - ``store.save_note``  -- delegate for POST /save_memory (memory_base.serve.notes.store)
-- ``health.db_healthy``, ``health.embedding_healthy``, ``health.rerank_healthy``,
-  ``health.llm_healthy`` -- async dependency probes used by GET /health/services
-- ``search_routes.hit_to_dict``  -- Hit -> {source, ref, date, score, text[, context]} serializer
-
-Collection fails today: memory_base.serve.api does not exist yet.
+- ``health.db_healthy``, ``health.embedding_healthy``, ``health.rerank_healthy``
+  -- async dependency probes used by GET /health/services
+- ``search_routes.hit_to_dict``  -- Hit -> {id, ref, date, score, text, ...} serializer
 """
 
 from __future__ import annotations
@@ -26,23 +24,14 @@ from memory_base.serve.notes import store
 client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
 
-def _hit(
-    source="code",
-    ref="a.py:L1-L2",
-    text="body",
-    ts=1_700_000_000.0,
-    rrf=0.5,
-    rerank_score=None,
-    meta=None,
-):
+def _hit(ref="save_memory", text="body", rrf=0.5, rerank_score=None):
     return Hit(
-        source=source,
         ref=ref,
         text=text,
-        ts=ts,
+        ts=1_700_000_000.0,
         rrf=rrf,
         rerank_score=rerank_score,
-        meta=meta or {},
+        meta={"id": f"note:{ref}", "kind": "work", "tags": [], "occurred_at": None},
     )
 
 
@@ -55,7 +44,7 @@ def test_health_is_200_without_reaching_any_dependency(monkeypatch):
     async def unreachable():
         raise AssertionError("liveness must not probe a dependency")
 
-    for probe in ("db_healthy", "embedding_healthy", "rerank_healthy", "llm_healthy"):
+    for probe in ("db_healthy", "embedding_healthy", "rerank_healthy"):
         monkeypatch.setattr(health, probe, unreachable)
     response = client.get("/health")
     assert response.status_code == 200
@@ -72,7 +61,6 @@ def _all_probes_up(monkeypatch):
     monkeypatch.setattr(health, "db_healthy", up)
     monkeypatch.setattr(health, "embedding_healthy", up)
     monkeypatch.setattr(health, "rerank_healthy", up)
-    monkeypatch.setattr(health, "llm_healthy", up)
 
 
 def test_health_ok_when_all_dependencies_reachable(_all_probes_up):
@@ -80,7 +68,7 @@ def test_health_ok_when_all_dependencies_reachable(_all_probes_up):
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
-        "checks": {"db": True, "embedding": True, "rerank": True, "llm": True},
+        "checks": {"db": True, "embedding": True, "rerank": True},
     }
 
 
@@ -120,18 +108,6 @@ def test_health_503_when_rerank_unreachable(_all_probes_up, monkeypatch):
     assert body["checks"]["rerank"] is False
 
 
-def test_health_200_when_only_llm_unreachable(_all_probes_up, monkeypatch):
-    async def fake_llm_healthy():
-        return False
-
-    monkeypatch.setattr(health, "llm_healthy", fake_llm_healthy)
-    response = client.get("/health/services")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "ok"
-    assert body["checks"] == {"db": True, "embedding": True, "rerank": True, "llm": False}
-
-
 # ---- POST /search --------------------------------------------------------
 
 
@@ -144,11 +120,10 @@ def test_search_empty_query_400():
 @pytest.mark.parametrize(
     "body",
     [
-        {"query": "hello", "source": "all", "kind": "work"},
-        {"query": "hello", "source": "code", "tags": ["infra"]},
-        {"query": "hello", "source": "memory", "tags": []},
-        {"query": "hello", "source": "memory", "tags": None},
-        {"query": "hello", "source": "memory", "tags": "infra"},
+        {"query": "hello", "kind": "reminder"},
+        {"query": "hello", "tags": []},
+        {"query": "hello", "tags": None},
+        {"query": "hello", "tags": "infra"},
     ],
 )
 def test_search_filter_validation_errors_are_400(body):
@@ -170,7 +145,6 @@ def test_search_forwards_raw_kind_and_tags(monkeypatch):
         "/search",
         json={
             "query": "hello",
-            "source": "memory",
             "kind": "work",
             "tags": [" Infra ", "DATABASE", "infra"],
         },
@@ -191,32 +165,10 @@ def test_search_silently_ignores_include_atoms(monkeypatch):
     monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post(
         "/search",
-        json={"query": "hello", "source": "memory", "include_atoms": False},
+        json={"query": "hello", "include_atoms": False},
     )
     assert response.status_code == 200
     assert "include_atoms" not in captured
-
-
-def test_search_forwards_raw_repo_filter(monkeypatch):
-    """The route forwards the raw repo list as-is; search() does the normalizing."""
-    captured = {}
-
-    async def fake_search(query, source="all", **options):
-        captured.update(options)
-        return []
-
-    monkeypatch.setattr(search_routes, "search", fake_search)
-    response = client.post(
-        "/search", json={"query": "marker", "source": "code", "repo": [" repo_a ", "repo_a"]}
-    )
-    assert response.status_code == 200
-    assert captured["repo"] == [" repo_a ", "repo_a"]
-
-
-def test_search_rejects_repo_filter_outside_code_source():
-    response = client.post("/search", json={"query": "marker", "repo": ["repo_a"]})
-    assert response.status_code == 400
-    assert 'source="code"' in response.json()["error"]
 
 
 def test_search_forwards_namespaces_filter(monkeypatch):
@@ -254,9 +206,9 @@ def test_search_malformed_namespaces_400():
 
 
 def test_search_returns_hit_to_dict_shape(monkeypatch):
-    hits = [_hit(source="code", ref="a.py:L1-L2", text="x", rrf=0.5, rerank_score=0.9)]
+    hits = [_hit(text="x", rrf=0.5, rerank_score=0.9)]
 
-    async def fake_search(query, source="all", include_archived=False, **options):
+    async def fake_search(query, include_archived=False, **options):
         return hits
 
     monkeypatch.setattr(search_routes, "search", fake_search)
@@ -264,41 +216,13 @@ def test_search_returns_hit_to_dict_shape(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body == [search_routes.hit_to_dict(h) for h in hits]
-    assert set(body[0]) >= {"source", "ref", "date", "score", "text"}
-
-
-def test_search_defaults_source_to_all(monkeypatch):
-    captured = {}
-
-    async def fake_search(query, source="all", include_archived=False, **options):
-        captured["query"] = query
-        captured["source"] = source
-        return []
-
-    monkeypatch.setattr(search_routes, "search", fake_search)
-    response = client.post("/search", json={"query": "hello"})
-    assert response.status_code == 200
-    assert captured["query"] == "hello"
-    assert captured["source"] == "all"
-
-
-def test_search_passes_requested_source_through(monkeypatch):
-    captured = {}
-
-    async def fake_search(query, source="all", include_archived=False, **options):
-        captured["source"] = source
-        return []
-
-    monkeypatch.setattr(search_routes, "search", fake_search)
-    response = client.post("/search", json={"query": "hello", "source": "code"})
-    assert response.status_code == 200
-    assert captured["source"] == "code"
+    assert set(body[0]) >= {"id", "ref", "date", "score", "text"}
 
 
 def test_search_default_top_k_is_10(monkeypatch):
-    hits = [_hit(ref=f"f{i}.py:L1-L2", rrf=float(i)) for i in range(15)]
+    hits = [_hit(ref=f"note-{i}", rrf=float(i)) for i in range(15)]
 
-    async def fake_search(query, source="all", include_archived=False, **options):
+    async def fake_search(query, include_archived=False, **options):
         return hits
 
     monkeypatch.setattr(search_routes, "search", fake_search)
@@ -308,9 +232,9 @@ def test_search_default_top_k_is_10(monkeypatch):
 
 
 def test_search_respects_custom_top_k(monkeypatch):
-    hits = [_hit(ref=f"f{i}.py:L1-L2", rrf=float(i)) for i in range(5)]
+    hits = [_hit(ref=f"note-{i}", rrf=float(i)) for i in range(5)]
 
-    async def fake_search(query, source="all", include_archived=False, **options):
+    async def fake_search(query, include_archived=False, **options):
         return hits
 
     monkeypatch.setattr(search_routes, "search", fake_search)
@@ -551,13 +475,6 @@ def test_save_memory_malformed_namespace_400(namespace):
 # ---- source rename: history rejected ----------------------------------------
 
 
-def test_search_history_source_rejected_with_400():
-    response = client.post("/search", json={"query": "hello", "source": "history"})
-    assert response.status_code == 400
-    error = response.json()["error"]
-    assert "code" in error and "memory" in error and "all" in error
-
-
 # ---- POST /search since/until ----------------------------------------------
 
 
@@ -572,7 +489,7 @@ def test_search_forwards_raw_since_and_until(monkeypatch):
     monkeypatch.setattr(search_routes, "search", fake_search)
     response = client.post(
         "/search",
-        json={"query": "q", "source": "memory", "since": "2026-08-01", "until": "2026-08-12"},
+        json={"query": "q", "since": "2026-08-01", "until": "2026-08-12"},
     )
     assert response.status_code == 200
     assert captured["since"] == "2026-08-01"
@@ -587,7 +504,7 @@ def test_search_omitted_time_bounds_do_not_reach_search(monkeypatch):
         return []
 
     monkeypatch.setattr(search_routes, "search", fake_search)
-    response = client.post("/search", json={"query": "q", "source": "memory"})
+    response = client.post("/search", json={"query": "q"})
     assert response.status_code == 200
     assert "since" not in captured
     assert "until" not in captured
@@ -595,7 +512,7 @@ def test_search_omitted_time_bounds_do_not_reach_search(monkeypatch):
 
 @pytest.mark.parametrize("field", ["since", "until"])
 def test_search_explicit_null_time_bound_400(field):
-    response = client.post("/search", json={"query": "q", "source": "memory", field: None})
+    response = client.post("/search", json={"query": "q", field: None})
     assert response.status_code == 400
     assert field in response.json()["error"]
 
@@ -603,10 +520,8 @@ def test_search_explicit_null_time_bound_400(field):
 @pytest.mark.parametrize(
     "body",
     [
-        {"query": "q", "source": "memory", "since": "not-a-date"},
-        {"query": "q", "source": "memory", "since": "2026-08-13", "until": "2026-08-12"},
-        {"query": "q", "source": "code", "since": "2026-08-01"},
-        {"query": "q", "source": "all", "until": "2026-08-01"},
+        {"query": "q", "since": "not-a-date"},
+        {"query": "q", "since": "2026-08-13", "until": "2026-08-12"},
     ],
 )
 def test_search_time_bound_validation_errors_are_400(body):
@@ -617,7 +532,7 @@ def test_search_time_bound_validation_errors_are_400(body):
 
 def test_search_forwards_budget_tokens_and_ignores_top_k(monkeypatch):
     captured = {}
-    hits = [_hit(ref=f"f{i}.py:L1-L2", rrf=float(i)) for i in range(15)]
+    hits = [_hit(ref=f"note-{i}", rrf=float(i)) for i in range(15)]
 
     async def fake_search(query, **options):
         captured.update(options)

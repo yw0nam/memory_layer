@@ -1,6 +1,6 @@
 """Unit tests for the pure functions in src/search.py: no DB/network access.
 
-rrf_fuse and _dedup_cap operate purely on Hit objects /
+rrf_fuse and the score floor operate purely on Hit objects /
 plain dicts, so they're exercised directly with hand-built inputs.
 """
 
@@ -11,16 +11,13 @@ import pytest
 
 from memory_base.core.config import vector_literal
 from memory_base.retrieval.search import (
-    FUSED_TOP,
     MIN_SCORE,
-    PER_FILE_CAP,
     QWEN3_RERANK_PREFIX,
     QWEN3_RERANK_SUFFIX,
     RERANK_TEXT_LIMIT,
     RRF_K,
     Hit,
     _apply_min_score,
-    _dedup_cap,
     rerank_payload,
     rrf_fuse,
 )
@@ -65,55 +62,15 @@ def test_rrf_fuse_none_weights_preserves_default_scores():
     assert rrf_fuse(lists, None) == rrf_fuse(lists)
 
 
-# ---- _dedup_cap ----------------------------------------------------------
-
-
-def _hit(ref, rrf, filename=None):
-    meta = {"filename": filename} if filename else {}
-    return Hit(source="code", ref=ref, text="", ts=0.0, rrf=rrf, meta=meta)
-
-
-def test_dedup_cap_caps_same_file_to_per_file_cap():
-    hits = [_hit(f"a.py:L{i}", rrf=float(10 - i), filename="a.py") for i in range(5)]
-    out = _dedup_cap(hits)
-    assert len(out) == PER_FILE_CAP == 3
-    # keeps the highest-rrf chunks for that file
-    assert [h.rrf for h in out] == [10.0, 9.0, 8.0]
-
-
-def test_dedup_cap_overall_fused_top_cap():
-    hits = [_hit(f"f{i}.py:L1", rrf=float(50 - i), filename=f"f{i}.py") for i in range(50)]
-    out = _dedup_cap(hits)
-    assert len(out) == FUSED_TOP == 20
-
-
-def test_dedup_cap_keeps_rrf_descending_order():
-    hits = [
-        _hit("b.py:L1", rrf=0.3, filename="b.py"),
-        _hit("a.py:L1", rrf=0.9, filename="a.py"),
-        _hit("c.py:L1", rrf=0.6, filename="c.py"),
-    ]
-    out = _dedup_cap(hits)
-    assert [h.rrf for h in out] == [0.9, 0.6, 0.3]
-
-
-def test_dedup_cap_code_falls_back_to_ref_when_no_filename_meta():
-    # a code hit with no meta["filename"] -> dedup key falls back to ref
-    hits = [_hit("chunk-1", rrf=1.0)]
-    out = _dedup_cap(hits)
-    assert len(out) == 1
-    assert out[0].ref == "chunk-1"
-
-
 # ---- _apply_min_score -----------------------------------------------------
 
 
 def _reranked_hit(ref, score):
-    return Hit(source="code", ref=ref, text="", ts=0.0, rrf=0.02, rerank_score=score)
+    return Hit(ref=ref, text="", ts=0.0, rrf=0.02, rerank_score=score)
 
 
 def _rrf_only_hit(ref, score):
-    return Hit(source="code", ref=ref, text="", ts=0.0, rrf=score)
+    return Hit(ref=ref, text="", ts=0.0, rrf=score)
 
 
 def test_apply_min_score_drops_below_and_keeps_at_or_above_floor():
@@ -154,18 +111,18 @@ def test_apply_min_score_uses_min_score_constant_as_rerank_default():
 
 
 def test_hit_score_returns_rerank_score_when_set():
-    h = Hit(source="code", ref="a", text="", ts=0.0, rrf=0.3, rerank_score=0.9)
+    h = Hit(ref="a", text="", ts=0.0, rrf=0.3, rerank_score=0.9)
     assert h.score == 0.9
 
 
 def test_hit_score_falls_back_to_rrf_when_rerank_is_none():
-    h = Hit(source="code", ref="a", text="", ts=0.0, rrf=0.4, rerank_score=None)
+    h = Hit(ref="a", text="", ts=0.0, rrf=0.4, rerank_score=None)
     assert h.score == 0.4
 
 
 def test_hit_defaults_and_meta_dict_independence():
-    h1 = Hit(source="code", ref="a", text="", ts=0.0)
-    h2 = Hit(source="code", ref="b", text="", ts=0.0)
+    h1 = Hit(ref="a", text="", ts=0.0)
+    h2 = Hit(ref="b", text="", ts=0.0)
     assert h1.rrf == 0.0
     assert h1.rerank_score is None
     h1.meta["x"] = 1

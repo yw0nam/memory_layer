@@ -12,7 +12,7 @@ memory-base serves one person. Several agents reach it, from several hosts: a co
 agent and a personal agent. The server grew an access
 model piece by piece without a decision of its own: a key carried a home namespace, an
 admin flag, and an allowlist of authors; a namespace was public or private to an owner;
-documents and repositories had a creator; some routes were admin-only.
+some routes were admin-only.
 
 The deployed data showed what that model protected. Every active key was admin, so
 namespace permissions and owner rules granted nothing. What remained was friction: connecting an agent

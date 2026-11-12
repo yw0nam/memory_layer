@@ -31,7 +31,7 @@ class NamespaceNotFoundError(NamespaceError):
 
 
 class NamespaceNotEmptyError(NamespaceError):
-    """The namespace still has notes, chunks, table rows, or messages."""
+    """The namespace still has notes or messages."""
 
 
 def validate_namespace_name(name: Any) -> str:
@@ -41,27 +41,12 @@ def validate_namespace_name(name: Any) -> str:
     return name
 
 
-async def _exists_in_conn(conn: Any, name: str) -> bool:
-    return bool(
-        await conn.fetchval(
-            f'SELECT EXISTS(SELECT 1 FROM "{PG_SCHEMA}".namespaces WHERE name = $1)', name
-        )
-    )
-
-
 async def require_registered(conn: Any, name: str) -> None:
     """Raise NamespaceError unless name is registered; holds it against deletion until commit."""
     if not await conn.fetchval(
         f'SELECT 1 FROM "{PG_SCHEMA}".namespaces WHERE name = $1 FOR SHARE', name
     ):
         raise NamespaceError(f"unregistered namespace: {name}")
-
-
-async def namespace_exists(name: str) -> bool:
-    """Return whether name is registered."""
-    async with db.acquire() as conn:
-        await ensure_schema_once(conn)
-        return await _exists_in_conn(conn, name)
 
 
 async def create_namespace(name: Any) -> dict[str, Any]:
@@ -111,8 +96,6 @@ async def delete_namespace(name: str) -> None:
                 f"""
                 SELECT EXISTS(
                   SELECT 1 FROM "{PG_SCHEMA}".memory_chunks WHERE namespace = $1
-                ) OR EXISTS(
-                  SELECT 1 FROM "{PG_SCHEMA}".doc_rows WHERE namespace = $1
                 ) OR EXISTS(
                   SELECT 1 FROM "{PG_SCHEMA}".messages WHERE namespace = $1
                 )

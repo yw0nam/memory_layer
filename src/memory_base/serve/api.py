@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -14,39 +14,22 @@ from memory_base.core.logger import setup_logging
 from memory_base.serve import health
 from memory_base.serve.access import routes as access_routes
 from memory_base.serve.access.auth import ApiKeyAuthMiddleware
-from memory_base.serve.documents import pipeline as document_pipeline
-from memory_base.serve.documents import routes as document_routes
 from memory_base.serve.messages import routes as message_routes
 from memory_base.serve.notes import routes as note_routes
-from memory_base.serve.repos import cache as repo_cache
-from memory_base.serve.repos import routes as repo_routes
 from memory_base.serve.search import routes as search_routes
-from memory_base.serve.tables import routes as table_routes
 
 setup_logging()
 logging.getLogger("uvicorn.access").addFilter(health.HealthAccessFilter())
 
 
-# Background work as (start, stop) pairs: started in order, stopped in reverse.
-BACKGROUND = (
-    (document_pipeline.start, document_pipeline.stop),
-    (repo_cache.start, repo_cache.stop),
-)
-
-
 @asynccontextmanager
 async def lifespan(app: Starlette):
-    """Start background work, stop what started in reverse, and close the pools last.
-
-    A failing start() still stops everything started before it.
-    """
+    """Close the pool on shutdown."""
     del app
-    async with AsyncExitStack() as stack:
-        stack.push_async_callback(db.close_pool)
-        stack.push_async_callback(db.close_table_query_pool)
-        for start, stop in BACKGROUND:
-            stack.push_async_callback(stop, await start())
+    try:
         yield
+    finally:
+        await db.close_pool()
 
 
 app = Starlette(
@@ -62,15 +45,6 @@ app = Starlette(
         Route("/messages", message_routes.list_route, methods=["GET"]),
         Route("/messages/{message_id}/claim", message_routes.claim_route, methods=["POST"]),
         Route("/messages/{message_id}", message_routes.cancel_route, methods=["DELETE"]),
-        Route("/tables/query", table_routes.query_route, methods=["POST"]),
-        Route("/ingest/document", document_routes.ingest_route, methods=["POST"]),
-        Route("/ingest/jobs", document_routes.jobs_route, methods=["GET"]),
-        Route("/ingest/jobs/{job_id}", document_routes.job_route, methods=["GET"]),
-        Route("/ingest/documents/{document_id}", document_routes.remove_route, methods=["DELETE"]),
-        Route("/repos", repo_routes.ingest_route, methods=["POST"]),
-        Route("/repos", repo_routes.list_route, methods=["GET"]),
-        Route("/repos/jobs/{job_id}", repo_routes.job_route, methods=["GET"]),
-        Route("/repos/{name}", repo_routes.remove_route, methods=["DELETE"]),
         Route("/namespaces", access_routes.namespaces_create_route, methods=["POST"]),
         Route("/namespaces", access_routes.namespaces_list_route, methods=["GET"]),
         Route("/namespaces/{name}", access_routes.namespaces_delete_route, methods=["DELETE"]),

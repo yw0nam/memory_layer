@@ -19,9 +19,8 @@ stored text.
 
 ## Decision
 
-Agent-authored messages live in a separate `messages` table on the same pattern as
-`doc_rows` (ADR-0001): written without an embedding call, never content-gated, and
-invisible to every search path. The write side renders a validated field set into
+Agent-authored messages live in a separate `messages` table: written without an
+embedding call, never content-gated, and invisible to every search path. The write side renders a validated field set into
 canonical Markdown (`# Subject`, `## Status`, `## Result`, optional `## Next`,
 `## Verification`, `## References`), blockquoting every line of user-controlled text so
 nothing escapes the skeleton, and rejects instead of truncating past 16 KiB.
@@ -54,8 +53,6 @@ signal — not transcript capture — and the note gate's refusal is what define
 
 - The REST surface grows by `/messages` routes and the MCP server by four thin proxy
   tools; retrieval code is untouched.
-- The `messages` table must never be granted to the SQL query role; the grant list
-  stays part of the trust boundary.
 - Namespace deletion counts messages as content, so a namespace cannot be dropped out
   from under undelivered signals.
 - A message cannot carry durable knowledge: a general message expires, a handoff is

@@ -1,51 +1,25 @@
 """Integration tests for search() and the MCP tools against Postgres and the model services.
 
-A small git repository is indexed into the session's throwaway Postgres container once
-per module, so code search runs against rows this module wrote; memory rows are seeded
-through save_note. The embedder and reranker are the configured live endpoints.
+Rows are seeded through save_note into the session's throwaway Postgres container. The
+embedder and reranker are the configured live endpoints.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-import os
-import subprocess
 import uuid
+from contextlib import contextmanager
 
 import asyncpg
-import numpy as np
 import pytest
 
-from memory_base.core.config import EMB_DIM, PG_SCHEMA, db_url, vector_literal
+from memory_base.core.config import PG_SCHEMA, db_url
 from memory_base.core.db import acquire, close_pool, get_pool
-from memory_base.retrieval.search import PER_FILE_CAP, search
+from memory_base.retrieval.search import search
 from memory_base.serve import mcp_server
-from memory_base.serve.repos import cache as repo_cache
-from memory_base.serve.notes.store import build_note_row, save_note
+from memory_base.serve.notes.store import save_note
 
-pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("indexed_code")]
-
-_SEED_SOURCE = '''"""Embedding vector search pipeline: chunks are stored as halfvec columns."""
-
-EMB_DIM = 2048  # halfvec(2048) in pgvector
-
-
-def embedding_vector_search_pipeline(query):
-    """Embed the query, then rank halfvec rows by cosine distance."""
-    return query
-'''
-
-
-@pytest.fixture(scope="module")
-def indexed_code(tmp_path_factory):
-    origin = tmp_path_factory.mktemp("seed-origin")
-    (origin / "seed.py").write_text(_SEED_SOURCE)
-    git_env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t"}
-    git_env.update(GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
-    for args in (["init", "-q", "-b", "main"], ["add", "."], ["commit", "-q", "-m", "seed"]):
-        subprocess.run(["git", "-C", str(origin), *args], check=True, env=git_env)
-    asyncio.run(repo_cache._run_ingest_job(str(origin), repo_cache.CACHE_ROOT / "seed", None))
+pytestmark = pytest.mark.integration
 
 
 async def _delete_note(note_id: str) -> None:
@@ -56,107 +30,54 @@ async def _delete_note(note_id: str) -> None:
         await conn.close()
 
 
-# ---- search() against seeded code_chunks / memory_chunks ------------------
-
-
-def test_search_code_source_returns_code_hits_with_line_refs():
-    hits = asyncio.run(search("halfvec", source="code", rerank=False))
-    assert len(hits) >= 1
-    assert all(h.source == "code" for h in hits)
-    assert all(":L" in h.ref for h in hits)
-    assert all(h.rrf > 0 for h in hits)
-
-
-def test_search_memory_source_returns_memory_hits():
-    content = "integration-test pin: zzz_integ_marker 7f3a9b2c"
-    note_id = build_note_row(content, "work", ["test"], 1_700_000_000.0, author="natsume")["id"]
-    asyncio.run(_delete_note(note_id))
-    try:
-        asyncio.run(save_note(content, tags=["test"], kind="work", author="natsume"))
-        hits = asyncio.run(search(content, source="memory", rerank=False))
-        assert len(hits) >= 1
-        assert all(h.source == "memory" for h in hits)
-    finally:
-        asyncio.run(_delete_note(note_id))
-
-
-def test_notes_with_distinct_session_ids_are_not_capped_by_search():
-    marker = f"zzz_integ_notecap_{uuid.uuid4().hex[:8]}"
-    contents = [
-        f"integration-test note cap pin {marker}: fact number {i}" for i in range(PER_FILE_CAP + 2)
-    ]
-    note_ids = []
+@contextmanager
+def seeded_notes(*contents: str):
+    """Save the notes, yield their ids, and delete them afterwards."""
+    ids: list[str] = []
     try:
         for content in contents:
             result = asyncio.run(
                 save_note(content, tags=["test"], kind="work", allow_similar=True, author="natsume")
             )
-            note_ids.append(result["id"])
-        hits = asyncio.run(search(marker, source="memory", rerank=False))
-        assert len(hits) > PER_FILE_CAP
+            ids.append(result["id"])
+        yield ids
     finally:
-        for note_id in note_ids:
+        for note_id in ids:
             asyncio.run(_delete_note(note_id))
 
 
-def test_document_chunks_sharing_a_session_id_are_capped_by_search():
-    document_id = f"cap-test-doc-{uuid.uuid4().hex[:8]}"
-    marker = f"zzz_integ_doccap_{uuid.uuid4().hex[:8]}"
-    embedding = vector_literal(np.zeros(EMB_DIM, dtype=np.float16))
-    chunk_count = PER_FILE_CAP + 2
-
-    async def seed() -> None:
-        async with acquire() as conn:
-            await conn.executemany(
-                f"""
-                INSERT INTO "{PG_SCHEMA}".memory_chunks
-                  (id, source_type, source_ref, chunk_kind, session_id, content_raw,
-                   distilled, embedding, ts_last_active, namespace, metadata)
-                VALUES ($1, 'document', $2, 'doc', $2, $3, $3, $4::halfvec, $5,
-                        'default', $6::jsonb)
-                """,
-                [
-                    (
-                        f"doc:{document_id}:{i}",
-                        document_id,
-                        f"{marker} chunk number {i} about the topic",
-                        embedding,
-                        1_700_000_000.0,
-                        json.dumps({"search_ref": f"{document_id}#chunk-{i}"}),
-                    )
-                    for i in range(chunk_count)
-                ],
-            )
-
-    async def clean() -> None:
-        async with acquire() as conn:
-            await conn.execute(
-                f'DELETE FROM "{PG_SCHEMA}".memory_chunks WHERE session_id = $1',
-                document_id,
-            )
-
-    asyncio.run(seed())
-    try:
-        hits = asyncio.run(search(marker, source="memory", rerank=False))
-        matching = [h for h in hits if h.meta["session_id"] == document_id]
-        assert 0 < len(matching) <= PER_FILE_CAP
-    finally:
-        asyncio.run(clean())
+# ---- search() against seeded memory_chunks ----------------------------------
 
 
-def test_search_all_source_with_rerank_populates_rerank_score():
-    # min_score=0: this test checks rerank_score population, not the relevance floor.
-    hits = asyncio.run(
-        search("embedding vector search pipeline", source="all", rerank=True, min_score=0)
-    )
-    assert len(hits) >= 1
-    assert any(h.rerank_score is not None for h in hits)
+def test_search_returns_the_seeded_note():
+    marker = f"zzz_integ_marker_{uuid.uuid4().hex[:8]}"
+    with seeded_notes(f"integration-test pin: {marker}") as ids:
+        hits = asyncio.run(search(marker, rerank=False))
+        assert ids[0] in [h.meta["id"] for h in hits]
+        assert all(h.rrf > 0 for h in hits)
 
 
-def test_fts_exact_literal_hits_file_containing_it():
-    # "halfvec" appears verbatim in the seeded repository.
-    hits = asyncio.run(search("halfvec", source="code", rerank=False))
-    assert any("halfvec" in h.text.lower() for h in hits)
+def test_every_note_matching_the_query_is_returned():
+    marker = f"zzz_integ_notecap_{uuid.uuid4().hex[:8]}"
+    contents = [f"integration-test note pin {marker}: fact number {i}" for i in range(5)]
+    with seeded_notes(*contents) as ids:
+        hits = asyncio.run(search(marker, rerank=False))
+        assert set(ids) <= {h.meta["id"] for h in hits}
+
+
+def test_search_with_rerank_populates_rerank_score():
+    marker = f"zzz_integ_rerank_{uuid.uuid4().hex[:8]}"
+    with seeded_notes(f"integration-test pin: {marker}"):
+        # min_score=0: this test checks rerank_score population, not the relevance floor.
+        hits = asyncio.run(search(marker, rerank=True, min_score=0))
+        assert any(h.rerank_score is not None for h in hits)
+
+
+def test_fts_exact_literal_hits_note_containing_it():
+    marker = f"zzz_integ_literal_{uuid.uuid4().hex[:8]}"
+    with seeded_notes(f"integration-test pin: {marker}"):
+        hits = asyncio.run(search(marker, rerank=False))
+        assert any(marker in h.text for h in hits)
 
 
 def test_repeated_searches_keep_pool_backend_count_flat():
@@ -177,7 +98,7 @@ def test_repeated_searches_keep_pool_backend_count_flat():
 
         before = await backend_count()
         for _ in range(5):
-            await search("halfvec", source="code", rerank=False)
+            await search("halfvec", rerank=False)
             assert await backend_count() == before
         await close_pool()
 
@@ -187,23 +108,27 @@ def test_repeated_searches_keep_pool_backend_count_flat():
 # ---- MCP in-process tool call ----------------------------------------------
 
 
-def test_mcp_search_code_tool_real_call_returns_expected_schema(rest_in_process):
-    """Calls the real search_code tool in-process via
+def test_mcp_search_memory_tool_real_call_returns_expected_schema(rest_in_process):
+    """Calls the real search_memory tool in-process via
     mcp.shared.memory.create_connected_server_and_client_session; the proxy
     routes through the in-process REST app, exercising the full
     search.search() pipeline including the reranker.
     """
     from mcp.shared.memory import create_connected_server_and_client_session
 
+    marker = f"zzz_integ_mcp_{uuid.uuid4().hex[:8]}"
+
     async def _run():
         async with create_connected_server_and_client_session(mcp_server.mcp._mcp_server) as client:
-            return await client.call_tool("search_code", {"query": "halfvec", "top_k": 3})
+            return await client.call_tool(
+                "search_memory", {"query": marker, "top_k": 3, "min_score": 0, "author": "all"}
+            )
 
-    result = asyncio.run(_run())
+    with seeded_notes(f"integration-test pin: {marker}"):
+        result = asyncio.run(_run())
     assert not result.isError
     payload = result.structuredContent["result"]
     assert len(payload) >= 1
     for item in payload:
-        for key in ("source", "ref", "date", "score", "text"):
+        for key in ("id", "kind", "ref", "date", "score", "text"):
             assert key in item
-        assert item["source"] == "code"

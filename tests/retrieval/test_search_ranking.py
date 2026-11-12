@@ -26,37 +26,17 @@ def memory_row(name: str, ts: float, text: str | None = None) -> dict:
         "content_raw": text or f"{name} body",
         "ts_last_active": ts,
         "archived_at": None,
-        "namespace": "default",
-        "session_id": name,
         "occurred_at": None,
     }
 
 
-def code_row(name: str, code: str, start_line: int = 1) -> dict:
-    return {
-        "id": name,
-        "repo": "repo",
-        "filename": f"{name}.py",
-        "code": code,
-        "start_line": start_line,
-        "end_line": start_line + 10,
-        "mtime": time.time(),
-    }
-
-
 class FakeConn:
-    def __init__(self, memory_vec=(), code_vec=(), neighbours=()):
+    def __init__(self, memory_vec=()):
         self.memory_vec = list(memory_vec)
-        self.code_vec = list(code_vec)
-        self.neighbours = list(neighbours)
 
     async def fetch(self, sql: str, *args):
-        if "WHERE filename = $1" in sql:
-            return self.neighbours
         if "to_bm25query" in sql:
             return []
-        if "code_chunks" in sql:
-            return self.code_vec
         return self.memory_vec
 
 
@@ -123,7 +103,7 @@ def test_an_old_memory_with_a_strong_vector_rank_reaches_the_reranker(run_search
     fresh = [memory_row(f"fresh-{i:02d}", now - i * 60) for i in range(30)]
     reranker = FakeReranker({"old-note": 0.9})
 
-    hits = run_search(FakeConn(memory_vec=[old, *fresh]), reranker, source="memory")
+    hits = run_search(FakeConn(memory_vec=[old, *fresh]), reranker)
 
     assert any("old-note body" in doc for doc in reranker.documents)
     assert hits[0].meta["id"] == "old-note"
@@ -137,7 +117,7 @@ def test_a_top_k_search_reranks_twenty_fused_candidates_and_a_budget_search_fort
     rows = [memory_row(f"cand-{i:02d}", now - i * 60) for i in range(45)]
     reranker = FakeReranker({})
 
-    run_search(FakeConn(memory_vec=rows), reranker, source="memory", **options)
+    run_search(FakeConn(memory_vec=rows), reranker, **options)
 
     assert len(reranker.documents) == reranked
     assert all(any(f"cand-{i:02d} body" in d for d in reranker.documents) for i in range(reranked))
@@ -147,12 +127,6 @@ def test_the_multiplicative_age_decay_is_gone():
     assert not hasattr(search, "TIME_DECAY_HALF_LIFE_DAYS")
     assert not hasattr(search, "_apply_time_decay")
     assert not hasattr(search, "_decay_targets")
-
-
-def test_the_longmemeval_manifest_records_no_decay_half_life():
-    from memory_base.eval import longmemeval
-
-    assert "TIME_DECAY_HALF_LIFE_DAYS" not in longmemeval._retrieval_constants()
 
 
 # ---- token-budget packing --------------------------------------------------
@@ -173,9 +147,7 @@ def test_a_budget_returns_more_than_ten_short_hits_in_reranked_order(run_search)
     rows, scores = _scored_rows(15, 40)
     reranker = FakeReranker(scores)
 
-    hits = run_search(
-        FakeConn(memory_vec=rows), reranker, source="memory", budget_tokens=1000, min_score=0.5
-    )
+    hits = run_search(FakeConn(memory_vec=rows), reranker, budget_tokens=1000, min_score=0.5)
 
     assert len(hits) == 15 > search.RERANK_TOP
     assert [h.rerank_score for h in hits] == sorted(scores.values(), reverse=True)
@@ -184,48 +156,24 @@ def test_a_budget_returns_more_than_ten_short_hits_in_reranked_order(run_search)
 def test_a_budget_stops_before_the_hit_that_would_exceed_it(run_search):
     rows, scores = _scored_rows(6, 400)
 
-    hits = run_search(
-        FakeConn(memory_vec=rows), FakeReranker(scores), source="memory", budget_tokens=250
-    )
+    hits = run_search(FakeConn(memory_vec=rows), FakeReranker(scores), budget_tokens=250)
 
     assert [h.meta["id"] for h in hits] == ["note-00", "note-02"]
     assert sum(search.estimate_tokens(h) for h in hits) <= 250
 
 
-def test_a_budget_counts_a_code_hit_with_its_restored_context(run_search):
-    now = time.time()
-    first = memory_row("first-note", now, "first-note " + "x" * 389)
-    last = memory_row("last-note", now, "last-note " + "x" * 70)
-    code = code_row("module", "def f(): pass  # module marker")
-    neighbours = [{"code": "y" * 800, "start_line": 20}]
-    reranker = FakeReranker({"first-note": 0.9, "module marker": 0.8, "last-note": 0.7})
-
-    hits = run_search(
-        FakeConn(memory_vec=[first, last], code_vec=[code], neighbours=neighbours),
-        reranker,
-        source="all",
-        budget_tokens=150,
-    )
-
-    assert [h.ref for h in hits] == ["first-note"]
-
-
 def test_the_token_estimate_is_a_quarter_of_the_characters_and_at_least_one():
-    hit = search.Hit(source="memory", ref="r", text="x" * 41, ts=0.0)
-    empty = search.Hit(source="memory", ref="r", text="", ts=0.0)
-    with_context = search.Hit(
-        source="code", ref="r", text="x" * 40, ts=0.0, meta={"context": "y" * 40}
-    )
+    hit = search.Hit(ref="r", text="x" * 41, ts=0.0)
+    empty = search.Hit(ref="r", text="", ts=0.0)
 
     assert search.estimate_tokens(hit) == 10
     assert search.estimate_tokens(empty) == 1
-    assert search.estimate_tokens(with_context) == 20
 
 
 def test_without_a_budget_rerank_top_and_the_floor_still_apply(run_search):
     rows, scores = _scored_rows(15, 40)
 
-    hits = run_search(FakeConn(memory_vec=rows), FakeReranker(scores), source="memory")
+    hits = run_search(FakeConn(memory_vec=rows), FakeReranker(scores))
 
     assert len(hits) <= search.RERANK_TOP
     assert all(h.score >= search.MIN_SCORE for h in hits)
@@ -242,7 +190,6 @@ def test_memory_hit_meta_carries_the_superseded_id_when_recorded(run_search):
     hits = run_search(
         FakeConn(memory_vec=[row]),
         FakeReranker({"replacing-note": 0.9}),
-        source="memory",
     )
 
     assert hits[0].meta["supersedes"] == "note:old0000000000"
@@ -252,7 +199,6 @@ def test_memory_hit_meta_reports_no_superseded_id_when_unrecorded(run_search):
     hits = run_search(
         FakeConn(memory_vec=[memory_row("plain-note", time.time())]),
         FakeReranker({"plain-note": 0.9}),
-        source="memory",
     )
 
     assert hits[0].meta["supersedes"] is None

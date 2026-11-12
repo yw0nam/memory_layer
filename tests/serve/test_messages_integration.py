@@ -127,24 +127,6 @@ def test_schema_creates_messages_table_with_contracted_columns():
     assert columns["created_at"].startswith("timestamp")
     assert columns["expires_at"].startswith("timestamp")
 
-    async def _grants():
-        conn = await asyncpg.connect(db_url())
-        try:
-            return await conn.fetchval(
-                """
-                SELECT count(*)
-                FROM information_schema.role_table_grants
-                WHERE table_schema = $1 AND table_name = 'messages'
-                  AND grantee = 'memory_tables_query'
-                """,
-                PG_SCHEMA,
-            )
-        finally:
-            await conn.close()
-
-    # The restricted SQL role must not see the new table (ADR-0001 grant list).
-    assert asyncio.run(_grants()) == 0
-
 
 # ---- write path: no embedding, no search visibility ----------
 
@@ -184,7 +166,7 @@ def test_send_stores_rendered_content_without_touching_the_note_path(monkeypatch
         asyncio.run(_cleanup(marker))
 
 
-def test_message_content_never_lands_in_any_searched_table():
+def test_message_content_never_lands_in_the_searched_table():
     marker = f"zzmsg_{uuid.uuid4().hex[:8]}"
     needle = f"{marker} signum certum quod quaeritur"
     counts = {}
@@ -197,10 +179,6 @@ def test_message_content_never_lands_in_any_searched_table():
                 "WHERE content_raw LIKE $1 OR distilled LIKE $1",
                 f"%{needle}%",
             )
-            counts["doc_rows"] = await conn.fetchval(
-                f'SELECT count(*) FROM "{PG_SCHEMA}".doc_rows WHERE data::text LIKE $1',
-                f"%{needle}%",
-            )
             counts["messages"] = await conn.fetchval(
                 f'SELECT count(*) FROM "{PG_SCHEMA}".messages WHERE subject = $1', needle
             )
@@ -211,7 +189,6 @@ def test_message_content_never_lands_in_any_searched_table():
         assert _send(needle, result="only addressed").status_code == 201
         asyncio.run(_run())
         assert counts["memory_chunks"] == 0
-        assert counts["doc_rows"] == 0
         assert counts["messages"] == 1
     finally:
         asyncio.run(_cleanup(marker))

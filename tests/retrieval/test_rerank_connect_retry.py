@@ -46,7 +46,7 @@ def _backend(monkeypatch, failures, status=200):
 
 
 def _hits():
-    return [Hit(source="memory", ref=f"note:{i}", text="body", ts=0.0, rrf=0.02) for i in (1, 2)]
+    return [Hit(ref=f"note:{i}", text="body", ts=0.0, rrf=0.02) for i in (1, 2)]
 
 
 def test_connect_stall_is_retried_once_and_reorders_hits(monkeypatch):

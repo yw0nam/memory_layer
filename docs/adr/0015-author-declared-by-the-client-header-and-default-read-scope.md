@@ -27,7 +27,7 @@ as plain memory.
 - The default read scope of notes is the notes whose author equals the header author plus
   the notes marked `shared`. It applies to every discovery read of notes: note hits of
   `/search` and `GET /notes`. It does not apply to messages, handoffs,
-  document chunks, CSV cards, code search, or any operation addressed by id. A
+  or any operation addressed by id. A
   read's `author` filter is three-way: omitted is the default scope, `all` is every
   author's notes, a slug is exactly that author's notes.
 - `save_memory` takes a boolean `shared`. A shared note stays attributed to its writer and

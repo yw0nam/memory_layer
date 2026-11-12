@@ -1,8 +1,6 @@
 """Unit tests for the namespace registry (memory_base.serve.access.namespaces): no real DB.
 
-memory_base.core.db.acquire is monkeypatched to a fake connection, matching the
-convention already used in tests/serve/test_ingest_api.py
-(``monkeypatch.setattr(document_store.db, "acquire", acquire)``).
+memory_base.core.db.acquire is monkeypatched to a fake connection.
 """
 
 from __future__ import annotations
@@ -113,7 +111,7 @@ def test_list_namespaces_returns_rows(monkeypatch):
     assert asyncio.run(namespaces.list_namespaces()) == rows
 
 
-# ---- require_registered / namespace_exists -----------------------------------
+# ---- require_registered -----------------------------------
 
 
 def test_require_registered_passes_when_present(monkeypatch):
@@ -125,18 +123,6 @@ def test_require_registered_raises_when_absent(monkeypatch):
     conn = FakeConnection(fetchval_results=[False])
     with pytest.raises(namespaces.NamespaceError, match="unregistered namespace"):
         asyncio.run(namespaces.require_registered(conn, "ghost"))
-
-
-def test_namespace_exists_true(monkeypatch):
-    conn = FakeConnection(fetchval_results=[True])
-    _patch_acquire(monkeypatch, conn)
-    assert asyncio.run(namespaces.namespace_exists("default")) is True
-
-
-def test_namespace_exists_false(monkeypatch):
-    conn = FakeConnection(fetchval_results=[False])
-    _patch_acquire(monkeypatch, conn)
-    assert asyncio.run(namespaces.namespace_exists("ghost")) is False
 
 
 # ---- delete_namespace ---------------------------------------------------------

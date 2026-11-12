@@ -46,28 +46,28 @@ def test_the_author_argument_states_the_default_and_the_explicit_list(schemas, n
     assert {"type": "array", "items": {"type": "string"}} in author["anyOf"]
 
 
-def test_search_tools_state_the_rerank_cap_on_top_k(descriptions):
-    for name in ("search", "search_code", "search_memory"):
-        assert f"at most {RERANK_TOP}" in descriptions[name], name
+def test_the_server_registers_the_note_and_message_tools_only(descriptions):
+    assert set(descriptions) == {
+        "search_memory",
+        "list_notes",
+        "save_memory",
+        "archive_notes",
+        "delete_notes",
+        "send_message",
+        "list_messages",
+        "claim_message",
+        "cancel_message",
+    }
+
+
+def test_search_memory_states_the_rerank_cap_on_top_k(descriptions):
+    assert f"at most {RERANK_TOP}" in descriptions["search_memory"]
 
 
 def test_search_memory_lists_the_accepted_kinds(descriptions):
-    for kind in ("doc", "personal", "work"):
+    for kind in ("personal", "work"):
         assert f'"{kind}"' in descriptions["search_memory"], kind
-
-
-def test_query_table_names_the_top_level_columns_field(descriptions):
-    assert "meta.columns" not in descriptions["query_table"]
-    assert "`columns`" in descriptions["query_table"]
 
 
 def test_save_memory_states_the_shared_flag(descriptions):
     assert "shared" in descriptions["save_memory"]
-
-
-def test_search_states_note_hits_are_own_and_shared(descriptions):
-    assert "your own and shared notes" in descriptions["search"]
-
-
-def test_remove_document_states_it_deletes_the_table_rows(descriptions):
-    assert "doc_rows" in descriptions["remove_document"]

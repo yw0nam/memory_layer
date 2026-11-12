@@ -1,10 +1,9 @@
-"""REST route for hybrid search over memory and code, and the hit serializer it answers with."""
+"""REST route for hybrid note search, and the hit serializer it answers with."""
 
 from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
 from typing import Any
 
 from starlette.requests import Request
@@ -14,14 +13,12 @@ from memory_base.retrieval.search import Hit
 from memory_base.retrieval.search import UpstreamUnavailable
 from memory_base.retrieval.search import normalize_namespaces
 from memory_base.retrieval.search import search
-from memory_base.serve.common.http import TEXT_LIMIT
 from memory_base.serve.common.http import error
 from memory_base.serve.common.http import json_body
 from memory_base.serve.common.http import note_scope
 from memory_base.serve.notes.store import note_date
 
 LOGGER = logging.getLogger(__name__)
-SOURCES = ("all", "code", "memory")
 # Beyond this a query is a pasted payload, not a question: it costs embedder and BM25
 # work no ranking can use.
 MAX_QUERY_CHARS = 2000
@@ -30,32 +27,15 @@ MAX_BUDGET_TOKENS = 32000
 
 def hit_to_dict(hit: Hit) -> dict[str, Any]:
     """Convert a search hit into a JSON-serializable response object."""
-    if hit.source == "memory":
-        out: dict[str, Any] = {
-            "source": hit.source,
-            "id": hit.meta["id"],
-            "kind": hit.meta["kind"],
-            "tags": hit.meta["tags"],
-            "ref": hit.ref,
-            "date": note_date(hit.meta["occurred_at"], hit.ts),
-            "score": hit.score,
-            # Memory text is bounded at write time; code chunks are not.
-            "text": hit.text,
-        }
-    else:
-        out = {
-            "source": hit.source,
-            "ref": hit.ref,
-            "date": datetime.fromtimestamp(hit.ts, tz=timezone.utc).strftime("%Y-%m-%d"),
-            "score": hit.score,
-            "text": hit.text[:TEXT_LIMIT],
-        }
-    repo = hit.meta.get("repo")
-    if repo:
-        out["repo"] = repo
-    context = hit.meta.get("context")
-    if context:
-        out["context"] = context
+    out: dict[str, Any] = {
+        "id": hit.meta["id"],
+        "kind": hit.meta["kind"],
+        "tags": hit.meta["tags"],
+        "ref": hit.ref,
+        "date": note_date(hit.meta["occurred_at"], hit.ts),
+        "score": hit.score,
+        "text": hit.text,
+    }
     if hit.meta.get("archived"):
         out["archived"] = True
     if hit.meta.get("author"):
@@ -64,8 +44,6 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         out["shared"] = True
     if hit.meta.get("supersedes") is not None:
         out["supersedes"] = hit.meta["supersedes"]
-    if "columns" in hit.meta:
-        out["columns"] = hit.meta["columns"]
     return out
 
 
@@ -80,9 +58,6 @@ async def search_route(request: Request) -> JSONResponse:
     if not isinstance(query, str) or not query.strip():
         return error("query must be a non-empty string")
     query = query[:MAX_QUERY_CHARS]
-    source = body.get("source", "all")
-    if source not in SOURCES:
-        return error(f"source must be one of {SOURCES}")
     top_k = body.get("top_k", 10)
     if isinstance(top_k, bool) or not isinstance(top_k, int):
         return error("top_k must be an integer")
@@ -110,8 +85,6 @@ async def search_route(request: Request) -> JSONResponse:
     # only the resolved value and cannot tell the two apart, so this stays here.
     if "tags" in body and body["tags"] is None:
         return error("tags must be a non-empty list of strings")
-    if "repo" in body and body["repo"] is None:
-        return error("repo must be a non-empty list of strings")
     if "since" in body and body["since"] is None:
         return error("since must be an ISO 8601 date or datetime string")
     if "until" in body and body["until"] is None:
@@ -121,16 +94,11 @@ async def search_route(request: Request) -> JSONResponse:
     try:
         requested_namespaces = normalize_namespaces(body.get("namespaces"))
         authors, visible_to = note_scope(request.state.author, body.get("author"))
-        options: dict[str, Any] = {
-            "source": source,
-            "include_archived": include_archived,
-        }
+        options: dict[str, Any] = {"include_archived": include_archived}
         if "kind" in body:
             options["kind"] = body["kind"]
         if "tags" in body:
             options["tags"] = body["tags"]
-        if "repo" in body:
-            options["repo"] = body["repo"]
         if "since" in body:
             options["since"] = body["since"]
         if "until" in body:
