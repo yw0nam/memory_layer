@@ -5,7 +5,6 @@ No DB, no vLLM.
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -21,9 +20,7 @@ from memory_base.retrieval import search as search_mod
         (
             "RERANK_URL",
             lambda: asyncio.run(
-                search_mod._rerank(
-                    "q", [search_mod.Hit(source="memory", ref="r", text="t", ts=0.0)]
-                )
+                search_mod._rerank("q", [search_mod.Hit(ref="r", text="t", ts=0.0)])
             ),
         ),
         ("DB_URL", lambda: config.db_url()),
@@ -67,29 +64,8 @@ def test_rerank_reads_on_query_timeout_and_connects_on_the_short_timeout(monkeyp
             return _FakeResponse()
 
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
-    hit = search_mod.Hit(source="memory", ref="r", text="text", ts=0.0)
+    hit = search_mod.Hit(ref="r", text="text", ts=0.0)
     asyncio.run(search_mod._rerank("q", [hit]))
     timeout = captured["timeout"]
     assert timeout.read == config.QUERY_TIMEOUT_SECONDS
     assert timeout.connect == config.RERANK_CONNECT_TIMEOUT_SECONDS
-
-
-def test_embed_many_orders_output_by_response_index_not_response_order(monkeypatch):
-    monkeypatch.setenv("EMB_URL", "http://fake")
-    embedder = config.VllmEmbedder()
-
-    class _ShuffledEmbeddings:
-        async def create(self, **kwargs):
-            del kwargs
-            # Response items arrive out of input order; each embedding encodes its true index.
-            return SimpleNamespace(
-                data=[
-                    SimpleNamespace(index=2, embedding=[2.0]),
-                    SimpleNamespace(index=0, embedding=[0.0]),
-                    SimpleNamespace(index=1, embedding=[1.0]),
-                ]
-            )
-
-    embedder._client = SimpleNamespace(embeddings=_ShuffledEmbeddings())
-    vectors = asyncio.run(embedder.embed_many(["a", "b", "c"]))
-    assert [float(v[0]) for v in vectors] == [0.0, 1.0, 2.0]

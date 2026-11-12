@@ -113,7 +113,7 @@ def test_list_namespaces_returns_rows(monkeypatch):
     assert asyncio.run(namespaces.list_namespaces()) == rows
 
 
-# ---- require_registered / namespace_exists -----------------------------------
+# ---- require_registered -----------------------------------
 
 
 def test_require_registered_passes_when_present(monkeypatch):
@@ -125,18 +125,6 @@ def test_require_registered_raises_when_absent(monkeypatch):
     conn = FakeConnection(fetchval_results=[False])
     with pytest.raises(namespaces.NamespaceError, match="unregistered namespace"):
         asyncio.run(namespaces.require_registered(conn, "ghost"))
-
-
-def test_namespace_exists_true(monkeypatch):
-    conn = FakeConnection(fetchval_results=[True])
-    _patch_acquire(monkeypatch, conn)
-    assert asyncio.run(namespaces.namespace_exists("default")) is True
-
-
-def test_namespace_exists_false(monkeypatch):
-    conn = FakeConnection(fetchval_results=[False])
-    _patch_acquire(monkeypatch, conn)
-    assert asyncio.run(namespaces.namespace_exists("ghost")) is False
 
 
 # ---- delete_namespace ---------------------------------------------------------

@@ -1,29 +1,20 @@
-"""Every write path refuses a credential before any model call or content write."""
+"""Every note write path refuses a credential before any embedding call or content write."""
 
 from __future__ import annotations
 
 import asyncio
-import time
 from contextlib import asynccontextmanager
 
 import httpx
 import pytest
 from loguru import logger
 
-from memory_base.adapters import document
-from memory_base.ingest import enrich
 from memory_base.serve import api
-from memory_base.serve.access import namespaces
-from memory_base.serve.documents import tools as document_tools
-from memory_base.serve.common import job_store
-from memory_base.serve.documents import pipeline as document_pipeline
-from memory_base.serve.documents import store as document_store
 from memory_base.serve.common import rest_client
 from memory_base.serve.notes import store, tools
 
 # Uppercase on purpose: tag normalization lowercases, which would hide it from the detector.
 AWS_KEY = "AKIA" + "Q" * 16
-GITLAB_TOKEN = "glpat-" + "q" * 20
 
 
 class Calls:
@@ -50,12 +41,6 @@ def calls(monkeypatch):
     recorder = Calls()
     for target, name in [
         (store, "embed_text"),
-        (enrich, "chat_json"),
-        (document_pipeline, "summarize_and_tag"),
-        (document_pipeline, "embed_text"),
-        (document_store, "replace_document_rows"),
-        (document_store, "existing_document_state"),
-        (job_store, "admit_document"),
     ]:
         recorder.forbid(monkeypatch, target, name)
 
@@ -65,11 +50,7 @@ def calls(monkeypatch):
         raise AssertionError("db must not be reached")
         yield
 
-    async def namespace_exists(name):
-        return name == "default"
-
     monkeypatch.setattr(store.db, "acquire", acquire)
-    monkeypatch.setattr(namespaces, "namespace_exists", namespace_exists)
     return recorder
 
 
@@ -164,140 +145,4 @@ def test_mcp_save_memory_surfaces_the_credential_refusal(monkeypatch, calls):
         )
     assert "note contains a credential (AWS Access Key)" in str(refused.value)
     assert AWS_KEY not in str(refused.value)
-    assert calls.made == []
-
-
-# ---- upload metadata ------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("data", "filename", "secret_type"),
-    [
-        ({"tags": ["policy", AWS_KEY]}, "guide.md", "AWS Access Key"),
-        ({"origin": f"vault:{AWS_KEY}"}, "guide.md", "AWS Access Key"),
-        ({}, f"{AWS_KEY}.md", "AWS Access Key"),
-        ({"document_id": GITLAB_TOKEN}, "guide.md", "GitLab Token"),
-    ],
-    ids=["tag", "origin", "filename", "document_id"],
-)
-def test_rest_upload_refuses_a_credential_in_its_fields_before_admission(
-    calls, data, filename, secret_type
-):
-    async def run():
-        async with _rest() as client:
-            return await client.post(
-                "/ingest/document", data=data, files={"file": (filename, b"plain body")}
-            )
-
-    response = asyncio.run(run())
-    assert response.status_code == 400
-    assert f"contains a credential ({secret_type})" in response.json()["error"]
-    assert AWS_KEY not in response.text and GITLAB_TOKEN not in response.text
-    assert calls.made == []
-    assert not document_pipeline.INGEST_SPOOL.exists() or not any(
-        document_pipeline.INGEST_SPOOL.iterdir()
-    )
-
-
-@pytest.mark.parametrize(
-    ("kwargs", "secret_type"),
-    [
-        ({"filename": f"{AWS_KEY}.md"}, "AWS Access Key"),
-        ({"filename": "guide.md", "document_id": GITLAB_TOKEN}, "GitLab Token"),
-    ],
-    ids=["filename", "document_id"],
-)
-def test_mcp_ingest_document_surfaces_the_field_refusal(monkeypatch, calls, kwargs, secret_type):
-    _mcp_through_rest(monkeypatch)
-    with pytest.raises(ValueError) as refused:
-        asyncio.run(document_tools.ingest_document(content="plain body", **kwargs))
-    assert f"contains a credential ({secret_type})" in str(refused.value)
-    assert AWS_KEY not in str(refused.value) and GITLAB_TOKEN not in str(refused.value)
-    assert calls.made == []
-
-
-# ---- document and CSV content -----------------------------------------------
-
-
-def _queued_job(spool, filename, mode="force"):
-    now = time.time()
-    return job_store.IngestJob(
-        job_id="job-1",
-        document_id=filename.lower(),
-        namespace="default",
-        mode=mode,
-        filename=filename,
-        spool_path=str(spool),
-        status="running",
-        created_at=now,
-        updated_at=now,
-    )
-
-
-@pytest.fixture
-def terminal(monkeypatch):
-    recorded: list[tuple[str, str | None]] = []
-
-    async def mark_terminal(job, status, error=None):
-        recorded.append((status, error))
-        job.status, job.error, job.stage = status, error, "done"
-
-    monkeypatch.setattr(job_store, "mark_terminal", mark_terminal)
-    return recorded
-
-
-def _markdown_with_secret(tmp_path):
-    spool = tmp_path / "runbook.md"
-    body = "# Runbook\n\n" + "Rotate the deploy credentials every quarter. " * 20
-    spool.write_text(f"{body}\n\nThe current key is {AWS_KEY}.\n")
-    return spool
-
-
-def _csv_with_secret_in_row_500(tmp_path):
-    spool = tmp_path / "ledger.csv"
-    rows = [f"svc-{index},ok" for index in range(600)]
-    rows[499] = f"svc-499,{AWS_KEY}"
-    spool.write_text("service,status\n" + "\n".join(rows) + "\n")
-    return spool
-
-
-@pytest.mark.parametrize(
-    "make_spool", [_markdown_with_secret, _csv_with_secret_in_row_500], ids=["markdown", "csv"]
-)
-def test_worker_fails_a_credential_document_whole_and_cleans_the_spool(
-    tmp_path, calls, terminal, log_lines, make_spool
-):
-    spool = make_spool(tmp_path)
-    job = _queued_job(spool, spool.name)
-
-    asyncio.run(document_pipeline.run_claimed(job))
-
-    expected = "document contains a credential (AWS Access Key); remove it and upload again"
-    assert terminal == [("failed", expected)]
-    assert job.status == "failed"
-    assert job.error == expected
-    assert not spool.exists()
-    assert calls.made == []
-    assert not any(AWS_KEY in line for line in log_lines)
-
-
-@pytest.mark.parametrize(
-    "make_spool", [_markdown_with_secret, _csv_with_secret_in_row_500], ids=["markdown", "csv"]
-)
-def test_same_hash_reupload_of_a_credential_document_is_still_refused(
-    monkeypatch, tmp_path, calls, make_spool
-):
-    spool = make_spool(tmp_path)
-    same_hash = document_pipeline._file_hash(spool)
-
-    async def existing(document_id, namespace="default", schema=None):
-        return same_hash, True
-
-    monkeypatch.setattr(document_store, "existing_document_state", existing)
-    job = _queued_job(spool, spool.name, mode="upsert")
-    with pytest.raises(document.CredentialDocumentError) as refused:
-        asyncio.run(document_pipeline.run_document_job(job))
-    assert refused.value.secret_type == "AWS Access Key"
-    assert AWS_KEY not in str(refused.value)
-    assert job.status != "no_op"
     assert calls.made == []

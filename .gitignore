@@ -1,8 +1,5 @@
 .env
 .venv/
 __pycache__/
-.cocoindex/
 logs/
-.repos_cache/
 git-credentials
-/data/

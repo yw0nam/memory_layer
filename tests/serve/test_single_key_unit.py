@@ -74,26 +74,3 @@ def test_a_note_list_without_a_namespace_covers_every_namespace(client, monkeypa
     monkeypatch.setattr(notes_store, "list_notes", fake_list_notes)
     assert client.get("/notes").status_code == 200
     assert seen["namespaces"] is None
-
-
-def test_a_document_upload_without_a_namespace_lands_in_default(client, monkeypatch):
-    from pathlib import Path
-
-    from memory_base.serve.access import namespaces
-    from memory_base.serve.common import job_store
-
-    captured = {}
-
-    async def admit(**kwargs):
-        captured.update(kwargs)
-        return job_store.IngestJob(**kwargs)
-
-    async def namespace_exists(name):
-        return name == "default"
-
-    monkeypatch.setattr(job_store, "admit_document", admit)
-    monkeypatch.setattr(namespaces, "namespace_exists", namespace_exists)
-    response = client.post("/ingest/document", files={"file": ("guide.md", b"content")})
-    assert response.status_code == 202, response.text
-    assert captured["namespace"] == "default"
-    Path(captured["spool_path"]).unlink(missing_ok=True)

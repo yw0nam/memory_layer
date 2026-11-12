@@ -24,32 +24,10 @@ services:
       - "8010:8010"
     environment:
       DB_URL: postgres://memory:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/memory_base
-      TABLES_QUERY_PASSWORD: ${TABLES_QUERY_PASSWORD:?set TABLES_QUERY_PASSWORD in .env}
-      COCOINDEX_DB: /data/cocoindex_state
       EMB_URL: ${EMB_URL}
       RERANK_URL: ${RERANK_URL}
       EMB_MODEL: ${EMB_MODEL}
       RERANK_MODEL: ${RERANK_MODEL}
-      OPENCODE_API_KEY: ${OPENCODE_API_KEY}
-      OPENCODE_MODEL: ${OPENCODE_MODEL}
-      ZAI_API_KEY: ${ZAI_API_KEY}
-      ZAI_BASE_URL: ${ZAI_BASE_URL}
-      ZAI_MODEL: ${ZAI_MODEL}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_MODEL: ${OPENAI_MODEL}
-      CLAUDE_API_KEY: ${CLAUDE_API_KEY}
-      CLAUDE_MODEL: ${CLAUDE_MODEL}
-      VLLM_URL: ${VLLM_URL}
-      VLLM_MODEL: ${VLLM_MODEL}
-      REPO_CACHE: /data/repos_cache
-      INGEST_SPOOL: /data/ingest-spool
-    # ponytail: repo clones and the CocoIndex ledger live here; losing either
-    # directory orphans code_chunks rows until the repos are re-added.
-    volumes:
-      - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/repos_cache:/data/repos_cache
-      - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/cocoindex_state:/data/cocoindex_state
-      - ${DATA_ROOT:?set DATA_ROOT to the host directory holding all state}/ingest-spool:/data/ingest-spool
-      - ./git-credentials:/run/git-credentials:ro
     command: uv run --no-sync uvicorn memory_base.serve.api:app --host 0.0.0.0 --port 8010
     # /health is liveness only; /health/services is the one that reaches the vLLM endpoints.
     healthcheck:
@@ -76,4 +54,3 @@ services:
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
       MCP_TRANSPORT: streamable-http
       REST_URL: http://api:8010
-      TABLES_QUERY_PASSWORD: ${TABLES_QUERY_PASSWORD:?set TABLES_QUERY_PASSWORD in .env}

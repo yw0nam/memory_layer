@@ -105,24 +105,8 @@ def test_ensure_schema_bootstraps_schema_and_vector_before_memory_table():
     assert statements[2].startswith('CREATE TABLE IF NOT EXISTS "test_schema".memory_chunks')
 
 
-def test_jobs_accept_only_the_document_and_repo_kinds(monkeypatch):
-    captured = {}
-
-    class RecordingConnection(FakeConnection):
-        async def execute(self, query, *args):
-            captured["sql"] = query
-            await super().execute(query, *args)
-
-    asyncio.run(schema.ensure_schema(RecordingConnection()))
-    sql = captured["sql"]
-    assert (
-        "kind text NOT NULL CONSTRAINT jobs_kind_check CHECK (kind IN ('document', 'repo'))" in sql
-    )
-
-
 def test_rebinding_module_pg_schema_keeps_ddl_and_guard_in_sync(monkeypatch):
-    """Rebinding schema.PG_SCHEMA, as eval/retrieval.py's _scratch_schema_scope does,
-    must move both the DDL target and the once-guard's recorded name together."""
+    """Rebinding schema.PG_SCHEMA must move both the DDL target and the once-guard's recorded name together."""
     captured_query = {}
     real_execute = FakeConnection.execute
 

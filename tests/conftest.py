@@ -2,7 +2,7 @@
 
 No test reaches the deployment database. Unit tests see an unreachable DB_URL;
 integration tests get a throwaway Postgres container that this session starts on
-tmpfs and removes at the end, and every on-disk path points at a session tempdir.
+tmpfs and removes at the end, and the log directory is a session tempdir.
 """
 
 from __future__ import annotations
@@ -43,13 +43,10 @@ def _remove_orphaned_state_dirs() -> None:
 
 
 _remove_orphaned_state_dirs()
-# Set before any memory_base import: these paths are read at module import time.
+# Set before any memory_base import: this path is read at module import time.
 _STATE_DIR = Path(tempfile.mkdtemp(prefix=f"memory-base-tests-{os.getpid()}-"))
 os.environ["DB_URL"] = OFFLINE_DB_URL
-os.environ["INGEST_SPOOL"] = str(_STATE_DIR / "ingest-spool")
-os.environ["REPO_CACHE"] = str(_STATE_DIR / "repos-cache")
 os.environ["LOG_DIR"] = str(_STATE_DIR / "logs")
-os.environ["COCOINDEX_DB"] = str(_STATE_DIR / "cocoindex")
 
 
 _live_container: str | None = None
@@ -114,7 +111,6 @@ def _start_live_database() -> None:
     port = _docker("port", _live_container, "5432/tcp").splitlines()[0].rsplit(":", 1)[1]
     url = f"postgresql://memory:{password}@127.0.0.1:{port}/memory_base"
     os.environ["DB_URL"] = url
-    os.environ["TABLES_QUERY_PASSWORD"] = secrets.token_hex(16)
     _prepare_schema(url)
 
 
@@ -148,30 +144,10 @@ def only_integration_tests_reach_the_database(request, monkeypatch):
 @pytest.fixture(autouse=True)
 def model_names(monkeypatch):
     """Tests that fake the backends still need the endpoints and names to resolve; real ones win."""
-    for name in ("VLLM_URL", "EMB_URL", "RERANK_URL"):
+    for name in ("EMB_URL", "RERANK_URL"):
         monkeypatch.setenv(name, os.getenv(name) or "http://vllm.test")
-    for name in ("VLLM_MODEL", "EMB_MODEL", "RERANK_MODEL"):
+    for name in ("EMB_MODEL", "RERANK_MODEL"):
         monkeypatch.setenv(name, os.getenv(name) or "test-model")
-
-
-@pytest.fixture(autouse=True)
-def table_query_password_for_unit_tests(request, monkeypatch):
-    """Unit schema fakes receive a password without requiring deployment configuration."""
-    if request.node.get_closest_marker("integration") is None:
-        monkeypatch.setenv(
-            "TABLES_QUERY_PASSWORD", os.getenv("TABLES_QUERY_PASSWORD") or "test-only"
-        )
-
-
-@pytest.fixture(autouse=True)
-def isolate_unit_app_lifespan(request, monkeypatch):
-    """Keep ordinary tests independent of Postgres-backed worker startup."""
-    if request.node.get_closest_marker("integration") is not None:
-        return
-
-    from memory_base.serve import api
-
-    monkeypatch.setattr(api, "BACKGROUND", ())
 
 
 @pytest.fixture()
