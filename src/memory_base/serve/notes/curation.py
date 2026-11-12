@@ -53,22 +53,17 @@ async def archive_rows(ids: list[str], now: float, archived_by: str) -> int:
         return int(status.rsplit(" ", 1)[-1])
 
 
-async def rows_by_ids(ids: list[str], notes_only: bool = False) -> list[dict]:
-    """Return lifecycle fields for rows matching the supplied identifiers.
-
-    ``notes_only`` drops every row that is not an agent note.
-    """
+async def rows_by_ids(ids: list[str]) -> list[dict]:
+    """Return lifecycle fields for agent notes matching the supplied identifiers."""
     async with db.acquire() as conn:
         rows = await conn.fetch(
             f"""
             SELECT id, chunk_kind AS kind, archived_at,
                    metadata->>'archived_by' AS archived_by
             FROM "{PG_SCHEMA}".memory_chunks
-            WHERE id = ANY($1::text[])
-              AND (NOT $2::boolean OR source_type = 'agent_note')
+            WHERE source_type = 'agent_note' AND id = ANY($1::text[])
             ORDER BY id
             """,
             ids,
-            notes_only,
         )
         return [dict(row) for row in rows]

@@ -144,7 +144,7 @@ async def archive_route(request: Request) -> JSONResponse:
     ids = _ids(body)
     if ids is None:
         return error("ids must be a non-empty list")
-    rows = await curation.rows_by_ids(ids, notes_only=True)
+    rows = await curation.rows_by_ids(ids)
     if refused := _refuse_missing(ids, rows, "active notes"):
         return refused
     if body.get("confirm") is True:

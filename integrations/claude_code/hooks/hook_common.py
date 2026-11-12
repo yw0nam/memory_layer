@@ -57,16 +57,13 @@ def data_dir() -> Path:
     return path
 
 
-def _request(cfg: Config, req: urllib.request.Request, timeout: float):
+def get(cfg: Config, path: str, params: dict | None = None, timeout: float = READ_TIMEOUT):
+    query = f"?{urllib.parse.urlencode(params)}" if params else ""
+    req = urllib.request.Request(f"{cfg.url.rstrip('/')}{path}{query}")
     req.add_header("X-API-Key", cfg.api_key)
     req.add_header("X-Author", cfg.author)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
-
-
-def get(cfg: Config, path: str, params: dict | None = None, timeout: float = READ_TIMEOUT):
-    query = f"?{urllib.parse.urlencode(params)}" if params else ""
-    return _request(cfg, urllib.request.Request(f"{cfg.url.rstrip('/')}{path}{query}"), timeout)
 
 
 def _is_local_host(host: str) -> bool:
@@ -120,9 +117,7 @@ def git_origin(cwd: str) -> str | None:
     return url if result.returncode == 0 and url else None
 
 
-def emit(context: str | None, system_message: str | None) -> None:
-    """Print the hook's output: plain context, or a JSON `systemMessage` line for the user."""
-    if system_message is not None:
-        print(json.dumps({"systemMessage": system_message}, ensure_ascii=False))
-    elif context:
+def emit(context: str) -> None:
+    """Print the hook's context; an empty one prints nothing."""
+    if context:
         print(context)

@@ -134,8 +134,7 @@ def test_admin_archive_with_ids_previews_those_rows(monkeypatch):
     calls = {"rows_by_ids": None, "archive_rows": None}
     rows = [{"id": "note:a", "kind": "note", "archived_at": None, "archived_by": None}]
 
-    async def fake_rows_by_ids(ids, notes_only=False):
-        assert notes_only
+    async def fake_rows_by_ids(ids):
         calls["rows_by_ids"] = ids
         return rows
 
@@ -155,7 +154,7 @@ def test_admin_archive_with_ids_previews_those_rows(monkeypatch):
 def test_admin_archive_with_ids_confirm_stamps_the_header_author(monkeypatch):
     captured = {}
 
-    async def fake_rows_by_ids(ids, notes_only=False):
+    async def fake_rows_by_ids(ids):
         return [{"id": i} for i in ids]
 
     async def fake_archive_rows(ids, now, archived_by=None):
@@ -178,7 +177,7 @@ def test_admin_archive_with_ids_confirm_stamps_the_header_author(monkeypatch):
 def test_admin_archive_with_ids_names_the_ids_not_in_scope(monkeypatch):
     calls = {"archive_rows": None}
 
-    async def fake_rows_by_ids(ids, notes_only=False):
+    async def fake_rows_by_ids(ids):
         return [{"id": "note:a"}]
 
     async def fake_archive_rows(ids, now, archived_by=None):

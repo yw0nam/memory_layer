@@ -1,8 +1,9 @@
 """Claude Code SessionStart hook: deliver this repo's handoff headers.
 
-Prints one <memory-context> fence holding the handoffs, or nothing when there are none, and records the
-connection state to `status.json` in the plugin data directory. The hook never claims a handoff. Config comes from the plugin
-options (`CLAUDE_PLUGIN_OPTION_*`). Every failure mode is fail-open: exit 0. Stdlib only.
+Prints one <memory-context> fence holding the handoffs, or nothing when there are none,
+and records the connection state to `status.json` in the plugin data directory. The hook
+never claims a handoff. Config comes from the plugin options (`CLAUDE_PLUGIN_OPTION_*`).
+Every failure mode is fail-open: exit 0. Stdlib only.
 """
 
 from __future__ import annotations
@@ -106,7 +107,7 @@ def main() -> int:
                 failure.append(str(exc))
                 raise
 
-        emit(run_hook(payload, fetch), None)
+        emit(run_hook(payload, fetch))
         try:
             _write_status(cfg, not failure, failure[0] if failure else None)
         except Exception:
