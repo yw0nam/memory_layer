@@ -1,8 +1,7 @@
 # Memory Base
 
 A retrieval layer whose memory is distilled content. Agents write memories through a
-validating tool; documents and code repositories are ingested through source adapters.
-Every consumer reads back through one REST API.
+validating tool. Every consumer reads back through one REST API.
 
 ## Language
 
@@ -10,33 +9,15 @@ Every consumer reads back through one REST API.
 
 **Chunk**:
 The unit of storage and retrieval — one embedded, independently searchable piece of content.
-_Avoid_: record, entry, item, document (for the unit)
+_Avoid_: record, entry, item
 
 **Note**:
 An agent-authored memory, distilled by the agent before it arrives rather than extracted from a file.
 _Avoid_: memo, observation
 
 **Kind**:
-The label a note carries: `personal` (the user: their life, their day, and moments with the agent) or `work` (knowledge of the work), chosen by the agent when it calls `save_memory`; it narrows search and listing and never decides whether the note is stored. A document chunk's kind is `doc`.
+The label a note carries: `personal` (the user: their life, their day, and moments with the agent) or `work` (knowledge of the work), chosen by the agent when it calls `save_memory`; it narrows search and listing and never decides whether the note is stored.
 _Avoid_: track, lane, category, type
-
-**Document**:
-An uploaded file that is converted and split into chunks. The whole file, never one of its pieces.
-_Avoid_: file, doc, upload
-
-**Card**:
-A single distilled description of a tabular document — its fields, shape, and the
-patterns visible in a sample — standing in for data that would be noise if chunked
-directly. Distinct from the chunks of a prose document. The card is also the handle to
-the document's table rows: it carries the column list and the document id a SQL query
-needs.
-_Avoid_: summary, table summary, doc chunk
-
-**Table rows**:
-A tabular document's data rows, stored verbatim in `doc_rows` and read exclusively
-through the SQL query lane. Never embedded, never returned by search — the card is
-found, the rows are computed over.
-_Avoid_: table chunks, row chunks, records
 
 **Message**:
 An agent-authored, addressed one-time signal, stored as canonical Markdown in `messages`,
@@ -58,14 +39,6 @@ The at-most-once delivery of a pending message: exactly one claimer wins, and th
 loser is refused. Terminal — a claimed message is never delivered again.
 _Avoid_: pop, read receipt, acknowledge
 
-**Code chunk**:
-A span of source lines from an indexed repository. Retrieved from its own lane, separate from memories.
-_Avoid_: snippet, fragment
-
-**Repo**:
-A git repository cached and indexed for code retrieval. Managed and re-indexable, unlike a document.
-_Avoid_: codebase, project, source
-
 ### Organization
 
 **Namespace**:
@@ -85,7 +58,7 @@ note stays attributed to the writer.
 _Avoid_: public, global
 
 **Tag**:
-An uploader- or author-supplied label on a chunk, used to narrow retrieval. Not a boundary.
+An author-supplied label on a note, used to narrow retrieval. Not a boundary.
 _Avoid_: label, category, topic
 
 **Supersede**:

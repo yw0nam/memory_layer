@@ -4,20 +4,13 @@
 
 | variable | purpose |
 |---|---|
-| `OPENCODE_API_KEY`, `ZAI_API_KEY`, `OPENAI_API_KEY`, `CLAUDE_API_KEY` | chat API keys; the first non-empty one in the order opencode → zai → openai → claude selects the chat provider |
-| `ZAI_BASE_URL` | z.ai OpenAI-compatible chat endpoint (default `https://api.z.ai/api/coding/paas/v4`) |
-| `OPENCODE_MODEL`, `ZAI_MODEL`, `OPENAI_MODEL`, `CLAUDE_MODEL` | chat model names (defaults `deepseek-v4.1-flash` / `glm-5.3-flash` / `gpt-5.6-luna` / `claude-haiku-4-5`); `OPENCODE_MODEL` must be an OpenCode Go model served on the OpenAI-compatible chat-completions endpoint, fixed at `https://opencode.ai/inference/go/openai/v1` |
-| `VLLM_URL`, `VLLM_MODEL` | vLLM chat endpoint used when no API key is set; required only in that case |
 | `EMB_URL`, `RERANK_URL` | vLLM OpenAI-compatible endpoints for embedding and rerank |
 | `EMB_MODEL`, `RERANK_MODEL` | embedding and rerank model names |
 | `DB_URL` | Postgres connection string |
 | `DB_POOL_MIN`, `DB_POOL_MAX` | asyncpg pool size bounds (default `1` / `10`) |
 | `DB_POOL_ACQUIRE_TIMEOUT` | seconds to wait for a pooled connection before failing (default `30`) |
 | `POSTGRES_PASSWORD` | required; consumed by docker-compose for the db service and the api `DB_URL` |
-| `TABLES_QUERY_PASSWORD` | required; login password of `memory_tables_query`, the restricted role the SQL table lane connects as — set and kept current by `ensure_schema` at startup |
-| `DATA_ROOT` | required; host directory docker-compose mounts persisted state under (`pgdata`, `repos_cache`, `cocoindex_state`, `ingest-spool`) |
-| `REPO_CACHE` | git checkout root |
-| `INGEST_SPOOL` | durable uploaded-document spool root |
+| `DATA_ROOT` | required; host directory docker-compose mounts the Postgres data directory (`pgdata`) under |
 | `REST_URL` | backend the MCP server proxies to |
 | `MEMORY_API_KEY` | the MCP server's `X-API-Key` over stdio transport; streamable HTTP forwards the caller's own header instead |
 | `MEMORY_AUTHOR` | the MCP server's `X-Author` over stdio transport; streamable HTTP forwards the caller's own header instead |
@@ -29,37 +22,4 @@
 Tuning knobs, all optional: `NOTE_SIMILAR_THRESHOLD`, `MESSAGE_TTL_DAYS` (1..30, default 7;
 the expiry of a general message sent without `expires_at` — a completed handoff expires
 after 3 days and another handoff has none; the server refuses to boot outside that
-range), `INGEST_MAX_BYTES`,
-`INGEST_BACKLOG_PER_KEY`, `INGEST_BACKLOG_MAX`, `INGEST_MAX_CONCURRENT_JOBS`,
-`REPO_MAX_QUEUED`, `REPO_MAX_BYTES`, `REPO_DISK_HEADROOM_BYTES`, `JOB_RETENTION_SECONDS`.
-
-## Private repositories
-
-`git-credentials` (gitignored) at the repo root holds one credential line per host and is
-mounted read-only at `/run/git-credentials`, where the container's system-wide
-`credential.helper` reads it. Create it before starting the api container — Docker mounts
-a directory in its place otherwise:
-
-```bash
-touch git-credentials                                   # empty — public repos only
-```
-
-Each line is a URL carrying the credential for one host, with any `@` or `:` inside the
-username or token percent-encoded:
-
-```
-https://user:token@github.com
-https://x-bitbucket-api-token-auth:api-token@bitbucket.org
-```
-
-Bitbucket API tokens authenticate git over https with the static username
-`x-bitbucket-api-token-auth` (the account email is for the REST API only). Credentials never
-enter repo URLs or git remotes, so `GET /repos` and job logs cannot leak them.
-`GIT_TERMINAL_PROMPT=0` makes a clone with no matching credential fail immediately instead
-of waiting on a prompt.
-
-`COCOINDEX_DB` is set by `docker-compose.yml`, not by `.env` — together with `REPO_CACHE`
-and `INGEST_SPOOL` it points at a container-local path bound under `DATA_ROOT` on the host,
-so one ledger tracks one repo cache and uploaded documents remain available across API
-restarts. Losing the repo cache or the ledger orphans `code_chunks` rows until the repos are
-re-added.
+range).

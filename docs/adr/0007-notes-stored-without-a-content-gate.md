@@ -31,9 +31,6 @@ chat-model call. The client agent decides what is worth keeping, guided by the
 `save_memory` description and the server instructions: write rarely, search before
 saving, supersede a changed value, and the list of what not to save.
 
-The chat model is called in one place: the CSV branch, to summarize a sampled table into
-one card.
-
 This supersedes the judge prompt and the refusal recovery of ADR-0006. Its other decisions
 stand: one `save_memory` tool, the kind as a label, parameter notes in the input schema.
 

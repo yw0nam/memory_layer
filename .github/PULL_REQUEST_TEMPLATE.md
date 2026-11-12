@@ -1,4 +1,4 @@
-<!-- Title in English, conventional-commit format (becomes the squash-merge subject). e.g. "feat: selective ingest gates" -->
+<!-- Title in English, conventional-commit format (becomes the squash-merge subject). e.g. "feat: selective save gates" -->
 
 ## Summary
 <!-- What and why -->
@@ -6,9 +6,9 @@
 ## Related issues
 <!-- One line per resolved issue: Closes #N -->
 
-## Runtime evidence (required for ingest / retrieval / serving behavior)
+## Runtime evidence (required for retrieval / serving behavior)
 <!-- Unit tests are not runtime verification. For any behavioral change, paste
-     the proving output: ingest stats line, search results for a real query,
+     the proving output: search results for a real query,
      an MCP client call, or relevant logs. State "N/A — no runtime behavior
      change" only when the diff is non-runtime (docs, config, tooling). -->
 
@@ -19,7 +19,6 @@
 - [ ] Runtime evidence attached above, or N/A justified
 
 ## Checklist (core principles)
-- [ ] Selective storage — notes stay distilled; verbatim text lives only in `doc_rows`
-- [ ] Source-specific logic stays out of the source-agnostic core (ingest pipeline, retrieval, serving)
+- [ ] Selective storage — notes stay distilled; raw text is never stored
 - [ ] No hardcoded endpoints/models — configuration lives in `.env`
 - [ ] New/changed behavior ships a test in this PR (or `skip-tests` label justified)
