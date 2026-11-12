@@ -1,7 +1,7 @@
 {
   "name": "memory-base",
   "version": "0.4.0",
-  "description": "Memory Base for Claude Code: the agent's and the user's cards and the repo's handoffs at session start, and the verbatim turn record kept beside them.",
+  "description": "Memory Base for Claude Code: the repo's handoff headers at session start, and the memory tools over MCP.",
   "author": { "name": "yw0nam" },
   "license": "MIT",
   "keywords": ["memory", "mcp", "hooks", "memory-base"],
@@ -33,18 +33,6 @@
       "description": "The author slug this agent writes under and reads by default; sent as the X-Author header on every request.",
       "default": "claude-code",
       "required": true
-    },
-    "user_entity": {
-      "type": "string",
-      "title": "User entity",
-      "description": "Slug of the user's own entity (kind person), as list_entities shows it; its card is delivered at session start. Empty: no user card.",
-      "required": false
-    },
-    "namespace": {
-      "type": "string",
-      "title": "Namespace",
-      "description": "A registered namespace for this agent's turns and for the facts on its session-start cards; empty means `default`. Register a new one first (the connect-agent skill shows how): the server refuses every turn in an unregistered namespace.",
-      "required": false
     }
   }
 }

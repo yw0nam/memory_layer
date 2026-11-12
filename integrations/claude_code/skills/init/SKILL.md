@@ -23,11 +23,10 @@ Show one short table:
 | field | value |
 |---|---|
 | configured | `configured` (false: the URL or the key is empty) |
-| card reachable | `card_reachable` (the author's card fetch), with `error` when false |
+| reachable | `reachable` (false: the last handoff fetch failed), with `error` when false |
 | checked at | `checked_at` |
 | author | `author` |
 | REST URL | `url` |
-| namespace | `namespace`, or `default` when null |
 
 ## 3. Find leftover hand-installed entries
 
@@ -42,7 +41,7 @@ python3 -c "import json,os;d=json.load(open(os.path.expanduser('~/.claude.json')
 ```
 
 - A count above 0 means `~/.claude/settings.json` holds a hand-installed hook entry
-  (UserPromptSubmit or SessionStart running a `memory_base_*.py` script from
+  (a hook running a `memory_base_*.py` script from
   `~/.claude/hooks/`). Tell the user to delete those entries.
 - A list containing `memory-base` means `~/.claude.json` holds a hand-installed MCP
   entry. Tell the user to delete it (`claude mcp remove memory-base`).
@@ -52,7 +51,7 @@ say so. Do not edit either file.
 
 ## 4. How to change values
 
-The plugin's rows in `/config` change the URLs, the author, the user entity, and the namespace; the key is
+The plugin's rows in `/config` change the URLs and the author; the key is
 held in the secure store, never in a file. The author option is sent as the `X-Author`
 header on every hook and MCP request and is the default read scope: reads return that
 author's own notes and the shared notes. Changes apply to the next session.
