@@ -1,1 +1,1 @@
-"""Reproducible evaluation tools."""
+"""Runtime-evidence sandbox."""
