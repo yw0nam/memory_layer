@@ -13,8 +13,7 @@ embeddings). `--read prefetch` reads each question the way the Hermes prefetch d
 score floor 0.25) instead of search_memory's defaults (top 10, floor 0.25) and prefixes the
 run name with `prefetch`; `--read budget` packs hits up to a 4000-token budget
 (`budget_tokens`) and prefixes `budget`; `--read candidates` keeps every fused candidate in
-rerank order, plus the production top_k read, for memory_base.eval.read_sweep and prefixes
-`candidates`. `frontier` reports evidence coverage and junk per read cell from a candidates
+rerank order, plus the production top_k read, and prefixes `candidates`. `frontier` reports evidence coverage and junk per read cell from a candidates
 run's hit judgments (memory_base.eval.hit_judge).
 
 CLI:
@@ -66,8 +65,8 @@ VARIANTS = ("baseline", "dated")
 RUNS = ("baseline", "dated", "prefetch", "budget")
 # A budget no packet reaches, so a search returns every fused candidate in rerank order.
 CANDIDATES_BUDGET = 10**9
-# How a reader bounds its hits: search_memory's defaults, the values the Hermes prefetch
-# sends, a token budget packed in rerank order, and every candidate for the read sweep.
+# How a reader bounds its hits: search_memory's defaults, the prefetch values, a token
+# budget packed in rerank order, and every candidate in rerank order.
 READ_SETTINGS = {
     "search": {"top_k": 10, "min_score": None},
     "prefetch": {"top_k": 5, "min_score": 0.25},

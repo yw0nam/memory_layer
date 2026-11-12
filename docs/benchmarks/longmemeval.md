@@ -81,10 +81,6 @@ by side.
 A budget packet records its `budget_tokens`, and the manifest records the read setting
 of every run.
 
-The `candidates` read feeds `memory_base.eval.read_sweep`, which cuts every read-settings
-grid point from its fused candidates and, for the `top_k` points, the production `top_k`
-read each `candidates` packet also carries (see `read-settings.md`).
-
 ## Extraction
 
 The extractor is `glm-5.3-flash` on the z.ai endpoint built from `ZAI_API_KEY` in `.env`
