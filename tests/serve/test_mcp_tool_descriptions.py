@@ -46,7 +46,7 @@ def test_the_author_argument_states_the_default_and_the_explicit_list(schemas, n
     assert {"type": "array", "items": {"type": "string"}} in author["anyOf"]
 
 
-def test_the_server_registers_the_note_and_message_tools_only(descriptions):
+def test_the_server_registers_the_note_message_and_decision_tools_only(descriptions):
     assert set(descriptions) == {
         "search_memory",
         "list_notes",
@@ -57,6 +57,10 @@ def test_the_server_registers_the_note_and_message_tools_only(descriptions):
         "list_messages",
         "claim_message",
         "cancel_message",
+        "record_decision",
+        "retire_decision",
+        "list_decisions",
+        "get_decision",
     }
 
 
