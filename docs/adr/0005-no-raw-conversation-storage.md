@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; the content gate's judge prompt was superseded by ADR-0007
+Superseded by ADR-0017; the content gate's judge prompt was superseded by ADR-0007
 
 The Claude Code plugin keeps the last 1500 characters of the previous assistant message in a
 session-local file of the plugin data directory, overwritten each turn and removed on clear and
