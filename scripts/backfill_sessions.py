@@ -43,34 +43,45 @@ SINCE_FORMAT = "%Y-%m-%d"
 class Send:
     """The uploader's send: posts each chunk to /session_events, counting the outcome.
 
-    A dry run counts the events without posting. A 400 rejection is counted and
-    skipped as the uploader does; any other failure is remembered so the run
+    A dry run counts the events without posting. Events count once by id, so a chunk the
+    uploader resends line by line after a 400 is not counted twice; an event is rejected
+    when no post of it was accepted. Any failure other than a 400 is remembered so the run
     can stop after the transcript.
     """
 
     def __init__(self, cfg: Config, dry: bool):
         self.cfg, self.dry = cfg, dry
-        self.events = self.stored = self.known = self.rejected = 0
+        self.ids: set[str] = set()
+        self.accepted: set[str] = set()
+        self.stored = self.known = 0
         self.failure: Exception | None = None
 
+    @property
+    def events(self) -> int:
+        return len(self.ids)
+
+    @property
+    def rejected(self) -> int:
+        return 0 if self.dry else len(self.ids - self.accepted)
+
     def __call__(self, body: dict) -> dict:
-        self.events += len(body["events"])
+        ids = {event["id"] for event in body["events"]}
+        self.ids |= ids
         if self.dry:
             return {"stored": 0, "known": 0, "conflicts": []}
         try:
             reply = post(self.cfg, "/session_events", body, uploader.POST_TIMEOUT)
-            self.stored += reply.get("stored") or 0
-            self.known += reply.get("known") or 0
-            return reply
         except urllib.error.HTTPError as exc:
-            if exc.code == 400:
-                self.rejected += len(body["events"])
-            else:
+            if exc.code != 400:
                 self.failure = exc
             raise
         except Exception as exc:
             self.failure = exc
             raise
+        self.accepted |= ids
+        self.stored += reply.get("stored") or 0
+        self.known += reply.get("known") or 0
+        return reply
 
 
 def _cwd_of(path: Path) -> str | None:
@@ -130,12 +141,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     cfg = Config(url=args.url.rstrip("/"), api_key=api_key, author=author)
     since = datetime.strptime(args.since, SINCE_FORMAT).timestamp() if args.since else None
-    if args.dry_run:
-        # A dry run's checkpoints land in a throwaway directory, so a real run resends.
-        os.environ["CLAUDE_PLUGIN_DATA"] = tempfile.mkdtemp(prefix="memory-base-backfill-dry-")
-    else:
-        os.environ["CLAUDE_PLUGIN_DATA"] = str(Path(args.state).expanduser())
     files = _transcripts(Path(args.projects).expanduser(), since)
+    if not args.dry_run:
+        os.environ["CLAUDE_PLUGIN_DATA"] = str(Path(args.state).expanduser())
+        return _backfill(cfg, files, dry=False)
+    # A dry run's checkpoints land in a throwaway directory, so a real run resends.
+    with tempfile.TemporaryDirectory(prefix="memory-base-backfill-dry-") as scratch:
+        os.environ["CLAUDE_PLUGIN_DATA"] = scratch
+        return _backfill(cfg, files, dry=True)
+
+
+def _backfill(cfg: Config, files: list[Path], dry: bool) -> int:
+    """Upload each transcript in order; 1 at the first failure that is not a 400."""
     totals = dict(events=0, stored=0, known=0, rejected=0, files=0, skipped=0)
     for path in files:
         cwd = _cwd_of(path)
@@ -143,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{path.stem} skipped (no cwd)")
             totals["skipped"] += 1
             continue
-        send = Send(cfg, args.dry_run)
+        send = Send(cfg, dry)
         uploader.upload(str(path), path.stem, cwd, send)
         if send.failure is not None:
             print(f"error: {path.name}: {send.failure}", file=sys.stderr)
@@ -155,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         totals["files"] += 1
         for key in ("events", "stored", "known", "rejected"):
             totals[key] += getattr(send, key)
-    verb = "would send" if args.dry_run else "sent"
+    verb = "would send" if dry else "sent"
     print(
         f"total {verb} events={totals['events']} stored={totals['stored']}"
         f" known={totals['known']} rejected={totals['rejected']}"

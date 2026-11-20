@@ -55,7 +55,8 @@ def digest(line: bytes) -> str:
 
 
 def start(point: dict, handle) -> int:
-    """Where to read the open transcript from: the offset, or 0 when the file is not the one acknowledged."""
+    """Where to read the open transcript from: the offset, or 0 when the file is not the one
+    acknowledged."""
     offset = point.get("offset", 0)
     stat = os.fstat(handle.fileno())
     if not offset or (stat.st_dev, stat.st_ino) != (point.get("dev"), point.get("inode")):
@@ -69,7 +70,8 @@ def start(point: dict, handle) -> int:
 
 
 def advance(point: dict, handle, line_start: int, line: bytes) -> None:
-    """Record `line`, read from `line_start` of the open transcript, as the last acknowledged one."""
+    """Record `line`, read from `line_start` of the open transcript, as the last acknowledged
+    one."""
     stat = os.fstat(handle.fileno())
     point.update(
         dev=stat.st_dev,
