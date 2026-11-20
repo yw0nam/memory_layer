@@ -18,6 +18,7 @@ from memory_base.serve.decisions import routes as decision_routes
 from memory_base.serve.messages import routes as message_routes
 from memory_base.serve.notes import routes as note_routes
 from memory_base.serve.search import routes as search_routes
+from memory_base.serve.sessions import routes as session_routes
 
 setup_logging()
 logging.getLogger("uvicorn.access").addFilter(health.HealthAccessFilter())
@@ -51,11 +52,16 @@ app = Starlette(
         Route("/decisions", decision_routes.list_route, methods=["GET"]),
         Route("/decisions/retire", decision_routes.retire_route, methods=["POST"]),
         Route("/decisions/{number}", decision_routes.get_route, methods=["GET"]),
+        Route("/session_events", session_routes.write_route, methods=["POST"]),
+        Route("/session_events/search", session_routes.search_route, methods=["GET"]),
+        Route("/sessions", session_routes.list_route, methods=["GET"]),
+        Route("/sessions/{session_id:path}", session_routes.read_route, methods=["GET"]),
         Route("/namespaces", access_routes.namespaces_create_route, methods=["POST"]),
         Route("/namespaces", access_routes.namespaces_list_route, methods=["GET"]),
         Route("/namespaces/{name}", access_routes.namespaces_delete_route, methods=["DELETE"]),
         Route("/admin/notes/delete", note_routes.delete_route, methods=["POST"]),
         Route("/admin/archive", note_routes.archive_route, methods=["POST"]),
+        Route("/admin/sessions/{session_id:path}", session_routes.delete_route, methods=["DELETE"]),
         Route("/admin/messages/purge", message_routes.purge_route, methods=["POST"]),
     ],
 )

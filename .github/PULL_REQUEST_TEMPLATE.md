@@ -19,6 +19,6 @@
 - [ ] Runtime evidence attached above, or N/A justified
 
 ## Checklist (core principles)
-- [ ] Selective storage — notes stay distilled; raw text is never stored
+- [ ] Selective storage — notes stay distilled; raw text lives only in the session record lane, never ranked
 - [ ] No hardcoded endpoints/models — configuration lives in `.env`
 - [ ] New/changed behavior ships a test in this PR (or `skip-tests` label justified)

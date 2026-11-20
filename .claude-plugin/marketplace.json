@@ -10,7 +10,7 @@
     {
       "name": "memory-base",
       "source": "./integrations/claude_code",
-      "description": "Memory Base for Claude Code: the repo's handoffs and decision titles at session start, decisions and notes recalled for each prompt, and the memory tools over MCP."
+      "description": "Memory Base for Claude Code: the repo's handoffs and decision titles at session start, decisions and notes recalled for each prompt, the session record of each session's transcript, and the memory tools over MCP."
     }
   ]
 }

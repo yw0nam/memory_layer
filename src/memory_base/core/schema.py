@@ -1,4 +1,5 @@
-"""Public database schema setup for notes, messages, namespaces, keys, and decisions."""
+"""Public database schema setup for notes, messages, namespaces, keys, decisions, and session
+events."""
 
 from __future__ import annotations
 
@@ -88,6 +89,28 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           created_at timestamptz NOT NULL,
           PRIMARY KEY (scope, author, number)
         );
+        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        CREATE TABLE IF NOT EXISTS {schema}.session_events (
+          id uuid NOT NULL,
+          author text NOT NULL,
+          session_id text NOT NULL,
+          seq integer NOT NULL,
+          role text NOT NULL CHECK (role IN ('user', 'assistant', 'tool_call', 'tool_result')),
+          content text NOT NULL,
+          tool_name text,
+          tool_use_id text,
+          event_at timestamptz NOT NULL,
+          repo text,
+          host text NOT NULL,
+          cwd text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (author, id),
+          UNIQUE (author, session_id, seq)
+        );
+        CREATE INDEX IF NOT EXISTS session_events__author_event_at
+          ON {schema}.session_events (author, event_at DESC);
+        CREATE INDEX IF NOT EXISTS session_events__content_trgm
+          ON {schema}.session_events USING GIN (content gin_trgm_ops);
         """
     )
 
