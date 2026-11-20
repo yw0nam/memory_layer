@@ -39,6 +39,14 @@ The at-most-once delivery of a pending message: exactly one claimer wins, and th
 loser is refused. Terminal — a claimed message is never delivered again.
 _Avoid_: pop, read receipt, acknowledge
 
+**Decision**:
+A numbered record of a choice the owner made about a repository, kept in the decision lane
+as `D-N` per repository and author: title, decision, why (the reason and the rejected
+alternatives), links, and the decided date. Written, superseded, or retired only when the
+owner asks; a retired or superseded decision stays as history. Never a note, and never
+returned by note search.
+_Avoid_: note, ADR, ticket, memo
+
 ### Organization
 
 **Namespace**:
@@ -49,7 +57,7 @@ _Avoid_: tenant, workspace, bucket, collection
 The slug a client declares in the `X-Author` header: the attribution of everything the
 client writes and the default scope of its note reads — a note read returns that author's
 own notes and the shared notes unless the read names an author. Shape is checked; it
-grants nothing beyond that.
+grants nothing beyond that. Its decisions are read by it alone.
 _Avoid_: agent id, profile name, owner
 
 **Shared**:
