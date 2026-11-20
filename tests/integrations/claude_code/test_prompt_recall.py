@@ -18,13 +18,16 @@ import pytest
 
 import prompt_recall
 from hook_common import data_dir
+from recall import tail
 
 PLUGIN = Path(__file__).resolve().parents[3] / "integrations" / "claude_code"
 PROMPT = "How do we retopologize the hair?"
+ORIGIN = "git@github.com:o/r.git"
+SCOPE = "repo:github.com/o/r"
 
 
-def _payload(prompt=PROMPT, session="sess-1"):
-    return {"session_id": session, "cwd": "/repo", "prompt": prompt}
+def _payload(prompt=PROMPT, session="sess-1", transcript=""):
+    return {"session_id": session, "cwd": "/repo", "prompt": prompt, "transcript_path": transcript}
 
 
 def _note(n, text=None):
@@ -37,6 +40,22 @@ def _note(n, text=None):
         "text": text or f"Note {n}.",
         "author": "claude-code",
     }
+
+
+def _decision(n, decision=None):
+    return {
+        "number": n,
+        "title": f"Decision title {n}",
+        "decided_on": "2026-10-30",
+        "decision": decision or f"Decision text {n}.",
+        "why": None,
+        "links": [],
+        "score": 0.8,
+    }
+
+
+def _reply(notes=(), decisions=(), errors=()):
+    return {"notes": list(notes), "decisions": list(decisions), "errors": list(errors)}
 
 
 class FakePost:
@@ -56,8 +75,8 @@ def state_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path / "data"))
 
 
-def _run(post, payload=None):
-    return prompt_recall.run(payload or _payload(), post, time.monotonic())
+def _run(post, payload=None, origin=None):
+    return prompt_recall.run(payload or _payload(), post, time.monotonic(), lambda cwd: origin)
 
 
 @pytest.mark.parametrize(
@@ -71,14 +90,89 @@ def _run(post, payload=None):
     ids=["short", "fence-only", "short-after-fence", "slash-command"],
 )
 def test_a_short_fence_only_or_slash_prompt_sends_no_request(prompt):
-    post = FakePost([_note(1)])
+    post = FakePost(_reply([_note(1)]))
 
     assert _run(post, _payload(prompt=prompt)) == ""
     assert post.calls == []
 
 
-def test_a_session_sees_each_note_once_and_a_note_cut_by_the_budget_comes_back():
-    post = FakePost([_note(n, f"Note {n} " + "z" * 1740) for n in (1, 2, 3)])
+def test_a_slash_command_sends_no_request_even_after_an_assistant_message():
+    tail.save("sess-1", "A long assistant message.")
+    post = FakePost(_reply([_note(1)]))
+
+    assert _run(post, _payload(prompt="/review the branch")) == ""
+    assert post.calls == []
+
+
+def test_a_short_reply_recalls_with_the_previous_assistant_text_from_the_tail_file():
+    tail.save("sess-1", "Shall I retopologize the hair with the old rig?")
+    post = FakePost(_reply([_note(1)]))
+
+    assert "Note 1." in _run(post, _payload(prompt="yes"))
+    [(path, body)] = post.calls
+    assert path == "/recall"
+    assert body["query"] == "Shall I retopologize the hair with the old rig?\n\nyes"
+
+
+def test_a_short_reply_falls_back_to_the_transcript_tail(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Use the old rig?"}]},
+            }
+        )
+        + "\n"
+    )
+    post = FakePost(_reply([_note(1)]))
+
+    _run(post, _payload(prompt="ok", transcript=str(transcript)))
+
+    assert post.calls[0][1]["query"] == "Use the old rig?\n\nok"
+
+
+def test_a_short_reply_without_an_assistant_message_sends_no_request():
+    post = FakePost(_reply([_note(1)]))
+
+    assert _run(post, _payload(prompt="yes", transcript="/missing.jsonl")) == ""
+    assert post.calls == []
+
+
+def test_the_request_carries_the_scope_of_a_portable_origin_only():
+    post = FakePost(_reply())
+
+    _run(post, origin=ORIGIN)
+    _run(post, origin="/srv/git/r.git")
+
+    assert post.calls[0][1]["scope"] == SCOPE
+    assert "scope" not in post.calls[1][1]
+
+
+def test_decisions_come_before_notes():
+    post = FakePost(_reply([_note(1)], [_decision(3)]))
+
+    context = _run(post, origin=ORIGIN)
+
+    assert context.index("D-3 Decision title 3") < context.index("Note n1")
+
+
+def test_five_asked_then_the_shown_dropped_then_two_decisions_and_three_notes():
+    post = FakePost(_reply([_note(n) for n in range(1, 6)], [_decision(n) for n in range(1, 6)]))
+
+    first = _run(post, origin=ORIGIN)
+    second = _run(post, origin=ORIGIN)
+    third = _run(post, origin=ORIGIN)
+
+    assert [f"D-{n} " in first for n in range(1, 6)] == [True, True, False, False, False]
+    assert [f"Note n{n} " in first for n in range(1, 6)] == [True, True, True, False, False]
+    assert [f"D-{n} " in second for n in range(1, 6)] == [False, False, True, True, False]
+    assert [f"Note n{n} " in second for n in range(1, 6)] == [False, False, False, True, True]
+    assert "D-5 " in third and "Note" not in third
+
+
+def test_a_session_sees_each_item_once_and_a_note_cut_by_the_budget_comes_back():
+    post = FakePost(_reply([_note(n, f"Note {n} " + "z" * 1740) for n in (1, 2, 3)]))
 
     first = _run(post)
     second = _run(post)
@@ -93,6 +187,17 @@ def test_a_session_sees_each_note_once_and_a_note_cut_by_the_budget_comes_back()
     assert len(log) == 4
     assert "n1,n2" in log[0] and "n3" in log[1]
     assert all("retopologize" not in line for line in log)
+
+
+def test_the_log_line_names_the_errors_and_the_emitted_keys_but_never_the_texts():
+    tail.save("sess-1", "A secret assistant sentence.")
+    post = FakePost(_reply([], [_decision(3)], errors=["notes"]))
+
+    _run(post, _payload(prompt="a secret prompt sentence"), origin=ORIGIN)
+
+    [line] = (data_dir() / "recall.log").read_text().splitlines()
+    assert f"emitted=decision:{SCOPE}#3" in line and "errors=notes" in line
+    assert "secret" not in line
 
 
 def test_a_server_failure_emits_nothing():
@@ -115,12 +220,12 @@ def _env(url, tmp_path):
 
 @pytest.fixture
 def search_server():
-    reply = json.dumps([_note(1, "Hooks stay stdlib-only.")]).encode()
+    reply = json.dumps(_reply([_note(1, "Hooks stay stdlib-only.")])).encode()
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             self.rfile.read(int(self.headers["Content-Length"]))
-            self.send_response(200 if self.path == "/search" else 404)
+            self.send_response(200 if self.path == "/recall" else 404)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(reply)))
             self.end_headers()
