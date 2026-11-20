@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from memory_base.serve.common.scope import normalize_scope
 from memory_base.serve.messages import store
 
 
@@ -44,48 +45,44 @@ def test_subject_key_is_casefolded_normalized_subject():
 
 
 def test_scope_normalizes_repo_origin_hostname_only_preserving_path_case():
-    assert store.normalize_scope("repo:https://GitHub.com/Yw0nam/Memory-Base.git") == (
+    assert normalize_scope("repo:https://GitHub.com/Yw0nam/Memory-Base.git") == (
         "repo:github.com/Yw0nam/Memory-Base"
     )
 
 
 def test_scope_accepts_canonical_form_and_round_trips():
     canonical = "repo:github.com/org/repo"
-    assert store.normalize_scope(canonical) == canonical
+    assert normalize_scope(canonical) == canonical
     for raw in (
         "repo:https://GitHub.com/org/repo.git",
         "repo:git@github.com:org/repo.git",
         "repo:https://github.com/org/repo/",
     ):
-        normalized = store.normalize_scope(raw)
-        assert store.normalize_scope(normalized) == normalized
+        normalized = normalize_scope(raw)
+        assert normalize_scope(normalized) == normalized
 
 
 def test_scope_strips_trailing_slash_and_git_suffix():
-    assert store.normalize_scope("repo:https://github.com/org/repo/") == (
-        "repo:github.com/org/repo"
-    )
-    assert store.normalize_scope("repo:https://github.com/org/repo.git") == (
-        "repo:github.com/org/repo"
-    )
+    assert normalize_scope("repo:https://github.com/org/repo/") == ("repo:github.com/org/repo")
+    assert normalize_scope("repo:https://github.com/org/repo.git") == ("repo:github.com/org/repo")
 
 
 def test_scope_rejects_repo_origin_with_credentials():
     with pytest.raises(ValueError):
-        store.normalize_scope("repo:https://user:token@github.com/org/repo")
+        normalize_scope("repo:https://user:token@github.com/org/repo")
     with pytest.raises(ValueError):
-        store.normalize_scope("repo:user@github.com:org/repo")
+        normalize_scope("repo:user@github.com:org/repo")
 
 
 def test_scope_rejects_raw_http_origin():
     with pytest.raises(ValueError):
-        store.normalize_scope("repo:http://github.com/org/repo")
+        normalize_scope("repo:http://github.com/org/repo")
 
 
 def test_scope_rejects_non_url_repo_origin():
     for bad in ("repo:/home/user/checkout", "repo:not a url"):
         with pytest.raises(ValueError):
-            store.normalize_scope(bad)
+            normalize_scope(bad)
 
 
 def test_scope_strips_query_and_fragment_from_every_origin_form():
@@ -96,14 +93,14 @@ def test_scope_strips_query_and_fragment_from_every_origin_form():
         "repo:git@github.com:org/repo?x=1#frag",
         "repo:git@github.com:org/repo.git#frag",
     ):
-        assert store.normalize_scope(raw) == canonical
+        assert normalize_scope(raw) == canonical
 
 
 def test_scope_rejects_an_unbounded_origin():
     with pytest.raises(ValueError):
-        store.normalize_scope("repo:github.com/" + "a" * 600)
+        normalize_scope("repo:github.com/" + "a" * 600)
     with pytest.raises(ValueError):
-        store.normalize_scope("project:" + "a" * 600 + "/b")
+        normalize_scope("project:" + "a" * 600 + "/b")
 
 
 def test_scope_rejects_local_checkout_paths():
@@ -119,13 +116,11 @@ def test_scope_rejects_local_checkout_paths():
         "repo:git@169.254.1.1:org/repo",
     ):
         with pytest.raises(ValueError):
-            store.normalize_scope(bad)
+            normalize_scope(bad)
 
 
 def test_scope_preserves_repository_path_case_on_a_dotted_host():
-    assert store.normalize_scope("repo:Git.Example.COM/Org/Repo") == (
-        "repo:git.example.com/Org/Repo"
-    )
+    assert normalize_scope("repo:Git.Example.COM/Org/Repo") == ("repo:git.example.com/Org/Repo")
 
 
 def _reload_with_ttl_env(monkeypatch, value):
@@ -164,7 +159,7 @@ def test_configured_default_ttl_of_thirty_days_loads(monkeypatch):
 
 
 def test_scope_accepts_explicit_project_form_and_lowercases():
-    assert store.normalize_scope("project:Acme/Widget-Pro") == "project:acme/widget-pro"
+    assert normalize_scope("project:Acme/Widget-Pro") == "project:acme/widget-pro"
 
 
 def test_scope_rejects_malformed_project_segments():
@@ -176,19 +171,19 @@ def test_scope_rejects_malformed_project_segments():
         "project: org/repo",
     ):
         with pytest.raises(ValueError):
-            store.normalize_scope(bad)
+            normalize_scope(bad)
 
 
 def test_scope_rejects_cwd_and_absolute_path_forms():
     for bad in ("/home/user/project", ".", "./relative", "C:\\work\\repo", "my-scope"):
         with pytest.raises(ValueError):
-            store.normalize_scope(bad)
+            normalize_scope(bad)
 
 
 def test_scope_rejects_non_string_and_blank():
     for bad in (None, "", "   "):
         with pytest.raises(ValueError):
-            store.normalize_scope(bad)
+            normalize_scope(bad)
 
 
 # ---- refs --------------------------------------------------------------------

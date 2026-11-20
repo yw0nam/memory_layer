@@ -207,7 +207,7 @@ def test_save_memory_description_states_the_decision_points_only():
         "the user would otherwise be asked again",
         "something you gave them that they may want again",
         "code, version control, the tracker, and documents cannot answer",
-        "A work decision keeps its reason.",
+        "Repository decisions go to `record_decision`.",
         "Do NOT save session progress",
         "send_message",
         "The server refuses API keys, tokens, and a digit code",
@@ -229,6 +229,7 @@ def test_save_memory_description_states_the_decision_points_only():
         "a reproduced bug and its fix",
         "archive_notes",
         "The server stores a note once",
+        "A work decision keeps its reason.",
     ):
         assert stale not in description
 

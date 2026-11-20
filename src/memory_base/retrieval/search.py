@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any
@@ -377,11 +378,10 @@ async def _embed_query(query: str) -> str:
     return vector_literal(vector)
 
 
-async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
+async def rerank_scores(query: str, texts: list[str]) -> list[float]:
+    """Relevance score of each text against the query, in input order."""
     import httpx
 
-    if not hits:
-        return hits
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(QUERY_TIMEOUT_SECONDS, connect=RERANK_CONNECT_TIMEOUT_SECONDS),
         transport=httpx.AsyncHTTPTransport(retries=1),
@@ -389,13 +389,39 @@ async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
         try:
             r = await client.post(
                 require_env("RERANK_URL").rstrip("/") + "/rerank",
-                json=rerank_payload(rerank_model(), query, [h.text for h in hits]),
+                json=rerank_payload(rerank_model(), query, texts),
             )
             r.raise_for_status()
         except httpx.HTTPError as exc:
             raise UpstreamUnavailable("reranking") from exc
-    for item in r.json()["results"]:
-        hits[item["index"]].rerank_score = item["relevance_score"]
+    try:
+        return _scores_by_index(r.json()["results"], len(texts))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise UpstreamUnavailable("reranking") from exc
+
+
+def _scores_by_index(results: list, count: int) -> list[float]:
+    """Scores in input order; raises unless results score every index in range exactly once."""
+    if not isinstance(results, list):
+        raise ValueError("results is not a list")
+    scores: list[float | None] = [None] * count
+    for item in results:
+        index, score = item["index"], item["relevance_score"]
+        if type(index) is not int or not 0 <= index < count or scores[index] is not None:
+            raise ValueError(f"bad or repeated index {index!r}")
+        if type(score) not in (int, float) or not math.isfinite(score):
+            raise ValueError(f"bad score {score!r}")
+        scores[index] = score
+    if None in scores:
+        raise ValueError("an input index has no score")
+    return scores
+
+
+async def _rerank(query: str, hits: list[Hit]) -> list[Hit]:
+    if not hits:
+        return hits
+    for hit, score in zip(hits, await rerank_scores(query, [h.text for h in hits]), strict=True):
+        hit.rerank_score = score
     hits.sort(key=lambda h: h.rerank_score or 0.0, reverse=True)
     return hits
 

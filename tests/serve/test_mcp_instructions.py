@@ -51,6 +51,17 @@ def test_instructions_draw_the_message_vs_note_line():
     assert "never embedded" in SERVER_INSTRUCTIONS
 
 
+def test_instructions_route_repository_decisions_to_the_decision_lane():
+    flat = " ".join(SERVER_INSTRUCTIONS.split())
+    assert "decision lane" in flat
+    assert "list_decisions" in flat
+    assert "get_decision" in flat
+    assert "record_decision" in flat
+    assert "retire_decision" in flat
+    assert "only when the owner asks" in flat
+    assert "earlier decisions" not in flat
+
+
 def test_instructions_state_the_header_author_and_the_read_scope():
     flat = " ".join(SERVER_INSTRUCTIONS.split())
     assert "X-Author" in flat

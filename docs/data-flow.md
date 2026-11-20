@@ -167,6 +167,62 @@ a newer one.
 
 The read path writes nothing to the database.
 
+## Read path — recall (`POST /recall`)
+
+`/recall` answers one query with two lanes that run concurrently. The query is at most
+4000 chars; unknown fields, an invalid `scope`, `top_k` (1–5), or `min_score` (0–1) are a 400.
+
+- **Notes lane.** The hybrid search of `/search` for the query, visible to the caller's
+  default read scope (own and shared notes), reranked, kept at or above `notes.min_score`
+  (default 0.5), and cut to `notes.top_k` (default 3). Hits have the `/search` shape.
+- **Decisions lane**, only when `scope` is given. The caller's newest 200 active decisions
+  of that scope are the candidates; superseded and retired ones never are. With no
+  candidates the lane makes no rerank call. Each candidate is reranked as its `D-N` number
+  and title, the decision, and the why, separated by blank lines. Kept at or above
+  `decisions.min_score` (default 0.5), sorted by score then by higher number, cut to
+  `decisions.top_k` (default 2).
+
+The two lists are scored separately and never merged. The response is
+`{"notes": [...], "decisions": [{number, title, decided_on, decision, why, links, score}], "errors": [...]}`.
+A lane that fails is named in `errors` and the other lane still answers; when every lane
+fails the response is a 503. Without `scope` the decisions list is empty.
+
+## Decision lane (`/decisions`)
+
+`memory.decisions` holds the numbered decisions of one repository, keyed by
+`(scope, author, number)`. Its routes are separate from the note and message routes, and
+no note read, including the note lane of `/recall`, reads the table.
+
+**Write** (`POST /decisions`). `scope` must normalize to a `repo:` scope; a `project:` scope
+is a 400. `title` is 1–200 chars, `decision` is non-empty, `why` is optional, `decision` and
+`why` together are at most 1500 chars, `links` is at most 10 strings of at most 500 chars,
+`decided_on` is an ISO date (default: today in UTC), and `supersedes` is a positive number.
+A body that carries `author` is refused; the author is the `X-Author` header. In one
+transaction an advisory lock on `(scope, author)` serializes writers, the number is the
+largest existing plus one, and the row is inserted `active`. The response is
+`201 {number, superseded}`.
+
+**Supersede.** With `supersedes`, the same transaction first sets the named decision to
+`superseded` with `superseded_by` set to the new number, a conditional update that matches
+only an `active` row of the same scope and author. If it matches nothing, the write is a
+400 and the transaction rolls back, so the refused write takes no number.
+
+**Retire** (`POST /decisions/retire`). `scope`, `number`, and `reason` (1–1500 chars). A
+conditional update sets `status` to `retired` and records `retired_reason` on an `active`
+row; any other state, or no such number, is a 400. The response is
+`{number, status: "retired"}`.
+
+**Read.** `GET /decisions?scope=&status=&limit=` returns headers (`number`, `title`,
+`decided_on`, `status`) newest number first; `status` is `active` (the default) or `all`,
+and `limit` defaults to 200; a larger value is a 400. `GET /decisions/{number}?scope=` returns the
+row in full: `decision`, `why`, `links`, `decided_on`, `status`, `supersedes` (the number it
+replaced), `superseded_by`, `retired_reason`, and `created_at`. A number the caller does not
+have in the scope is a 404. Another author's decisions are never returned.
+
+Superseded and retired decisions stay in the table as history; no route deletes one. The
+server does not judge when to write: the tool descriptions and the server instructions
+limit recording, superseding, and retiring to the owner's request.
+
 ## Read path — messages (`GET /messages`, claim, cancel)
 
 A general message sent without `expires_at` expires after `MESSAGE_TTL_DAYS` and a
@@ -256,6 +312,11 @@ The hook claims nothing and records its connection state in `status.json`.
 | `occurred_at` | when the remembered event happened; a hit's `date` and the `since`/`until` bound |
 | `metadata` | jsonb: `tags`, `author`, `shared`, `archived_by`, `supersedes`, `replaced_by`, `similar_ack`, … |
 | `archived_at` | when the row was archived; archived rows leave search |
+
+`memory.decisions` — one row per decision: `scope` (`repo:<origin>`, checked by a
+`CHECK`), `author`, `number`, `title`, `decision`, `why`, `links` (jsonb), `decided_on`,
+`status` (`active` | `superseded` | `retired`), `superseded_by` (the number that replaced
+it), `retired_reason`, and `created_at`. The primary key is `(scope, author, number)`.
 
 `memory.messages` — addressed, once-claimed signals: `namespace`, `purpose`
 (`message` | `handoff`), `scope`, `subject` with its normalized `subject_key`,

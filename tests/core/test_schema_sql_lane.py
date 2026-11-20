@@ -74,7 +74,32 @@ def test_pending_message_index_carries_no_expiry_predicate(monkeypatch):
     assert "expires_at" not in index
 
 
-def test_the_schema_creates_only_notes_messages_namespaces_and_keys(monkeypatch):
+def test_decisions_are_numbered_per_scope_and_author(monkeypatch):
+    monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
+    conn = RecordingConnection()
+
+    asyncio.run(schema.ensure_schema(conn))
+
+    sql = "\n".join(conn.queries)
+    body = _table_body(sql, "decisions")
+    assert "scope text NOT NULL CHECK (scope LIKE 'repo:%')" in body
+    assert "author text NOT NULL" in body
+    assert "number integer NOT NULL" in body
+    assert "title text NOT NULL" in body
+    assert "decision text NOT NULL" in body
+    assert "why text" in body
+    assert "links jsonb NOT NULL DEFAULT '[]'" in body
+    assert "decided_on date NOT NULL" in body
+    assert "status text NOT NULL CHECK (status IN ('active', 'superseded', 'retired'))" in body
+    assert "superseded_by integer" in body
+    assert "retired_reason text" in body
+    assert "created_at timestamptz NOT NULL" in body
+    assert "PRIMARY KEY (scope, author, number)" in body
+    assert "embedding" not in body
+    assert "decisions__" not in sql
+
+
+def test_the_schema_creates_only_notes_messages_namespaces_keys_and_decisions(monkeypatch):
     monkeypatch.setattr(schema, "PG_SCHEMA", "scratch_schema")
     conn = RecordingConnection()
 
@@ -83,4 +108,4 @@ def test_the_schema_creates_only_notes_messages_namespaces_and_keys(monkeypatch)
     tables = re.findall(
         r"CREATE TABLE IF NOT EXISTS \"scratch_schema\"\.(\w+)", "\n".join(conn.queries)
     )
-    assert tables == ["memory_chunks", "messages", "namespaces", "api_keys"]
+    assert tables == ["memory_chunks", "messages", "namespaces", "api_keys", "decisions"]

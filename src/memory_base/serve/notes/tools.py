@@ -107,14 +107,14 @@ async def save_memory(
 ) -> dict[str, Any]:
     """Remember the user and their work for later sessions.
 
-    Save a note when a later session needs it and cannot get it elsewhere: the user would
-    otherwise be asked again, it is something you gave them that they may want again, or
-    code, version control, the tracker, and documents cannot answer it. A work decision
-    keeps its reason. Do NOT save session progress (send_message carries it), what a PR,
-    issue, commit, or file already says, generic advice, or filler. The server refuses API
-    keys, tokens, and a digit code (PIN, password, lock combination, one-time, pickup, or
-    verification code) stated in the same sentence as its name; keep every other code,
-    password, or combination out yourself.
+    Save a note when a later session needs it and cannot get it elsewhere: the user would otherwise
+    be asked again, it is something you gave them that they may want again, or code, version
+    control, the tracker, and documents cannot answer it. Repository decisions go to
+    `record_decision`. Do NOT save session progress (send_message carries it), what a PR, issue,
+    commit, or file already says, generic advice, or filler. The server refuses API keys, tokens,
+    and a digit code (PIN, password, lock combination, one-time, pickup, or verification code)
+    stated in the same sentence as its name; keep every other code, password, or combination out
+    yourself.
 
     Write `content` in English, standalone, subject first, with absolute dates ("on
     2026-09-30"), at most 1,750 characters; a longer note becomes one note per fact.

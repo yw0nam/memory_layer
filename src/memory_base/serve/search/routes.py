@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -16,13 +17,19 @@ from memory_base.retrieval.search import search
 from memory_base.serve.common.http import error
 from memory_base.serve.common.http import json_body
 from memory_base.serve.common.http import note_scope
+from memory_base.serve.decisions.store import repo_scope
 from memory_base.serve.notes.store import note_date
+from memory_base.serve.search import recall
 
 LOGGER = logging.getLogger(__name__)
 # Beyond this a query is a pasted payload, not a question: it costs embedder and BM25
 # work no ranking can use.
 MAX_QUERY_CHARS = 2000
 MAX_BUDGET_TOKENS = 32000
+RECALL_MAX_QUERY_CHARS = 4000
+RECALL_MAX_TOP_K = 5
+RECALL_FIELDS = frozenset({"query", "scope", "notes", "decisions"})
+RECALL_DEFAULTS = {"notes": (3, 0.5), "decisions": (2, 0.5)}
 
 
 def hit_to_dict(hit: Hit) -> dict[str, Any]:
@@ -130,3 +137,79 @@ async def search_route(request: Request) -> JSONResponse:
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse([hit_to_dict(hit) for hit in hits])
+
+
+def _lane_options(body: dict[str, Any], lane: str) -> tuple[int, float]:
+    """The lane's (top_k, min_score) from the body, else its default."""
+    options = body.get(lane, {})
+    if not isinstance(options, dict) or not set(options) <= {"top_k", "min_score"}:
+        raise ValueError(f"{lane} must be an object with top_k and min_score")
+    top_k, min_score = RECALL_DEFAULTS[lane]
+    top_k = options.get("top_k", top_k)
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or not 1 <= top_k <= RECALL_MAX_TOP_K:
+        raise ValueError(f"{lane}.top_k must be an integer between 1 and {RECALL_MAX_TOP_K}")
+    min_score = options.get("min_score", min_score)
+    if isinstance(min_score, bool) or not isinstance(min_score, (int, float)):
+        raise ValueError(f"{lane}.min_score must be a number between 0 and 1")
+    if not 0 <= min_score <= 1:
+        raise ValueError(f"{lane}.min_score must be a number between 0 and 1")
+    return top_k, min_score
+
+
+async def recall_route(request: Request) -> JSONResponse:
+    """Notes and the caller's repository decisions for one query, scored separately.
+
+    A failing lane is named in `errors` and the other still answers; all failing is a 503.
+    """
+    try:
+        body = await json_body(request)
+    except Exception as exc:
+        return error(f"invalid JSON body: {exc}")
+    query = body.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return error("query must be a non-empty string")
+    if len(query) > RECALL_MAX_QUERY_CHARS:
+        return error(f"query must be at most {RECALL_MAX_QUERY_CHARS} chars")
+    if unknown := sorted(set(body) - RECALL_FIELDS):
+        return error(f"unknown field(s): {', '.join(unknown)}")
+    try:
+        scope = repo_scope(body["scope"]) if "scope" in body else None
+        note_options = _lane_options(body, "notes")
+        decision_options = _lane_options(body, "decisions")
+    except ValueError as exc:
+        return error(str(exc))
+
+    author = request.state.author
+    # The note search gets the query's tail: the query ends with the user's prompt.
+    lanes = {"notes": recall.recall_notes(query[-MAX_QUERY_CHARS:], author, *note_options)}
+    if scope is not None:
+        lanes["decisions"] = recall.recall_decisions(query, scope, author, *decision_options)
+    started = time.monotonic()
+    results = dict(zip(lanes, await asyncio.gather(*lanes.values(), return_exceptions=True)))
+    failures = {
+        name: result for name, result in results.items() if isinstance(result, BaseException)
+    }
+    for name, exc in failures.items():
+        if isinstance(exc, UpstreamUnavailable):
+            LOGGER.warning(
+                "recall unavailable: lane=%s service=%s cause=%s: %s elapsed=%.1fs",
+                name,
+                exc.service,
+                type(exc.__cause__).__name__,
+                exc.__cause__,
+                time.monotonic() - started,
+            )
+        else:
+            LOGGER.error("recall failed: lane=%s", name, exc_info=exc)
+    if len(failures) == len(lanes):
+        first = next(iter(failures.values()))
+        detail = f": {first}" if isinstance(first, UpstreamUnavailable) else ""
+        return error(f"recall unavailable{detail}, so memory cannot be attached right now", 503)
+    ok = {name: result for name, result in results.items() if name not in failures}
+    return JSONResponse(
+        {
+            "notes": [hit_to_dict(hit) for hit in ok.get("notes", [])],
+            "decisions": ok.get("decisions", []),
+            "errors": list(failures),
+        }
+    )

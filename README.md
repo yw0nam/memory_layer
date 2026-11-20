@@ -17,10 +17,11 @@ never embedded, listed while pending and consumed by claiming instead of search.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  9 tools: search_memory / save_memory / list_notes /
-   │ mcp_server  │           archive_notes / delete_notes / send_message /
-   └──────┬──────┘           list_messages / claim_message / cancel_message
-          │ HTTP             (thin proxy, no logic)
+   ┌─────────────┐  13 tools: search_memory / save_memory / list_notes /
+   │ mcp_server  │            archive_notes / delete_notes / send_message /
+   └──────┬──────┘            list_messages / claim_message / cancel_message /
+          │ HTTP              record_decision / retire_decision / list_decisions /
+          │                   get_decision   (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
    ║              REST API  :8010   (the only backend)         ║
@@ -32,7 +33,7 @@ never embedded, listed while pending and consumed by claiming instead of search.
      └───────────────────┴─────────┬─────────┘
                                    ▼
               Postgres 17 + pgvector + pg_textsearch  :5439
-              memory_chunks · messages · namespaces · api_keys
+              memory_chunks · messages · namespaces · api_keys · decisions
 
   side services:  vLLM (embedding / rerank)
 ```
@@ -40,7 +41,9 @@ never embedded, listed while pending and consumed by claiming instead of search.
 Every consumer reaches stored notes through the REST API, never through the database
 directly. `memory_chunks` feeds search, `messages` holds addressed, once-claimed signals
 that are never embedded and never searched
-([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)).
+([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)). `decisions` holds each
+author's numbered decisions per repository; only their own routes and `/recall` read it
+([ADR-0016](docs/adr/0016-a-per-repository-decision-lane-beside-notes.md)).
 
 How notes and messages move through the system — the write pipeline, the hybrid-search
 read path, the archive lifecycle, and the storage schema — is documented in
@@ -55,6 +58,11 @@ read path, the archive lifecycle, and the storage schema — is documented in
 | `POST` | `/search` | hybrid note search — `query`, `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `namespaces`, `since`/`until`, `include_archived`; without `budget_tokens` the reranked results are capped at 10 before `top_k` applies; `author` omitted returns the calling author's own and shared notes, `all` every author's, a list of slugs exactly those authors' |
 | `POST` | `/save_memory` | store a distilled note, attributed to the `X-Author` header — `content`, the required `tags`, the required `kind` (`personal` or `work`, a label for search and listing), the optional `shared` (a note every author's default read scope returns; set at creation only), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); refused with 409 when a near-identical active note in the caller's default scope exists unless `supersedes` names it or `allow_similar` is set, and before embedding when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind` (`personal` or `work`), repeated `author` (omitted: the caller's own and shared notes; `all`: every author; slugs: exactly those authors), `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
+| `POST` | `/recall` | notes and the caller's active decisions for one query, scored separately — `query` (at most 4000 chars), optional `scope` (`repo:<origin>`; without it no decisions are scored), and `notes` / `decisions` objects each with `top_k` (at most 5; defaults 3 and 2) and `min_score` (defaults 0.5 and 0.5); the notes are `/search` hits, the decisions carry their number, text, and `score`; a failing lane is named in `errors` and the other still answers, both failing is `503` |
+| `POST` | `/decisions` | record a decision in a repository scope, attributed to the `X-Author` header — `scope` (`repo:<origin>`), `title` (at most 200 chars), `decision`, optional `why`, `links` (at most 10 strings of at most 500 chars), `decided_on` (ISO date, default today in UTC), and `supersedes` (the number of an active decision of the caller that it replaces); `decision` and `why` together are at most 1500 chars; `201 {number, superseded}`; a `supersedes` that is not an active decision of the caller is a 400 and takes no number |
+| `POST` | `/decisions/retire` | retire an active decision of the caller — `scope`, `number`, `reason`; any other state is a 400 |
+| `GET` | `/decisions` | the caller's decisions in a scope, newest number first — `scope`, `status` (`active`, the default, or `all`), `limit` (default 200, max 200); rows hold `number`, `title`, `decided_on`, `status` |
+| `GET` | `/decisions/{number}` | one of the caller's decisions in full — `scope`; with `supersedes`, `superseded_by`, and `retired_reason`; `404` when the caller has no such number in the scope |
 | `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, optional `idempotency_key` and `expires_at`; attributed to the `X-Author` header; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (case-insensitive substring of the normalized subject), `include_content` (default false: headers only), `limit` (default 50, max 100) |
 | `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown id a 404 |
@@ -88,7 +96,8 @@ stdio by default; `MCP_TRANSPORT=sse|streamable-http` with `MCP_HOST`/`MCP_PORT`
 over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
 `search_memory` · `save_memory` · `list_notes` · `archive_notes` · `delete_notes` ·
-`send_message` · `list_messages` · `claim_message` · `cancel_message`
+`send_message` · `list_messages` · `claim_message` · `cancel_message` ·
+`record_decision` · `retire_decision` · `list_decisions` · `get_decision`
 
 `search_memory` takes `include_archived`, `kind`, `tags`, `since`/`until`, `author`, and
 `budget_tokens`, which returns hits in rerank order up to a token budget instead of
@@ -111,6 +120,10 @@ general message is operational and expires after `MESSAGE_TTL_DAYS`; a completed
 handoff expires after 3 days and an in_progress or blocked one stays pending until it
 is claimed, superseded, or cancelled, unless its sender gives an `expires_at`; a note
 is durable knowledge.
+
+The decision lane is separate from notes: `record_decision` (a supersede included) and
+`retire_decision` run only when the owner asks; `list_decisions` and `get_decision` read a
+repository's decisions of the caller's author. Note search never returns them.
 
 ## Running
 
@@ -173,7 +186,7 @@ uv run python -m memory_base.serve.access.keys revoke <key-hash-prefix>
 `revoke` takes an 8+ character prefix of the stored hash, as shown by `list`, and
 revokes every active key matching it.
 
-Every write — saved note, archive, message — is
+Every write — saved note, archive, message, decision — is
 attributed to the `X-Author` header's author. A note read returns the caller's own notes
 and the notes marked `shared` unless it names an `author`
 ([ADR-0015](docs/adr/0015-author-declared-by-the-client-header-and-default-read-scope.md)).
