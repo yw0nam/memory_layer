@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted; supersedes [ADR-0005](0005-no-raw-conversation-storage.md).
+Accepted; supersedes [ADR-0005](0005-no-raw-conversation-storage.md) in its decision to store no
+raw conversation turns. Its note id rule and the session-local tail file stay in force.
 
 ## Context
 
@@ -16,7 +17,8 @@ ADR-0005 removed went away when the server was narrowed, and it is not restored 
 
 - Claude Code main-session transcripts are stored verbatim in `session_events`, per author: user
   text, assistant text, tool calls, and tool results. Tool input and tool results are cut at 2,000
-  characters; other text at 64,000. A cut value ends with a ` [cut, N chars]` marker giving its original length.
+  characters; other text at 64,000. A cut value ends with a ` [cut, N chars]` marker giving its
+  original length.
 - The plugin's session record uploader posts them. A detached process, started by the Stop,
   SessionEnd, and SessionStart hooks, reads the transcript from a per-session checkpoint and
   uploads only complete lines. Each event id is derived from the session, the transcript entry, and
@@ -29,8 +31,9 @@ ADR-0005 removed went away when the server was narrowed, and it is not restored 
 
 ## Consequences
 
-- Any valid key with the same author reads the record ([ADR-0014](0014-one-kind-of-key-the-server-grants-nothing-beyond-authentication.md)):
-  the author is the only boundary between sessions.
+- Any valid key with the same author reads the record
+  ([ADR-0014](0014-one-kind-of-key-the-server-grants-nothing-beyond-authentication.md)): the
+  author is the only boundary between sessions.
 - The record holds whatever was in the session, secrets included. A secret in a session is stored
   as text and is not refused.
 - A session is deleted whole through `DELETE /admin/sessions/{session_id}`, which removes the

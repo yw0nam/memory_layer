@@ -89,9 +89,11 @@ for its transcript. SessionStart starts the sweep. The hook prints nothing and e
 The uploader reads the main transcript only, never a subagent's, from the checkpoint's offset and
 only complete lines. Its text and tool events go to `POST /session_events` in chunks of at most 500
 events and about 1,900,000 bytes. Tool input and results are cut at 2,000 characters and other text at
-64,000. A chunk the server answers with 400 is skipped and logged; any other failure stops the run
-and leaves the checkpoint at the last acknowledged chunk, so the next run resumes there. A second
-uploader for a session exits while the first holds its lock.
+64,000. An event's `cwd` is its transcript entry's own, else the checkpoint's. A chunk the server
+answers with 400 is resent line by line, and a line that still gets 400 is skipped and logged; any
+other failure stops that session's run and leaves the checkpoint at the last acknowledged line, so
+the next run resumes there. A second uploader for a session exits while the first holds its lock.
+The sweep goes on to the next session when one fails.
 
 The record is the session verbatim, secrets included, and it is readable through the MCP tools
 `list_sessions`, `read_session`, and `search_transcript` by the same author from any machine
@@ -116,11 +118,11 @@ print nothing, and the session record hook uploads nothing. SessionStart records
 - `records/<session>.json`: the session record checkpoint: the transcript path, session id, cwd, the
   file's device and inode, the acknowledged offset, and the sha256 of the last acknowledged line.
   `records/<session>.lock` is held by an uploader while it runs. Neither is removed by a hook; the
-  sweep removes both once the transcript file is gone.
+  sweep removes both once the transcript file is gone and no uploader holds the lock.
 - `recall.log`: one line per prompt that reaches the lookup: time, elapsed milliseconds, the keys shown,
   and the errors. It holds no prompt text, is appended to, and is never rotated.
-- `records.log`: one line per uploaded chunk: time, session, and the counts or the error. It holds no
-  event content, is appended to, and is never rotated.
+- `records.log`: one line per post or failure: time, session, counts, event ids, and errors. It
+  never holds event content, is appended to, and is never rotated.
 
 Without `CLAUDE_PLUGIN_DATA` the hooks use a `memory_base_plugin` directory under the system temp directory.
 

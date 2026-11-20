@@ -360,7 +360,9 @@ second uploader for the same session exits at once.
   type other than `user` or `assistant`, and it skips `thinking`, `redacted_thinking`, and image
   blocks. Text blocks become `user` or `assistant` events; `tool_use` becomes a `tool_call` and
   `tool_result` a `tool_result`. Tool input and results are cut at 2,000 characters, other text at
-  64,000, with a ` [cut, N chars]` marker.
+  64,000, with a ` [cut, N chars]` marker; `tool_name` and `tool_use_id` are cut at 200. Any other
+  value shape is written as JSON text, so `content` is always a string. An event's `cwd` is its
+  transcript entry's own `cwd`, else the checkpoint's.
 - **Ids.** Each event id is `uuid5(NAMESPACE_URL, "<session>:<entry uuid>:<block index>")`, so a
   replayed line carries the same ids and the server counts it `known`.
 - **Chunks.** A chunk holds at most 500 events and about 1,900,000 bytes of encoded events, except
@@ -372,20 +374,25 @@ second uploader for the same session exits at once.
   sha256. It advances after each acknowledged chunk. Before reading, the uploader compares the
   file's identity, its size, and the sha256 of the last acknowledged line; any mismatch restarts
   from offset 0, and the server's `known` count absorbs the replay.
-- **Failures.** A 400 rejects a chunk for good: the uploader logs `rejected=` and moves past it. Any
-  other failure logs `error=` and stops; the checkpoint stays at the last acknowledged chunk.
-  `records.log` gets one line per chunk with counts and event ids, never content.
-- **Sweep.** `--sweep` uploads every checkpoint whose offset differs from its file's size. A
-  checkpoint whose transcript file is gone is deleted with its lock.
+- **Failures.** A chunk answered with 400 is resent line by line; a line that still gets 400 is
+  logged as `rejected=` with its first event id and passed over. Any other failure logs `error=`
+  and stops that session; the checkpoint stays at the last acknowledged line. `records.log` gets
+  one line per post or failure with counts, event ids, and errors, never content.
+- **Sweep.** `--sweep` uploads every checkpoint whose offset differs from its file's size, and a
+  session that fails does not stop it. A checkpoint whose transcript file is gone is deleted with
+  its lock unless an uploader holds that lock.
 
 **Write** (`POST /session_events`). A body is `{events}` with 1 to 500 events and a request body of
 at most 2,000,000 bytes. Each event carries `id`, `session_id` (at most 200 chars), `role`,
 `content` (at most 64,000 chars), optional `tool_name` and `tool_use_id`, `event_at` (ISO 8601,
-naive values read as UTC), optional `repo` (a `repo:` scope), `host`, and `cwd`. The rows of one
+naive values read as UTC), optional `repo` (a `repo:` scope), and the required `host` and `cwd`. The rows of one
 author and session are numbered under a transaction-scoped advisory lock: a new row takes the next
 `seq` in request order, an id already stored with the same payload counts as `known`, and an id
-stored with another payload is skipped and listed in `conflicts`. The response is
-`{stored, known, conflicts}`. A body that carries `author` is a 400.
+stored with another payload is skipped and listed in `conflicts`. Ids are the caller's own: each
+author stores its own copy of an id. The response is `{stored, known, conflicts}`. A body that
+carries `author` is a 400, as is a field other than `events` (`unknown field(s): …`) and a
+`Content-Length` over the byte cap, which is refused before the body is read. NUL characters are
+dropped and lone surrogates replaced before storage.
 
 **Read.** Three routes read the caller's rows only; each is also an MCP tool
 (`list_sessions`, `read_session`, `search_transcript`).
@@ -395,7 +402,9 @@ stored with another payload is skipped and listed in `conflicts`. The response i
   A row holds `session_id`, `repo`, `host`, `cwd`, `started_at`, `last_at`, `events`, and `title`:
   the first user event, whitespace-normalized and cut at 120 characters.
 - `GET /sessions/{session_id}?from_seq=&limit=&role=&contains=` returns events in seq order from
-  `from_seq` (default 1), at most `limit` (default 50, max 200). `role` keeps one role. With
+  `from_seq` (default 1), at most `limit` (default 50, max 200) and at most 200,000 characters of
+  content, with at least one event. The page carries `next_from_seq`, the seq of the first event
+  left out, or null when none remains. `role` keeps one role. With
   `contains` (at least 2 characters, case-insensitive substring), only the matches come back, each
   with the event before and after it, and each match is marked `match: true`. An unknown or foreign
   session is a 404.
@@ -403,8 +412,8 @@ stored with another payload is skipped and listed in `conflicts`. The response i
   `q` (at least 2 characters), newest first, at most `limit` (default 20, max 50). Each hit carries a
   300-character `window` centred on the first match.
 
-**Delete.** `DELETE /admin/sessions/{session_id}` removes the caller's rows of that session and
-returns `{deleted}`. The checkpoint is not touched; see
+**Delete.** `DELETE /admin/sessions/{session_id}` removes the caller's rows of that session under
+the session's advisory lock, so it never interleaves with a write, and returns `{deleted}`. The checkpoint is not touched; see
 [ADR-0017](adr/0017-the-session-record-lane.md) for what a replay stores after a delete.
 
 **Author isolation.** Every row carries the `X-Author` of its write, and every read, search,
@@ -448,12 +457,12 @@ internal — responses carry the report status only.
 `messages` is outside the retrieval contract: it is read by address, never returned by
 search ([ADR-0002](adr/0002-messages-addressed-once-claimed-lane.md)).
 
-`memory.session_events` — one row per transcript event: `id` (the derived uuid), `author`,
-`namespace` (always `default`), `session_id`, `seq` (unique with `author` and `session_id`),
+`memory.session_events` — one row per transcript event: `id` (the derived uuid; the primary key is
+`(author, id)`), `author`, `session_id`, `seq` (unique with `author` and `session_id`),
 `role` (`user` | `assistant` | `tool_call` | `tool_result`), `content`, `tool_name`,
 `tool_use_id`, `event_at`, `repo`, `host`, `cwd`, and `created_at`. A trigram GIN index on
 `content` serves the substring search, and `(author, event_at DESC)` serves the listing. No
-embedding column. A namespace that holds session events cannot be deleted.
+embedding column.
 
 `session_events` is outside the retrieval contract: it is read by the session routes, never
 returned by search or recall ([ADR-0017](adr/0017-the-session-record-lane.md)).

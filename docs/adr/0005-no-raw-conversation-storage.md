@@ -2,7 +2,9 @@
 
 ## Status
 
-Superseded by ADR-0017; the content gate's judge prompt was superseded by ADR-0007
+Superseded by [ADR-0017](0017-the-session-record-lane.md) only in its decision to store no raw
+conversation turns; its note id rule and the session-local tail file below stay in force. The
+content gate's judge prompt was superseded by ADR-0007.
 
 The Claude Code plugin keeps the last 1500 characters of the previous assistant message in a
 session-local file of the plugin data directory, overwritten each turn and removed on clear and
