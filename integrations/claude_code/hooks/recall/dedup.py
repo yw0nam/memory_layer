@@ -1,4 +1,4 @@
-"""Per-session dedup: the note ids a session was already shown, in `data_dir()/sessions/`.
+"""Per-session dedup: the keys (note ids, decision keys) a session was already shown, in `data_dir()/sessions/`.
 
 Best-effort: a failed write loses only the ids it carried. Writers of one session take a
 short flock on its lock file and merge only their new ids, so overlapping hooks keep each
@@ -10,17 +10,18 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-import re
 from contextlib import contextmanager
 from pathlib import Path
 
-from hook_common import data_dir
-
-_UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
+from hook_common import session_file
 
 
 def _path(session_id: str) -> Path:
-    return data_dir() / "sessions" / f"{_UNSAFE.sub('_', session_id) or '_'}.json"
+    return session_file(session_id, ".json")
+
+
+def decision_key(scope: str, number: int) -> str:
+    return f"decision:{scope}#{number}"
 
 
 @contextmanager

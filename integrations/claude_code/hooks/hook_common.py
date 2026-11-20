@@ -21,6 +21,7 @@ GIT_TIMEOUT_SECONDS = 1.0
 
 _FENCE_TAG = re.compile(r"<\s*/?\s*memory-(context|recall)", re.IGNORECASE)
 _SCP_ORIGIN = re.compile(r"(?:[^:@/]+@)?(?P<host>[^:/]+):(?P<path>.+)")
+_UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 _ORIGIN_HOST = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
 
@@ -55,6 +56,11 @@ def data_dir() -> Path:
     )
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def session_file(session_id: str, suffix: str) -> Path:
+    """The session's file with `suffix` in `data_dir()/sessions/`; the id is made filename-safe."""
+    return data_dir() / "sessions" / f"{_UNSAFE.sub('_', session_id) or '_'}{suffix}"
 
 
 def _request(cfg: Config, req: urllib.request.Request, timeout: float):

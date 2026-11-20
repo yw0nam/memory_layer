@@ -1,4 +1,4 @@
-"""The recall query for one prompt and its one note search, bounded by a cutoff."""
+"""The recall query for one prompt and its one /recall call, bounded by a cutoff."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ import re
 import threading
 import time
 
-MIN_SCORE = 0.5
-# TOP_K is also the cap on notes per prompt.
-TOP_K = 3
+NOTES_FLOOR = 0.5
+DECISIONS_FLOOR = 0.5
+# Asked of the server; the shown ones are dropped before the caps in prompt_recall.
+ASK = 5
 QUERY_CHARS = 2000
 MIN_QUERY_CHARS = 20
 
@@ -18,38 +19,48 @@ _FENCED = re.compile(
 )
 
 
-def query(prompt: str) -> str:
-    """The prompt without the hooks' complete memory fences, cut to 2000 characters.
+def query(prompt: str, previous: str) -> str:
+    """The previous assistant text, a blank line and the prompt without the hooks' complete
+    memory fences, cut to 2000 characters.
 
-    A prompt shorter than 20 characters or a slash command gives "": nothing to recall.
+    A slash command, an empty prompt, or a prompt under 20 characters with no previous
+    assistant text gives "": nothing to recall.
     """
     text = _FENCED.sub(" ", prompt).strip()
-    if len(text) < MIN_QUERY_CHARS or text.startswith("/"):
+    if not text or text.startswith("/") or (not previous and len(text) < MIN_QUERY_CHARS):
         return ""
-    return text[:QUERY_CHARS]
+    text = text[:QUERY_CHARS]
+    return f"{previous}\n\n{text}" if previous else text
 
 
-def search(post, text: str, cutoff: float) -> list[dict]:
-    """The note hits scoring at least MIN_SCORE that arrived by `cutoff` (monotonic), else []."""
-    hits: list[dict] = []
+def search(post, text: str, scope: str | None, cutoff: float) -> tuple[list, list, list]:
+    """The (notes, decisions, errors) of one /recall that arrived by `cutoff` (monotonic).
+
+    A failed or late call gives ([], [], ["unavailable"]).
+    """
+    body = {
+        "query": text,
+        "notes": {"top_k": ASK, "min_score": NOTES_FLOOR},
+        "decisions": {"top_k": ASK, "min_score": DECISIONS_FLOOR},
+    }
+    if scope:
+        body["scope"] = scope
+    result: list[tuple[list, list, list]] = []
 
     def ask() -> None:
         try:
-            reply = post(
-                "/search",
-                {"query": text, "top_k": TOP_K, "min_score": MIN_SCORE},
-                timeout=max(cutoff - time.monotonic(), 0.1),
-            )
-            if isinstance(reply, list):
-                hits.extend(
-                    hit
-                    for hit in reply
-                    if isinstance(hit, dict) and (hit.get("score") or 0) >= MIN_SCORE
+            reply = post("/recall", body, timeout=max(cutoff - time.monotonic(), 0.1))
+            result.append(
+                (
+                    [hit for hit in reply["notes"] if isinstance(hit, dict)],
+                    [hit for hit in reply["decisions"] if isinstance(hit, dict)],
+                    [str(name) for name in reply["errors"]],
                 )
+            )
         except Exception:
             pass
 
     thread = threading.Thread(target=ask, daemon=True)
     thread.start()
     thread.join(max(cutoff - time.monotonic(), 0))
-    return [] if thread.is_alive() else hits
+    return result[0] if result and not thread.is_alive() else ([], [], ["unavailable"])
