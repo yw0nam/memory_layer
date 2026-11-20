@@ -62,6 +62,13 @@ def test_instructions_route_repository_decisions_to_the_decision_lane():
     assert "earlier decisions" not in flat
 
 
+def test_instructions_say_the_session_record_exists_and_is_read_on_demand():
+    flat = " ".join(SERVER_INSTRUCTIONS.split())
+    assert "session record" in flat
+    assert "search_transcript" in flat
+    assert "on demand" in flat
+
+
 def test_instructions_state_the_header_author_and_the_read_scope():
     flat = " ".join(SERVER_INSTRUCTIONS.split())
     assert "X-Author" in flat
