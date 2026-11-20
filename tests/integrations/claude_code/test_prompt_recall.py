@@ -18,6 +18,7 @@ import pytest
 
 import prompt_recall
 from hook_common import data_dir
+from recall import dedup
 from recall import tail
 
 PLUGIN = Path(__file__).resolve().parents[3] / "integrations" / "claude_code"
@@ -76,7 +77,10 @@ def state_dir(monkeypatch, tmp_path):
 
 
 def _run(post, payload=None, origin=None):
-    return prompt_recall.run(payload or _payload(), post, time.monotonic(), lambda cwd: origin)
+    payload = payload or _payload()
+    context, keys = prompt_recall.run(payload, post, time.monotonic(), lambda cwd: origin)
+    dedup.add(payload["session_id"], keys)
+    return context
 
 
 @pytest.mark.parametrize(

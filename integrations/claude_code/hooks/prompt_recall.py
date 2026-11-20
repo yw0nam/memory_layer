@@ -14,57 +14,40 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime
-from datetime import timezone
 
 from hook_common import Config
-from hook_common import data_dir
 from hook_common import git_origin
 from hook_common import post
 from hook_common import repo_scope
 from recall import dedup
+from recall import log
 from recall import render
 from recall import search
 from recall import tail
+from recall.choose import choose
 
 START = time.monotonic()
 CUTOFF = 2.5
 DEADLINE = 3.0
-LOG = "recall.log"
-MAX_DECISIONS = 2
-MAX_NOTES = 3
 
 
-def run(payload: dict, post, started: float, remote_of=git_origin) -> str:
-    """The context to inject for this prompt via `post(path, body, timeout)`, or ""."""
+def run(payload: dict, send, started: float, remote_of=git_origin) -> tuple[str, list[str]]:
+    """The context to inject for this prompt and the keys it shows, via `send(path, body, timeout)`.
+
+    The caller records the keys once the context is printed.
+    """
     session = payload.get("session_id") or ""
     previous = tail.previous(session, payload.get("transcript_path") or "")
     text = search.query(payload.get("prompt") or "", previous)
     if not text:
-        return ""
+        return "", []
     cwd = payload.get("cwd") or ""
     scope = repo_scope(remote_of(cwd)) if cwd else None
-    notes, decisions, errors = search.search(post, text, scope, started + CUTOFF)
-    seen = dedup.load(session)
-    decisions = [d for d in decisions if dedup.decision_key(scope, d.get("number")) not in seen]
-    notes = [n for n in notes if str(n.get("id")) not in seen]
-    context, keys = render.render(decisions[:MAX_DECISIONS], notes[:MAX_NOTES], scope)
-    dedup.add(session, keys)
-    _log(started, keys, errors)
-    return context
-
-
-def _log(started: float, keys: list[str], errors: list[str]) -> None:
-    """Append one line for this call; it never holds the prompt, and a failed write is dropped."""
-    elapsed = int((time.monotonic() - started) * 1000)
-    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    try:
-        with open(data_dir() / LOG, "a") as handle:
-            handle.write(
-                f"{stamp} ms={elapsed} emitted={','.join(keys)} errors={','.join(errors)}\n"
-            )
-    except OSError:
-        pass
+    notes, decisions, errors = search.search(send, text, scope, started + CUTOFF)
+    decisions, notes = choose(decisions, notes, scope, dedup.load(session))
+    context, keys = render.render(decisions, notes, scope)
+    log.write(started, keys, errors)
+    return context, keys
 
 
 def main() -> None:
@@ -72,12 +55,13 @@ def main() -> None:
     timer = threading.Timer(max(START + DEADLINE - time.monotonic(), 0), os._exit, (0,))
     timer.daemon = True
     timer.start()
-    context = ""
+    session, context, keys = "", "", []
     try:
         payload = json.load(sys.stdin)
+        session = payload.get("session_id") or ""
         cfg = Config.from_env()
         if cfg.configured:
-            context = run(
+            context, keys = run(
                 payload, lambda path, body, timeout: post(cfg, path, body, timeout), START
             )
     except Exception:
@@ -87,6 +71,7 @@ def main() -> None:
             output = {"hookEventName": "UserPromptSubmit", "additionalContext": context}
             sys.stdout.write(json.dumps({"hookSpecificOutput": output}))
             sys.stdout.flush()
+            dedup.add(session, keys)
     finally:
         os._exit(0)
 
