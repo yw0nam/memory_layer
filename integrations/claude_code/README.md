@@ -104,11 +104,15 @@ Without `CLAUDE_PLUGIN_DATA` the hooks use a `memory_base_plugin` directory unde
 
 Both live in the repository's `scripts/` directory and are run by hand, not by the plugin.
 
-- `scripts/import_decision_issues.py --repo OWNER/NAME --url URL [--dry-run]`: one-time, resumable
-  import of a repository's closed `decision` issues into its decision lane.
-- `scripts/probe_recall.py`: the recall probe. `seed-notes` copies notes to a sandbox server; `run`
-  picks the tail length and decision floor on half of a local case file and checks the other half
-  through the real UserPromptSubmit hook.
+- `scripts/import_decision_issues.py --repo OWNER/NAME --url URL [--plugin-data DIR] [--dry-run]`:
+  one-time, resumable import of a repository's closed `decision` issues into its decision lane. A
+  decision's text is the last comment with a `Decision` heading and every comment after it. The
+  author in `MEMORY_BASE_AUTHOR` must equal the `author` in the plugin's `status.json`. It refuses a
+  scope that already lists 200 decisions. A dry run prints each issue's title and text length.
+- `scripts/probe_recall.py`: the recall probe. `seed-notes --from URL --to URL` copies notes to a
+  sandbox server (the target key is `MEMORY_BASE_TO_API_KEY`). `run --repo OWNER/NAME` sweeps the
+  tail length (0, 200, 400, 800) and the decision floor on half of a local case file through
+  `/recall`, freezes the best pair, and then every case goes through the hook with that pair.
 
 ## Check
 
