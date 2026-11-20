@@ -13,7 +13,6 @@ from typing import Any
 from memory_base.core import db
 from memory_base.core.config import PG_SCHEMA
 from memory_base.core.schema import ensure_schema_once
-from memory_base.serve.access.namespaces import DEFAULT_NAMESPACE
 
 ROLES = ("user", "assistant", "tool_call", "tool_result")
 MAX_EVENTS = 500
@@ -24,10 +23,17 @@ TITLE_CHARS = 120
 WINDOW_CHARS = 300
 LIST_MAX_LIMIT = 100
 READ_MAX_LIMIT = 200
+READ_MAX_CHARS = 200_000
 SEARCH_MAX_LIMIT = 50
 
 _TABLE = f'"{PG_SCHEMA}".session_events'
 LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))"
+
+
+def _lock_key(author: str, session_id: str) -> str:
+    return f"{author}\x1f{session_id}"
+
+
 _PAYLOAD_FIELDS = (
     "session_id", "role", "content", "tool_name", "tool_use_id", "event_at", "repo", "host", "cwd"
 )  # fmt: skip
@@ -54,10 +60,11 @@ async def store_events(author: str, events: list[dict[str, Any]]) -> dict[str, A
             sessions = sorted({event["session_id"] for event in events})
             # Locks are taken in sorted order, so two batches over shared sessions cannot deadlock.
             for session_id in sessions:
-                await conn.execute(LOCK_SQL, f"{author}\x1f{session_id}")
+                await conn.execute(LOCK_SQL, _lock_key(author, session_id))
             stored = await conn.fetch(
-                f"SELECT id, author, seq, {', '.join(_PAYLOAD_FIELDS)} FROM {_TABLE} "
-                "WHERE id = ANY($1::uuid[])",
+                f"SELECT id, seq, {', '.join(_PAYLOAD_FIELDS)} FROM {_TABLE} "
+                "WHERE author = $1 AND id = ANY($2::uuid[])",
+                author,
                 [str(event["id"]) for event in events],
             )
             seen = {str(row["id"]): dict(row) for row in stored}
@@ -72,25 +79,25 @@ async def store_events(author: str, events: list[dict[str, Any]]) -> dict[str, A
             for event in events:
                 key = str(event["id"])
                 if (old := seen.get(key)) is not None:
-                    if old["author"] == author and all(
-                        old[field] == event[field] for field in _PAYLOAD_FIELDS
-                    ):
+                    if all(old[field] == event[field] for field in _PAYLOAD_FIELDS):
                         known += 1
                     else:
                         conflicts.append(key)
                     continue
                 seq[event["session_id"]] = seq.get(event["session_id"], 0) + 1
-                seen[key] = {**event, "author": author}
+                seen[key] = event
                 rows.append(
-                    (key, author, DEFAULT_NAMESPACE, event["session_id"], seq[event["session_id"]])
+                    (key, author, event["session_id"], seq[event["session_id"]])
                     + tuple(event[field] for field in _PAYLOAD_FIELDS[1:])
                 )
+            # A concurrent first write of the same id is skipped instead of failing the batch.
             await conn.executemany(
                 f"""
                 INSERT INTO {_TABLE}
-                  (id, author, namespace, session_id, seq, role, content, tool_name,
+                  (id, author, session_id, seq, role, content, tool_name,
                    tool_use_id, event_at, repo, host, cwd)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT DO NOTHING
                 """,
                 rows,
             )
@@ -153,7 +160,11 @@ async def read_session(
     contains: str | None,
 ) -> dict[str, Any]:
     """The session's events in seq order from `from_seq`, or only the matches of `contains`
-    with one neighbour on each side."""
+    with one neighbour on each side.
+
+    A page holds at most `limit` events and READ_MAX_CHARS content characters (always at
+    least one event); `next_from_seq` is the seq of the first event left out, or None.
+    """
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
         if not await conn.fetchval(
@@ -174,7 +185,7 @@ async def read_session(
                 author,
                 session_id,
                 from_seq,
-                limit,
+                limit + 1,
                 role,
             )
         else:
@@ -199,13 +210,21 @@ async def read_session(
                 author,
                 session_id,
                 from_seq,
-                limit,
+                limit + 1,
                 role,
                 _like(contains),
             )
+    events, chars = [], 0
+    for row in rows[:limit]:
+        chars += len(row["content"])
+        if events and chars > READ_MAX_CHARS:
+            break
+        events.append({**row, "event_at": row["event_at"].isoformat()})
+    more = rows[len(events)] if len(rows) > len(events) else None
     return {
         "session_id": session_id,
-        "events": [{**row, "event_at": row["event_at"].isoformat()} for row in map(dict, rows)],
+        "events": events,
+        "next_from_seq": more["seq"] if more is not None else None,
     }
 
 
@@ -255,10 +274,12 @@ async def search(
 
 
 async def delete_session(*, author: str, session_id: str) -> int:
-    """Hard-delete the author's rows of a session; returns the count."""
+    """Hard-delete the author's rows of a session under its lock; returns the count."""
     async with db.acquire() as conn:
         await ensure_schema_once(conn)
-        status = await conn.execute(
-            f"DELETE FROM {_TABLE} WHERE author = $1 AND session_id = $2", author, session_id
-        )
+        async with conn.transaction():
+            await conn.execute(LOCK_SQL, _lock_key(author, session_id))
+            status = await conn.execute(
+                f"DELETE FROM {_TABLE} WHERE author = $1 AND session_id = $2", author, session_id
+            )
     return int(status.split()[-1])

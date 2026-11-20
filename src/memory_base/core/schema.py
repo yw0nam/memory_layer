@@ -90,9 +90,8 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         );
         CREATE EXTENSION IF NOT EXISTS pg_trgm;
         CREATE TABLE IF NOT EXISTS {schema}.session_events (
-          id uuid PRIMARY KEY,
+          id uuid NOT NULL,
           author text NOT NULL,
-          namespace text NOT NULL,
           session_id text NOT NULL,
           seq integer NOT NULL,
           role text NOT NULL CHECK (role IN ('user', 'assistant', 'tool_call', 'tool_result')),
@@ -104,6 +103,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           host text NOT NULL,
           cwd text NOT NULL,
           created_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (author, id),
           UNIQUE (author, session_id, seq)
         );
         CREATE INDEX IF NOT EXISTS session_events__author_event_at

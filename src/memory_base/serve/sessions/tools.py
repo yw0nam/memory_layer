@@ -49,9 +49,11 @@ async def read_session(
     """Read one of your own stored Claude Code sessions verbatim, in order.
 
     The session record is not memory: it is read on demand and never ranked. Returns
-    {session_id, events}; each event is {seq, role, tool_name, event_at, content}, with
-    role user, assistant, tool_call or tool_result. `from_seq` is the seq to start from
-    (default 1) and `limit` defaults to 50, max 200: continue from the last seq + 1.
+    {session_id, events, next_from_seq}; each event is {seq, role, tool_name, event_at,
+    content}, with role user, assistant, tool_call or tool_result. `from_seq` is the seq
+    to start from (default 1) and `limit` defaults to 50, max 200. A page also stops
+    before 200,000 characters of content (it always holds one event); when events remain,
+    `next_from_seq` names the seq to continue from, else it is null.
     `role` keeps one role. With `contains` (a literal, case-insensitive substring of at
     least 2 characters) only the matching events come back, each with the event before
     and after it, matches marked `match: true`. An unknown session gets a 404.

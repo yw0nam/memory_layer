@@ -24,10 +24,11 @@ _OPTIONAL = {"tool_name", "tool_use_id", "repo"}
 
 
 def _text(value: Any, name: str, low: int, high: int) -> str:
-    """The string as sent (never stripped), without NUL characters Postgres cannot store."""
+    """The string as sent (never stripped), without the NUL characters and lone surrogates
+    Postgres cannot store."""
     if not isinstance(value, str):
         raise RequestError(f"{name} must be a string")
-    value = value.replace("\x00", "")
+    value = value.replace("\x00", "").encode("utf-8", "replace").decode()
     if not low <= len(value) <= high:
         raise RequestError(f"{name} must hold {low} to {high} characters")
     return value
@@ -84,9 +85,16 @@ def parse_event(raw: Any) -> dict[str, Any]:
 
 async def write_route(request: Request) -> JSONResponse:
     """Store a batch of events; a replay of the same payload counts as known."""
+    too_big = f"request body must be at most {store.MAX_BODY_BYTES} bytes"
+    try:
+        declared = int(request.headers.get("content-length", "0"))
+    except ValueError:
+        return error("invalid Content-Length")
+    if declared > store.MAX_BODY_BYTES:
+        return error(too_big)
     raw = await request.body()
     if len(raw) > store.MAX_BODY_BYTES:
-        return error(f"request body must be at most {store.MAX_BODY_BYTES} bytes")
+        return error(too_big)
     try:
         body = json.loads(raw)
     except ValueError as exc:
@@ -94,8 +102,10 @@ async def write_route(request: Request) -> JSONResponse:
     if rejected := reject_author(body):
         return rejected
     try:
-        if not isinstance(body, dict) or set(body) != {"events"}:
-            raise RequestError('the body must be an object with one field, "events"')
+        if not isinstance(body, dict) or "events" not in body:
+            raise RequestError('the body must be an object with the field "events"')
+        if unknown := sorted(set(body) - {"events"}):
+            raise RequestError(f"unknown field(s): {', '.join(unknown)}")
         events = body["events"]
         if not isinstance(events, list) or not 1 <= len(events) <= store.MAX_EVENTS:
             raise RequestError(f"events must be a list of 1 to {store.MAX_EVENTS} events")

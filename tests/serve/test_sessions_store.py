@@ -53,7 +53,7 @@ class RecordingConn:
         self.calls.append((" ".join(query.split()), args))
         if "max(seq)" in query:
             return [{"session_id": sid, "last": seq} for sid, seq in self.last_seq.items()]
-        if "id = ANY" in query:
+        if "AND id = ANY" in query:
             return [row for row in self.stored if row["author"] == args[0]]
         return self.stored
 
@@ -108,7 +108,7 @@ def test_new_events_take_the_next_seq_per_session_in_request_order_after_the_loc
     conn = use(RecordingConn(last_seq={"s1": 4}))
     events = [_event("s1"), _event("s2"), _event("s1")]
     assert _store(events) == {"stored": 3, "known": 0, "conflicts": []}
-    seqs = [(row[3], row[4]) for row in _inserted(conn)]
+    seqs = [(row[2], row[3]) for row in _inserted(conn)]
     assert seqs == [("s1", 5), ("s2", 1), ("s1", 6)]
     statements = [sql for sql, _ in conn.calls]
     locks = [i for i, sql in enumerate(statements) if "pg_advisory_xact_lock" in sql]
@@ -131,14 +131,14 @@ def test_a_stored_id_is_known_when_the_payload_matches_and_a_conflict_when_it_di
     result = _store([same, changed, fresh])
     assert result == {"stored": 1, "known": 1, "conflicts": [str(changed["id"])]}
     [row] = _inserted(conn)
-    assert row[0] == str(fresh["id"]) and row[4] == 3
+    assert row[0] == str(fresh["id"]) and row[3] == 3
 
 
 def test_each_author_stores_its_own_copy_of_an_id_and_a_racing_insert_cannot_fail(use):
     event = _event()
     conn = use(RecordingConn(stored=[{**event, "author": "natsume", "seq": 1}]))
     assert _store([event]) == {"stored": 1, "known": 0, "conflicts": []}
-    [lookup] = [args for sql, args in conn.calls if "id = ANY" in sql]
+    [lookup] = [args for sql, args in conn.calls if "AND id = ANY" in sql]
     assert lookup[0] == "claude-code"
     [insert] = [sql for sql, _ in conn.calls if sql.startswith("INSERT INTO")]
     assert insert.endswith("ON CONFLICT DO NOTHING")
