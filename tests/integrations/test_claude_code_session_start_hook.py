@@ -18,6 +18,7 @@ import session_start
 from memory_base.serve.common.scope import normalize_scope
 from hook_common import git_origin
 from hook_common import repo_scope
+from recall import dedup
 from session_start import HANDOFF_HEADER
 from session_start import run_hook as _run_hook
 
@@ -387,3 +388,17 @@ def test_main_fails_open_on_malformed_stdin(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
     assert session_start.main() == 0
     assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    ("source", "kept"), [("clear", False), ("compact", False), ("resume", True)]
+)
+def test_a_clear_or_compaction_resets_the_sessions_recalled_notes(
+    monkeypatch, repo, hook_env, source, kept
+):
+    monkeypatch.setattr(urllib.request, "urlopen", _server())
+    dedup.add("sess-1", ["n1"])
+    _stdin(monkeypatch, {**_payload(str(repo)), "source": source})
+
+    assert session_start.main() == 0
+    assert (dedup.load("sess-1") == {"n1"}) is kept
