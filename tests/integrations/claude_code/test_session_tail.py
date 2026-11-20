@@ -13,8 +13,8 @@ PLUGIN = Path(__file__).resolve().parents[3] / "integrations" / "claude_code"
 
 
 def _run(tmp_path, payload, configured=True):
-    [entry] = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]["Stop"]
-    [hook] = entry["hooks"]
+    entries = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]["Stop"]
+    [hook] = [h for entry in entries for h in entry["hooks"] if "session_tail.py" in h["command"]]
     assert hook["timeout"] <= 3
     env = {
         **os.environ,
