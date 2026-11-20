@@ -45,7 +45,7 @@ Read first. Before starting a task or answering from recall, search_memory for e
 notes on the subject — arriving without them is this server's most common misuse.
 Decisions made with the owner live apart from notes, in the per-repository decision lane:
 list_decisions and get_decision read them; record_decision and retire_decision change them
-only when the owner asks. Work notes hold tips and preferences.
+only when the owner asks.
 
 """
 

@@ -59,7 +59,6 @@ def test_instructions_route_repository_decisions_to_the_decision_lane():
     assert "record_decision" in flat
     assert "retire_decision" in flat
     assert "only when the owner asks" in flat
-    assert "Work notes hold tips and preferences" in flat
     assert "earlier decisions" not in flat
 
 
