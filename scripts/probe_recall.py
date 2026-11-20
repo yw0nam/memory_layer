@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Real-turn probe of the per-prompt recall: seed a sandbox, calibrate on half, check the other half.
 
-  probe_recall.py seed-notes --from URL --to URL [--to-key KEY]
-  probe_recall.py run --url URL --cases cases.jsonl --map map.txt [--out report.json]
+  probe_recall.py seed-notes --from URL --to URL
+  probe_recall.py run --repo OWNER/NAME --url URL --cases cases.jsonl --map map.txt [--out report.json]
 
-`seed-notes` copies the caller's notes into another server and prints counts only.
-`run` sweeps the tail length and the decision floor on the calibration half through
-POST /recall, freezes the best pair, then runs every case through the real hook process
-(prompt_recall.py via a wrapper that sets the frozen floor) and prints a Markdown summary.
-The hook reads whatever tail file it finds, so the chosen tail length is applied by cutting
-the file; the hook exposes no tail-length setting. The case file stays local; the report and
-the summary name case ids only.
+`seed-notes` copies the caller's notes into another server and prints counts only; it
+refuses when --from and --to are the same server. `run` sweeps the tail length and the
+decision floor on the calibration half through POST /recall, freezes the best pair, then
+runs every case through the hook process (prompt_recall.py via a wrapper that sets the
+frozen floor and tail length) and prints a Markdown summary. The case file stays local; the
+report and the summary name case ids only.
 
-Environment: MEMORY_BASE_API_KEY, MEMORY_BASE_AUTHOR (also the hook's key and author).
+Environment: MEMORY_BASE_API_KEY, MEMORY_BASE_AUTHOR (also the hook's key and author);
+MEMORY_BASE_TO_API_KEY, the target server's key, for seed-notes.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest import mock
 
 from import_decision_issues import RequestFailed
 from import_decision_issues import rest
@@ -35,19 +36,18 @@ HOOKS = Path(__file__).resolve().parents[1] / "integrations" / "claude_code" / "
 sys.path.insert(0, str(HOOKS))
 
 from recall import search as hook_search  # noqa: E402
+from recall.choose import MAX_DECISIONS  # noqa: E402
 
-SCOPE = "repo:github.com/yw0nam/vrm-builder"
-ORIGIN = "https://github.com/yw0nam/vrm-builder.git"
-TAILS = (0, 800, 1500)
+TAILS = (0, 200, 400, 800)
 FLOORS = tuple(round(step * 0.05, 2) for step in range(1, 20))
 MAX_FALSE_POSITIVE = 0.10
-MAX_DECISIONS = 2  # the hook's cap
 LIST_LIMIT = 200
 HOOK_TIMEOUT_S = 10
-# Sets the frozen floor, then runs the hook exactly as Claude Code does.
+# Sets the frozen floor and tail length, then runs the hook's main() with the plugin's environment.
 WRAPPER = (
     "import sys; sys.path.insert(0, sys.argv[1]); import prompt_recall; "
     "from recall import search; search.DECISIONS_FLOOR = float(sys.argv[2]); "
+    "search.TAIL_QUERY_CHARS = int(sys.argv[3]) or search.TAIL_QUERY_CHARS; "
     "prompt_recall.main()"
 )
 _MAP_LINE = re.compile(r"^#(\d+) -> D-(\d+)$")
@@ -82,13 +82,22 @@ def gold_numbers(case: dict, issue_map: dict[int, int]) -> set[int]:
     return {issue_map[issue] for issue in case["gold"]}
 
 
+def scope_of(repo: str) -> str:
+    return f"repo:github.com/{repo}"
+
+
+def origin_of(repo: str) -> str:
+    return f"https://github.com/{repo}.git"
+
+
 def build_query(prompt: str, tail: str, length: int) -> str:
     """The hook's query for the last `length` chars of the assistant tail and the prompt."""
-    return hook_search.query(prompt, tail[-length:] if length else "")
+    with mock.patch.object(hook_search, "TAIL_QUERY_CHARS", length or hook_search.TAIL_QUERY_CHARS):
+        return hook_search.query(prompt, tail[-length:] if length else "")
 
 
 def emitted_decisions(rows: list[dict], floor: float) -> list[int]:
-    """The decision numbers the hook would show: best two scoring at or above the floor."""
+    """The decision numbers the hook would show: the best three scoring at or above the floor."""
     kept = sorted(
         (r for r in rows if r["score"] >= floor), key=lambda r: (-r["score"], -r["number"])
     )
@@ -163,6 +172,8 @@ def percentile(values: list[float], q: int) -> float | None:
 def seed_notes(src: str, dst: str, *, from_key: str, to_key: str, author: str) -> tuple[int, int]:
     """Copy the caller's notes from src to dst; (copied, failed)."""
     rows = rest(f"{src}/notes?limit={LIST_LIMIT}", api_key=from_key, author=author)
+    if len(rows) >= LIST_LIMIT:
+        print(f"warning: {len(rows)} notes came back; there may be more to copy", file=sys.stderr)
     copied = failed = 0
     for row in rows:
         body = {
@@ -191,7 +202,7 @@ def load_cases(path: str) -> list[dict]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def recall_sweep(base: str, cases: list[dict], *, api_key: str, author: str) -> dict:
+def recall_sweep(base: str, cases: list[dict], scope: str, *, api_key: str, author: str) -> dict:
     """The score table {(case id, tail): decisions, notes, ms} from POST /recall, no hook."""
     scores = {}
     for case in cases:
@@ -201,7 +212,7 @@ def recall_sweep(base: str, cases: list[dict], *, api_key: str, author: str) -> 
             if query:
                 body = {
                     "query": query,
-                    "scope": SCOPE,
+                    "scope": scope,
                     "notes": {"top_k": hook_search.ASK, "min_score": 0},
                     "decisions": {"top_k": hook_search.ASK, "min_score": 0},
                 }
@@ -219,7 +230,7 @@ def recall_sweep(base: str, cases: list[dict], *, api_key: str, author: str) -> 
     return scores
 
 
-def run_hook(case: dict, length: int, floor: float, repo: str, env: dict) -> dict:
+def run_hook(case: dict, length: int, floor: float, cwd: str, env: dict) -> dict:
     """One case through the real hook process in a fresh plugin data dir."""
     with tempfile.TemporaryDirectory() as data:
         session = f"probe-{case['id']}"
@@ -227,11 +238,11 @@ def run_hook(case: dict, length: int, floor: float, repo: str, env: dict) -> dic
         if tail:
             (Path(data) / "sessions").mkdir()
             (Path(data) / "sessions" / f"{session}.tail").write_text(tail, encoding="utf-8")
-        payload = json.dumps({"prompt": case["prompt"], "session_id": session, "cwd": repo})
+        payload = json.dumps({"prompt": case["prompt"], "session_id": session, "cwd": cwd})
         started = time.monotonic()
         try:
             done = subprocess.run(
-                [sys.executable, "-c", WRAPPER, str(HOOKS), str(floor)],
+                [sys.executable, "-c", WRAPPER, str(HOOKS), str(floor), str(length)],
                 input=payload,
                 capture_output=True,
                 text=True,
@@ -257,9 +268,9 @@ def run_hook(case: dict, length: int, floor: float, repo: str, env: dict) -> dic
     }
 
 
-def make_repo(root: str) -> str:
+def make_repo(root: str, repo: str) -> str:
     """A temp git repository whose origin is the probed repository."""
-    for args in (["init", "-q"], ["remote", "add", "origin", ORIGIN]):
+    for args in (["init", "-q"], ["remote", "add", "origin", origin_of(repo)]):
         subprocess.run(["git", "-C", root, *args], check=True, capture_output=True)
     return root
 
@@ -276,12 +287,14 @@ def timing(values: list[float]) -> dict:
     }
 
 
-def probe(base: str, cases: list[dict], issue_map: dict[int, int], *, api_key: str, author: str):
+def probe(
+    base: str, repo: str, cases: list[dict], issue_map: dict[int, int], *, api_key: str, author: str
+):
     """The whole report dict: sweep, frozen pair, hook run."""
     for case in cases:
         gold_numbers(case, issue_map)  # fails before any call
     calibration, held_out = split_cases(cases)
-    scores = recall_sweep(base, cases, api_key=api_key, author=author)
+    scores = recall_sweep(base, cases, scope_of(repo), api_key=api_key, author=author)
     length, floor, calibration_hits = choose(calibration, scores, issue_map)
     env = {
         **os.environ,
@@ -290,8 +303,8 @@ def probe(base: str, cases: list[dict], issue_map: dict[int, int], *, api_key: s
         "CLAUDE_PLUGIN_OPTION_AUTHOR": author,
     }
     with tempfile.TemporaryDirectory() as root:
-        repo = make_repo(root)
-        runs = {c["id"]: run_hook(c, length, floor, repo, env) for c in cases}
+        cwd = make_repo(root, repo)
+        runs = {c["id"]: run_hook(c, length, floor, cwd, env) for c in cases}
     emitted = {case_id: run["decisions"] for case_id, run in runs.items()}
     held_ids = {c["id"] for c in held_out}
     notes = {
@@ -379,8 +392,8 @@ def parse_args(argv: list[str] | None):
     seed = sub.add_parser("seed-notes", help="copy the caller's notes to another server")
     seed.add_argument("--from", dest="src", required=True, help="source REST base URL")
     seed.add_argument("--to", dest="dst", required=True, help="target REST base URL")
-    seed.add_argument("--to-key", help="target API key (default MEMORY_BASE_API_KEY)")
     run = sub.add_parser("run", help="calibrate, freeze and check the recall")
+    run.add_argument("--repo", required=True, metavar="OWNER/NAME", help="GitHub repository")
     run.add_argument("--url", required=True, help="REST base URL of the sandbox server")
     run.add_argument("--cases", required=True, help="local JSONL case file")
     run.add_argument(
@@ -399,19 +412,25 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         if args.command == "seed-notes":
-            to_key = args.to_key or api_key
-            copied, failed = seed_notes(
-                args.src.rstrip("/"),
-                args.dst.rstrip("/"),
-                from_key=api_key,
-                to_key=to_key,
-                author=author,
-            )
+            src, dst = args.src.rstrip("/"), args.dst.rstrip("/")
+            to_key = os.environ.get("MEMORY_BASE_TO_API_KEY")
+            if src == dst or not to_key:
+                print(
+                    "error: --from and --to must differ, and MEMORY_BASE_TO_API_KEY must be set",
+                    file=sys.stderr,
+                )
+                return 2
+            copied, failed = seed_notes(src, dst, from_key=api_key, to_key=to_key, author=author)
             print(f"copied {copied}, failed {failed}")
             return 0 if not failed else 1
         issue_map = parse_map(Path(args.map).read_text())
         report = probe(
-            args.url.rstrip("/"), load_cases(args.cases), issue_map, api_key=api_key, author=author
+            args.url.rstrip("/"),
+            args.repo,
+            load_cases(args.cases),
+            issue_map,
+            api_key=api_key,
+            author=author,
         )
     except (RequestFailed, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
