@@ -26,6 +26,12 @@ def test_the_query_is_the_previous_text_a_blank_line_and_the_prompt_without_fenc
     assert len(text) == len("I will retopologize the hair.\n\n") + 2000
 
 
+def test_only_the_last_200_chars_of_the_previous_text_join_the_query():
+    text = search.query("yes please", "a" * 300 + "b" * 200)
+
+    assert text == "b" * 200 + "\n\nyes please"
+
+
 @pytest.mark.parametrize(
     ("prompt", "previous", "expected"),
     [
@@ -67,7 +73,7 @@ def test_one_recall_asks_both_lanes_with_the_scope_and_floors():
             },
         )
     ]
-    assert (search.NOTES_FLOOR, search.DECISIONS_FLOOR) == (0.5, 0.5)
+    assert (search.NOTES_FLOOR, search.DECISIONS_FLOOR) == (0.5, 0.7)
 
 
 def test_a_prompt_without_a_scope_sends_none():

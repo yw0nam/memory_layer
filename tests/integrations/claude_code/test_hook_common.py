@@ -22,14 +22,16 @@ def test_post_sends_the_json_body_with_the_agent_headers(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
-    reply = post(CFG, "/search", {"query": "hair retopology", "top_k": 3}, timeout=1.5)
+    reply = post(
+        CFG, "/recall", {"query": "hair retopology", "scope": "repo:github.com/o/r"}, timeout=1.5
+    )
 
     assert reply == [{"id": "n1"}]
     [(request, timeout)] = sent
     assert timeout == 1.5
     assert request.get_method() == "POST"
-    assert request.full_url == "http://memory.test/search"
-    assert json.loads(request.data) == {"query": "hair retopology", "top_k": 3}
+    assert request.full_url == "http://memory.test/recall"
+    assert json.loads(request.data) == {"query": "hair retopology", "scope": "repo:github.com/o/r"}
     assert request.get_header("Content-type") == "application/json"
     assert request.get_header("X-api-key") == "key"
     assert request.get_header("X-author") == "claude-code"

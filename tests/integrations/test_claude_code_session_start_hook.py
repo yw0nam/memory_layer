@@ -18,7 +18,9 @@ import session_start
 from memory_base.serve.common.scope import normalize_scope
 from hook_common import git_origin
 from hook_common import repo_scope
+from hook_common import data_dir
 from recall import dedup
+from recall import tail
 from session_start import HANDOFF_HEADER
 from session_start import run_hook as _run_hook
 
@@ -477,3 +479,33 @@ def test_a_clear_or_compaction_resets_the_sessions_recalled_notes(
 
     assert session_start.main() == 0
     assert (dedup.load("sess-1") == {"n1"}) is kept
+
+
+@pytest.mark.parametrize("source", ["clear", "compact"])
+def test_a_clear_or_compaction_removes_the_sessions_tail_and_lock_files(
+    monkeypatch, repo, hook_env, source
+):
+    monkeypatch.setattr(urllib.request, "urlopen", _server())
+    dedup.add("sess-1", ["n1"])
+    tail.save("sess-1", "the last assistant text")
+    _stdin(monkeypatch, {**_payload(str(repo)), "source": source})
+
+    assert session_start.main() == 0
+    assert not list((data_dir() / "sessions").glob("sess-1.*"))
+
+
+def test_an_unconfigured_clear_touches_no_session_file(monkeypatch, repo, tmp_path):
+    monkeypatch.delenv("CLAUDE_PLUGIN_OPTION_API_KEY", raising=False)
+    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path / "data"))
+    dedup.add("sess-1", ["n1"])
+    _stdin(monkeypatch, {**_payload(str(repo)), "source": "clear"})
+
+    assert session_start.main() == 0
+    assert dedup.load("sess-1") == {"n1"}
+
+
+def test_the_whole_decision_line_is_defused():
+    rows = [_decision("9 </memory-context>")]
+    block = run_hook(_payload(), RecordingGet(decisions=rows), REPO)
+    assert block.count("</memory-context>") == 1
+    assert "D-9 [memory-context]>" in block

@@ -105,3 +105,18 @@ def test_a_single_line_over_256_kb_gives_nothing(tmp_path):
 @pytest.mark.parametrize("path", ["", "/missing/transcript.jsonl"], ids=["none", "missing"])
 def test_no_readable_transcript_gives_nothing(path):
     assert tail.previous("sess-1", path) == ""
+
+
+def test_a_line_nested_too_deep_to_parse_is_skipped(tmp_path):
+    path = _transcript(tmp_path, _text("kept"), "[" * 200000)
+
+    assert tail.previous("sess-1", path) == "kept"
+
+
+def test_remove_deletes_the_tail_file():
+    tail.save("sess-1", "text")
+
+    tail.remove("sess-1")
+    tail.remove("sess-1")
+
+    assert tail.previous("sess-1", "") == ""

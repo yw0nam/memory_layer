@@ -31,3 +31,15 @@ def test_a_failed_write_is_dropped():
     dedup.add("sess-1", ["n1"])
 
     assert dedup.load("sess-1") == set()
+
+
+def test_reset_leaves_no_file_of_the_session():
+    dedup.add("sess-1", ["n1"])
+    dedup.add("sess-2", ["n2"])
+
+    dedup.reset("sess-1")
+
+    assert sorted(p.name for p in (data_dir() / "sessions").iterdir()) == [
+        "sess-2.json",
+        "sess-2.lock",
+    ]

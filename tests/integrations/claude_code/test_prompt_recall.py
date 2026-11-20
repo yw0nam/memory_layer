@@ -161,18 +161,28 @@ def test_decisions_come_before_notes():
     assert context.index("D-3 Decision title 3") < context.index("Note n1")
 
 
-def test_five_asked_then_the_shown_dropped_then_two_decisions_and_three_notes():
+def test_five_asked_then_the_shown_dropped_then_three_decisions_and_three_notes():
     post = FakePost(_reply([_note(n) for n in range(1, 6)], [_decision(n) for n in range(1, 6)]))
 
     first = _run(post, origin=ORIGIN)
     second = _run(post, origin=ORIGIN)
     third = _run(post, origin=ORIGIN)
 
-    assert [f"D-{n} " in first for n in range(1, 6)] == [True, True, False, False, False]
+    assert [f"D-{n} " in first for n in range(1, 6)] == [True, True, True, False, False]
     assert [f"Note n{n} " in first for n in range(1, 6)] == [True, True, True, False, False]
-    assert [f"D-{n} " in second for n in range(1, 6)] == [False, False, True, True, False]
+    assert [f"D-{n} " in second for n in range(1, 6)] == [False, False, False, True, True]
     assert [f"Note n{n} " in second for n in range(1, 6)] == [False, False, False, True, True]
-    assert "D-5 " in third and "Note" not in third
+    assert third == ""
+    assert post.calls[0][1]["decisions"] == {"top_k": 5, "min_score": 0.7}
+
+
+def test_a_recalled_decision_shows_its_title_and_never_its_text():
+    post = FakePost(_reply(decisions=[_decision(3, "A long decision text.")]))
+
+    context = _run(post, origin=ORIGIN)
+
+    assert "D-3 Decision title 3 (2026-10-30)" in context
+    assert "long decision text" not in context
 
 
 def test_a_session_sees_each_item_once_and_a_note_cut_by_the_budget_comes_back():
