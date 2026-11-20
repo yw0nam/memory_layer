@@ -54,10 +54,12 @@ def add(session_id: str, ids: list[str]) -> None:
 
 
 def reset(session_id: str) -> None:
-    """Forget every id the session was shown."""
+    """Forget every key the session was shown and remove its lock file."""
     path = _path(session_id)
     try:
         with _locked(path):
             path.unlink(missing_ok=True)
+        # shortcut: a writer racing this unlink may lock the removed file and lose its keys; harmless for a dedup hint.
+        path.with_suffix(".lock").unlink(missing_ok=True)
     except OSError:
         pass

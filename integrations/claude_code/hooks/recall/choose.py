@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from recall import dedup
 
-MAX_DECISIONS = 2
+MAX_DECISIONS = 3
 MAX_NOTES = 3
 
 

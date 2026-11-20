@@ -2,8 +2,9 @@
 
 Prints one <memory-context> fence holding the handoffs, the repository scope line and the
 newest decision titles, or nothing when there is none of them, and records the connection
-state to `status.json` in the plugin data directory. The hook never claims a handoff. Config comes from the plugin options (`CLAUDE_PLUGIN_OPTION_*`).
-Every failure mode is fail-open: exit 0. Stdlib only.
+state to `status.json` in the plugin data directory. The hook never claims a handoff.
+Config comes from the plugin options (`CLAUDE_PLUGIN_OPTION_*`). Every failure mode is
+fail-open: exit 0. Stdlib only.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from hook_common import get
 from hook_common import git_origin
 from hook_common import repo_scope
 from recall import dedup
+from recall import tail
 
 HANDOFF_LIMIT = 10
 HANDOFF_FETCH_LIMIT = 100
@@ -67,8 +69,8 @@ def format_decisions(rows: list[dict]) -> str:
         return ""
     lines = [DECISIONS_HEADER]
     for row in rows[:DECISION_LIMIT]:
-        title = defuse(" ".join(str(row["title"]).split()))
-        lines.append(f"D-{row['number']} ({str(row.get('decided_on', ''))[:10]}) {title}")
+        title = " ".join(str(row["title"]).split())
+        lines.append(defuse(f"D-{row['number']} ({str(row.get('decided_on', ''))[:10]}) {title}"))
     if len(rows) > DECISION_LIMIT:
         lines.append(MORE_LINE.format(count=len(rows) - DECISION_LIMIT))
     return "\n".join(lines)
@@ -114,13 +116,14 @@ def _write_status(cfg: Config, reachable: bool, error: str | None) -> None:
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
-        if payload.get("source") in RESET_SOURCES:
-            dedup.reset(payload.get("session_id") or "")
         cfg = Config.from_env()
         if not cfg.configured:
             _write_status(cfg, False, None)
             emit(run_hook(payload, None))
             return 0
+        if payload.get("source") in RESET_SOURCES:
+            dedup.reset(payload.get("session_id") or "")
+            tail.remove(payload.get("session_id") or "")
         failure: list[str] = []
 
         def fetch(path: str, params: dict):

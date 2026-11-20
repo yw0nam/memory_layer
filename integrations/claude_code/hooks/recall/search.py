@@ -7,10 +7,11 @@ import threading
 import time
 
 NOTES_FLOOR = 0.5
-DECISIONS_FLOOR = 0.5
+DECISIONS_FLOOR = 0.7
 # Asked of the server; the shown ones are dropped before the caps in prompt_recall.
 ASK = 5
 QUERY_CHARS = 2000
+TAIL_QUERY_CHARS = 200
 MIN_QUERY_CHARS = 20
 
 _FENCED = re.compile(
@@ -20,8 +21,8 @@ _FENCED = re.compile(
 
 
 def query(prompt: str, previous: str) -> str:
-    """The previous assistant text, a blank line and the prompt without the hooks' complete
-    memory fences, cut to 2000 characters.
+    """The last 200 characters of the previous assistant text, a blank line and the prompt
+    without the hooks' complete memory fences, cut to 2000 characters.
 
     A slash command, an empty prompt, or a prompt under 20 characters with no previous
     assistant text gives "": nothing to recall.
@@ -30,7 +31,7 @@ def query(prompt: str, previous: str) -> str:
     if not text or text.startswith("/") or (not previous and len(text) < MIN_QUERY_CHARS):
         return ""
     text = text[:QUERY_CHARS]
-    return f"{previous}\n\n{text}" if previous else text
+    return f"{previous[-TAIL_QUERY_CHARS:]}\n\n{text}" if previous else text
 
 
 def search(post, text: str, scope: str | None, cutoff: float) -> tuple[list, list, list]:

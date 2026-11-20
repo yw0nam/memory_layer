@@ -23,6 +23,14 @@ def save(session_id: str, text: str) -> None:
         pass
 
 
+def remove(session_id: str) -> None:
+    """Forget the session's tail file."""
+    try:
+        session_file(session_id, ".tail").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def previous(session_id: str, transcript_path: str) -> str:
     """The previous assistant text (at most TAIL_CHARS), or "" when neither source has it."""
     try:
@@ -49,7 +57,7 @@ def _from_transcript(path: str) -> str:
                 continue
             blocks = entry["message"]["content"]
             text = "\n".join(b["text"] for b in blocks if b.get("type") == "text")
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
             continue
         if text:
             return text[-TAIL_CHARS:]
