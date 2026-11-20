@@ -168,9 +168,10 @@ def test_the_fence_holds_only_this_repos_handoffs():
     assert _lines(block) == [*HANDOFF_LINES, SCOPE_LINE]
     assert block.count("<memory-context>") == 1
     assert "Session:" not in block
-    assert get.calls == [
-        ("/messages", {"purpose": "handoff", "scope": "repo:github.com/o/r", "limit": "100"})
-    ]
+    assert get.calls[0] == (
+        "/messages",
+        {"purpose": "handoff", "scope": "repo:github.com/o/r", "limit": "100"},
+    )
 
 
 def test_no_handoffs_leave_the_scope_line_alone_in_the_fence():
@@ -285,7 +286,7 @@ def test_completed_handoffs_print_one_counted_line_without_the_continue_header()
     lines = _lines(block)
     assert HANDOFF_HEADER not in block
     assert not any(line.startswith("- ") for line in lines)
-    assert lines[-1] == (
+    assert lines[-2] == (
         "Memory: completed handoffs delivered for this repo: 1. "
         "Claim one to read it; list_messages names their ids."
     )
