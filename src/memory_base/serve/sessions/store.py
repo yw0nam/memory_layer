@@ -107,7 +107,8 @@ async def store_events(author: str, events: list[dict[str, Any]]) -> dict[str, A
 async def list_sessions(
     *, author: str, repo: str | None, since: float | None, until: float | None, limit: int
 ) -> list[dict[str, Any]]:
-    """The author's sessions newest first by their last event, each titled by its first user event."""
+    """The author's sessions newest first by their last event, each titled by its first user
+    event."""
     args: list[Any] = [author]
     having = ["TRUE"]
     for expr, op, value in (
@@ -189,7 +190,7 @@ async def read_session(
                 role,
             )
         else:
-            # A match is a content hit of the asked role; its neighbours come back whatever their role.
+            # A match is a content hit of the asked role; its neighbours come back in any role.
             def hit(alias: str) -> str:
                 return (
                     f"({alias}.content ILIKE $6 ESCAPE '\\' "

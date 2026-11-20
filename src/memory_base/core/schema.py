@@ -1,4 +1,5 @@
-"""Public database schema setup for notes, messages, namespaces, keys, decisions, and session events."""
+"""Public database schema setup for notes, messages, namespaces, keys, decisions, and session
+events."""
 
 from __future__ import annotations
 

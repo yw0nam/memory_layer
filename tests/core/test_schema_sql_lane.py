@@ -1,4 +1,5 @@
-"""Unit contracts for the notes, messages, namespaces, keys, decisions, and session events schema."""
+"""Unit contracts for the notes, messages, namespaces, keys, decisions, and session events
+schema."""
 
 from __future__ import annotations
 
