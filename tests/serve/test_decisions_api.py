@@ -69,6 +69,8 @@ def test_a_body_carrying_author_is_rejected(monkeypatch, path):
         {"links": ["l" * 501]},
         {"links": "https://x.y"},
         {"decided_on": "yesterday"},
+        {"decided_on": "20260501"},
+        {"decided_on": "2026-W18-5"},
         {"scope": "project:o/p"},
         {"scope": "repo:localhost/o/r"},
         {"supersedes": "D-1"},
@@ -159,3 +161,9 @@ def test_get_returns_the_full_row_and_404_for_an_unknown_number(monkeypatch):
     assert client.get("/decisions/7", params={"scope": SCOPE}).status_code == 404
     assert client.get("/decisions/x", params={"scope": SCOPE}).status_code == 400
     assert client.get("/decisions/2").status_code == 400
+
+
+@pytest.mark.parametrize("missing", ["scope", "title", "decision"])
+def test_record_without_a_required_field_answers_400(missing):
+    body = {k: v for k, v in VALID.items() if k != missing}
+    assert client.post("/decisions", json=body).status_code == 400

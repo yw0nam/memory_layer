@@ -92,6 +92,15 @@ def test_the_note_search_runs_as_the_caller_with_the_floor(fakes):
     assert kwargs["min_score"] == 0.6
 
 
+def test_the_note_search_gets_the_last_two_thousand_chars_and_decisions_the_whole_query(fakes):
+    fakes["decisions"] = [_decision(1)]
+    fakes["scores"] = {"D-1 title 1": 0.9}
+    query = "h" * 2000 + "t" * 2000
+    client.post("/recall", json={"query": query, "scope": SCOPE})
+    assert fakes["search"][0][0] == "t" * 2000
+    assert fakes["rerank"][0][0] == query
+
+
 def test_decisions_are_the_callers_newest_two_hundred_and_texts_carry_the_number(fakes):
     fakes["decisions"] = [_decision(2), _decision(1, why=None)]
     fakes["scores"] = {"D-2 title 2": 0.9, "D-1 title 1": 0.9}
