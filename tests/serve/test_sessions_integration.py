@@ -162,8 +162,8 @@ def test_every_read_returns_only_the_callers_rows(tag):
     assert _read(session, headers=OTHER).status_code == 404
     listed = client.get("/sessions", headers=OTHER).json()
     assert all(not row["session_id"].startswith(tag) for row in listed)
-    found = client.get("/session_events/search", params={"q": tag}, headers=OTHER).json()
-    assert found == []
+    found = client.get("/session_events/search", params={"q": "스커트"}, headers=OTHER).json()
+    assert [h for h in found if h["session_id"].startswith(tag)] == []
     assert client.delete(f"/admin/sessions/{session}", headers=OTHER).json() == {"deleted": 0}
     assert _write([_event(session, "mine", 1)], headers=OTHER)["stored"] == 1
     assert _seqs(session, headers=OTHER) == [(1, "mine")]

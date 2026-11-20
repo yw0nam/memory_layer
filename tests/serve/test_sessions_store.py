@@ -118,7 +118,7 @@ def test_a_stored_id_is_known_when_the_payload_matches_and_a_conflict_when_it_di
     result = _store([same, changed, fresh])
     assert result == {"stored": 1, "known": 1, "conflicts": [str(changed["id"])]}
     [row] = _inserted(conn)
-    assert row[0] == fresh["id"] and row[4] == 3
+    assert row[0] == str(fresh["id"]) and row[4] == 3
 
 
 def test_an_id_stored_by_another_author_is_a_conflict(use):
