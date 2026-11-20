@@ -95,7 +95,7 @@ async def get_decision(scope: str, number: int, ctx: Context | None = None) -> d
     """
     return await rest_client.call(
         "GET",
-        f"/decisions/{int(number)}",
+        f"/decisions/{number}",
         params={"scope": scope},
         headers=rest_client.auth_headers(ctx),
     )
