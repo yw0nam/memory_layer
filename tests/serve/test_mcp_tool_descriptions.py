@@ -68,6 +68,12 @@ def test_search_memory_states_the_rerank_cap_on_top_k(descriptions):
     assert f"at most {RERANK_TOP}" in descriptions["search_memory"]
 
 
+def test_search_memory_points_decisions_to_the_decision_tools(descriptions):
+    assert "past decisions" not in descriptions["search_memory"]
+    assert "`list_decisions`" in descriptions["search_memory"]
+    assert "`get_decision`" in descriptions["search_memory"]
+
+
 def test_search_memory_lists_the_accepted_kinds(descriptions):
     for kind in ("personal", "work"):
         assert f'"{kind}"' in descriptions["search_memory"], kind
