@@ -19,7 +19,7 @@ from pathlib import Path
 READ_TIMEOUT = 3.0
 GIT_TIMEOUT_SECONDS = 1.0
 
-_FENCE_TAG = re.compile(r"<\s*/?\s*memory-context", re.IGNORECASE)
+_FENCE_TAG = re.compile(r"<\s*/?\s*memory-(context|recall)", re.IGNORECASE)
 _SCP_ORIGIN = re.compile(r"(?:[^:@/]+@)?(?P<host>[^:/]+):(?P<path>.+)")
 _ORIGIN_HOST = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
@@ -45,8 +45,8 @@ class Config:
 
 
 def defuse(text: str) -> str:
-    """Defuse memory-context tags inside retrieved text so it cannot close the fence."""
-    return _FENCE_TAG.sub("[memory-context]", text)
+    """Defuse memory-context and memory-recall tags inside retrieved text so it cannot close a fence."""
+    return _FENCE_TAG.sub(lambda tag: f"[memory-{tag[1].lower()}]", text)
 
 
 def data_dir() -> Path:
@@ -57,13 +57,25 @@ def data_dir() -> Path:
     return path
 
 
-def get(cfg: Config, path: str, params: dict | None = None, timeout: float = READ_TIMEOUT):
-    query = f"?{urllib.parse.urlencode(params)}" if params else ""
-    req = urllib.request.Request(f"{cfg.url.rstrip('/')}{path}{query}")
+def _request(cfg: Config, req: urllib.request.Request, timeout: float):
     req.add_header("X-API-Key", cfg.api_key)
     req.add_header("X-Author", cfg.author)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
+
+
+def get(cfg: Config, path: str, params: dict | None = None, timeout: float = READ_TIMEOUT):
+    query = f"?{urllib.parse.urlencode(params)}" if params else ""
+    return _request(cfg, urllib.request.Request(f"{cfg.url.rstrip('/')}{path}{query}"), timeout)
+
+
+def post(cfg: Config, path: str, body: dict, timeout: float = READ_TIMEOUT):
+    req = urllib.request.Request(
+        f"{cfg.url.rstrip('/')}{path}",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    return _request(cfg, req, timeout)
 
 
 def _is_local_host(host: str) -> bool:
