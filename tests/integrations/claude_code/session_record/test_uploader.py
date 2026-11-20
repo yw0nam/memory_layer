@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
 import uuid
 
 import pytest
@@ -18,12 +19,14 @@ def state_dir(monkeypatch, tmp_path):
 
 
 class FakeServer:
-    """Stores events by id as the contract says; `down` refuses, `lose_ack` stores then fails."""
+    """Stores events by id as the contract says; `down` refuses, `lose_ack` stores then fails,
+    `statuses` answers the next posts with those HTTP errors."""
 
     def __init__(self):
         self.rows, self.bodies = {}, []
         self.down = self.lose_ack = False
         self.on_post = None
+        self.statuses = []
 
     def __call__(self, body):
         if self.on_post:
@@ -31,6 +34,8 @@ class FakeServer:
         if self.down:
             raise OSError("connection refused")
         self.bodies.append(body)
+        if self.statuses:
+            raise urllib.error.HTTPError("/session_events", self.statuses.pop(0), "no", {}, None)
         stored = known = 0
         conflicts = []
         for event in body["events"]:
@@ -203,3 +208,47 @@ def test_conflicts_still_advance_and_the_log_names_their_ids_without_content(tmp
     assert len(server.bodies) == 1
     log = (data_dir() / "records.log").read_text()
     assert stored in log and "secret" not in log
+
+
+def _backlog(path, count=600):
+    _write(path, *(_line(f"u{n}", f"secret {n}") for n in range(count)))
+
+
+def test_a_chunk_rejected_with_400_is_logged_skipped_and_the_next_chunk_is_sent(tmp_path):
+    path, server = tmp_path / "t.jsonl", FakeServer()
+    _backlog(path)
+    server.statuses = [400]
+
+    _upload(path, server)
+    _upload(path, server)
+
+    rejected, sent = server.bodies
+    assert [len(rejected["events"]), len(sent["events"])] == [500, 100]
+    assert len(server.rows) == 100
+    log = (data_dir() / "records.log").read_text()
+    assert f"rejected=500 first_id={rejected['events'][0]['id']} status=400" in log
+    assert "secret" not in log
+
+
+def test_a_503_stops_the_pass_without_advancing(tmp_path):
+    path, server = tmp_path / "t.jsonl", FakeServer()
+    _backlog(path)
+    server.statuses = [503]
+
+    _upload(path, server)
+    _upload(path, server)
+
+    first, *again = ([e["id"] for e in body["events"]] for body in server.bodies)
+    assert len(server.bodies) == 3 and again[0] == first
+    assert len(server.rows) == 600
+
+
+def test_a_sweep_removes_the_files_of_a_session_whose_transcript_is_gone(tmp_path):
+    path, server = tmp_path / "t.jsonl", FakeServer()
+    _write(path, _line("u1", "first"))
+    _upload(path, server)
+    path.unlink()
+
+    uploader.sweep(server)
+
+    assert list((data_dir() / "records").iterdir()) == []
