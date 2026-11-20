@@ -9,6 +9,7 @@ transaction, and a refused one stores nothing.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -25,6 +26,7 @@ LINK_MAX_CHARS = 500
 LIST_MAX_LIMIT = 200
 STATUSES = ("active", "all")
 
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _TABLE = f'"{PG_SCHEMA}".decisions'
 
 
@@ -74,6 +76,8 @@ def _validated(title: Any, decision: Any, why: Any, links: Any, decided_on: Any)
         day = datetime.now(timezone.utc).date()
     else:
         try:
+            if not _DATE_RE.fullmatch(decided_on):
+                raise ValueError
             day = date.fromisoformat(decided_on)
         except (TypeError, ValueError):
             raise ValueError("decided_on must be an ISO date (YYYY-MM-DD)") from None

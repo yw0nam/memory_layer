@@ -33,7 +33,16 @@ async def record_route(request: Request) -> JSONResponse:
     if isinstance(body, JSONResponse):
         return body
     try:
-        result = await store.record_decision(author=request.state.author, **body)
+        result = await store.record_decision(
+            author=request.state.author,
+            scope=body.get("scope"),
+            title=body.get("title"),
+            decision=body.get("decision"),
+            why=body.get("why"),
+            links=body.get("links"),
+            decided_on=body.get("decided_on"),
+            supersedes=body.get("supersedes"),
+        )
     except ValueError as exc:
         return error(str(exc))
     return JSONResponse(result, status_code=201)
