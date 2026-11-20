@@ -6,15 +6,17 @@ where a route's delegation is under test.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
 
 import pytest
+from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from memory_base.serve import api
-from memory_base.serve.sessions import store
+from memory_base.serve.sessions import routes, store
 
 client = TestClient(api.app, headers={"X-API-Key": "test-key", "X-Author": "claude-code"})
 
@@ -112,6 +114,45 @@ def test_a_bad_write_body_is_a_400_that_stores_nothing(no_store, body):
     response = client.post("/session_events", json=body)
     assert response.status_code == 400
     assert response.json()["error"]
+
+
+def test_a_lone_surrogate_is_replaced_before_storage(monkeypatch):
+    captured = {}
+
+    async def fake_store(author, events):
+        captured["events"] = events
+        return {"stored": 1, "known": 0, "conflicts": []}
+
+    monkeypatch.setattr(store, "store_events", fake_store)
+    body = json.dumps({"events": [_event(content="a\ud800b", tool_name="T\udfff")]})
+    response = client.post(
+        "/session_events", content=body, headers={"Content-Type": "application/json"}
+    )
+    assert response.status_code == 200
+    [row] = captured["events"]
+    assert (row["content"], row["tool_name"]) == ("a?b", "T?")
+
+
+def test_a_content_length_over_the_byte_cap_is_a_400_before_the_body_is_read():
+    async def receive():
+        raise AssertionError("the body must not be read")
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/session_events",
+        "query_string": b"",
+        "headers": [(b"content-length", str(store.MAX_BODY_BYTES + 1).encode())],
+    }
+    response = asyncio.run(routes.write_route(Request(scope, receive)))
+    assert response.status_code == 400
+    assert "bytes" in json.loads(response.body)["error"]
+
+
+def test_an_unknown_top_level_field_is_named_as_the_decisions_lane_names_it(no_store):
+    response = client.post("/session_events", json={"events": [_event()], "extra": 1})
+    assert response.status_code == 400
+    assert response.json()["error"] == "unknown field(s): extra"
 
 
 def test_an_author_in_the_body_names_the_header(no_store):

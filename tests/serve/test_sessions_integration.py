@@ -102,7 +102,7 @@ def test_schema_holds_the_table_the_trigram_index_and_the_extension(tag):
 
     columns, trgm, gin = asyncio.run(scenario())
     assert columns == {
-        "id", "author", "namespace", "session_id", "seq", "role", "content", "tool_name",
+        "id", "author", "session_id", "seq", "role", "content", "tool_name",
         "tool_use_id", "event_at", "repo", "host", "cwd", "created_at",
     }  # fmt: skip
     assert trgm == 1 and gin == 1
@@ -119,6 +119,22 @@ def test_a_batch_is_stored_in_order_a_replay_is_known_and_a_changed_payload_conf
     result = _write([events[0], changed, fresh])
     assert result == {"stored": 1, "known": 1, "conflicts": [events[1]["id"]]}
     assert _seqs(session) == [(1, "m0"), (2, "m1"), (3, "m2"), (4, "m3")]
+
+
+def test_each_author_stores_its_own_copy_of_the_same_event(tag):
+    event = _event(f"{tag}-copy", "same", 0)
+    assert _write([event])["stored"] == 1
+    assert _write([event], headers=OTHER) == {"stored": 1, "known": 0, "conflicts": []}
+    assert _write([event], headers=OTHER)["known"] == 1
+
+
+def test_a_read_page_stops_before_200000_content_chars(tag):
+    session = f"{tag}-big"
+    _write([_event(session, "x" * 60_000, n) for n in range(4)])
+    page = _read(session).json()
+    assert [e["seq"] for e in page["events"]] == [1, 2, 3]
+    assert page["next_from_seq"] == 4
+    assert _read(session, from_seq=4).json()["next_from_seq"] is None
 
 
 def test_an_event_keeps_its_tool_fields_and_an_empty_tool_call_content(tag):

@@ -133,6 +133,8 @@ def test_session_events_are_numbered_per_author_and_session_with_a_trigram_index
         in body
     )
     assert "UNIQUE (author, session_id, seq)" in body
+    assert "PRIMARY KEY (author, id)" in body
+    assert "namespace" not in body
     assert "embedding" not in body
     assert "CREATE EXTENSION IF NOT EXISTS pg_trgm" in sql
     assert "USING GIN (content gin_trgm_ops)" in " ".join(sql.split())

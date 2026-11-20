@@ -82,3 +82,9 @@ def test_the_descriptions_say_on_demand_own_sessions_never_ranked():
         assert "your own" in description, name
         assert "not memory" in description, name
         assert "never ranked" in description, name
+
+
+def test_read_session_states_the_page_cap_and_how_to_continue():
+    description = " ".join(_tools()["read_session"].description.split())
+    assert "200,000 characters" in description
+    assert "`next_from_seq`" in description
