@@ -1,4 +1,4 @@
-"""Public database schema setup for notes, messages, namespaces, and keys."""
+"""Public database schema setup for notes, messages, namespaces, keys, and decisions."""
 
 from __future__ import annotations
 
@@ -72,6 +72,21 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
           label text NOT NULL,
           created_at timestamptz NOT NULL DEFAULT now(),
           revoked_at timestamptz
+        );
+        CREATE TABLE IF NOT EXISTS {schema}.decisions (
+          scope text NOT NULL CHECK (scope LIKE 'repo:%'),
+          author text NOT NULL,
+          number integer NOT NULL,
+          title text NOT NULL,
+          decision text NOT NULL,
+          why text,
+          links jsonb NOT NULL DEFAULT '[]',
+          decided_on date NOT NULL,
+          status text NOT NULL CHECK (status IN ('active', 'superseded', 'retired')),
+          superseded_by integer,
+          retired_reason text,
+          created_at timestamptz NOT NULL,
+          PRIMARY KEY (scope, author, number)
         );
         """
     )
