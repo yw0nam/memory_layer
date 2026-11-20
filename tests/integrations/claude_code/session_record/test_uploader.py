@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import urllib.error
@@ -10,6 +11,7 @@ import uuid
 import pytest
 
 from hook_common import data_dir
+from session_record import checkpoint
 from session_record import uploader
 
 
@@ -20,13 +22,14 @@ def state_dir(monkeypatch, tmp_path):
 
 class FakeServer:
     """Stores events by id as the contract says; `down` refuses, `lose_ack` stores then fails,
-    `statuses` answers the next posts with those HTTP errors."""
+    `statuses` answers the next posts with those HTTP errors, and a body holding an id in
+    `bad` gets a 400."""
 
     def __init__(self):
         self.rows, self.bodies = {}, []
         self.down = self.lose_ack = False
         self.on_post = None
-        self.statuses = []
+        self.statuses, self.bad = [], set()
 
     def __call__(self, body):
         if self.on_post:
@@ -36,6 +39,8 @@ class FakeServer:
         self.bodies.append(body)
         if self.statuses:
             raise urllib.error.HTTPError("/session_events", self.statuses.pop(0), "no", {}, None)
+        if self.bad & {event["id"] for event in body["events"]}:
+            raise urllib.error.HTTPError("/session_events", 400, "bad event", {}, None)
         stored = known = 0
         conflicts = []
         for event in body["events"]:
@@ -214,19 +219,19 @@ def _backlog(path, count=600):
     _write(path, *(_line(f"u{n}", f"secret {n}") for n in range(count)))
 
 
-def test_a_chunk_rejected_with_400_is_logged_skipped_and_the_next_chunk_is_sent(tmp_path):
+def test_a_400_chunk_is_resent_line_by_line_and_only_the_bad_line_is_skipped(tmp_path):
     path, server = tmp_path / "t.jsonl", FakeServer()
     _backlog(path)
-    server.statuses = [400]
+    bad = str(uuid.uuid5(uuid.NAMESPACE_URL, "s1:u10:0"))
+    server.bad = {bad}
 
     _upload(path, server)
     _upload(path, server)
 
-    rejected, sent = server.bodies
-    assert [len(rejected["events"]), len(sent["events"])] == [500, 100]
-    assert len(server.rows) == 100
+    assert len(server.rows) == 599 and bad not in server.rows
+    assert server.sent()[-1] == "secret 599"
     log = (data_dir() / "records.log").read_text()
-    assert f"rejected=500 first_id={rejected['events'][0]['id']} status=400" in log
+    assert f"rejected=1 first_id={bad} status=400" in log
     assert "secret" not in log
 
 
@@ -252,3 +257,51 @@ def test_a_sweep_removes_the_files_of_a_session_whose_transcript_is_gone(tmp_pat
     uploader.sweep(server)
 
     assert list((data_dir() / "records").iterdir()) == []
+
+
+def test_a_sweep_keeps_the_files_of_a_gone_transcript_whose_lock_is_held(tmp_path):
+    path, server = tmp_path / "t.jsonl", FakeServer()
+    _write(path, _line("u1", "first"))
+    _upload(path, server)
+    path.unlink()
+
+    with open(checkpoint.file_of("s1", ".lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        uploader.sweep(server)
+
+    assert checkpoint.load("s1") is not None
+
+
+def test_a_failing_session_does_not_stop_the_sweep(tmp_path):
+    broken, good, server = tmp_path / "a.jsonl", tmp_path / "b.jsonl", FakeServer()
+    _write(broken, _line("u1", "first"))
+    _upload(broken, server, session="a")
+    point = checkpoint.load("a")
+    del point["line_start"]
+    checkpoint.save(point)
+    _write(broken, _line("u2", "second"), mode="ab")
+    _write(good, _line("u1", "other"))
+    server.down = True
+    _upload(good, server, session="b")
+    server.down = False
+
+    uploader.sweep(server)
+
+    assert server.sent() == ["first", "other"]
+    assert "session=a error=KeyError" in (data_dir() / "records.log").read_text()
+
+
+def test_the_lock_holder_makes_one_more_pass_when_the_file_grew_while_it_held_the_lock(tmp_path):
+    path, server = tmp_path / "t.jsonl", FakeServer()
+    _write(path, _line("u1", "first"))
+    refused = FakeServer()
+
+    def hook_fires_meanwhile():
+        server.on_post = None
+        _write(path, _line("u2", "second"), mode="ab")
+        _upload(path, refused)
+
+    server.on_post = hook_fires_meanwhile
+    _upload(path, server)
+
+    assert (server.sent(), refused.bodies) == (["first", "second"], [])

@@ -126,7 +126,7 @@ def test_transcripts_run_in_ascending_mtime_order(env, tmp_path, rest, capsys):
 # ---- cwd ----------------------------------------------------------------------
 
 
-def test_cwd_comes_from_the_first_entry_that_has_one(env, tmp_path, rest, capsys):
+def test_an_entry_without_a_cwd_takes_the_first_one_the_transcript_has(env, tmp_path, rest, capsys):
     projects = tmp_path / "projects"
     _write(
         projects / "alpha" / "s1.jsonl",
@@ -138,7 +138,11 @@ def test_cwd_comes_from_the_first_entry_that_has_one(env, tmp_path, rest, capsys
     code, out, _ = _run(projects, tmp_path, rest, capsys=capsys)
 
     assert code == 0
-    assert {event["cwd"] for event in rest.rows.values()} == {"/repo/one"}
+    assert [(e["content"], e["cwd"]) for e in rest.rows.values()] == [
+        ("before the cwd", "/repo/one"),
+        ("with the cwd", "/repo/one"),
+        ("another cwd", "/repo/two"),
+    ]
     # /repo/one does not exist, so the repo scope is null.
     assert {event["repo"] for event in rest.rows.values()} == {None}
 
@@ -208,3 +212,21 @@ def test_a_non_400_failure_stops_with_exit_1_and_the_file_name(env, tmp_path, re
     assert code == 1
     assert "never sent" not in rest.sent()
     assert "bad.jsonl" in err
+
+
+def test_a_line_rejected_with_400_is_counted_once_and_the_other_line_is_stored(
+    env, tmp_path, rest, capsys
+):
+    projects = tmp_path / "projects"
+    _write(
+        projects / "alpha" / "s1.jsonl",
+        _line("u1", "rejected", cwd="/repo/one"),
+        _line("u2", "kept", cwd="/repo/one"),
+    )
+    rest.statuses = [400, 400]
+
+    code, out, _ = _run(projects, tmp_path, rest, capsys=capsys)
+
+    assert code == 0
+    assert [row["content"] for row in rest.rows.values()] == ["kept"]
+    assert "s1 events=2 stored=1 known=0 rejected=1" in out

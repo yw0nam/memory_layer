@@ -130,3 +130,35 @@ def test_ids_are_stable_across_reruns_and_distinct_across_sessions():
 
     assert first == again == [_id("s1", "u1", 0), _id("s1", "u1", 1)]
     assert not set(first) & set(forked)
+
+
+def test_odd_shapes_never_raise_content_is_a_string_and_tool_names_are_cut_to_200():
+    lines = [
+        _line("user", [{"type": "tool_result", "tool_use_id": "t", "content": ["x"]}]),
+        _line("user", [{"type": "tool_result", "tool_use_id": "t", "content": {"a": 1}}]),
+        _line("assistant", [{"type": "text", "text": {"a": 1}}]),
+        _line("assistant", [{"type": "tool_use", "id": "i" * 300, "name": "n" * 300}]),
+        _line("assistant", ["a bare string", 7, None]),
+    ]
+
+    events = [mapper.events(line, "s1", WHERE) for line in lines]
+
+    assert [[e["content"] for e in found] for found in events] == [
+        ["x"],
+        ['{"a": 1}'],
+        ['{"a": 1}'],
+        [""],
+        [],
+    ]
+    call = events[3][0]
+    assert (len(call["tool_name"]), len(call["tool_use_id"])) == (200, 200)
+
+
+def test_an_entry_with_its_own_cwd_keeps_it_and_one_without_takes_the_given_cwd():
+    own = _line("user", "moved", uid="u1", cwd="/repo/sub")
+    plain = _line("user", "here", uid="u2")
+
+    assert [mapper.events(line, "s1", WHERE)[0]["cwd"] for line in (own, plain)] == [
+        "/repo/sub",
+        "/repo",
+    ]
