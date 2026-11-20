@@ -194,22 +194,24 @@ has not seen yet. This section is what the client builds and does with the reply
 
 ```
 previous assistant text (Stop tail file, else transcript) + prompt
-   │  query: previous, blank line, prompt; fences removed, prompt ≤ 2000 chars
+   │  query: last 200 chars of previous, blank line, prompt; fences removed, prompt ≤ 2000 chars
    ▼
- POST /recall   notes top_k 5 · decisions top_k 5 · min_score 0.5 · scope
+ POST /recall   notes top_k 5 min 0.5 · decisions top_k 5 min 0.7 · scope
    │  reply by 2.5 s after the hook starts; a later one counts as unavailable
    ▼
  drop the keys this session was already shown
    ▼
- decisions[:2] → notes[:3] → one <memory-recall> fence of at most 4000 chars
+ decisions[:3] (titles) → notes[:3] → one <memory-recall> fence of at most 4000 chars
    ▼
  stdout hookSpecificOutput.additionalContext
  session shown set += keys shown · recall.log += one line
 ```
 
 - **Query.** The Stop hook keeps the last 1500 characters of the assistant's last message in the
-  session's tail file. Without that file, the hook takes the last assistant text of the transcript,
-  scanning its last 256 KiB. The query is at most 3502 characters. A prompt that starts with `/`, is
+  session's tail file, a file local to the plugin data directory that is replaced each turn and
+  never sent to the server. Without that file, the hook takes the last assistant text of the
+  transcript, scanning its last 256 KiB. The query takes the last 200 characters of that text, so
+  it is at most 2202 characters. A prompt that starts with `/`, is
   empty once fences are removed, or is under 20 characters with no previous text makes no call.
 - **Request.** One `POST /recall`, with `scope` only when the origin is portable; without it the
   server returns no decisions. The hook does not re-score: the server applies `min_score`.
@@ -218,9 +220,11 @@ previous assistant text (Stop tail file, else transcript) + prompt
   shows nothing and logs `errors=unavailable`.
 - **Dedup.** The shown set holds `decision:<scope>#<number>` keys and note ids in
   `sessions/<session>.json` under the plugin data directory. Shown items are removed before the caps,
-  so the next-ranked ones take their place. SessionStart clears the set on `clear` and `compact`.
-- **Render.** A decision block is `D-<number> <title> (<decided_on>)`, its decision text cut to 600
-  characters, and a line pointing to `get_decision`. A note block is its id, date, tags and text.
+  so the next-ranked ones take their place. SessionStart clears the set and the tail file on `clear`
+  and `compact`.
+- **Render.** The decisions are one block of titles only: a header line saying to read one with
+  `get_decision`, then `D-<number> <title> (<decided_on>)` per decision, with no decision text. A
+  note block is its id, date, tags and text.
   Entries are whole and in order; the first one that does not fit ends the list, and the fence
   counts its own header and footer.
 

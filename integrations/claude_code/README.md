@@ -53,13 +53,13 @@ close the fence.
 
 ### UserPromptSubmit
 
-The query is the previous assistant text and the prompt. The previous text is the session's tail
-file from the Stop hook (at most 1500 characters); without it, the last assistant text of the
-transcript, read from its last 256 KiB. The prompt has its complete `<memory-context>` and
+The query is the last 200 characters of the previous assistant text and the prompt. The previous
+text is the session's tail file from the Stop hook (which keeps at most 1500 characters); without it,
+the last assistant text of the transcript, read from its last 256 KiB. The prompt has its complete `<memory-context>` and
 `<memory-recall>` fences removed and is cut to 2000 characters. The two are joined by a blank line.
 A prompt that starts with `/`, is empty, or is under 20 characters with no previous text makes no call.
 
-The hook sends one `POST /recall` with `notes` and `decisions`, each `top_k` 5 and `min_score` 0.5,
+The hook sends one `POST /recall` with `notes` and `decisions`, `top_k` 5 for both and `min_score` 0.5 for notes and 0.7 for decisions,
 and the repository's `scope` when the origin is portable. The server applies those floors; the
 hook does not re-score.
 
@@ -68,10 +68,10 @@ logs `errors=unavailable`. The process exits at 3.0 seconds whatever it is doing
 `hooks.json` timeout is 4 seconds.
 
 Decisions the session has already been shown are dropped first, then the rest are capped: at most
-2 decisions, then at most 3 notes. The fence is one `<memory-recall>` block: a header line, then the
-decisions in rank order, then the notes. A decision shows `D-<number> <title> (<decided_on>)`, its
-decision text cut to 600 characters, and a line pointing to `get_decision`; a note shows its id, date,
-tags and text. Entries are whole and the fence is at most 4000 characters; the first entry that does
+3 decisions, then at most 3 notes. The fence is one `<memory-recall>` block: a header line, then
+the decisions in rank order, then the notes. The decisions are titles only, under one line saying to
+read one with `get_decision`: each is `D-<number> <title> (<decided_on>)`, with no decision text. A
+note shows its id, date, tags and text. Entries are whole and the fence is at most 4000 characters; the first entry that does
 not fit ends the list. The shown keys are merged into the session's shown set.
 
 ### Stop
@@ -92,8 +92,9 @@ print nothing. SessionStart records `configured: false` in `status.json`.
 - `status.json`: configured, URL, author, reachable, check time, error. SessionStart writes it.
 - `sessions/<session>.json`: the keys a session was shown (`decision:<scope>#<number>` and note ids),
   writers hold `sessions/<session>.lock` while they merge.
-  SessionStart clears it on `clear` and `compact`.
-- `sessions/<session>.tail`: the last 1500 characters of the assistant's last message. The Stop hook writes it.
+  SessionStart removes both on `clear` and `compact`.
+- `sessions/<session>.tail`: the last 1500 characters of the assistant's last message, replaced each
+  turn by the Stop hook and removed by SessionStart on `clear` and `compact`. It never leaves the machine.
 - `recall.log`: one line per prompt that reaches the lookup: time, elapsed milliseconds, the keys shown,
   and the errors. It holds no prompt text, is appended to, and is never rotated.
 
