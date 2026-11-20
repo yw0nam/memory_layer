@@ -40,6 +40,7 @@ app = Starlette(
         Route("/health", health.health, methods=["GET"]),
         Route("/health/services", health.health_services, methods=["GET"]),
         Route("/search", search_routes.search_route, methods=["POST"]),
+        Route("/recall", search_routes.recall_route, methods=["POST"]),
         Route("/save_memory", note_routes.save_route, methods=["POST"]),
         Route("/notes", note_routes.list_route, methods=["GET"]),
         Route("/messages", message_routes.send_route, methods=["POST"]),
