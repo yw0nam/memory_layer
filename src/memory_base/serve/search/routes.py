@@ -26,6 +26,10 @@ LOGGER = logging.getLogger(__name__)
 # work no ranking can use.
 MAX_QUERY_CHARS = 2000
 MAX_BUDGET_TOKENS = 32000
+RECALL_MAX_QUERY_CHARS = 4000
+RECALL_MAX_TOP_K = 5
+RECALL_FIELDS = frozenset({"query", "scope", "notes", "decisions"})
+RECALL_DEFAULTS = {"notes": (3, 0.5), "decisions": (2, 0.5)}
 
 
 def hit_to_dict(hit: Hit) -> dict[str, Any]:
@@ -135,12 +139,6 @@ async def search_route(request: Request) -> JSONResponse:
     return JSONResponse([hit_to_dict(hit) for hit in hits])
 
 
-RECALL_MAX_QUERY_CHARS = 4000
-RECALL_MAX_TOP_K = 5
-RECALL_FIELDS = frozenset({"query", "scope", "notes", "decisions"})
-RECALL_DEFAULTS = {"notes": (3, 0.5), "decisions": (2, 0.5)}
-
-
 def _lane_options(body: dict[str, Any], lane: str) -> tuple[int, float]:
     """The lane's (top_k, min_score) from the body, else its default."""
     options = body.get(lane, {})
@@ -182,12 +180,15 @@ async def recall_route(request: Request) -> JSONResponse:
         return error(str(exc))
 
     author = request.state.author
-    lanes = {"notes": recall.recall_notes(query, author, *note_options)}
+    # The note search gets the query's tail: the query ends with the user's prompt.
+    lanes = {"notes": recall.recall_notes(query[-MAX_QUERY_CHARS:], author, *note_options)}
     if scope is not None:
         lanes["decisions"] = recall.recall_decisions(query, scope, author, *decision_options)
     started = time.monotonic()
     results = dict(zip(lanes, await asyncio.gather(*lanes.values(), return_exceptions=True)))
-    failures = {name: result for name, result in results.items() if isinstance(result, Exception)}
+    failures = {
+        name: result for name, result in results.items() if isinstance(result, BaseException)
+    }
     for name, exc in failures.items():
         if isinstance(exc, UpstreamUnavailable):
             LOGGER.warning(
