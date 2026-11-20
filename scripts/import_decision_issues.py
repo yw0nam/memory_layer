@@ -6,11 +6,14 @@ is skipped, so the run can be repeated until it completes. gh reads the issues,
 the memory-base REST API records them. A dry run prints what it would record
 and writes nothing.
 
-Usage: import_decision_issues.py --repo OWNER/NAME --url MEMORY_BASE_URL [--dry-run]
+Usage: import_decision_issues.py --repo OWNER/NAME --url MEMORY_BASE_URL
+       [--plugin-data DIR] [--dry-run]
 
-Environment: MEMORY_BASE_API_KEY, MEMORY_BASE_AUTHOR, CLAUDE_PLUGIN_AUTHOR.
-The two author values must be set and equal; the plugin's decisions must not
-land under another persona.
+Environment: MEMORY_BASE_API_KEY, MEMORY_BASE_AUTHOR. The author must equal the
+`author` in the plugin's `status.json` (in --plugin-data, else CLAUDE_PLUGIN_DATA,
+else the hooks' default data directory), so the plugin's decisions do not land
+under another persona. A scope whose decision list is already at the 200-row
+cap is refused: the resume check could not see every link.
 """
 
 from __future__ import annotations
@@ -21,8 +24,10 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 GH_TIMEOUT_S = 30
 REST_TIMEOUT_S = 30
@@ -38,7 +43,11 @@ class GhError(Exception):
 
 
 class RequestFailed(Exception):
-    """A memory-base REST call failed; the run stops."""
+    """A memory-base REST call failed or answered something unexpected; the run stops."""
+
+
+class ListCapReached(Exception):
+    """The scope's decision list is as long as one request can return."""
 
 
 def run_gh(args: list[str]) -> str:
@@ -96,17 +105,16 @@ def issue_comments(repo: str, number: int) -> list[dict]:
 def closing_text(comments: list[dict], issue_url: str) -> str:
     """The closing decision text of an issue, cut to BODY_MAX_CHARS with a pointer suffix.
 
-    The last comment whose body has a `Decision` heading wins; otherwise all
-    comment bodies joined by blank lines.
+    The last comment whose body has a `Decision` heading and every later comment
+    (amendments), joined by blank lines; without a heading, all comment bodies.
     """
-    bodies = [str(comment.get("body") or "") for comment in comments]
-    text = ""
-    for body in reversed(bodies):
-        if any(DECISION_HEADING.match(line) for line in body.splitlines()):
-            text = body.strip()
+    bodies = [str(comment.get("body") or "").strip() for comment in comments]
+    start = 0
+    for index in range(len(bodies) - 1, -1, -1):
+        if any(DECISION_HEADING.match(line) for line in bodies[index].splitlines()):
+            start = index
             break
-    if not text:
-        text = "\n\n".join(body.strip() for body in bodies)
+    text = "\n\n".join(bodies[start:])
     if len(text) <= BODY_MAX_CHARS:
         return text
     suffix = f" [cut; full text: {issue_url}]"
@@ -134,18 +142,38 @@ def imported_links(base: str, scope: str, *, api_key: str, author: str) -> set[s
     """Every link in the scope's decisions, active or not; the resume check."""
     query = urllib.parse.urlencode({"scope": scope, "status": "all", "limit": LIST_LIMIT})
     rows = rest(f"{base}/decisions?{query}", api_key=api_key, author=author)
-    links: set[str] = set()
-    for row in rows:
-        query = urllib.parse.urlencode({"scope": scope})
-        detail = rest(f"{base}/decisions/{row['number']}?{query}", api_key=api_key, author=author)
-        links.update(detail["links"])
+    try:
+        if len(rows) >= LIST_LIMIT:
+            raise ListCapReached(f"{scope} already lists {len(rows)} decisions")
+        links: set[str] = set()
+        for row in rows:
+            query = urllib.parse.urlencode({"scope": scope})
+            number = row["number"]
+            detail = rest(f"{base}/decisions/{number}?{query}", api_key=api_key, author=author)
+            links.update(detail["links"])
+    except (KeyError, TypeError) as exc:
+        raise RequestFailed(f"unexpected decisions reply: {exc!r}") from exc
     return links
+
+
+def plugin_author(plugin_data: str | None) -> str | None:
+    """The `author` the plugin recorded in its `status.json`, or None."""
+    root = Path(
+        plugin_data
+        or os.environ.get("CLAUDE_PLUGIN_DATA")
+        or Path(tempfile.gettempdir()) / "memory_base_plugin"
+    )
+    try:
+        return json.loads((root / "status.json").read_text())["author"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def parse_args(argv: list[str] | None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", required=True, metavar="OWNER/NAME", help="GitHub repository")
     parser.add_argument("--url", required=True, help="memory-base REST base URL")
+    parser.add_argument("--plugin-data", help="the plugin data directory holding status.json")
     parser.add_argument(
         "--dry-run", action="store_true", help="print what would be recorded; write nothing"
     )
@@ -158,9 +186,9 @@ def parse_args(argv: list[str] | None):
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     author = os.environ.get("MEMORY_BASE_AUTHOR")
-    if not author or author != os.environ.get("CLAUDE_PLUGIN_AUTHOR"):
+    if not author or author != plugin_author(args.plugin_data):
         print(
-            "error: MEMORY_BASE_AUTHOR and CLAUDE_PLUGIN_AUTHOR must be set and equal",
+            "error: MEMORY_BASE_AUTHOR must be set and equal the author in the plugin's status.json",
             file=sys.stderr,
         )
         return 2
@@ -174,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         already = imported_links(base, scope, api_key=api_key, author=author)
         issues = list_issues(args.repo)
+    except ListCapReached as exc:
+        print(f"error: {exc}; the resume check needs every row", file=sys.stderr)
+        return 2
     except (GhError, RequestFailed) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -202,15 +233,16 @@ def main(argv: list[str] | None = None) -> int:
         if issue.get("closedAt"):
             record["decided_on"] = issue["closedAt"][:10]
         if args.dry_run:
-            print(f"#{issue['number']} -> D-? (dry run) {json.dumps(record, ensure_ascii=False)}")
+            print(f"#{issue['number']} (dry run) {json.dumps(record['title'])}: {len(text)} chars")
             recorded += 1
             continue
         try:
             result = rest(f"{base}/decisions", api_key=api_key, author=author, payload=record)
-        except RequestFailed as exc:
-            print(f"error: {exc}", file=sys.stderr)
+            number = result["number"]
+        except (RequestFailed, KeyError, TypeError) as exc:
+            print(f"error: {exc!r}", file=sys.stderr)
             return 1
-        print(f"#{issue['number']} -> D-{result['number']}")
+        print(f"#{issue['number']} -> D-{number}")
         recorded += 1
     verb = "would record" if args.dry_run else "recorded"
     print(f"{verb} {recorded}, skipped {skipped}")

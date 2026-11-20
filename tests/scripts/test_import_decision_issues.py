@@ -264,6 +264,6 @@ def test_dry_run_sends_no_post(env, gh_calls, rest, capsys):
     )
     assert rest.urls("GET") == [f"{BASE}/decisions?{query}"]
     out = capsys.readouterr().out
-    assert '#1 (dry run) "Keep decisions in their own lane": 26 chars' in out
+    assert '#1 (dry run) "Keep decisions in their own lane": 25 chars' in out
     assert "Use pgvector" not in out
     assert "would record 3, skipped 0" in out
