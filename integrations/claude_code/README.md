@@ -1,7 +1,8 @@
 # memory-base plugin for Claude Code
 
 A Claude Code plugin that connects a session to memory-base: the repo's handoffs and decision
-titles at session start, decisions and notes recalled for each prompt, and the memory tools over MCP.
+titles at session start, decisions and notes recalled for each prompt, the session record of each
+session's transcript, and the memory tools over MCP.
 
 ## Install
 
@@ -28,6 +29,7 @@ The `connect-agent` skill walks through picking the author and minting a key for
 | SessionStart hook | `hooks/session_start.py` | start, resume, clear, compaction | prints one `<memory-context>` fence: the repo's open handoffs, a line counting its completed handoffs, the repository scope line, and the newest active decision titles; records the connection in `status.json` |
 | UserPromptSubmit hook | `hooks/prompt_recall.py` | every prompt | prints one `<memory-recall>` fence of the decisions and notes this session has not been shown yet |
 | Stop hook | `hooks/session_tail.py` | end of each assistant turn | saves the tail of the assistant's last message for the next prompt's query; prints nothing |
+| Session record hook | `hooks/session_record.py` | Stop, SessionEnd, start (the start sweeps unfinished transcripts) | starts a detached uploader that posts the session's new transcript lines to `/session_events`; prints nothing |
 | MCP server | `.mcp.json` | session | the memory tools, with the key and author from the plugin options as the `X-API-Key` and `X-Author` headers |
 | `/memory-base:init` | `skills/init` | on demand | reports `status.json` and flags old hand-installed entries |
 | `/memory-base:connect-agent` | `skills/connect-agent` | on demand | connects, changes, or disconnects an agent |
@@ -79,11 +81,27 @@ not fit ends the list. The shown keys are merged into the session's shown set.
 Writes the last 1500 characters of `last_assistant_message` to the session's tail file, replacing it
 atomically. It prints nothing.
 
+### Session record
+
+Stop and SessionEnd write the session's checkpoint if it is missing, then start a detached uploader
+for its transcript. SessionStart starts the sweep. The hook prints nothing and exits at once.
+
+The uploader reads the main transcript only, never a subagent's, from the checkpoint's offset and
+only complete lines. Its text and tool events go to `POST /session_events` in chunks of at most 500
+events and about 1,900,000 bytes. Tool input and results are cut at 2,000 characters and other text at
+64,000. A chunk the server answers with 400 is skipped and logged; any other failure stops the run
+and leaves the checkpoint at the last acknowledged chunk, so the next run resumes there. A second
+uploader for a session exits while the first holds its lock.
+
+The record is the session verbatim, secrets included, and it is readable through the MCP tools
+`list_sessions`, `read_session`, and `search_transcript` by the same author from any machine
+([ADR-0017](../../docs/adr/0017-the-session-record-lane.md)). It never reaches `/search` or `/recall`.
+
 ### When memory-base is not configured
 
 When the REST URL, API key or author option is empty, no call is made and nothing is saved. SessionStart
 prints only the scope line, and only when the origin is portable. The UserPromptSubmit and Stop hooks
-print nothing. SessionStart records `configured: false` in `status.json`.
+print nothing, and the session record hook uploads nothing. SessionStart records `configured: false` in `status.json`.
 
 ## Data directory
 
@@ -95,20 +113,30 @@ print nothing. SessionStart records `configured: false` in `status.json`.
   SessionStart removes both on `clear` and `compact`.
 - `sessions/<session>.tail`: the last 1500 characters of the assistant's last message, replaced each
   turn by the Stop hook and removed by SessionStart on `clear` and `compact`. It never leaves the machine.
+- `records/<session>.json`: the session record checkpoint: the transcript path, session id, cwd, the
+  file's device and inode, the acknowledged offset, and the sha256 of the last acknowledged line.
+  `records/<session>.lock` is held by an uploader while it runs. Neither is removed by a hook; the
+  sweep removes both once the transcript file is gone.
 - `recall.log`: one line per prompt that reaches the lookup: time, elapsed milliseconds, the keys shown,
   and the errors. It holds no prompt text, is appended to, and is never rotated.
+- `records.log`: one line per uploaded chunk: time, session, and the counts or the error. It holds no
+  event content, is appended to, and is never rotated.
 
 Without `CLAUDE_PLUGIN_DATA` the hooks use a `memory_base_plugin` directory under the system temp directory.
 
 ## Scripts
 
-Both live in the repository's `scripts/` directory and are run by hand, not by the plugin.
+All three live in the repository's `scripts/` directory and are run by hand, not by the plugin.
 
 - `scripts/import_decision_issues.py --repo OWNER/NAME --url URL [--plugin-data DIR] [--dry-run]`:
   one-time, resumable import of a repository's closed `decision` issues into its decision lane. A
   decision's text is the last comment with a `Decision` heading and every comment after it. The
   author in `MEMORY_BASE_AUTHOR` must equal the `author` in the plugin's `status.json`. It refuses a
   scope that already lists 200 decisions. A dry run prints each issue's title and text length.
+- `scripts/backfill_sessions.py --url URL [--projects DIR] [--since YYYY-MM-DD] [--state DIR] [--dry-run]`:
+  one-time backfill of the main-session transcripts under `~/.claude/projects` into the session record, in
+  modification order; `MEMORY_BASE_API_KEY` and `MEMORY_BASE_AUTHOR` must be set. Each transcript's checkpoints
+  live in `--state` (default `~/.cache/memory-base-backfill`), so a rerun resumes and a new state directory resends all.
 - `scripts/probe_recall.py`: the recall probe. `seed-notes --from URL --to URL` copies notes to a
   sandbox server (the target key is `MEMORY_BASE_TO_API_KEY`). `run --repo OWNER/NAME` sweeps the
   tail length (0, 200, 400, 800) and the decision floor on half of a local case file through
