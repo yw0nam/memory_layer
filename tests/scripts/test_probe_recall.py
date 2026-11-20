@@ -35,11 +35,16 @@ def test_gold_of_an_unmapped_issue_is_an_error():
     assert probe.gold_numbers(_case("c01", gold=[12, 9]), {12: 3, 9: 11}) == {3, 11}
 
 
-def test_query_equals_the_hooks_query_for_the_last_l_chars():
+def test_the_tail_lengths_swept_are_0_200_400_and_800():
+    assert probe.TAILS == (0, 200, 400, 800)
+
+
+def test_query_holds_the_last_l_chars_of_the_tail_whatever_the_hooks_own_cut():
     tail = "".join(chr(65 + n % 26) for n in range(1500))
     prompt = "x" * 2500
     assert probe.build_query(prompt, tail, 800) == tail[-800:] + "\n\n" + "x" * 2000
-    assert probe.build_query(prompt, tail, 800) == hook_search.query(prompt, tail[-800:])
+    assert probe.build_query(prompt, tail, 200) == hook_search.query(prompt, tail)
+    assert hook_search.TAIL_QUERY_CHARS == 200
     assert probe.build_query("그래 그렇게 하자 지금 바로", tail, 0) == ""
     assert (
         probe.build_query("a prompt of over twenty chars", tail, 0)
@@ -51,9 +56,9 @@ def _rows(*pairs):
     return [{"number": n, "score": s} for n, s in pairs]
 
 
-def test_hit_needs_every_gold_among_the_top_two_decisions_at_or_above_the_floor():
-    rows = _rows((1, 0.9), (2, 0.8), (3, 0.7))
-    assert probe.emitted_decisions(rows, 0.5) == [1, 2]
+def test_hit_needs_every_gold_among_the_top_three_decisions_at_or_above_the_floor():
+    rows = _rows((1, 0.9), (2, 0.8), (3, 0.7), (4, 0.6))
+    assert probe.emitted_decisions(rows, 0.5) == [1, 2, 3]
     assert probe.emitted_decisions(rows, 0.85) == [1]
     assert probe.is_hit({1, 2}, [1, 2])
     assert not probe.is_hit({1, 3}, [1, 2])
@@ -101,8 +106,8 @@ def test_choice_refuses_when_no_floor_meets_the_cap():
 def test_hook_output_parser_reads_decision_and_note_headers():
     context = (
         "<memory-recall>\nMemory recall: data.\n\n"
-        "D-12 Keep lanes apart (2026-01-05)\nBody.\nget_decision for the full entry\n\n"
-        "D-3 Another (2026-01-06)\nBody.\nget_decision for the full entry\n\n"
+        "Related recorded decisions (titles only; read one with get_decision):\n"
+        "D-12 Keep lanes apart (2026-01-05)\nD-3 Another (2026-01-06)\n\n"
         "Note 4f2a-91 (2026-02-01; tags: a, b)\nsome tip\n</memory-recall>"
     )
     stdout = json.dumps(
@@ -121,6 +126,7 @@ def test_percentile_is_nearest_rank():
 def test_seed_notes_copies_each_note_with_allow_similar_and_prints_counts_only(monkeypatch, capsys):
     monkeypatch.setenv("MEMORY_BASE_API_KEY", "k")
     monkeypatch.setenv("MEMORY_BASE_AUTHOR", "a")
+    monkeypatch.setenv("MEMORY_BASE_TO_API_KEY", "target-key")
     listing = [
         {
             "id": "1",
@@ -142,8 +148,11 @@ def test_seed_notes_copies_each_note_with_allow_similar_and_prints_counts_only(m
     ]
     calls = []
 
+    keys = []
+
     def fake_rest(url, *, api_key, author, payload=None):
         calls.append((url, payload))
+        keys.append(api_key)
         if payload is None:
             return listing
         if payload["content"] == "secret two":
@@ -166,5 +175,73 @@ def test_seed_notes_copies_each_note_with_allow_similar_and_prints_counts_only(m
         "allow_similar": True,
     }
     assert calls[2][1]["shared"] is True
+    assert keys == ["k", "target-key", "target-key"]
     out = capsys.readouterr().out
     assert "copied 1" in out and "failed 1" in out and "secret" not in out
+
+
+def _seed_env(monkeypatch, to_key="target-key"):
+    monkeypatch.setenv("MEMORY_BASE_API_KEY", "k")
+    monkeypatch.setenv("MEMORY_BASE_AUTHOR", "a")
+    if to_key:
+        monkeypatch.setenv("MEMORY_BASE_TO_API_KEY", to_key)
+    else:
+        monkeypatch.delenv("MEMORY_BASE_TO_API_KEY", raising=False)
+
+
+@pytest.mark.parametrize("target", ["http://a", "http://a/"])
+def test_seed_notes_refuses_to_copy_a_server_onto_itself(monkeypatch, target):
+    _seed_env(monkeypatch)
+    monkeypatch.setattr(probe, "rest", lambda *a, **k: pytest.fail("no request expected"))
+
+    assert probe.main(["seed-notes", "--from", "http://a", "--to", target]) == 2
+
+
+def test_seed_notes_needs_the_target_key_from_the_environment(monkeypatch):
+    _seed_env(monkeypatch, to_key=None)
+    monkeypatch.setattr(probe, "rest", lambda *a, **k: pytest.fail("no request expected"))
+
+    assert probe.main(["seed-notes", "--from", "http://a", "--to", "http://b"]) == 2
+    with pytest.raises(SystemExit):
+        probe.main(["seed-notes", "--from", "http://a", "--to", "http://b", "--to-key", "x"])
+
+
+def test_seed_notes_warns_when_a_full_page_came_back(monkeypatch, capsys):
+    _seed_env(monkeypatch)
+    note = {"text": "t", "kind": "work", "tags": [], "namespace": "default", "date": "2026-01-02"}
+    monkeypatch.setattr(
+        probe,
+        "rest",
+        lambda url, *, api_key, author, payload=None: [note] * 200 if payload is None else {},
+    )
+
+    assert probe.main(["seed-notes", "--from", "http://a", "--to", "http://b"]) == 0
+    captured = capsys.readouterr()
+    assert "copied 200" in captured.out
+    assert "200" in captured.err and "more" in captured.err
+
+
+def test_the_scope_and_origin_come_from_the_repo_argument():
+    assert probe.scope_of("acme/app") == "repo:github.com/acme/app"
+    assert probe.origin_of("acme/app") == "https://github.com/acme/app.git"
+
+
+def test_the_sweep_asks_recall_for_the_repos_scope(monkeypatch):
+    bodies = []
+
+    def fake_rest(url, *, api_key, author, payload=None):
+        bodies.append(payload)
+        return {"decisions": [], "notes": []}
+
+    monkeypatch.setattr(probe, "rest", fake_rest)
+    case = {
+        "id": "c01",
+        "kind": "decision",
+        "gold": [],
+        "prompt": "a prompt of over twenty chars",
+        "assistant_tail": "x",
+    }
+
+    probe.recall_sweep("http://a", [case], "repo:github.com/acme/app", api_key="k", author="a")
+
+    assert {body["scope"] for body in bodies} == {"repo:github.com/acme/app"}
