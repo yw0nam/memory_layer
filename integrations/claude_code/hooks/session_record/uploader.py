@@ -3,8 +3,8 @@
 `python3 -m session_record.uploader <transcript_path> <session_id> <cwd>` uploads one session;
 `--sweep` uploads every session whose checkpoint is behind its file. One uploader runs per
 session: a second one exits at once. Only complete lines are read, one line's events go in
-one chunk, and the checkpoint advances after each acknowledged chunk; the first failure
-stops the run. `records.log` gets one line per chunk, never its content. Stdlib only.
+one chunk, and the checkpoint advances after each acknowledged chunk and past a chunk the
+server rejects with 400; any other failure stops the run. `records.log` gets one line per chunk, never its content. Stdlib only.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import json
 import os
 import socket
 import sys
+import urllib.error
 from datetime import datetime
 from datetime import timezone
 
@@ -75,15 +76,23 @@ def _drain(point: dict, send) -> int | None:
             if events:
                 try:
                     reply = send({"events": events})
+                    conflicts = ",".join(reply.get("conflicts") or [])
+                    _log(
+                        session_id,
+                        f"sent={len(events)} stored={reply.get('stored')}"
+                        f" known={reply.get('known')} conflicts={conflicts}",
+                    )
+                except urllib.error.HTTPError as exc:
+                    if exc.code != 400:
+                        _log(session_id, f"sent={len(events)} error=HTTPError status={exc.code}")
+                        return None
+                    # A 400 rejects this chunk for good; skipping it keeps the session moving.
+                    _log(
+                        session_id, f"rejected={len(events)} first_id={events[0]['id']} status=400"
+                    )
                 except Exception as exc:
                     _log(session_id, f"sent={len(events)} error={type(exc).__name__}")
                     return None
-                conflicts = ",".join(reply.get("conflicts") or [])
-                _log(
-                    session_id,
-                    f"sent={len(events)} stored={reply.get('stored')} known={reply.get('known')}"
-                    f" conflicts={conflicts}",
-                )
             checkpoint.advance(point, handle, line_start, line)
         return handle.tell()
 
@@ -109,10 +118,14 @@ def upload(path: str, session_id: str, cwd: str, send) -> None:
 
 
 def sweep(send) -> None:
-    """Upload every session whose checkpoint offset is behind its file."""
+    """Upload every session whose checkpoint offset is behind its file; drop those whose file is gone."""
     for item in sorted(checkpoint.records_dir().glob("*.json")):
         try:
             point = json.loads(item.read_text())
+            if not os.path.exists(point["path"]):
+                for gone in (item, item.with_suffix(".lock")):
+                    gone.unlink(missing_ok=True)
+                continue
             behind = os.path.getsize(point["path"]) != point.get("offset", 0)
         except (OSError, ValueError, KeyError, TypeError):
             continue
