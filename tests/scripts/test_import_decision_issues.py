@@ -49,10 +49,13 @@ def _issue_of(args):
 
 
 @pytest.fixture
-def env(monkeypatch):
+def env(monkeypatch, tmp_path):
     monkeypatch.setenv("MEMORY_BASE_API_KEY", "test-key")
     monkeypatch.setenv("MEMORY_BASE_AUTHOR", "claude-code")
-    monkeypatch.setenv("CLAUDE_PLUGIN_AUTHOR", "claude-code")
+    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path))
+    monkeypatch.delenv("CLAUDE_PLUGIN_AUTHOR", raising=False)
+    (tmp_path / "status.json").write_text(json.dumps({"author": "claude-code"}))
+    return tmp_path
 
 
 @pytest.fixture
@@ -79,13 +82,14 @@ class FakeRest:
         self.existing = []
         self.links = {}
         self.next_number = 0
+        self.reply = None
         monkeypatch.setattr(imi, "rest", self)
 
     def __call__(self, url, *, api_key, author, payload=None):
         self.calls.append(("POST" if payload is not None else "GET", url, payload))
         if payload is not None:
             self.next_number += 1
-            return {"number": self.next_number, "id": "id", "superseded": None}
+            return self.reply or {"number": self.next_number, "id": "id", "superseded": None}
         if "/decisions?" in url:
             return self.existing
         number = int(url.split("/decisions/", 1)[1].split("?", 1)[0])
@@ -106,10 +110,22 @@ def rest(monkeypatch):
 # ---- closing rule -------------------------------------------------------------
 
 
+def test_closing_rule_takes_the_last_heading_comment_and_every_later_comment():
+    comments = [
+        {"body": "early"},
+        {"body": "## Decision\nUse pgvector."},
+        {"body": "Amendment: also index tags."},
+        {"body": "Amendment 2."},
+    ]
+    assert imi.closing_text(comments, "u") == (
+        "## Decision\nUse pgvector.\n\nAmendment: also index tags.\n\nAmendment 2."
+    )
+
+
 def test_closing_rule_takes_the_last_heading_comment_else_all_bodies():
     comments = [
         {"body": "## Decision\nUse pgvector."},
-        {"body": "later chatter without a heading"},
+        {"body": "chatter without a heading"},
         {"body": "# decision\nThe final call."},
     ]
     assert imi.closing_text(comments, "u") == "# decision\nThe final call."
@@ -165,18 +181,55 @@ def test_skips_issues_already_imported(env, gh_calls, rest, capsys):
     assert "#2 skipped (already imported)" in capsys.readouterr().out
 
 
-def test_author_mismatch_refuses_before_any_request(env, gh_calls, rest, monkeypatch):
-    monkeypatch.setenv("CLAUDE_PLUGIN_AUTHOR", "other-plugin")
+def test_author_differing_from_the_plugins_status_refuses_before_any_request(
+    env, gh_calls, rest, monkeypatch
+):
+    monkeypatch.setenv("MEMORY_BASE_AUTHOR", "other-persona")
     assert imi.main(["--repo", "acme/app", "--url", BASE]) == 2
     assert gh_calls == []
     assert rest.calls == []
 
 
-def test_missing_author_refuses_before_any_request(env, gh_calls, rest, monkeypatch):
-    monkeypatch.delenv("CLAUDE_PLUGIN_AUTHOR")
+@pytest.mark.parametrize(
+    "status", [None, "not json", "{}"], ids=["missing", "garbage", "no-author"]
+)
+def test_an_unreadable_plugin_status_refuses_before_any_request(env, gh_calls, rest, status):
+    (env / "status.json").unlink()
+    if status is not None:
+        (env / "status.json").write_text(status)
     assert imi.main(["--repo", "acme/app", "--url", BASE]) == 2
     assert gh_calls == []
     assert rest.calls == []
+
+
+def test_plugin_data_option_names_the_status_directory(env, gh_calls, rest, monkeypatch, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "status.json").write_text(json.dumps({"author": "claude-code"}))
+    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path / "missing"))
+    assert imi.main(["--repo", "acme/app", "--url", BASE, "--plugin-data", str(other)]) == 0
+
+
+def test_a_full_decision_list_refuses_because_the_resume_check_would_miss_rows(env, gh_calls, rest):
+    rest.existing = [
+        {"number": n, "title": "t", "decided_on": "2026-01-06", "status": "active"}
+        for n in range(200, 0, -1)
+    ]
+    assert imi.main(["--repo", "acme/app", "--url", BASE]) == 2
+    assert rest.posts() == []
+
+
+@pytest.mark.parametrize("existing", [{"detail": "x"}, [{"title": "no number"}]])
+def test_a_malformed_list_reply_stops_the_run(env, gh_calls, rest, existing):
+    rest.existing = existing
+    assert imi.main(["--repo", "acme/app", "--url", BASE]) == 1
+    assert rest.posts() == []
+
+
+def test_a_record_reply_without_a_number_stops_the_run(env, gh_calls, rest):
+    rest.reply = {"unexpected": True}
+    assert imi.main(["--repo", "acme/app", "--url", BASE]) == 1
+    assert len(rest.posts()) == 1
 
 
 def test_gh_failure_on_comments_stops_before_writing_that_issue(env, rest, monkeypatch):
@@ -211,5 +264,6 @@ def test_dry_run_sends_no_post(env, gh_calls, rest, capsys):
     )
     assert rest.urls("GET") == [f"{BASE}/decisions?{query}"]
     out = capsys.readouterr().out
-    assert "#1 -> D-? (dry run)" in out
+    assert '#1 (dry run) "Keep decisions in their own lane": 26 chars' in out
+    assert "Use pgvector" not in out
     assert "would record 3, skipped 0" in out
