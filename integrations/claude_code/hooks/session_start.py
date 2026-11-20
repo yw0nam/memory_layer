@@ -20,6 +20,7 @@ from hook_common import emit
 from hook_common import get
 from hook_common import git_origin
 from hook_common import repo_scope
+from recall import dedup
 
 HANDOFF_LIMIT = 10
 HANDOFF_FETCH_LIMIT = 100
@@ -30,6 +31,7 @@ COMPLETED_LINE = (
     "Memory: completed handoffs delivered for this repo: {count}. "
     "Claim one to read it; list_messages names their ids."
 )
+RESET_SOURCES = ("clear", "compact")
 
 
 def format_handoffs(rows: list[dict]) -> str:
@@ -94,6 +96,8 @@ def _write_status(cfg: Config, reachable: bool, error: str | None) -> None:
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
+        if payload.get("source") in RESET_SOURCES:
+            dedup.reset(payload.get("session_id") or "")
         cfg = Config.from_env()
         if not cfg.configured:
             _write_status(cfg, False, None)
