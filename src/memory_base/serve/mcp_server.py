@@ -43,11 +43,9 @@ message lane for one-time signals between sessions (never embedded, never search
 
 Read first. Before starting a task or answering from recall, search_memory for earlier
 notes on the subject — arriving without them is this server's most common misuse.
-Decisions made with the owner are kept per repository in the decision lane, apart from
-notes: list_decisions and get_decision read them, and they are recorded, superseded or
-retired (record_decision, retire_decision) only when the owner asks. Work notes hold tips
-and preferences; repository decisions go to the decision lane, and search_memory before
-answering from recall still applies to notes.
+Decisions made with the owner live apart from notes, in the per-repository decision lane:
+list_decisions and get_decision read them; record_decision and retire_decision change them
+only when the owner asks. Work notes hold tips and preferences.
 
 """
 
