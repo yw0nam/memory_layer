@@ -68,7 +68,8 @@ async def search_memory(
 ) -> list[dict[str, Any]]:
     """Search stored notes for the given query.
 
-    Use this for questions about past decisions and saved notes. Returns up to
+    Use this for questions about saved notes; a repository's decisions are read with
+    `list_decisions` and `get_decision`. Returns up to
     `top_k` hits sorted by relevance; without `budget_tokens` the reranked results are
     capped at 10 before `top_k` applies, so a `top_k` above 10 still returns at most 10
     hits. Each hit has ref, date (YYYY-MM-DD), score, and text: the note in full, never

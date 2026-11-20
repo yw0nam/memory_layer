@@ -42,7 +42,12 @@ memory-base holds distilled notes (memory of the user and of the work) plus an a
 message lane for one-time signals between sessions (never embedded, never searched).
 
 Read first. Before starting a task or answering from recall, search_memory for earlier
-decisions on the subject — arriving without them is this server's most common misuse.
+notes on the subject — arriving without them is this server's most common misuse.
+Decisions made with the owner are kept per repository in the decision lane, apart from
+notes: list_decisions and get_decision read them, and they are recorded, superseded or
+retired (record_decision, retire_decision) only when the owner asks. Work notes hold tips
+and preferences; repository decisions go to the decision lane, and search_memory before
+answering from recall still applies to notes.
 
 """
 
