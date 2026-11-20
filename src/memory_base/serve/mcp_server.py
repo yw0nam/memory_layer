@@ -27,6 +27,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from memory_base.core.logger import setup_logging
+from memory_base.serve.decisions import tools as decision_tools
 from memory_base.serve.messages import tools as message_tools
 from memory_base.serve.notes import tools as note_tools
 from memory_base.serve.search import tools as search_tools
@@ -124,6 +125,10 @@ mcp.tool()(message_tools.send_message)
 mcp.tool()(message_tools.list_messages)
 mcp.tool()(message_tools.claim_message)
 mcp.tool()(message_tools.cancel_message)
+mcp.tool()(decision_tools.record_decision)
+mcp.tool()(decision_tools.retire_decision)
+mcp.tool()(decision_tools.list_decisions)
+mcp.tool()(decision_tools.get_decision)
 mcp.tool()(note_tools.archive_notes)
 mcp.tool()(note_tools.delete_notes)
 
