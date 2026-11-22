@@ -33,6 +33,9 @@ The `connect-agent` skill walks through picking the author and minting a key for
 | MCP server | `.mcp.json` | session | the memory tools, with the key and author from the plugin options as the `X-API-Key` and `X-Author` headers |
 | `/memory-base:init` | `skills/init` | on demand | reports `status.json` and flags old hand-installed entries |
 | `/memory-base:connect-agent` | `skills/connect-agent` | on demand | connects, changes, or disconnects an agent |
+| `/memory-base:save-notes` | `skills/save-notes` | on request, before `/compact` | saves the session's lessons as notes, superseding stale ones; lists the owner's decisions as drafts |
+| `/memory-base:send-handoff` | `skills/send-handoff` | on request, before `/compact` with work unfinished | sends the repository's work state and next steps, and cancels the caller's stale handoffs |
+| `/memory-base:record-decision` | `skills/record-decision` | when the owner says to record, supersede, or retire | checks the active decisions, records each one, and shows its D-number |
 
 Hooks are stdlib Python, fail open (exit 0), and run synchronously.
 

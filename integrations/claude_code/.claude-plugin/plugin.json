@@ -1,6 +1,6 @@
 {
   "name": "memory-base",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Memory Base for Claude Code: the repo's handoffs and decision titles at session start, decisions and notes recalled for each prompt, the session record of each session's transcript, and the memory tools over MCP.",
   "author": { "name": "yw0nam" },
   "license": "MIT",
