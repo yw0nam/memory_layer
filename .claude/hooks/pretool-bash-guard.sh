@@ -17,7 +17,7 @@ cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null) |
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 
 # Quoted spans holding whitespace are prose, not file operands; one left-to-right pass keeps an apostrophe inside double quotes literal.
-prose_free=$(printf '%s' "$cmd" | sed -zE "s/(\"[^\"[:space:]]*\"|'[^'[:space:]]*')|\"[^\"]*\"|'[^'\n]*'/\1/g") || prose_free="$cmd"
+prose_free=$(printf '%s' "$cmd" | perl -0777 -pe "s/(\"[^\"[:space:]]*\"|'[^'[:space:]]*')|\"[^\"]*\"|'[^'\n]*'/\$1/g") || prose_free="$cmd"
 if printf '%s' "$prose_free" | grep -qE '(^|[;&|({!`[:space:]])(cat|less|more|head|tail|bat|grep|rg|sed|awk|strings|base64|xxd|source)[[:space:]]([^;&|]*[[:space:]/"'"'"'<=])?\.env([^.A-Za-z0-9_-]|$)'; then
   deny ".env holds internal endpoints and DB credentials — reading it into the transcript is blocked. Check existence with ls; copy it into a worktree with cp without exposing contents."
 fi
@@ -29,7 +29,7 @@ if ! printf '%s' "$prose_free" | grep -q 'pipefail' &&
 fi
 
 # Double quotes are stripped across the whole command; apostrophes stay line-scoped.
-git_cmd=$(printf '%s' "$cmd" | sed "s/'[^']*'//g" | sed -z 's/"[^"]*"//g') || git_cmd=""
+git_cmd=$(printf '%s' "$cmd" | sed "s/'[^']*'//g" | perl -0777 -pe 's/"[^"]*"//g') || git_cmd=""
 if printf '%s' "$git_cmd" | grep -qE '(^|[;&|[:space:]])git(([[:space:]]+-[^[:space:];&|]+)*[[:space:]]+|[[:space:]]+-C[[:space:]]+([^[:space:];&|]+[[:space:]]+)?)(commit|push)([[:space:]]|$)'; then
   git_dir="${cwd:-.}"
   target=$(printf '%s' "$cmd" \
