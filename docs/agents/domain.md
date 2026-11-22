@@ -44,7 +44,8 @@ A change to an MCP tool or REST contract (a field, a default, a limit, a retenti
 updates every place that states it, in the same PR: the tool docstring in
 `src/memory_base/serve/<feature>/tools.py` (the tool description), the server instructions
 in `src/memory_base/serve/mcp_server.py`, the REST table and lane paragraphs in
-`README.md`, `docs/data-flow.md`, `docs/configuration.md`, `GLOSSARY.md`, the ADR that
+`README.md`, `docs/data-flow.md`, `docs/configuration.md`, `GLOSSARY.md`, the plugin skills
+in `integrations/claude_code/skills/`, the ADR that
 records the rule, and test fakes that echo the old value. Grep each of them for the old
 value before calling the change done.
 

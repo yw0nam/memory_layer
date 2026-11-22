@@ -154,7 +154,7 @@ uv run python -m memory_base.serve.access.keys new <label>   # prints a client's
 
 | client | integration |
 |---|---|
-| Claude Code | the plugin in [integrations/claude_code](integrations/claude_code/README.md): `/plugin marketplace add yw0nam/memory_layer`, then `/plugin install memory-base@memory_layer`; it brings the SessionStart hook (the repo's handoff headers, its scope line and newest decisions), the UserPromptSubmit recall and Stop hooks, the session record upload on Stop, SessionEnd, and SessionStart (the transcript of each session goes to `/session_events`), the MCP server, and the `init` and `connect-agent` skills |
+| Claude Code | the plugin in [integrations/claude_code](integrations/claude_code/README.md): `/plugin marketplace add yw0nam/memory_layer`, then `/plugin install memory-base@memory_layer`; it brings the SessionStart hook (the repo's handoff headers, its scope line and newest decisions), the UserPromptSubmit recall and Stop hooks, the session record upload on Stop, SessionEnd, and SessionStart (the transcript of each session goes to `/session_events`), the MCP server, the `init` and `connect-agent` skills, and the `save-notes`, `send-handoff` and `record-decision` skills |
 | Hermes | an `mcp_servers` entry for the MCP server with the `X-API-Key` and `X-Author` headers |
 
 The memory schema is created on first write (`ensure_schema`).
