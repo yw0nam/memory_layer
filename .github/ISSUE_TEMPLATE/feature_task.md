@@ -21,4 +21,4 @@ labels: ["feature"]
 ## Checklist
 - [ ] TDD order: failing test first (`test:`), then implementation (`feat:`), then refactor
 - [ ] No unverified assumptions (web/context7 cross-check, user confirmation for design decisions)
-- [ ] Selective storage upheld — notes stay distilled; raw text is never stored
+- [ ] Selective storage upheld — notes stay distilled; raw text lives only in the session record lane, never ranked

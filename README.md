@@ -5,7 +5,8 @@ addressed messages between sessions, served through a single REST API and an MCP
 
 Only distilled content is embedded. Agent notes arrive already distilled by the writing
 agent and pass deterministic checks (format, credentials such as API keys, tokens, PINs,
-and one-time codes, near duplicates); raw transcripts are never stored. Agent-authored
+and one-time codes, near duplicates); transcripts are not notes: the session record keeps
+Claude Code transcripts verbatim, read on demand and never ranked. Agent-authored
 messages — one-time signals and handoff snapshots — are stored as canonical Markdown,
 never embedded, listed while pending and consumed by claiming instead of search.
 
@@ -17,10 +18,12 @@ never embedded, listed while pending and consumed by claiming instead of search.
 └───────┬──────────────────────────────────────────────────────────────────────┘
         │ MCP  (stdio | streamable HTTP :8765)
         ▼
-   ┌─────────────┐  9 tools: search_memory / save_memory / list_notes /
-   │ mcp_server  │           archive_notes / delete_notes / send_message /
-   └──────┬──────┘           list_messages / claim_message / cancel_message
-          │ HTTP             (thin proxy, no logic)
+   ┌─────────────┐  16 tools: search_memory / save_memory / list_notes /
+   │ mcp_server  │            archive_notes / delete_notes / send_message /
+   └──────┬──────┘            list_messages / claim_message / cancel_message /
+          │ HTTP              record_decision / retire_decision / list_decisions /
+          │                   get_decision / list_sessions / read_session /
+          │                   search_transcript   (thin proxy, no logic)
           ▼
    ╔═══════════════════════════════════════════════════════════╗
    ║              REST API  :8010   (the only backend)         ║
@@ -32,7 +35,7 @@ never embedded, listed while pending and consumed by claiming instead of search.
      └───────────────────┴─────────┬─────────┘
                                    ▼
               Postgres 17 + pgvector + pg_textsearch  :5439
-              memory_chunks · messages · namespaces · api_keys
+              memory_chunks · messages · namespaces · api_keys · decisions · session_events
 
   side services:  vLLM (embedding / rerank)
 ```
@@ -40,7 +43,11 @@ never embedded, listed while pending and consumed by claiming instead of search.
 Every consumer reaches stored notes through the REST API, never through the database
 directly. `memory_chunks` feeds search, `messages` holds addressed, once-claimed signals
 that are never embedded and never searched
-([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)).
+([ADR-0002](docs/adr/0002-messages-addressed-once-claimed-lane.md)). `decisions` holds each
+author's numbered decisions per repository; only their own routes and `/recall` read it
+([ADR-0016](docs/adr/0016-a-per-repository-decision-lane-beside-notes.md)). `session_events` holds
+each author's Claude Code transcript events; only the session routes and their MCP tools read it,
+never `/search` or `/recall` ([ADR-0017](docs/adr/0017-the-session-record-lane.md)).
 
 How notes and messages move through the system — the write pipeline, the hybrid-search
 read path, the archive lifecycle, and the storage schema — is documented in
@@ -55,6 +62,15 @@ read path, the archive lifecycle, and the storage schema — is documented in
 | `POST` | `/search` | hybrid note search — `query`, `top_k`, `min_score`, `budget_tokens`, `kind`, `tags`, `author`, `namespaces`, `since`/`until`, `include_archived`; without `budget_tokens` the reranked results are capped at 10 before `top_k` applies; `author` omitted returns the calling author's own and shared notes, `all` every author's, a list of slugs exactly those authors' |
 | `POST` | `/save_memory` | store a distilled note, attributed to the `X-Author` header — `content`, the required `tags`, the required `kind` (`personal` or `work`, a label for search and listing), the optional `shared` (a note every author's default read scope returns; set at creation only), the optional id of a prior note to archive (400 when the save would leave no active note), and an optional `occurred_at` (ISO 8601, the event's date, stored beside the save time); refused with 409 when a near-identical active note in the caller's default scope exists unless `supersedes` names it or `allow_similar` is set, and before embedding when the content or a tag carries a credential (the error names the credential type only) |
 | `GET` | `/notes` | list agent notes newest-first without a query or embedding call — repeated `tags` and `namespace` params, `kind` (`personal` or `work`), repeated `author` (omitted: the caller's own and shared notes; `all`: every author; slugs: exactly those authors), `since`/`until`, `include_archived`, `limit` (default 50, max 200) |
+| `POST` | `/recall` | notes and the caller's active decisions for one query, scored separately — `query` (at most 4000 chars), optional `scope` (`repo:<origin>`; without it no decisions are scored), and `notes` / `decisions` objects each with `top_k` (at most 5; defaults 3 and 2) and `min_score` (defaults 0.5 and 0.5); the notes are `/search` hits, the decisions carry their number, text, and `score`; a failing lane is named in `errors` and the other still answers, both failing is `503` |
+| `POST` | `/session_events` | store a batch of Claude Code transcript events, attributed to the `X-Author` header — `events` (1 to 500 objects, the request body at most 2,000,000 bytes); each event has `id` (UUID), `session_id`, `role` (`user`, `assistant`, `tool_call`, or `tool_result`), `content` (at most 64,000 chars), optional `tool_name` and `tool_use_id`, `event_at` (ISO 8601), optional `repo`, and the required `host` and `cwd`; `200 {stored, known, conflicts}`, where an id the caller already stored with the same payload is `known` and one stored with another payload is listed in `conflicts`; each author stores its own copy of an id; a body with `author` is a 400 |
+| `GET` | `/sessions` | the caller's sessions newest first by their last event — `repo`, `since`, `until`, `limit` (default 20, max 100); rows hold `session_id`, `repo`, `host`, `cwd`, `started_at`, `last_at`, `events`, and `title` (the first user message that does not open with a tag such as `<command-name>`, at most 120 chars) |
+| `GET` | `/sessions/{session_id}` | one of the caller's sessions in seq order — `from_seq` (default 1), `limit` (default 50, max 200), `role`, and `contains` (a case-insensitive substring of at least 2 chars, which returns each match with its neighbour on either side, the matches marked `match: true`); rows hold `seq`, `role`, `tool_name`, `event_at`, and `content`; a page also stops before 200,000 characters of content (it always holds one event), and `next_from_seq` names the seq to continue from while events remain, else null; `404` when the caller has no such session |
+| `GET` | `/session_events/search` | the caller's events whose content holds `q` (required, at least 2 chars) as a case-insensitive substring, newest first — `repo`, `role`, `limit` (default 20, max 50); each hit has `session_id`, `seq`, `role`, `event_at`, `repo`, and a 300-char `window` around the first match |
+| `POST` | `/decisions` | record a decision in a repository scope, attributed to the `X-Author` header — `scope` (`repo:<origin>`), `title` (at most 200 chars), `decision`, optional `why`, `links` (at most 10 strings of at most 500 chars), `decided_on` (ISO date, default today in UTC), and `supersedes` (the number of an active decision of the caller that it replaces); `decision` and `why` together are at most 1500 chars; `201 {number, superseded}`; a `supersedes` that is not an active decision of the caller is a 400 and takes no number |
+| `POST` | `/decisions/retire` | retire an active decision of the caller — `scope`, `number`, `reason`; any other state is a 400 |
+| `GET` | `/decisions` | the caller's decisions in a scope, newest number first — `scope`, `status` (`active`, the default, or `all`), `limit` (default 200, max 200); rows hold `number`, `title`, `decided_on`, `status` |
+| `GET` | `/decisions/{number}` | one of the caller's decisions in full — `scope`; with `supersedes`, `superseded_by`, and `retired_reason`; `404` when the caller has no such number in the scope |
 | `POST` | `/messages` | send an addressed message (status `info`, no scope) or, with a `scope` (`repo:<origin>` or `project:<organization>/<project>`), a handoff snapshot (status `in_progress`\|`blocked`\|`completed`) — subject, result, optional `next`/`verification`/`refs`, optional `idempotency_key` and `expires_at`; attributed to the `X-Author` header; rendered to canonical Markdown, rejected past 16 KiB; an identical replay returns 200 |
 | `GET` | `/messages` | pending, unexpired messages newest-first without a query or embedding call — repeated `namespace`, `purpose`, `scope`, `subject` (case-insensitive substring of the normalized subject), `include_content` (default false: headers only), `limit` (default 50, max 100) |
 | `POST` | `/messages/{id}/claim` | claim a pending message at most once — the loser of a race gets 409; a stale superseded or expired id gets 409, an unknown id a 404 |
@@ -64,6 +80,7 @@ read path, the archive lifecycle, and the storage schema — is documented in
 | `DELETE` | `/namespaces/{name}` | unregister a namespace with no notes or messages; the reserved `default` namespace cannot be deleted |
 | `POST` | `/admin/notes/delete` | preview, or delete with `confirm`; an id that is not an agent note makes the whole call a 400 that lists them as `missing` |
 | `POST` | `/admin/archive` | preview the agent notes named by `ids` (`notes_to_archive`), then archive them with `confirm`, stamping the header author on every row archived; a body without `ids`, or an id that is not an active note, is a 400 (the id case lists them as `missing`) |
+| `DELETE` | `/admin/sessions/{session_id}` | delete the caller's rows of one session; returns `{deleted}` |
 | `POST` | `/admin/messages/purge` | preview claimed, cancelled, superseded, and expired messages (`messages_to_delete`), then delete them with `confirm` (`deleted`); deletion is permanent and releases their idempotency keys |
 
 The `/admin/*` routes are maintenance routes; any valid key may call them.
@@ -88,7 +105,9 @@ stdio by default; `MCP_TRANSPORT=sse|streamable-http` with `MCP_HOST`/`MCP_PORT`
 over HTTP (Docker serves streamable HTTP on `:8765/mcp`).
 
 `search_memory` · `save_memory` · `list_notes` · `archive_notes` · `delete_notes` ·
-`send_message` · `list_messages` · `claim_message` · `cancel_message`
+`send_message` · `list_messages` · `claim_message` · `cancel_message` ·
+`record_decision` · `retire_decision` · `list_decisions` · `get_decision` ·
+`list_sessions` · `read_session` · `search_transcript`
 
 `search_memory` takes `include_archived`, `kind`, `tags`, `since`/`until`, `author`, and
 `budget_tokens`, which returns hits in rerank order up to a token budget instead of
@@ -112,6 +131,15 @@ handoff expires after 3 days and an in_progress or blocked one stays pending unt
 is claimed, superseded, or cancelled, unless its sender gives an `expires_at`; a note
 is durable knowledge.
 
+The decision lane is separate from notes: `record_decision` (a supersede included) and
+`retire_decision` run only when the owner asks; `list_decisions` and `get_decision` read a
+repository's decisions of the caller's author. Note search never returns them.
+
+The session record is read the same way: `list_sessions` lists the caller's sessions
+(`repo`, `since`, `until`), `read_session` reads one in seq order or the matches of `contains`,
+and `search_transcript` finds a literal substring in the caller's events. None of them is
+memory and none is ranked.
+
 ## Running
 
 ```bash
@@ -126,7 +154,7 @@ uv run python -m memory_base.serve.access.keys new <label>   # prints a client's
 
 | client | integration |
 |---|---|
-| Claude Code | the plugin in [integrations/claude_code](integrations/claude_code/README.md): `/plugin marketplace add yw0nam/memory_layer`, then `/plugin install memory-base@memory_layer`; it brings the SessionStart hook that prints the repo's handoff headers, the MCP server, and the `init` and `connect-agent` skills |
+| Claude Code | the plugin in [integrations/claude_code](integrations/claude_code/README.md): `/plugin marketplace add yw0nam/memory_layer`, then `/plugin install memory-base@memory_layer`; it brings the SessionStart hook (the repo's handoff headers, its scope line and newest decisions), the UserPromptSubmit recall and Stop hooks, the session record upload on Stop, SessionEnd, and SessionStart (the transcript of each session goes to `/session_events`), the MCP server, and the `init` and `connect-agent` skills |
 | Hermes | an `mcp_servers` entry for the MCP server with the `X-API-Key` and `X-Author` headers |
 
 The memory schema is created on first write (`ensure_schema`).
@@ -173,7 +201,7 @@ uv run python -m memory_base.serve.access.keys revoke <key-hash-prefix>
 `revoke` takes an 8+ character prefix of the stored hash, as shown by `list`, and
 revokes every active key matching it.
 
-Every write — saved note, archive, message — is
+Every write — saved note, archive, message, decision, session event — is
 attributed to the `X-Author` header's author. A note read returns the caller's own notes
 and the notes marked `shared` unless it names an `author`
 ([ADR-0015](docs/adr/0015-author-declared-by-the-client-header-and-default-read-scope.md)).

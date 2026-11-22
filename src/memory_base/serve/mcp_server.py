@@ -27,9 +27,11 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from memory_base.core.logger import setup_logging
+from memory_base.serve.decisions import tools as decision_tools
 from memory_base.serve.messages import tools as message_tools
 from memory_base.serve.notes import tools as note_tools
 from memory_base.serve.search import tools as search_tools
+from memory_base.serve.sessions import tools as session_tools
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
@@ -41,7 +43,13 @@ memory-base holds distilled notes (memory of the user and of the work) plus an a
 message lane for one-time signals between sessions (never embedded, never searched).
 
 Read first. Before starting a task or answering from recall, search_memory for earlier
-decisions on the subject — arriving without them is this server's most common misuse.
+notes on the subject — arriving without them is this server's most common misuse.
+Decisions made with the owner live apart from notes, in the per-repository decision lane:
+list_decisions and get_decision read them; record_decision and retire_decision change them
+only when the owner asks.
+Your own past Claude Code sessions are stored apart from notes as the session record, read
+on demand with list_sessions, read_session and search_transcript; it is not memory and is
+never ranked.
 
 """
 
@@ -124,6 +132,13 @@ mcp.tool()(message_tools.send_message)
 mcp.tool()(message_tools.list_messages)
 mcp.tool()(message_tools.claim_message)
 mcp.tool()(message_tools.cancel_message)
+mcp.tool()(decision_tools.record_decision)
+mcp.tool()(decision_tools.retire_decision)
+mcp.tool()(decision_tools.list_decisions)
+mcp.tool()(decision_tools.get_decision)
+mcp.tool()(session_tools.list_sessions)
+mcp.tool()(session_tools.read_session)
+mcp.tool()(session_tools.search_transcript)
 mcp.tool()(note_tools.archive_notes)
 mcp.tool()(note_tools.delete_notes)
 

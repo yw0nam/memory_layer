@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted; the clause that a work decision keeps its reason is superseded by
+[ADR-0016](0016-a-per-repository-decision-lane-beside-notes.md).
 
 ## Context
 

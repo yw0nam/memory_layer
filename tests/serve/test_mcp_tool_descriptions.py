@@ -46,7 +46,7 @@ def test_the_author_argument_states_the_default_and_the_explicit_list(schemas, n
     assert {"type": "array", "items": {"type": "string"}} in author["anyOf"]
 
 
-def test_the_server_registers_the_note_and_message_tools_only(descriptions):
+def test_the_server_registers_the_note_message_decision_and_session_tools_only(descriptions):
     assert set(descriptions) == {
         "search_memory",
         "list_notes",
@@ -57,11 +57,24 @@ def test_the_server_registers_the_note_and_message_tools_only(descriptions):
         "list_messages",
         "claim_message",
         "cancel_message",
+        "record_decision",
+        "retire_decision",
+        "list_decisions",
+        "get_decision",
+        "list_sessions",
+        "read_session",
+        "search_transcript",
     }
 
 
 def test_search_memory_states_the_rerank_cap_on_top_k(descriptions):
     assert f"at most {RERANK_TOP}" in descriptions["search_memory"]
+
+
+def test_search_memory_points_decisions_to_the_decision_tools(descriptions):
+    assert "past decisions" not in descriptions["search_memory"]
+    assert "`list_decisions`" in descriptions["search_memory"]
+    assert "`get_decision`" in descriptions["search_memory"]
 
 
 def test_search_memory_lists_the_accepted_kinds(descriptions):

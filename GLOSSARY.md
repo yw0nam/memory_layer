@@ -39,6 +39,22 @@ The at-most-once delivery of a pending message: exactly one claimer wins, and th
 loser is refused. Terminal — a claimed message is never delivered again.
 _Avoid_: pop, read receipt, acknowledge
 
+**Decision**:
+A numbered record of a choice the owner made about a repository, kept in the decision lane
+as `D-N` per repository and author: title, decision, why (the reason and the rejected
+alternatives), links, and the decided date. Written, superseded, or retired only when the
+owner asks; a retired or superseded decision stays as history. Never a note, and never
+returned by note search.
+_Avoid_: note, ADR, ticket, memo
+
+**Session record**:
+The verbatim Claude Code transcript of one author's main sessions, uploaded by the plugin and stored as session events. Read on demand only (`list_sessions`, `read_session`, `search_transcript`); never embedded, never ranked, never part of note search or recall, and not memory.
+_Avoid_: transcript archive, chat log, history, summary
+
+**Session event**:
+One row of a session record: a user or assistant text block, a tool call, or a tool result, numbered by `seq` within its session. Text is cut at 64,000 characters and tool input or results at 2,000, with a `[cut, N chars]` marker.
+_Avoid_: message, chunk, log line
+
 ### Organization
 
 **Namespace**:
@@ -49,7 +65,7 @@ _Avoid_: tenant, workspace, bucket, collection
 The slug a client declares in the `X-Author` header: the attribution of everything the
 client writes and the default scope of its note reads — a note read returns that author's
 own notes and the shared notes unless the read names an author. Shape is checked; it
-grants nothing beyond that.
+grants nothing beyond that. Its decisions and session record are read by it alone.
 _Avoid_: agent id, profile name, owner
 
 **Shared**:
