@@ -35,7 +35,7 @@ The `connect-agent` skill walks through picking the author and minting a key for
 | `/memory-base:connect-agent` | `skills/connect-agent` | on demand | connects, changes, or disconnects an agent |
 | `/memory-base:save-notes` | `skills/save-notes` | on request, before `/compact` | saves the session's lessons as notes, superseding stale ones; lists the owner's decisions as drafts |
 | `/memory-base:send-handoff` | `skills/send-handoff` | on request, before `/compact` with work unfinished | sends the repository's work state and next steps, and cancels the caller's stale handoffs |
-| `/memory-base:record-decision` | `skills/record-decision` | when the owner says to record, supersede, or retire | checks the active decisions, records each one, and shows its D-number |
+| `/memory-base:record-decision` | `skills/record-decision` | when the owner says to record, supersede, or retire | checks the active decisions, records each one and shows its D-number, or retires one |
 
 Hooks are stdlib Python, fail open (exit 0), and run synchronously.
 

@@ -1,6 +1,6 @@
 ---
 name: record-decision
-description: "Use when the user says to record a decision, or to supersede or retire one. Drafts each decision, checks it against the repository's active decisions, records it and shows its D-number."
+description: "Use when the user says to record, save or remember a decision, or to supersede or retire one. Drafts each decision, checks it against the repository's active decisions, records it and shows its D-number."
 ---
 
 # Record a decision
@@ -21,9 +21,8 @@ stated reason.
 
 ## 2. Check the active decisions
 
-Find the scope: the scope line the SessionStart hook printed, or `repo:` followed by the
-output of `git remote get-url origin`. Then run `list_decisions` for it, and `get_decision` on
-each active decision a draft touches.
+Run `list_decisions` for the repository scope, and `get_decision` on each active decision a
+draft touches.
 - **The draft changes an active decision:** if the owner named that decision as the one to
   replace, the draft supersedes it. If not, show both and ask whether to supersede.
 - **An active decision already says the same:** drop the draft.
@@ -32,11 +31,9 @@ each active decision a draft touches.
 
 - **title:** one line that names the choice.
 - **decision:** the rule as it now stands, readable without this session.
-- **why:** the reason, and each alternative that was rejected with the reason it lost.
 - **links:** the issue, PR or ADR the decision came from or produced. If the repository's own
   instructions record decisions elsewhere too (a decision issue, an ADR), follow them as well,
   and link that record here.
-- **decided_on:** the owner's local date of the decision.
 
 ## 4. Record and show
 

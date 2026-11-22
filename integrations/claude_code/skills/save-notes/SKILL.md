@@ -1,6 +1,6 @@
 ---
 name: save-notes
-description: "Use when the user asks to save what this session learned to memory notes, or before /compact. Picks the lessons a later session needs, checks the notes already held, and saves or supersedes them."
+description: "Use when the user asks to save what this session learned to memory notes, or is about to /compact. Picks the lessons a later session needs, checks the notes already held, and saves or supersedes them."
 ---
 
 # Save a session's lessons as notes
@@ -22,8 +22,7 @@ Some candidates go elsewhere:
   draft in the report. A lesson that carries such a choice is split: the choice goes to the
   draft, and the how-to stays in the note.
 - **Progress:** where unfinished work stands. It belongs to a handoff (`send-handoff`).
-- **Already recorded:** a PR, issue, commit, file, decision or active note already states
-  it. Drop it.
+- **Already recorded:** a PR, issue, commit, file or active note already states it. Drop it.
 - **One-off:** a choice that holds only for the moment ("run it on the GPU host this
   time"). Drop it.
 
@@ -35,17 +34,14 @@ Run `search_memory` once per lesson subject, in parallel.
 
 ## 3. Write the notes
 
-- **One subject per note, kept short.** A note that holds two subjects, or a long write-up
-  of one, runs past the server's length limit and is refused.
+- **One subject per note.**
 - **First line:** the subject, the date and the source (repository, issue, set). A
   superseding note says in its first line what changed from the note it replaces.
 - **Body:** bullets that keep the measurements and file paths. A failed method keeps the
   reason it failed.
-- **Fields:** the first tag names the subject. Pass `occurred_at` when the note records an
-  event.
-- **Refusals:** split or shorten a note the server refuses, and send it again. If a
-  permission check denies a save (a prompt or the auto-mode classifier), show the note's
-  full text in the report, so nothing is lost.
+- **Refusals:** on a length refusal, split the note by subject and send each part again. On
+  any other refusal, do what its message says. If a permission check denies a save (a prompt
+  or the auto-mode classifier), show the note's full text in the report, so nothing is lost.
 
 ## 4. Report
 

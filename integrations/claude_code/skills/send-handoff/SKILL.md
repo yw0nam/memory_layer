@@ -1,6 +1,6 @@
 ---
 name: send-handoff
-description: "Use when the user asks for a handoff: pausing work, passing it to another agent, or before /compact with work unfinished. Sends the repository's work state and next steps, and withdraws your stale handoffs."
+description: "Use when the user asks for a handoff: pausing work, passing it to another agent, or about to /compact with work unfinished. Sends the repository's work state and next steps, and withdraws your stale handoffs."
 ---
 
 # Send a handoff
@@ -23,29 +23,34 @@ output of `git remote get-url origin`.
 - **Next:** the next steps, numbered, in order.
 
 A lesson that matters beyond this work belongs in a note (`save-notes`). A decision the owner
-made goes into the report as a draft, as step 5 describes.
+made goes into the report as a draft, as step 6 describes.
 
-## 3. Send it
+## 3. Read the pending handoffs
+
+Run `list_messages` for the scope, and note each row's `author`. A new handoff supersedes
+every pending one in the scope with the same subject, whoever wrote it. Pick a subject that no
+other author's pending handoff uses.
+
+## 4. Send it
 
 `send_message` with:
 - the scope;
 - `status`: `in_progress` or `blocked`, or `completed` when nothing is left to do;
 - a `subject` that names the work and its state;
-- the state from step 2 in `result`, with the next steps in `next_step`;
+- Done, Traps and Open questions in `result`;
+- Next in `next_step`, left out for `completed`;
 - the PR and issue URLs in `refs`.
 
-## 4. Withdraw your stale handoffs
+## 5. Cancel your stale handoffs
 
-A new handoff supersedes only a pending one with the same subject. Run `list_messages` for the
-scope, and `cancel_message` each pending handoff of yours that the new one makes stale.
-- Leave handoffs from other authors alone.
-- A handoff another session has already claimed cannot be cancelled
-  (`no cancellable message`). That is expected; skip it.
+Your handoffs are the rows from step 3 whose `author` equals the `author` on the row
+`send_message` returned. Run `cancel_message` on each of yours that the new handoff makes
+stale. Leave the other authors' handoffs alone.
 
-## 5. Report
+## 6. Report
 
 - The subject and id of the new handoff.
 - Each handoff you cancelled, and each one from another author that is still pending.
-- **Decision drafts:** each decision the owner made in the session that the decision lane
-  does not hold, with a title, the decision, the reason and the rejected alternatives. They
-  are recorded only when the owner says to record them (`record-decision`).
+- **Decision drafts:** each decision the owner made in the session, with a title, the
+  decision, the reason and the rejected alternatives. They are recorded only when the owner
+  says to record them (`record-decision`).
