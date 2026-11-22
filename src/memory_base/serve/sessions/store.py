@@ -108,7 +108,7 @@ async def list_sessions(
     *, author: str, repo: str | None, since: float | None, until: float | None, limit: int
 ) -> list[dict[str, Any]]:
     """The author's sessions newest first by their last event, each titled by its first user
-    event."""
+    event that does not open with a tag, or its first user event when every one does."""
     args: list[Any] = [author]
     having = ["TRUE"]
     for expr, op, value in (
@@ -130,7 +130,8 @@ async def list_sessions(
                    (SELECT left(btrim(regexp_replace(u.content, '\\s+', ' ', 'g')), {TITLE_CHARS})
                     FROM {_TABLE} u
                     WHERE u.author = t.author AND u.session_id = t.session_id AND u.role = 'user'
-                    ORDER BY u.seq LIMIT 1) AS title
+                    ORDER BY u.content ~ '^\\s*<[A-Za-z][A-Za-z0-9_-]*>', u.seq
+                    LIMIT 1) AS title
             FROM {_TABLE} t
             WHERE t.author = $1
             GROUP BY t.author, t.session_id
