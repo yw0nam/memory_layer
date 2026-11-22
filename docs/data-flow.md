@@ -400,7 +400,8 @@ dropped and lone surrogates replaced before storage.
 - `GET /sessions?repo=&since=&until=&limit=` lists sessions newest first by their last event.
   `repo` is an exact repo scope, `since` bounds the last event, and `until` bounds the first.
   A row holds `session_id`, `repo`, `host`, `cwd`, `started_at`, `last_at`, `events`, and `title`:
-  the first user event, whitespace-normalized and cut at 120 characters.
+  the first user event that does not open with a tag such as `<command-name>` (the first user event
+  when every one does), whitespace-normalized and cut at 120 characters.
 - `GET /sessions/{session_id}?from_seq=&limit=&role=&contains=` returns events in seq order from
   `from_seq` (default 1), at most `limit` (default 50, max 200) and at most 200,000 characters of
   content, with at least one event. The page carries `next_from_seq`, the seq of the first event

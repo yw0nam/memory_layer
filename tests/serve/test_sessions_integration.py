@@ -221,6 +221,24 @@ def test_list_sessions_titles_by_the_first_user_event_and_orders_newest_first(ta
     assert [r["session_id"] for r in after if tag in r["session_id"]] == [newer]
 
 
+def test_list_sessions_titles_skip_user_events_that_open_with_a_tag(tag):
+    wrapped, only_tags = f"{tag}-wrapped", f"{tag}-tags"
+    _write(
+        [
+            _event(wrapped, "<command-name>/clear</command-name>\n<command-message>clear", 0),
+            _event(wrapped, " <bash-input>ls</bash-input>", 1),
+            _event(wrapped, "real first prompt", 2),
+            _event(only_tags, "<command-name>/mcp</command-name>", 60),
+        ]
+    )
+    titles = {
+        r["session_id"]: r["title"]
+        for r in client.get("/sessions", params={"limit": 100}).json()
+        if tag in r["session_id"]
+    }
+    assert titles == {wrapped: "real first prompt", only_tags: "<command-name>/mcp</command-name>"}
+
+
 def test_read_session_pages_by_seq_and_filters_by_role(tag):
     session = f"{tag}-read"
     _write([_event(session, f"m{n}", n, role="assistant" if n % 2 else "user") for n in range(6)])
