@@ -26,9 +26,10 @@ async def list_sessions(
     The session record is the verbatim transcript your Claude Code sessions uploaded:
     not memory, read on demand and never ranked. Each row is {session_id, repo, host,
     cwd, started_at, last_at, events, title}; `title` is the first user message that
-    does not open with a tag such as <command-name>, cut at 120 characters. Narrow by repo scope (`repo`: repo:<host>/<path>) or time window
-    (`since`, `until`: ISO 8601 date or datetime), then read_session. `limit` defaults
-    to 20, max 100. No other author reads your sessions.
+    does not open with a tag such as <command-name>, cut at 120 characters. Narrow by
+    repo scope (`repo`: repo:<host>/<path>) or time window (`since`, `until`: ISO 8601
+    date or datetime), then read_session. `limit` defaults to 20, max 100. No other
+    author reads your sessions.
     """
     return await rest_client.call(
         "GET",
